@@ -384,7 +384,9 @@ export class FigureCanvas {
     // the pane covers the window anyway (app.css).
     if (this.el.requestFullscreen && !document.fullscreenElement) this.el.requestFullscreen().catch(() => {});
     this.stage.focus({ preventScroll: true });
-    requestAnimationFrame(() => this.showStep(first));
+    // Unless a key already moved it (a frame can come late).
+    const p = this.presenting;
+    requestAnimationFrame(() => { if (this.presenting === p && p.i < 0) this.showStep(first); });
   }
 
   showStep(i, frameAgain = false) {

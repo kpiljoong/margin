@@ -162,7 +162,8 @@ await check('presenting steps through the flow and ends', `
   const stage = $('.canvas-stage');
   stage.focus();
   key('Home', {}, stage);
-  key('p', {}, stage); await sleep(400);
+  key('p', {}, stage);
+  await until(() => $('.cap-head')?.textContent);
   key('Home', {}, stage); await sleep(300);
   const first = $('.cap-head')?.textContent;
   key(' ', {}, stage); await sleep(300);
