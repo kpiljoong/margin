@@ -41,11 +41,13 @@ jobs:
 
       - run: npm ci
 
-      - name: Lint and test
+      - name: Lint
         if: runner.os == 'Linux'
-        run: |
-          npm run lint
-          npm test
+        run: npm run lint
+
+      # On every OS: the notation, shortcuts, and code updates installed and
+      # started the way the app does it (paths and renames differ per OS).
+      - run: npm test
 
       # The app itself, in Electron on a virtual display: notes, canvas,
       # presenting, a review picked and applied (scripts/smoke.mjs).

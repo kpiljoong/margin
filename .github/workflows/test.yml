@@ -1,0 +1,35 @@
+name: Test
+
+# Every push to main and every pull request: lint once, and the tests on
+# macOS, Windows and Linux (they include installing and starting a signed
+# code update, which touches the file system differently on each).
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci
+
+      - name: Lint
+        if: runner.os == 'Linux'
+        run: npm run lint
+
+      - run: npm test
