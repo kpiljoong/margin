@@ -61,6 +61,7 @@ function linkPath(a, b, outer = null) {
   return `M${ax},${y1} C${ax},${y1 + d * c} ${bx},${y2 - d * c} ${bx},${y2}`;
 }
 const PAD = 40;
+const SETTLE = 800; // ms after the pictures last changed before the camera catches up
 const RENAME_TIP = 'Click: select it in the note · Double-click: rename';
 
 export class FigureCanvas {
@@ -81,6 +82,7 @@ export class FigureCanvas {
     this.animEnd = 0;
     this.links = null; // [[{ pre, id }, { pre, id }]]
     this.hover = null; // the box under the pointer: { pre, id }
+    this.pin = null; // the box kept still while the pictures redraw (pinBox)
     // Following the flow with the keys: the box walked to, the steps taken
     // (to go back), and the ways offered at a branch.
     this.walkAt = null; // { pre, id }
@@ -130,6 +132,8 @@ export class FigureCanvas {
   // sections: [{ key, title, line, figures: [Element] }] in note order, only
   // those with pictures.
   setCards(sections) {
+    this.pinBox();
+    this.redrawnAt = performance.now();
     this.sections = sections;
     this.editing?.remove();
     // Links are drawn over the pictures (app.css), always.
@@ -144,12 +148,68 @@ export class FigureCanvas {
     this.hover = null;
     this.endWalk();
     this.endPresent();
-    this.whenLoaded(this.world, () => this.drawLinksSoon());
+    this.whenLoaded(this.world, () => { this.holdPin(); this.drawLinksSoon(); });
     this.empty.hidden = sections.length > 0;
     this.empty.textContent = sections.length ? '' : 'No pictures yet. Write a ```flow or ```mermaid block and it shows up here.';
   }
 
   cardOf(fig) { return fig?.closest('.canvas-card') || null; }
+
+  // ---- keeping still
+
+  // A box is known by its picture (section, place in it) and its text (a
+  // Mermaid box by its id), which outlast the elements.
+  boxName(pre, id) {
+    const text = pre.flowNodes?.find((f) => f.id === id)?.text;
+    return text != null ? `t:${text}` : `i:${id}`;
+  }
+
+  figureAt(key, i) { return this.sections.find((s) => s.key === key)?.figures[i] || null; }
+
+  // Before the pictures are made again: of the boxes in view, pick the one
+  // nearest the boxes at the cursor (else the middle of the view), and note
+  // where it is on screen. Adding a step or renaming one lays the picture
+  // out again; holdPin() then moves the camera so that box stays put, and
+  // the change happens around it instead of the whole picture sliding.
+  pinBox() {
+    this.pin = null;
+    if (this.fresh || this.presenting || performance.now() < this.animEnd) return;
+    const s = this.stage.getBoundingClientRect();
+    if (!s.width || !s.height) return;
+    const mid = (r) => ({ x: r.left + r.width / 2, y: r.top + r.height / 2 });
+    const at = this.world.querySelectorAll('.node-hit.on, .node-hit.walk-at');
+    let p = { x: s.left + s.width / 2, y: s.top + s.height / 2 };
+    if (at.length) { const b = this.bounds([...at]); p = { x: s.left + this.x + (b.x + b.w / 2) * this.k, y: s.top + this.y + (b.y + b.h / 2) * this.k }; }
+    let best = null;
+    for (const sec of this.sections) {
+      sec.figures.forEach((pre, i) => {
+        for (const hit of pre.querySelectorAll(':scope > .node-layer > .node-hit')) {
+          const r = hit.getBoundingClientRect();
+          if (r.right < s.left || r.left > s.right || r.bottom < s.top || r.top > s.bottom) continue;
+          const c = mid(r);
+          const d = Math.hypot(c.x - p.x, c.y - p.y);
+          if (!best || d < best.d) best = { d, key: sec.key, i, name: this.boxName(pre, hit.dataset.id), x: r.left, y: r.top };
+        }
+      });
+    }
+    if (best) this.pin = best;
+  }
+
+  // Put the pinned box back where it was on screen (as each picture comes).
+  holdPin() {
+    const pin = this.pin;
+    if (!pin || this.presenting) return;
+    const pre = this.figureAt(pin.key, pin.i);
+    const hit = pre && [...pre.querySelectorAll(':scope > .node-layer > .node-hit')].find((b) => this.boxName(pre, b.dataset.id) === pin.name);
+    if (!hit) return;
+    const r = hit.getBoundingClientRect();
+    const dx = r.left - pin.x;
+    const dy = r.top - pin.y;
+    if (Math.abs(dx) < 0.5 && Math.abs(dy) < 0.5) return;
+    this.x -= dx;
+    this.y -= dy;
+    this.apply();
+  }
 
   // The layout in world units, for a picture of the whole canvas:
   // { w, h, sections: [{ title, x, y, w, h, cards: [{ x, y, w, h, images: [{ src, x, y, w, h }] }] }] }.
@@ -169,6 +229,10 @@ export class FigureCanvas {
   // What the cursor is on: a picture, and maybe some of its boxes. The camera
   // moves only when that changes, so typing on a line keeps it still.
   target(goal) {
+    // Still in the same picture (typing adds, renames and drops the boxes at
+    // the cursor): the camera stays while they can be seen.
+    const place = (g) => (g ? `${g.section.key}|${g.section.figures.indexOf(g.fig)}` : null);
+    const samePicture = !!goal && place(goal) === place(this.goal);
     this.goal = goal;
     this.mark();
     const sig = goal ? `${goal.section.key}|${goal.section.figures.indexOf(goal.fig)}|${goal.nodes.map((n) => n.id).join(',')}` : null;
@@ -182,7 +246,23 @@ export class FigureCanvas {
       this.whenLoaded(this.world, () => (goal && this.view === 'picture' ? this.refocus(false) : this.fitAll(false)));
       return;
     }
-    if (goal && this.view === 'picture') this.refocus(true);
+    if (!goal || this.view !== 'picture') return;
+    if (samePicture && !goal.nodes.length) return;
+    // While typing, the boxes come and go at each key: follow them once
+    // typing stops, not at every step.
+    if (samePicture && this.typing()) { this.settleSoon(); return; }
+    this.refocus(true, samePicture);
+  }
+
+  typing() { return performance.now() - (this.redrawnAt || 0) < SETTLE; }
+
+  // Once typing stops, bring the boxes at the cursor into view if they are not.
+  settleSoon() {
+    clearTimeout(this.settleTimer);
+    this.settleTimer = setTimeout(() => {
+      if (this.typing()) { this.settleSoon(); return; }
+      if (this.goal && this.view === 'picture' && !this.presenting) this.refocus(true, true);
+    }, SETTLE);
   }
 
   // Look at the target: its boxes centred, or the picture (its top left if
@@ -201,7 +281,8 @@ export class FigureCanvas {
       const card = this.cardOf(goal?.fig);
       if (this.sig !== want || !card || this.view !== 'picture') return;
       const hits = goal.nodes.map((n) => this.hit(n.pre, n.id)).filter(Boolean);
-      if (onlyIfHidden && this.inView(hits.length ? hits : [card])) return;
+      // A picture with no boxes at the cursor counts as seen while part of it is.
+      if (onlyIfHidden && (hits.length ? this.inView(hits) : this.overlapsView(card))) return;
       const s = this.stage.getBoundingClientRect();
       if (!s.width || !s.height) return;
       const c = this.bounds([card]);
@@ -648,8 +729,15 @@ export class FigureCanvas {
     return els.every((e) => { const r = e.getBoundingClientRect(); return r.left >= s.left && r.right <= s.right && r.top >= s.top && r.bottom <= s.bottom; });
   }
 
+  overlapsView(e) {
+    const s = this.stage.getBoundingClientRect();
+    const r = e.getBoundingClientRect();
+    return r.right > s.left && r.left < s.right && r.bottom > s.top && r.top < s.bottom;
+  }
+
   moveTo(k, x, y, animate) {
     cancelAnimationFrame(this.anim);
+    this.pin = null;
     this.fresh = false;
     if (!animate || matchMedia('(prefers-reduced-motion: reduce)').matches) {
       Object.assign(this, { k, x, y });
@@ -676,6 +764,7 @@ export class FigureCanvas {
   zoomAt(next, cx, cy) {
     cancelAnimationFrame(this.anim);
     next = Math.max(0.05, Math.min(8, next));
+    this.pin = null;
     this.x = cx - (cx - this.x) * (next / this.k);
     this.y = cy - (cy - this.y) * (next / this.k);
     this.k = next;
@@ -698,10 +787,14 @@ export class FigureCanvas {
     const stage = this.stage;
     this.world.addEventListener('diagram-shown', (e) => {
       this.layer(e.target);
+      this.whenLoaded(e.target, () => this.holdPin());
       this.links = null;
       this.mark();
       // A picture being looked at changed size: keep its target in view.
-      if (this.view === 'picture' && this.goal?.fig === e.target && !this.fresh) this.refocus(true, true);
+      if (this.view === 'picture' && this.goal?.fig === e.target && !this.fresh) {
+        if (this.typing()) this.settleSoon();
+        else this.refocus(true, true);
+      }
     });
     stage.addEventListener('wheel', (e) => {
       e.preventDefault();
@@ -711,6 +804,7 @@ export class FigureCanvas {
       if (this.h.wheelPans?.() && !e.ctrlKey && !e.metaKey) {
         cancelAnimationFrame(this.anim);
         const line = e.deltaMode === 1 ? 16 : 1;
+        this.pin = null;
         this.x -= (e.shiftKey && !e.deltaX ? e.deltaY : e.deltaX) * line;
         this.y -= (e.shiftKey && !e.deltaX ? 0 : e.deltaY) * line;
         this.fresh = false;
@@ -753,6 +847,7 @@ export class FigureCanvas {
         stage.classList.add('panning');
         this.editing?.remove();
       }
+      this.pin = null;
       this.x = press.x + dx;
       this.y = press.y + dy;
       this.fresh = false;

@@ -2,7 +2,7 @@
 
 A ` ```flow ` block is a flowchart notation you write like text. It exists so that, in a meeting, you type on the keyboard instead of drawing with the mouse and see the diagram as you type. It is tuned for drawing "what leads to what": system architecture, process improvements, workflows.
 
-The text is the source; the diagram is only a view. You never move boxes or draw lines by hand. The app converts the notation into a mermaid flowchart, so preview, embedding, export, and image copy behave exactly as with ` ```mermaid `.
+The text is the source; the diagram is only a view. You never move boxes or draw lines by hand. The app converts the notation into a mermaid flowchart, so preview, embedding, export, and image copy behave exactly as with ` ```mermaid `. Places that don't know this notation (GitHub, GitLab) show a ` ```flow ` block as plain text: to share a note there, use **Copy for GitHub (flows as Mermaid)** in the note's ⋯ menu, which copies it with every flow block written as Mermaid.
 
 ````markdown
 ```flow

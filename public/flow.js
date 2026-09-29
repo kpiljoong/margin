@@ -218,6 +218,35 @@ export function flowBlocks(md) {
   return out;
 }
 
+// The note with each ```flow block written as a ```mermaid block, for places
+// that show Mermaid but don't know this notation (GitHub, GitLab, …).
+// A block that can't be drawn stays as it is. { md, converted, failed }.
+export function flowsAsMermaid(md) {
+  const lines = String(md).split('\n');
+  const out = [];
+  let converted = 0;
+  let failed = 0;
+  for (let i = 0; i < lines.length; i++) {
+    const open = /^( {0,3})(`{3,}|~{3,})\s*([\w-]*)/.exec(lines[i]);
+    if (!open) { out.push(lines[i]); continue; }
+    let j = i + 1;
+    while (j < lines.length && !(lines[j].trimStart().startsWith(open[2]) && !lines[j].trim().slice(open[2].length).trim())) j++;
+    const block = lines.slice(i, Math.min(j + 1, lines.length));
+    if (open[3].toLowerCase() === 'flow') {
+      try {
+        const code = flowToMermaid(lines.slice(i + 1, j).join('\n'));
+        out.push(`${open[1]}${open[2]}mermaid`, ...code.split('\n').map((l) => open[1] + l), `${open[1]}${open[2]}`);
+        converted++;
+        i = j;
+        continue;
+      } catch { failed++; }
+    }
+    out.push(...block);
+    i = j;
+  }
+  return { md: out.join('\n'), converted, failed };
+}
+
 // Is the caret in a ```flow block, and is its line half written — ending in
 // an arrow, a "-(" label, or " :" before a note? { partial } or null.
 const PARTIAL = /(?:-|->|-->|→|--|\.\.?>?|<-?>?|-\([^()]*\)?-?|\s:)$/;

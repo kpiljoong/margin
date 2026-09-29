@@ -1,7 +1,7 @@
 // node --test (npm test): the ```flow notation, public/flow.js.
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { parseFlow, isStepText } from '../public/flow.js';
+import { parseFlow, isStepText, flowsAsMermaid, flowToMermaid } from '../public/flow.js';
 
 const byText = (flow) => Object.fromEntries(flow.nodes.map((n) => [n.text, n]));
 
@@ -136,4 +136,14 @@ test('flowLineAt: in a flow block, and whether the line is half written', async 
   assert.deepEqual(flowLineAt(md, at(2)), { partial: false });
   for (const l of [3, 4, 5, 6]) assert.deepEqual(flowLineAt(md, at(l)), { partial: true }, md.split('\n')[l]);
   assert.deepEqual(flowLineAt(md, at(7)), { partial: false });
+});
+
+test('a note for GitHub: each flow block becomes a mermaid block, the rest stays', () => {
+  const md = ['# Deploy', '', '```flow', 'PR -> Review -> Deploy !', '```', '', '```js', 'a -> b', '```', '', '~~~~flow', '', '~~~~', 'Done.'].join('\n');
+  const r = flowsAsMermaid(md);
+  assert.equal(r.converted, 1);
+  assert.equal(r.failed, 1); // the empty block has nothing to draw: kept
+  assert.equal(r.md, ['# Deploy', '', '```mermaid', flowToMermaid('PR -> Review -> Deploy !'), '```', '', '```js', 'a -> b', '```', '', '~~~~flow', '', '~~~~', 'Done.'].join('\n'));
+  assert.match(r.md, /class n3 problem/);
+  assert.deepEqual(flowsAsMermaid('no pictures'), { md: 'no pictures', converted: 0, failed: 0 });
 });

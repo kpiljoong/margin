@@ -1,7 +1,7 @@
 import { renderMarkdown, outline, slug } from './markdown.js';
 import { MarkdownEditor, setEditorKeys } from './editor.js';
 import { renderDiagrams } from './diagrams.js';
-import { flowToMermaid, parseFlow, isStepText, flowStepNames, nameKey, flowTour, flowLineAt } from './flow.js';
+import { flowToMermaid, flowsAsMermaid, parseFlow, isStepText, flowStepNames, nameKey, flowTour, flowLineAt } from './flow.js';
 import { FigureCanvas } from './canvas.js';
 import { goalAt, boxAt, mentionRanges, definitionLines } from './figure-goal.js';
 import { isDrawing, drawingFormat, DrawingFrame, renderDrawingEmbeds, cachedEmbed, forgetEmbed, drawingImageUrl } from './drawing.js';
@@ -1215,6 +1215,7 @@ function renderContent(g = S.focus) {
     h('button', { class: 'icon-btn', title: 'More actions', onclick: (e) => { const r = e.currentTarget.getBoundingClientRect(); contextMenu({ preventDefault() {}, stopPropagation() {}, clientX: r.right - 200, clientY: r.bottom + 4 }, [
       { label: 'Rename / move…', key: kbd('rename'), run: () => renameItem(tab.path) },
       { label: 'Copy [[link]]', run: () => navigator.clipboard.writeText(`[[${stem(tab.path)}]]`).then(() => toast('Link copied')) },
+      isNote(tab.path) ? { label: 'Copy for GitHub (flows as Mermaid)', run: () => copyWithMermaid(tab) } : null,
       isMermaidFile(tab.path) ? { label: 'Copy embed ![[…]]', run: () => navigator.clipboard.writeText(`![[${basename(tab.path)}]]`).then(() => toast('Embed copied — paste it into a note')) } : null,
       ...(isMermaidFile(tab.path) ? ['-', ...pictureItems(() => mermaidFilePicture(tab), { view: () => viewPicture(mermaidFilePicture(tab), basename(tab.path)) })] : []),
       '-',
@@ -2018,6 +2019,7 @@ const COMMANDS = [
   ['Rename / move current note…', () => fileTab() && renameItem(fileTab().path), { key: 'rename' }],
   ['Delete current note', () => fileTab() && deleteItem(fileTab().path)],
   ['New folder…', () => newFolder()],
+  ['Copy note for GitHub (flows as Mermaid)', () => copyWithMermaid()],
   ['Copy [[link]] to current note', () => fileTab() && navigator.clipboard.writeText(`[[${stem(fileTab().path)}]]`).then(() => toast('Link copied'))],
   ['Split: open to the side', splitRight, { key: 'split' }],
   ['Split: move tab to other pane', () => activeTab() && moveTab(activeTab(), activeTab().group === 0 ? 1 : 0)],
@@ -2915,6 +2917,17 @@ document.addEventListener('contextmenu', (e) => {
     path ? { label: `Open ${basename(path)}`, run: () => openFile(path) } : null,
   ]);
 });
+
+// The whole note as Markdown for places that show ```mermaid but don't know
+// ```flow (GitHub, GitLab, …): each flow block written as Mermaid.
+function copyWithMermaid(tab = fileTab()) {
+  if (!tab || !isNote(tab.path)) { toast('Open a note first'); return; }
+  const { md, converted, failed } = flowsAsMermaid(tab.content);
+  const kept = failed ? ` · ${failed} left as written (nothing to draw)` : '';
+  navigator.clipboard.writeText(md)
+    .then(() => toast(converted ? `Note copied with ${converted} flow ${converted === 1 ? 'block' : 'blocks'} as Mermaid${kept}` : `Note copied (no flow blocks to convert)${kept}`))
+    .catch((e) => toast(`Could not copy: ${e.message}`, 'error'));
+}
 
 // Replace a ```flow block in the note with the Mermaid it stands for (for
 // places that show ```mermaid but don't know this notation, like GitHub).
