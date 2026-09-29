@@ -335,6 +335,36 @@ function resolveLink(target, fromPath) {
   return linkIndex.byName.get(t.toLowerCase()) || null;
 }
 
+// [[Note#Section]] and [[#Section]] (this note): the note and the heading.
+// Obsidian's [[Note#Section#Sub]] points at the last one.
+function splitLink(target) {
+  const [note, ...rest] = String(target).split('#');
+  return { note: note.trim(), heading: rest.map((x) => x.trim()).filter(Boolean).pop() || '' };
+}
+
+// The line of a heading, matched the way links write it: without case,
+// marks or extra spaces.
+function headingLine(content, heading) {
+  const want = slug(heading);
+  return outline(content).find((it) => slug(it.text.replace(/[*_`]/g, '')) === want)?.line ?? null;
+}
+
+// Follow a link from a note, to its section if it names one. False when the
+// note doesn't exist.
+async function followLink(target, fromPath) {
+  const { note, heading } = splitLink(target);
+  const path = note ? resolveLink(note, fromPath) : (isNote(fromPath || '') ? fromPath : null);
+  if (!path) return false;
+  if (path !== fileTab()?.path) await openFile(path);
+  const tab = fileTab();
+  if (!heading || tab?.path !== path) return true;
+  const line = headingLine(tab.content, heading);
+  if (line == null) toast(`No section “${heading}” in ${stem(path)}`);
+  // Once the note is shown (its preview drawn).
+  else requestAnimationFrame(() => requestAnimationFrame(() => gotoHeading(line)));
+  return true;
+}
+
 // Textareas normalise line breaks to LF; remember CRLF files (common on
 // Windows) and write them back with CRLF so saving never rewrites every line.
 function fromDisk(text) {
@@ -1266,7 +1296,32 @@ function editorFor(tab) {
   return ed;
 }
 
-function completeFor(kind, query) {
+// Headings of notes not open, for [[Note# completion: path → { at, heads },
+// read again after a while (the note may have changed).
+const headingsOf = new Map();
+
+function completeFor(kind, query, ctx) {
+  if (kind === 'heading') {
+    const tab = fileTab();
+    const path = ctx.note.trim() ? resolveLink(ctx.note, tab?.path) : tab?.path;
+    if (!path) return [];
+    const open = S.tabs.find((t) => t.kind === 'file' && t.path === path);
+    const known = headingsOf.get(path);
+    let heads = open ? outline(open.content) : known?.heads;
+    if (!open && (!known || Date.now() - known.at > 10000)) {
+      headingsOf.set(path, { at: Date.now(), heads: known?.heads || [] });
+      api('GET', `/api/file?path=${encodeURIComponent(path)}`).then((f) => {
+        headingsOf.set(path, { at: Date.now(), heads: outline(f.content) });
+        tab?.editor?._maybeComplete(); // show them now they're here
+      }).catch(() => {});
+      if (!heads?.length) return [];
+    }
+    return heads.map((it) => ({ it, text: it.text.replace(/[*_`]/g, '') }))
+      .map((x) => ({ ...x, m: fuzzy(query, x.text) }))
+      .filter((x) => x.m && x.text.toLowerCase() !== query.trim().toLowerCase())
+      .sort((a, b) => (query ? b.m.score - a.m.score : 0))
+      .map(({ it, text }) => ({ label: text, detail: `H${it.level}`, insert: text }));
+  }
   if (kind === 'link') {
     const notes = S.files.filter((f) => f.note);
     const counts = {};
@@ -1884,17 +1939,23 @@ function previewClick(e, tab) {
   if (!a) return;
   e.preventDefault();
   const target = a.dataset.target || a.dataset.href;
-  if (target.startsWith('#')) {
+  if (a.dataset.href?.startsWith('#')) {
     const el = document.getElementById(slug(decodeURIComponent(target.slice(1))));
     el?.scrollIntoView({ behavior: 'smooth' });
     return;
   }
-  const hit = resolveLink(target, tab.path);
-  if (hit) openFile(hit);
-  else if (confirm(`"${target}" doesn't exist yet. Create it?`)) {
-    const p = a.dataset.target ? `${dirname(tab.path) ? `${dirname(tab.path)}/` : ''}${target}` : [dirname(tab.path), target].filter(Boolean).join('/');
+  // Markdown links may be URL-encoded ("my%20note.md#next-steps").
+  let link = target;
+  if (a.dataset.href) try { link = decodeURIComponent(target); } catch { /* keep as written */ }
+  followLink(link, tab.path).then((found) => {
+    if (found) return;
+    // A new note is named without the section.
+    const name = splitLink(link).note;
+    if (!name) { toast('No such note'); return; }
+    if (!confirm(`"${name}" doesn't exist yet. Create it?`)) return;
+    const p = a.dataset.target ? `${dirname(tab.path) ? `${dirname(tab.path)}/` : ''}${name}` : [dirname(tab.path), name].filter(Boolean).join('/');
     api('POST', '/api/file', { path: p }).then((f) => loadTree().then(() => openFile(f.path))).catch((err) => toast(err.message, 'error'));
-  }
+  });
 }
 
 function renderStatus() {
@@ -2605,8 +2666,7 @@ function onDrawingMessage(tab, m) {
 function openDrawingLink(tab, url) {
   const wiki = /^\[\[([^\]|]+)(?:\|[^\]]*)?\]\]$/.exec(url.trim());
   if (wiki) {
-    const p = resolveLink(wiki[1], tab.path);
-    if (p) openFile(p); else toast(`Not found: ${wiki[1]}`, 'error');
+    followLink(wiki[1], tab.path).then((found) => { if (!found) toast(`Not found: ${wiki[1]}`, 'error'); });
   } else if (/^https?:\/\//i.test(url)) window.open(url, '_blank', 'noopener,noreferrer');
 }
 
@@ -3598,8 +3658,7 @@ function reviewView(tab) {
         const a = e.target.closest('a.internal');
         if (!a) return;
         e.preventDefault();
-        const hit = resolveLink(a.dataset.target || a.dataset.href, run.focus || '');
-        if (hit) openFile(hit);
+        followLink(a.dataset.target || a.dataset.href, run.focus || '');
       } })));
   }
 

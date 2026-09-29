@@ -142,9 +142,9 @@ The shortcuts above (except typing behaviours like Tab, Enter, and bracket pairi
   - **User theme files**: JSON import/export. Only color values are allowed; values that could make external requests, like `url()`, are rejected.
 - **Writing settings**: Font (Mono/Sans/Serif), size, line height, line width, autosave, syntax coloring, spell check. Settings are stored on this device only.
 - **Autosave** (on by default): Saves 0.7 seconds after you stop typing. If another program changed the file in the meantime, it doesn't overwrite and shows a conflict banner. CRLF line endings and BOM are preserved.
-- **Typing helpers**: Enter continues lists, tasks, and quotes; Enter on an empty item ends the list. Brackets and backticks are closed automatically. Typing `[[` autocompletes note names, and `#` autocompletes existing tags. Pasting a URL with text selected makes `[text](URL)`.
+- **Typing helpers**: Enter continues lists, tasks, and quotes; Enter on an empty item ends the list. Brackets and backticks are closed automatically. Typing `[[` autocompletes note names, `[[Note#` (or `[[#` for this note) its section headings, and `#` autocompletes existing tags. Pasting a URL with text selected makes `[text](URL)`.
 - **Images and attachments**: Pasting or dropping saves the file in an `assets/` folder next to the note and inserts a relative link. Local images show in the preview, but **remote images are not loaded, to prevent tracking**. Clicking an image in the tree opens the image viewer.
-- **Links and tags**: `[[wikilink]]` and relative links can be followed; clicking a link to a missing note creates it. The sidebar shows:
+- **Links and tags**: `[[wikilink]]` and relative links can be followed; clicking a link to a missing note creates it. `[[Note#Section]]` opens the note at that heading, and `[[#Section]]` goes to a heading in the same note (headings match without case or formatting; `[[Note#Section#Sub]]` goes to the last one, as in Obsidian). Relative links do the same with `other.md#section-slug`. The sidebar shows:
   - **Outline**: The section containing the cursor is highlighted.
   - **Backlinks** (Linked from)
   - **Unlinked mentions**: Places in other notes where this note's name is written without a link. The **Link** button turns it into `[[Name|original wording]]`.

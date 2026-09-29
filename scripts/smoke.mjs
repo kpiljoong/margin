@@ -27,6 +27,7 @@ fs.writeFileSync(path.join(ws, 'flow.md'), [
   '```flow', 'PR -> Review -> Waiting for approval !', 'Waiting for approval -> Pass?', '  yes -(auto)-> Deploy', '  no -> Changes -> Review', '```', '',
   '## Proposal', '', '```flow', 'PR -> Review -> Deploy', '```', '',
 ].join('\n'));
+fs.writeFileSync(path.join(ws, 'sub', 'links.md'), '# Links\n\nSee [[flow#Proposal]].\n');
 const filler = (p) => Array.from({ length: 10 }, (_, i) => `${p} ${i}`);
 fs.writeFileSync(path.join(ws, 'sub', 'messy.md'), ['#Title', 'text', ...filler('a'), '* one', ...filler('b'), '##Sub', 'more', ...filler('c'), '+ two', ''].join('\n'));
 fs.writeFileSync(path.join(userData, 'config.json'), JSON.stringify({
@@ -199,6 +200,17 @@ await check('a shortcut can be changed, and used', `
   button('Done', d2).click();
   return { shown, oldKeys, opened, back };
 `, (v) => (/Y$/.test(v?.shown || '') && !v.oldKeys && v.opened && /P$/.test(v.back || '') ? null : 'the changed shortcut did not take'));
+
+await check('a [[note#section]] link opens the note at that section', `
+  await openNote('sub/links.md');
+  button('Split').click();
+  const a = await until(() => $$('.md a.internal').find((x) => x.offsetParent && x.dataset.target === 'flow#Proposal'));
+  if (!a) return { error: 'no link' };
+  a.click();
+  const ta = await until(() => $('.tab.active')?.textContent.includes('flow.md') && $$('.editor-wrap textarea').find((t) => t.offsetParent));
+  const at = await until(() => { const v = ta.value; const s = v.lastIndexOf('\\n', ta.selectionStart - 1) + 1; return v.slice(s, v.indexOf('\\n', s)).startsWith('## Proposal') && v.slice(s, v.indexOf('\\n', s)); }, 5000);
+  return { at };
+`, (v) => (v?.at === '## Proposal' ? null : 'the link did not land on the section'));
 
 await check('a review: pick one change, the count follows, apply writes it', `
   const ta = await openNote('sub/messy.md');

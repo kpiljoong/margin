@@ -683,18 +683,19 @@ export class MarkdownEditor {
     }
   }
 
-  // ---------------- autocomplete ([[links]] and #tags)
+  // ---------------- autocomplete ([[links]], [[link#sections]] and #tags)
   _maybeComplete() {
     const { selectionStart: s, selectionEnd: e, value } = this.ta;
     if (s !== e) return this._closePopup();
     const before = value.slice(Math.max(0, s - 120), s);
     let m;
     let ctx = null;
-    if ((m = before.match(/\[\[([^\]\n|#]*)$/))) ctx = { kind: 'link', query: m[1], from: s - m[1].length };
+    if ((m = before.match(/\[\[([^\]\n|#]*)#([^\]\n|#]*)$/))) ctx = { kind: 'heading', note: m[1], query: m[2], from: s - m[2].length };
+    else if ((m = before.match(/\[\[([^\]\n|#]*)$/))) ctx = { kind: 'link', query: m[1], from: s - m[1].length };
     else if ((m = before.match(/(?:^|[\s(])#([\p{L}\p{N}_][\p{L}\p{N}_/-]*)$/u))) ctx = { kind: 'tag', query: m[1], from: s - m[1].length };
     else ctx = this._stepContext(s, value);
     if (!ctx) return this._closePopup();
-    const items = this.complete(ctx.kind, ctx.query).slice(0, 12);
+    const items = this.complete(ctx.kind, ctx.query, ctx).slice(0, 12);
     if (!items.length) return this._closePopup();
     this._ac = { ...ctx, items, sel: 0 };
     this._renderPopup();
@@ -753,8 +754,9 @@ export class MarkdownEditor {
     const s = this.ta.selectionStart;
     const after = this.ta.value.slice(s, s + 2);
     let text = it.insert;
-    if (kind === 'link' && after !== ']]') text += ']]';
-    else if (kind === 'link') { this._closePopup(); this.replace(from, s + 2, `${text}]]`); return; }
+    const link = kind === 'link' || kind === 'heading';
+    if (link && after !== ']]') text += ']]';
+    else if (link) { this._closePopup(); this.replace(from, s + 2, `${text}]]`); return; }
     this._closePopup();
     this.replace(from, s, text + (kind === 'tag' ? ' ' : ''));
   }
