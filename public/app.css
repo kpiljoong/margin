@@ -249,6 +249,8 @@ input[type=checkbox] { accent-color: var(--accent); }
 .palette-item.sel { background: var(--bg-3); box-shadow: inset 2px 0 0 var(--accent); }
 .palette-item b { color: var(--accent); font-weight: 600; }
 .dialog-body { padding: 16px 18px; overflow: auto; }
+.dialog.confirm { width: min(440px, 92vw); }
+.dialog.confirm .dialog-body p { margin: 0; line-height: 1.5; overflow-wrap: anywhere; }
 .dialog-body h2 { margin: 0 0 4px; font-size: 16px; }
 .dialog-body .sub { color: var(--fg-dim); margin: 0 0 12px; }
 .dialog-body textarea { width: 100%; min-height: 90px; resize: vertical; padding: 8px 10px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--bg); outline: none; }

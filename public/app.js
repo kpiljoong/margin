@@ -122,6 +122,34 @@ function askText({ title, label = '', value = '', placeholder = '', multiline = 
   });
 }
 
+// In-app replacement for window.confirm(): on Windows, Electron leaves the
+// page without keyboard focus after a native dialog, so typing stopped
+// working. Resolves true for OK; the focus goes back where it was.
+function askConfirm(message, { okLabel = 'OK', danger = false } = {}) {
+  return new Promise((resolve) => {
+    const overlay = $('#overlay');
+    const before = document.activeElement;
+    const done = (v) => {
+      overlay.hidden = true;
+      overlay.replaceChildren();
+      overlay.onkeydown = null;
+      if (before?.isConnected) before.focus({ preventScroll: true });
+      resolve(v);
+    };
+    const ok = h('button', { class: `btn ${danger ? 'danger' : 'primary'}`, onclick: () => done(true) }, okLabel);
+    overlay.onclick = (e) => { if (e.target === overlay) done(false); };
+    overlay.onkeydown = (e) => { if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); done(false); } };
+    overlay.replaceChildren(h('div', { class: 'dialog confirm', role: 'alertdialog' },
+      h('div', { class: 'dialog-body' }, h('p', {}, message)),
+      h('div', { class: 'dialog-foot' },
+        h('div', { class: 'grow' }),
+        h('button', { class: 'btn', onclick: () => done(false) }, 'Cancel'),
+        ok)));
+    overlay.hidden = false;
+    ok.focus();
+  });
+}
+
 let toastTimer;
 function toast(msg, kind = '', action = null) {
   const el = $('#toast');
@@ -507,11 +535,11 @@ async function closeTab(id) {
   const tab = S.tabs.find((t) => t.id === id);
   if (!tab) return;
   if (tab.kind === 'file' && S.settings.autosave && !tab.conflict) await flushAutosave(tab);
-  if (tab.kind === 'file' && tab.content !== tab.saved && !confirm(`Discard unsaved changes to ${tab.path}?`)) return;
+  if (tab.kind === 'file' && tab.content !== tab.saved && !(await askConfirm(`Discard unsaved changes to ${tab.path}?`, { okLabel: 'Discard', danger: true }))) return;
   if (tab.kind === 'drawing' && !tab.discard) {
     if (S.settings.autosave && !tab.conflict) await saveDrawing(tab, { flush: true });
     else await flushDrawing(tab);
-    if (tab.text !== tab.saved && !confirm(`Discard unsaved changes to ${tab.path}?`)) return;
+    if (tab.text !== tab.saved && !(await askConfirm(`Discard unsaved changes to ${tab.path}?`, { okLabel: 'Discard', danger: true }))) return;
   }
   if (tab.kind === 'drawing') { clearTimeout(tab.autosaveTimer); tab.frame?.destroy(); tab.frame = null; }
   if (tab.timer) clearInterval(tab.timer);
@@ -1947,12 +1975,12 @@ function previewClick(e, tab) {
   // Markdown links may be URL-encoded ("my%20note.md#next-steps").
   let link = target;
   if (a.dataset.href) try { link = decodeURIComponent(target); } catch { /* keep as written */ }
-  followLink(link, tab.path).then((found) => {
+  followLink(link, tab.path).then(async (found) => {
     if (found) return;
     // A new note is named without the section.
     const name = splitLink(link).note;
     if (!name) { toast('No such note'); return; }
-    if (!confirm(`"${name}" doesn't exist yet. Create it?`)) return;
+    if (!(await askConfirm(`"${name}" doesn't exist yet. Create it?`, { okLabel: 'Create' }))) return;
     const p = a.dataset.target ? `${dirname(tab.path) ? `${dirname(tab.path)}/` : ''}${name}` : [dirname(tab.path), name].filter(Boolean).join('/');
     api('POST', '/api/file', { path: p }).then((f) => loadTree().then(() => openFile(f.path))).catch((err) => toast(err.message, 'error'));
   });
@@ -2528,7 +2556,7 @@ async function renameItem(p, isDir = false) {
 
 async function deleteItem(p, isDir = false) {
   const tab = S.tabs.find((t) => t.kind === 'file' && t.path === p);
-  if (tab && tab.content !== tab.saved && !confirm(`${p} has unsaved changes. Delete anyway?`)) return;
+  if (tab && tab.content !== tab.saved && !(await askConfirm(`${p} has unsaved changes. Delete anyway?`, { okLabel: 'Delete', danger: true }))) return;
   try {
     const r = await api('POST', '/api/delete', { path: p });
     for (const t of [...S.tabs]) if (isDoc(t) && (t.path === p || t.path.startsWith(`${p}/`))) { t.saved = t.kind === 'drawing' ? t.text : t.content; t.discard = true; await closeTab(t.id); }
@@ -3210,7 +3238,7 @@ async function restoreVersion(p, rev, content) {
       if (!c) throw new Error('No committed version');
       text = (await api('GET', `/api/git/show?rev=${c.hash}&path=${encodeURIComponent(c.gitPath)}`)).content;
     }
-    if (!confirm(rev === 'HEAD' ? `Discard your uncommitted changes to ${p}?` : `Replace ${p} with the version from ${rev.slice(0, 7)}?`)) return;
+    if (!(await askConfirm(rev === 'HEAD' ? `Discard your uncommitted changes to ${p}?` : `Replace ${p} with the version from ${rev.slice(0, 7)}?`, { okLabel: rev === 'HEAD' ? 'Discard' : 'Replace', danger: true }))) return;
     const cur = await api('GET', `/api/file?path=${encodeURIComponent(p)}`);
     await api('PUT', '/api/file', { path: p, content: text, baseHash: cur.hash });
     const open = S.tabs.find((t) => t.kind === 'file' && t.path === p);
@@ -3299,7 +3327,7 @@ async function openTaskDialog(presetTask = '') {
   const tab = fileTab();
   if (tab && (tab.content !== tab.saved || tab.saving)) {
     // The agent works on files on disk, so unsaved edits must be written first.
-    if (!S.settings.autosave && !confirm('Save your unsaved changes first? The agent works on the saved files.')) return;
+    if (!S.settings.autosave && !(await askConfirm('Save your unsaved changes first? The agent works on the saved files.', { okLabel: 'Save' }))) return;
     if (tab.saving) await tab.saving;
     if (tab.content !== tab.saved) await saveTab(tab);
     if (tab.content !== tab.saved) { toast('Could not save the note; resolve the conflict first.', 'error'); return; }
@@ -3694,7 +3722,7 @@ async function applyRun(tab) {
   const decisions = {};
   for (const [p, d] of Object.entries(tab.decisions)) decisions[p] = { file: d.file, hunks: [...d.hunks] };
   const dirtyOpen = S.tabs.filter((t) => t.kind === 'file' && t.content !== t.saved && decisions[t.path]);
-  if (dirtyOpen.length && !confirm(`You have unsaved edits in ${dirtyOpen.map((t) => t.path).join(', ')}. Applying will create a conflict with them. Continue?`)) return;
+  if (dirtyOpen.length && !(await askConfirm(`You have unsaved edits in ${dirtyOpen.map((t) => t.path).join(', ')}. Applying will create a conflict with them. Continue?`, { okLabel: 'Apply' }))) return;
   try {
     const commit = !!S.git?.repo && localStorage.getItem('an.commitOnApply') !== 'false';
     const r = await api('POST', `/api/runs/${tab.runId}/apply`, { decisions, commit });
@@ -3707,7 +3735,7 @@ async function applyRun(tab) {
 }
 
 async function discardRun(tab) {
-  if (!confirm('Discard this run? Nothing will be applied (the run stays in history).')) return;
+  if (!(await askConfirm('Discard this run? Nothing will be applied (the run stays in history).', { okLabel: 'Discard', danger: true }))) return;
   try { await api('POST', `/api/runs/${tab.runId}/discard`); } catch (e) { toast(e.message, 'error'); }
   await afterRunChange(tab);
 }
