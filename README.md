@@ -35,7 +35,7 @@ npm run demo     # browser mode with sample notes and an offline demo agent
 
 Requires Node.js 18+. To use a real agent, install and sign in to the [Claude Code](https://docs.anthropic.com/en/docs/claude-code) or [Codex](https://github.com/openai/codex) CLI, then add it under **Agent › Manage Agents…**.
 
-More: [user guide](docs/GUIDE.md) · [flow notation](docs/FLOW.md) · [product notes](docs/PRODUCT.md)
+More: [user guide](docs/GUIDE.md) · [flow notation](docs/FLOW.md) · [product notes](docs/PRODUCT.md) · [contributing](CONTRIBUTING.md)
 
 ## License
 

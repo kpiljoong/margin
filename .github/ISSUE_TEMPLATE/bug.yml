@@ -1,0 +1,45 @@
+name: Bug report
+description: Something doesn't work the way it should.
+labels: [bug]
+body:
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: What you did, what you expected, and what happened instead.
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      description: The smallest note or steps that show it. Leave out anything private.
+      placeholder: |
+        1. Open a note with …
+        2. Press …
+        3. …
+  - type: input
+    id: version
+    attributes:
+      label: Margin version
+      description: Margin › About Margin on macOS, Help › About elsewhere.
+      placeholder: "0.5.12"
+    validations:
+      required: true
+  - type: dropdown
+    id: os
+    attributes:
+      label: Operating system
+      options: [macOS (Apple silicon), macOS (Intel), Windows, Linux, Browser mode (npm run demo)]
+    validations:
+      required: true
+  - type: input
+    id: agent
+    attributes:
+      label: Agent, if it involves one
+      placeholder: Claude Code 2.x, Codex, the demo agent, …
+  - type: textarea
+    id: extra
+    attributes:
+      label: Anything else
+      description: Screenshots, error messages, or what the agent log said.
