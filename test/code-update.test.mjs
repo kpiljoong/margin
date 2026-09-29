@@ -52,7 +52,8 @@ function makeApp(bundledVersion = '1.0.0', shell = 1) {
   const bundle = path.join(dir, 'bundle');
   fs.mkdirSync(path.join(bundle, 'desktop'), { recursive: true });
   const boot = fs.readFileSync(path.join(ROOT, 'desktop', 'boot.js'), 'utf8')
-    .replace(/const PUBLIC_KEY = `-----BEGIN PUBLIC KEY-----[\s\S]+?-----END PUBLIC KEY-----\n`;/, `const PUBLIC_KEY = ${JSON.stringify(PUBLIC)};`);
+    // A Windows checkout has CRLF line ends.
+    .replace(/const PUBLIC_KEY = `-----BEGIN PUBLIC KEY-----[\s\S]+?-----END PUBLIC KEY-----\r?\n`;/, `const PUBLIC_KEY = ${JSON.stringify(PUBLIC)};`);
   assert.ok(boot.includes(JSON.stringify(PUBLIC)), 'the public key in boot.js was swapped');
   fs.writeFileSync(path.join(bundle, 'desktop', 'boot.js'), boot);
   fs.copyFileSync(path.join(ROOT, 'desktop', 'codepack.js'), path.join(bundle, 'desktop', 'codepack.js'));
