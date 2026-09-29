@@ -85,6 +85,8 @@ await send('Runtime.enable');
 // Runs `body` (an async function's source) in the page; returns its value.
 async function inPage(body) {
   const r = await send('Runtime.evaluate', { expression: `(async () => { ${HELPERS}\n${body} })()`, awaitPromise: true, returnByValue: true, userGesture: true });
+  // The page went away mid-run (it was still loading): say so, not "undefined".
+  if (r.error) throw new Error(r.error.message);
   if (r.result?.exceptionDetails) throw new Error(r.result.exceptionDetails.exception?.description || r.result.exceptionDetails.text);
   return r.result?.result?.value;
 }
@@ -122,6 +124,14 @@ async function check(name, body, expect) {
   results.push({ name, ok: !problem });
   console.log(`${problem ? '✗' : '✓'} ${name}${problem ? `\n    ${String(problem).split('\n').join('\n    ')}\n    got: ${JSON.stringify(value)}` : ''}`);
   if (problem) failed = true;
+}
+
+// The page may still be loading (or load again) when the debugger first
+// connects: wait until it has settled with the app in it.
+for (let i = 0; i < 60; i++) {
+  const r = await send('Runtime.evaluate', { expression: "document.readyState === 'complete' && !!document.querySelector('#sidebar')", returnByValue: true }).catch(() => null);
+  if (r?.result?.result?.value === true) break;
+  await sleep(500);
 }
 
 await check('the app loads the workspace', `
