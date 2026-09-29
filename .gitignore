@@ -1,0 +1,25 @@
+# dependencies & build output
+node_modules/
+dist/
+*.dmg
+*.zip
+*.blockmap
+*.AppImage
+*.exe
+
+# app data written into note folders
+.agent-notes/
+
+# OS / editor noise (._* comes from exFAT/network volumes)
+.DS_Store
+._*
+Thumbs.db
+*.log
+.vscode/
+.idea/
+
+# local, not published
+.env*
+/CLAUDE.md
+/docs/STATUS.md
+code-dist/

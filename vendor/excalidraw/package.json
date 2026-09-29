@@ -1,0 +1,18 @@
+{
+  "name": "margin-vendor-excalidraw",
+  "private": true,
+  "description": "Builds public/vendor/excalidraw (the isolated Excalidraw editor frame). Not part of the app at runtime.",
+  "license": "MIT",
+  "scripts": {
+    "build": "node build.mjs"
+  },
+  "dependencies": {
+    "@excalidraw/excalidraw": "0.18.1",
+    "lz-string": "1.5.0",
+    "react": "19.3.0",
+    "react-dom": "19.3.0"
+  },
+  "devDependencies": {
+    "esbuild": "0.28.2"
+  }
+}

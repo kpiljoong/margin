@@ -1,0 +1,47 @@
+[
+  { "id": "quick-open", "label": "Quick open", "group": "General", "keys": "CmdOrCtrl+P", "scope": "app" },
+  { "id": "palette", "label": "Command palette", "group": "General", "keys": "CmdOrCtrl+Shift+P", "scope": "app" },
+  { "id": "search", "label": "Search the workspace", "group": "General", "keys": "CmdOrCtrl+Shift+F", "scope": "app" },
+  { "id": "new-note", "label": "New note", "group": "General", "keys": "CmdOrCtrl+N", "scope": "app" },
+  { "id": "save", "label": "Save", "group": "General", "keys": "CmdOrCtrl+S", "scope": "app" },
+  { "id": "close-tab", "label": "Close tab", "group": "General", "keys": "CmdOrCtrl+W", "scope": "app" },
+  { "id": "settings", "label": "Settings", "group": "General", "keys": "CmdOrCtrl+,", "scope": "app" },
+  { "id": "rename", "label": "Rename / move the note", "group": "General", "keys": "F2", "scope": "app" },
+  { "id": "print", "label": "Print the note", "group": "General", "keys": "CmdOrCtrl+Alt+Shift+P", "scope": "app" },
+  { "id": "open-file", "label": "Open a file", "group": "General", "keys": "CmdOrCtrl+O", "scope": "menu" },
+  { "id": "open-folder", "label": "Open a folder", "group": "General", "keys": "CmdOrCtrl+Shift+O", "scope": "menu" },
+  { "id": "close-window", "label": "Close the window", "group": "General", "keys": "CmdOrCtrl+Shift+W", "scope": "menu" },
+
+  { "id": "cycle-mode", "label": "Edit / split / canvas / preview", "group": "View", "keys": "CmdOrCtrl+E", "scope": "app" },
+  { "id": "focus", "label": "Focus mode", "group": "View", "keys": "CmdOrCtrl+Shift+Enter", "scope": "app" },
+  { "id": "sidebar", "label": "Toggle the sidebar", "group": "View", "keys": "CmdOrCtrl+\\", "scope": "app" },
+  { "id": "split", "label": "Split editor / switch pane", "group": "View", "keys": "CmdOrCtrl+Alt+\\", "scope": "app" },
+  { "id": "files", "label": "Show files", "group": "View", "keys": "CmdOrCtrl+Shift+E", "scope": "app" },
+  { "id": "git", "label": "Show git changes", "group": "View", "keys": "CmdOrCtrl+Shift+G", "scope": "app" },
+  { "id": "nav-back", "label": "Go back", "group": "View", "keys": "CmdOrCtrl+[", "scope": "app" },
+  { "id": "nav-forward", "label": "Go forward", "group": "View", "keys": "CmdOrCtrl+]", "scope": "app" },
+
+  { "id": "delegate", "label": "Delegate a task", "group": "Agent", "keys": "CmdOrCtrl+K", "scope": "app" },
+  { "id": "runs", "label": "Show agent runs", "group": "Agent", "keys": "CmdOrCtrl+Shift+A", "scope": "app" },
+
+  { "id": "flow-next", "label": "Follow the flow: next box", "group": "Pictures", "keys": "CmdOrCtrl+Alt+Down", "scope": "app" },
+  { "id": "flow-back", "label": "Follow the flow: box before", "group": "Pictures", "keys": "CmdOrCtrl+Alt+Up", "scope": "app" },
+  { "id": "copy-drawing", "label": "Copy the drawing as an image", "group": "Pictures", "keys": "Alt+Shift+C", "scope": "app" },
+
+  { "id": "find", "label": "Find in note", "group": "Editor", "keys": "CmdOrCtrl+F", "scope": "editor" },
+  { "id": "replace", "label": "Replace in note", "group": "Editor", "keys": "CmdOrCtrl+Alt+F", "scope": "editor" },
+  { "id": "find-next", "label": "Next match (while finding)", "group": "Editor", "keys": "CmdOrCtrl+G", "scope": "find" },
+  { "id": "find-prev", "label": "Previous match (while finding)", "group": "Editor", "keys": "CmdOrCtrl+Shift+G", "scope": "find" },
+  { "id": "bold", "label": "Bold", "group": "Editor", "keys": "CmdOrCtrl+B", "scope": "editor" },
+  { "id": "italic", "label": "Italic", "group": "Editor", "keys": "CmdOrCtrl+I", "scope": "editor" },
+  { "id": "strike", "label": "Strikethrough", "group": "Editor", "keys": "CmdOrCtrl+Shift+X", "scope": "editor" },
+  { "id": "toggle-task", "label": "Toggle task checkbox", "group": "Editor", "keys": "CmdOrCtrl+Enter", "scope": "editor" },
+  { "id": "next-occurrence", "label": "Add next occurrence", "group": "Editor", "keys": "CmdOrCtrl+D", "scope": "editor" },
+  { "id": "all-occurrences", "label": "Select all occurrences", "group": "Editor", "keys": "CmdOrCtrl+Shift+L", "scope": "editor" },
+  { "id": "duplicate-line", "label": "Duplicate line", "group": "Editor", "keys": "CmdOrCtrl+Shift+D", "scope": "editor" },
+  { "id": "move-line-up", "label": "Move line up", "group": "Editor", "keys": "Alt+Up", "scope": "editor" },
+  { "id": "move-line-down", "label": "Move line down", "group": "Editor", "keys": "Alt+Down", "scope": "editor" },
+  { "id": "format-table", "label": "Format table", "group": "Editor", "keys": "CmdOrCtrl+Alt+T", "scope": "editor" },
+
+  { "id": "quick-capture", "label": "Quick capture (from any app)", "group": "System-wide", "keys": "Ctrl+Alt+N", "scope": "global" }
+]

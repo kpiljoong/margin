@@ -1,0 +1,115 @@
+name: Release
+
+# Push a tag like v0.3.1 to build every platform and publish a GitHub release.
+# "Run workflow" (manual) builds the same binaries as downloadable artifacts
+# without creating a release.
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-latest
+            args: --mac dmg --arm64 --x64
+          - os: windows-latest
+            args: --win zip --x64
+          - os: ubuntu-latest
+            args: --linux AppImage --x64
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Check the tag matches package.json
+        if: startsWith(github.ref, 'refs/tags/')
+        shell: bash
+        run: |
+          version="$(node -p "require('./package.json').version")"
+          [ "v$version" = "$GITHUB_REF_NAME" ] || { echo "Tag $GITHUB_REF_NAME does not match package.json version $version"; exit 1; }
+
+      - run: npm ci
+
+      - name: Lint and test
+        if: runner.os == 'Linux'
+        run: |
+          npm run lint
+          npm test
+
+      # The app itself, in Electron on a virtual display: notes, canvas,
+      # presenting, a review picked and applied (scripts/smoke.mjs).
+      - name: Smoke test
+        if: runner.os == 'Linux'
+        run: xvfb-run -a npm run smoke
+        env:
+          ELECTRON_DISABLE_SANDBOX: '1'
+
+      # The vendored Excalidraw frame must be byte-for-byte its recorded build.
+      - run: node build/check-vendor.js
+
+      - name: Build
+        run: npx electron-builder ${{ matrix.args }} --publish never
+        env:
+          # Unsigned builds for now.
+          CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: margin-${{ runner.os }}
+          path: |
+            dist/*.dmg
+            dist/*.zip
+            dist/*.AppImage
+          if-no-files-found: error
+
+  release:
+    if: startsWith(github.ref, 'refs/tags/')
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+
+      - uses: actions/download-artifact@v8
+        with:
+          path: out
+          merge-multiple: true
+
+      # The in-app code update: margin-code.json/.sig/.pack.gz, signed with
+      # the Ed25519 key whose public half is in desktop/boot.js.
+      - name: Build the signed code package
+        env:
+          MARGIN_UPDATE_KEY: ${{ secrets.MARGIN_UPDATE_KEY }}
+        run: |
+          node build/check-vendor.js
+          if [ -z "$MARGIN_UPDATE_KEY" ]; then
+            echo "::warning::MARGIN_UPDATE_KEY is not set, so this release has no in-app code update."
+          else
+            node build/code-package.js --out out
+          fi
+
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          ls -la out
+          if gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release upload "$GITHUB_REF_NAME" out/* --clobber --repo "$GITHUB_REPOSITORY"
+          else
+            gh release create "$GITHUB_REF_NAME" out/* --repo "$GITHUB_REPOSITORY" \
+              --title "Margin ${GITHUB_REF_NAME#v}" --generate-notes
+          fi

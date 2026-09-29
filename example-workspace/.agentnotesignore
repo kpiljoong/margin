@@ -1,0 +1,3 @@
+# Paths never shared with an agent (gitignore-style globs).
+private/
+*.secret.md

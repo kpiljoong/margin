@@ -1,0 +1,4 @@
+/* Margin: the frame fills its iframe; nothing here reaches outside it. */
+html, body, #root { margin: 0; height: 100%; overflow: hidden; }
+/* The library sidebar browses libraries.excalidraw.com — not available offline. */
+.default-sidebar-trigger, .sidebar-trigger { display: none !important; }

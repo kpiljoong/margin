@@ -1,0 +1,34 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="referrer" content="no-referrer">
+  <title>Margin</title>
+  <link rel="stylesheet" href="app.css">
+  <link rel="icon" href="icon.png">
+</head>
+<body>
+  <div id="app">
+    <div id="titlebar"></div>
+    <nav id="activity" aria-label="Views">
+      <button data-view="files" title="Files (⌘⇧E)">▤</button>
+      <button data-view="search" title="Search (⌘⇧F)">⌕</button>
+      <button data-view="agent" title="Agent runs (⌘⇧A)">✦<span id="agent-badge" hidden></span></button>
+      <button data-view="git" title="Git (⌘⇧G)">⎇<span id="git-badge" hidden></span></button>
+      <div class="spacer"></div>
+      <button id="btn-settings" title="Settings & themes (⌘,)">⚙</button>
+      <button id="btn-help" title="Shortcuts (?)">?</button>
+    </nav>
+    <aside id="sidebar"></aside>
+    <main id="main">
+      <div id="panes"></div>
+    </main>
+    <footer id="status"></footer>
+  </div>
+  <div id="sidebar-resizer" title="Drag to resize"></div>
+  <div id="overlay" hidden></div>
+  <div id="toast" hidden></div>
+  <script type="module" src="app.js"></script>
+</body>
+</html>

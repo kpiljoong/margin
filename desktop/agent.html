@@ -1,0 +1,53 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'">
+  <title>Agent</title>
+  <style>
+    :root { color-scheme: dark light; --bg: #21242b; --fg: #d7dae0; --dim: #8b919e; --border: #30343d; --accent: #7aa2f7; --card: #1b1d23; }
+    @media (prefers-color-scheme: light) { :root { --bg: #f3f3f1; --fg: #24262b; --dim: #676b74; --border: #dcdcd8; --accent: #3565d4; --card: #fff; } }
+    * { box-sizing: border-box; }
+    body { margin: 0; padding: 18px 20px 70px; background: var(--bg); color: var(--fg); font: 13px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; user-select: none; }
+    h1 { font-size: 15px; margin: 0 0 4px; }
+    p.sub { color: var(--dim); margin: 0 0 14px; }
+    label.opt { display: grid; grid-template-columns: 20px 1fr; gap: 2px 6px; padding: 8px 10px; margin-bottom: 6px; border: 1px solid var(--border); border-radius: 6px; background: var(--card); cursor: pointer; }
+    label.opt:has(input:checked) { border-color: var(--accent); }
+    label.opt .d { grid-column: 2; color: var(--dim); font-size: 12px; }
+    input[type=text] { width: 100%; margin-top: 4px; padding: 6px 8px; border: 1px solid var(--border); border-radius: 6px; background: var(--bg); color: var(--fg); font: 12px ui-monospace, Menlo, monospace; user-select: text; }
+    input[type=radio] { accent-color: var(--accent); margin: 3px 0 0; }
+    .note { color: var(--dim); font-size: 12px; margin: 10px 0 0; }
+    .foot { position: fixed; left: 0; right: 0; bottom: 0; display: flex; justify-content: flex-end; gap: 8px; padding: 12px 20px; border-top: 1px solid var(--border); background: var(--bg); }
+    button { padding: 5px 14px; border-radius: 6px; border: 1px solid var(--border); background: var(--card); color: var(--fg); font: inherit; }
+    button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+    .agent { display: grid; grid-template-columns: 20px 1fr auto; gap: 4px 8px; align-items: center; padding: 8px 10px; margin-bottom: 6px; border: 1px solid var(--border); border-radius: 6px; background: var(--card); }
+    .agent:has(input[type=radio]:checked) { border-color: var(--accent); }
+    .agent input[type=text] { margin: 0; }
+    .agent .name { font: 13px -apple-system, BlinkMacSystemFont, sans-serif; font-weight: 600; }
+    .agent .cmd { grid-column: 2 / 4; }
+    .agent .remove { padding: 2px 8px; font-size: 12px; }
+    .agent .default-label { grid-column: 2 / 4; color: var(--dim); font-size: 11.5px; }
+    .empty { color: var(--dim); padding: 10px 2px; }
+    .add-row { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin: 10px 0 4px; color: var(--dim); }
+    .add-row button { font-size: 12px; padding: 3px 10px; }
+    #error { flex: 1; color: #f7768e; font-size: 12px; align-self: center; }
+  </style>
+</head>
+<body>
+  <h1>Agents</h1>
+  <p class="sub">Each agent works on a staged copy of the notes you choose, and you review every change before it is applied. Pick one per task in the delegate dialog.</p>
+  <div id="list"></div>
+  <div class="add-row">
+    <span>Add:</span>
+    <span id="presets"></span>
+    <button type="button" id="add-custom">Custom command…</button>
+  </div>
+  <p class="note">Agents run with your user permissions and get the prompt on stdin and in <code>$AGENT_NOTES_PROMPT</code>. Notes marked <code>private: true</code> or listed in <code>.agentnotesignore</code> are never shared. No agents = agents off.</p>
+  <div class="foot">
+    <span id="error"></span>
+    <button type="button" id="cancel">Cancel</button>
+    <button type="button" id="save" class="primary">Save</button>
+  </div>
+  <script src="agent-dialog.js"></script>
+</body>
+</html>

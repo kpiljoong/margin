@@ -1,0 +1,96 @@
+{
+  "name": "margin",
+  "productName": "Margin",
+  "version": "0.5.10",
+  "description": "A lightweight, local-first Markdown workspace where you delegate edits to an AI agent and review them hunk by hunk.",
+  "private": true,
+  "license": "MIT",
+  "author": "kpiljoong",
+  "main": "desktop/boot.js",
+  "marginShell": 1,
+  "bin": {
+    "margin": "server.js"
+  },
+  "scripts": {
+    "start": "electron .",
+    "serve": "node server.js",
+    "demo": "node scripts/demo.js",
+    "pack": "electron-builder --dir",
+    "dist": "electron-builder",
+    "test": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --test 'test/*.test.mjs'",
+    "lint": "eslint .",
+    "smoke": "node scripts/smoke.mjs"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "devDependencies": {
+    "electron": "^44.4.5",
+    "electron-builder": "^26.15.3",
+    "eslint": "^10.11.0",
+    "globals": "^17.12.0"
+  },
+  "build": {
+    "appId": "io.github.kpiljoong.margin",
+    "productName": "Margin",
+    "artifactName": "${productName}-${version}-${os}-${arch}.${ext}",
+    "asar": false,
+    "afterPack": "build/adhoc-sign.js",
+    "directories": {
+      "output": "dist"
+    },
+    "files": [
+      "package.json",
+      "server.js",
+      "lib/**/*",
+      "public/**/*",
+      "scripts/**/*",
+      "desktop/**/*",
+      "example-workspace/**/*",
+      "!**/.agent-notes/**",
+      "!**/._*"
+    ],
+    "mac": {
+      "category": "public.app-category.productivity",
+      "target": [
+        "dmg",
+        "zip"
+      ],
+      "identity": null,
+      "extendInfo": {
+        "CFBundleDocumentTypes": [
+          {
+            "CFBundleTypeName": "Markdown Document",
+            "CFBundleTypeRole": "Editor",
+            "LSHandlerRank": "Alternate",
+            "CFBundleTypeExtensions": [
+              "md",
+              "markdown",
+              "mdx"
+            ]
+          },
+          {
+            "CFBundleTypeName": "Folder",
+            "CFBundleTypeRole": "Viewer",
+            "LSHandlerRank": "Alternate",
+            "LSItemContentTypes": [
+              "public.folder"
+            ]
+          }
+        ]
+      }
+    },
+    "win": {
+      "target": [
+        "nsis"
+      ]
+    },
+    "linux": {
+      "target": [
+        "AppImage"
+      ],
+      "category": "Office"
+    },
+    "publish": null
+  }
+}
