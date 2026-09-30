@@ -402,7 +402,7 @@ const linkPop = { el: null, key: '', timer: 0, hideTimer: 0 };
 // The part of a note a link shows: the section from its heading to the next
 // heading as high, or the whole note.
 function linkSection(content, heading) {
-  if (!heading) return { text: content, line: null };
+  if (!heading) return { text: content.replace(/^\uFEFF?---\r?\n[\s\S]*?\r?\n---\r?\n/, ''), line: null };
   const line = headingLine(content, heading);
   if (line == null) return null;
   const heads = outline(content);
@@ -1374,7 +1374,7 @@ function renderContent(g = S.focus) {
       isMermaidFile(tab.path) ? { label: 'Copy embed ![[…]]', run: () => navigator.clipboard.writeText(`![[${basename(tab.path)}]]`).then(() => toast('Embed copied — paste it into a note')) } : null,
       ...(isMermaidFile(tab.path) ? ['-', ...pictureItems(() => mermaidFilePicture(tab), { view: () => viewPicture(mermaidFilePicture(tab), basename(tab.path)) })] : []),
       '-',
-      { label: 'History (git)…', run: () => openHistory(tab.path) },
+      { label: 'History…', run: () => openHistory(tab.path) },
       S.gitMap.has(tab.path) ? { label: 'Changes since last commit', run: () => openGitDiff(tab.path) } : null,
       '-',
       { label: 'Export as HTML…', run: () => exportHtml(tab) },
@@ -1561,6 +1561,14 @@ function renderPreview(tab) {
     return;
   }
   p.innerHTML = renderMarkdown(tab.content, { image: (url) => localImage(url, tab.path), embed: (target, label) => fileEmbed(target, label, tab.path) });
+  if (p.querySelector('.note-embed.loading')) {
+    fillNoteEmbeds(p).then(() => { // the ones read from disk: draw what's in them
+      if (!p.isConnected) return;
+      renderDiagrams(p);
+      if (p.querySelector('.drawing-embed:not(.ready)')) fillDrawingEmbeds(p);
+      if (p.querySelector('.mmd-embed.loading')) fillMermaidEmbeds(p).then(() => renderDiagrams(p));
+    });
+  }
   p.querySelectorAll('a.internal').forEach((a) => {
     const target = a.dataset.target || a.dataset.href;
     if (!/^#/.test(target) && !resolveLink(target, tab.path)) { a.classList.add('missing'); a.title = 'Not found — click to create'; }
@@ -2048,6 +2056,8 @@ function previewClick(e, tab) {
   const tagEl = e.target.closest('a.tag');
   if (tagEl) { e.preventDefault(); searchFor(`#${tagEl.dataset.tag}`); return; }
   if (e.target.closest('.diagram-copy')) return; // handled globally
+  const embedHead = e.target.closest('.note-embed-head');
+  if (embedHead) { followLink(embedHead.parentElement.dataset.target, tab.path); return; }
   const drawingEl = e.target.closest('.drawing-embed[data-path], .mmd-embed[data-path]');
   if (drawingEl) { openFile(drawingEl.dataset.path, { side: e.metaKey || e.ctrlKey }); return; }
   const box = e.target.closest('input.task');
@@ -2198,7 +2208,7 @@ const COMMANDS = [
   ] : []),
   ['Git: show changes', () => showView('git')],
   ['Git: commit all changes…', () => { showView('git'); setTimeout(() => $('.git-msg')?.focus(), 50); }],
-  ['Git: history of current note', () => fileTab() && openHistory(fileTab().path)],
+  ['History of current note (kept versions and git)', () => fileTab() && openHistory(fileTab().path)],
   ['Preview: fold all sections', () => setFolds(fileTab(), 'all')],
   ['Preview: unfold all sections', () => setFolds(fileTab(), 'none')],
   ['Editor: format table', () => fileTab()?.editor.formatTable(0), { key: 'format-table' }],
@@ -2955,8 +2965,54 @@ function placeFramesSoon() {
 // ![[…]] in a note: a drawing or a Mermaid file, shown as a picture (click to open).
 function fileEmbed(target, label, fromPath) {
   const rel = resolveLink(target, fromPath);
+  // A note (or a section of one), but not in a note already shown inside
+  // another, nor in itself.
+  if (rel && isNote(rel)) return noteEmbedDepth || rel === fromPath ? null : noteEmbed(rel, target);
   if (rel && isMermaidFile(rel)) return mermaidEmbed(rel, label || target);
   return rel && isDrawing(rel) ? drawingEmbed(rel, label, target) : null;
+}
+
+// ![[Note]] / ![[Note#Section]]: the note, or that section, shown in place.
+// A placeholder first; fillNoteEmbeds puts the text in — at once when it is
+// known (open, or read before), so typing doesn't make it flicker.
+const noteSources = new Map();
+let noteEmbedDepth = 0;
+const noteEmbed = (rel, target) => `<span class="note-embed loading" data-path="${escAttr(rel)}" data-target="${escAttr(target)}">↳ ${escAttr(target)}…</span>`;
+
+function fillNoteEmbeds(root) {
+  const waits = [];
+  for (const el of [...root.querySelectorAll('.note-embed.loading')]) {
+    const path = el.dataset.path;
+    const src = S.tabs.find((t) => t.kind === 'file' && t.path === path && t.content != null)?.content ?? noteSources.get(path);
+    if (src != null) { fillNoteEmbed(el, src); continue; }
+    waits.push(api('GET', `/api/file?path=${encodeURIComponent(path)}`)
+      .then((f) => { noteSources.set(path, f.content); fillNoteEmbed(el, f.content); })
+      .catch((e) => { el.textContent = `↳ ${el.dataset.target}: ${e.message}`; el.classList.replace('loading', 'error'); }));
+  }
+  return Promise.all(waits);
+}
+
+function fillNoteEmbed(el, src) {
+  const path = el.dataset.path;
+  const { heading } = splitLink(el.dataset.target);
+  const part = linkSection(src, heading);
+  const body = h('div', { class: 'note-embed-body' });
+  if (!part) body.append(h('div', { class: 'empty' }, `No section “${heading}”.`));
+  else {
+    noteEmbedDepth++;
+    try { body.innerHTML = renderMarkdown(part.text, { image: (url) => localImage(url, path), embed: (t, l) => fileEmbed(t, l, path) }); } finally { noteEmbedDepth--; }
+    // Its lines, heading ids and checkboxes belong to the other note.
+    body.querySelectorAll('[data-line]').forEach((x) => x.removeAttribute('data-line'));
+    body.querySelectorAll('[id]').forEach((x) => x.removeAttribute('id'));
+    body.querySelectorAll('input.task').forEach((x) => { x.disabled = true; });
+  }
+  const box = h('div', { class: 'note-embed', 'data-path': path, 'data-target': el.dataset.target },
+    h('div', { class: 'note-embed-head', title: `Open ${path}` }, `↳ ${stem(path)}${heading ? ` › ${heading}` : ''}`), body);
+  // On a line of its own it comes wrapped in a paragraph: take its place.
+  const p = el.parentElement;
+  const alone = p?.tagName === 'P' && p.childNodes.length === 1;
+  if (alone && p.dataset.line) box.dataset.line = p.dataset.line;
+  (alone ? p : el).replaceWith(box);
 }
 
 // Diagram sources by path, so a note re-renders its embeds without waiting.
@@ -3161,12 +3217,13 @@ function convertFlow(pre) {
   toast('Converted to Mermaid');
 }
 
-// A drawing or diagram file changed: redraw the notes that show it.
+// A drawing, diagram or note changed: redraw the notes that show it.
 function refreshEmbeds(path) {
   forgetEmbed(path);
   mmdSources.delete(path);
+  noteSources.delete(path);
   for (const t of S.tabs) {
-    if (t.kind === 'file' && t.previewEl?.isConnected && [...t.previewEl.querySelectorAll('.drawing-embed, .mmd-embed')].some((el) => el.dataset.path === path)) renderPreview(t);
+    if (t.kind === 'file' && t.previewEl?.isConnected && [...t.previewEl.querySelectorAll('.drawing-embed, .mmd-embed, .note-embed')].some((el) => el.dataset.path === path)) renderPreview(t);
   }
 }
 
@@ -3253,20 +3310,26 @@ function openHistory(p) {
   let tab = S.tabs.find((t) => t.kind === 'history' && t.path === p);
   if (!tab) { tab = { id: `h:${p}`, kind: 'history', path: p, group: S.focus, commits: null, sel: 0, version: null }; S.tabs.push(tab); }
   activate(tab.id);
-  api('GET', `/api/git/log?path=${encodeURIComponent(p)}`).then((r) => {
-    tab.commits = r.commits;
-    tab.repo = r.repo;
+  // Commits, and the versions Margin kept itself (server.js, local history).
+  Promise.all([
+    api('GET', `/api/git/log?path=${encodeURIComponent(p)}`).catch(() => ({ repo: false, commits: [] })),
+    api('GET', `/api/history?path=${encodeURIComponent(p)}`),
+  ]).then(([g, l]) => {
+    const kept = l.versions.map((v) => ({ local: true, id: v.id, date: new Date(v.date).toISOString(), subject: KEPT_BECAUSE[v.reason] || 'Kept' }));
+    tab.commits = [...g.commits, ...kept].sort((a, b) => new Date(b.date) - new Date(a.date));
+    tab.repo = g.repo;
     renderContent(tab.group);
-    if (r.commits.length) selectVersion(tab, 0);
+    if (tab.commits.length) selectVersion(tab, 0);
   }).catch((e) => toast(e.message, 'error'));
 }
+const KEPT_BECAUSE = { save: 'Before later edits', outside: 'Before a change from another program', agent: 'Before agent changes were applied', links: 'Before links were updated', restore: 'Before restoring an earlier version' };
 
 async function selectVersion(tab, i) {
   tab.sel = i;
   const c = tab.commits[i];
   try {
     const [old, cur] = await Promise.all([
-      api('GET', `/api/git/show?rev=${c.hash}&path=${encodeURIComponent(c.gitPath)}`),
+      c.local ? api('GET', `/api/history/version?path=${encodeURIComponent(tab.path)}&id=${c.id}`) : api('GET', `/api/git/show?rev=${c.hash}&path=${encodeURIComponent(c.gitPath)}`),
       api('GET', `/api/file?path=${encodeURIComponent(tab.path)}`).catch(() => ({ content: '' })),
     ]);
     tab.version = { commit: c, content: old.content, hunks: lineHunks(old.content, cur.content) };
@@ -3334,18 +3397,18 @@ function historyView(tab) {
   const wrap = h('div', { class: 'history' });
   const list = h('div', { class: 'history-list' }, h('div', { class: 'section-label' }, `History · ${stem(tab.path)}`));
   if (!tab.commits) list.append(h('div', { class: 'empty' }, 'Loading…'));
-  else if (tab.repo === false) list.append(h('div', { class: 'empty' }, 'Not a git repository. Open the Git panel to initialize one.'));
-  else if (!tab.commits.length) list.append(h('div', { class: 'empty' }, 'No commits for this note yet.'));
+  else if (!tab.commits.length) list.append(h('div', { class: 'empty' }, 'No earlier versions yet. Margin keeps one when this note is saved after a while, changed by another program or an agent, or restored.'));
   else tab.commits.forEach((c, i) => list.append(h('div', { class: `history-row${i === tab.sel ? ' sel' : ''}`, onclick: () => selectVersion(tab, i) },
     h('div', { class: 'git-subject' }, c.agent ? h('span', { class: 'git-agent' }, '✦ ') : null, c.subject),
-    h('div', { class: 'git-meta' }, `${c.hash.slice(0, 7)} · ${c.author} · ${timeAgo(c.date)}`))));
+    h('div', { class: 'git-meta' }, c.local ? `kept by Margin · ${timeAgo(c.date)}` : `${c.hash.slice(0, 7)} · ${c.author} · ${timeAgo(c.date)}`))));
+  if (tab.commits && tab.repo === false) list.append(h('div', { class: 'history-foot' }, 'Not a git repository: these are the versions Margin kept (up to 50 per note, 30 days).'));
   const detail = h('div', { class: 'history-detail review' });
   const v = tab.version;
   if (v?.error) detail.append(h('div', { class: 'review-note warn' }, v.error));
   else if (v) {
     detail.append(h('div', { class: 'review-actions' },
       h('span', { class: 'grow' }, v.hunks.length ? `This version differs from the current note in ${v.hunks.length} place${v.hunks.length === 1 ? '' : 's'} (− this version, + current).` : 'Identical to the current note.'),
-      v.hunks.length ? h('button', { class: 'btn primary', onclick: () => restoreVersion(tab.path, v.commit.hash, v.content) }, 'Restore this version') : null));
+      v.hunks.length ? h('button', { class: 'btn primary', onclick: () => restoreVersion(tab.path, v.commit.hash || '', v.content, v.commit.local ? timeAgo(v.commit.date) : null) }, 'Restore this version') : null));
     detail.append(h('div', { class: 'file-card' }, v.hunks.map(staticHunk)));
   }
   wrap.append(list, detail);
@@ -3354,7 +3417,7 @@ function historyView(tab) {
 
 // Restoring writes the old text as a normal save, with an Undo that puts
 // back exactly what was there before.
-async function restoreVersion(p, rev, content) {
+async function restoreVersion(p, rev, content, when = null) {
   try {
     let text = content;
     if (text == null) {
@@ -3363,14 +3426,14 @@ async function restoreVersion(p, rev, content) {
       if (!c) throw new Error('No committed version');
       text = (await api('GET', `/api/git/show?rev=${c.hash}&path=${encodeURIComponent(c.gitPath)}`)).content;
     }
-    if (!(await askConfirm(rev === 'HEAD' ? `Discard your uncommitted changes to ${p}?` : `Replace ${p} with the version from ${rev.slice(0, 7)}?`, { okLabel: rev === 'HEAD' ? 'Discard' : 'Replace', danger: true }))) return;
+    if (!(await askConfirm(rev === 'HEAD' ? `Discard your uncommitted changes to ${p}?` : `Replace ${p} with the version from ${when || rev.slice(0, 7)}?`, { okLabel: rev === 'HEAD' ? 'Discard' : 'Replace', danger: true }))) return;
     const cur = await api('GET', `/api/file?path=${encodeURIComponent(p)}`);
-    await api('PUT', '/api/file', { path: p, content: text, baseHash: cur.hash });
+    await api('PUT', '/api/file', { path: p, content: text, baseHash: cur.hash, reason: 'restore' });
     const open = S.tabs.find((t) => t.kind === 'file' && t.path === p);
     if (open) await syncTabs([open]);
     toast(`Restored ${stem(p)}`, '', { label: 'Undo', run: async () => {
       const now = await api('GET', `/api/file?path=${encodeURIComponent(p)}`);
-      await api('PUT', '/api/file', { path: p, content: cur.content, baseHash: now.hash });
+      await api('PUT', '/api/file', { path: p, content: cur.content, baseHash: now.hash, reason: 'restore' });
       if (open) await syncTabs([open]);
       loadGit();
     } });
@@ -3391,6 +3454,7 @@ const documentHtml = (tab) => (isMermaidFile(tab.path)
 async function exportHtml(tab = fileTab()) {
   if (!tab) return;
   const body = h('div', { class: 'md', html: documentHtml(tab) });
+  await fillNoteEmbeds(body);
   await fillMermaidEmbeds(body);
   await renderDiagrams(body);
   await fillDrawingEmbeds(body);
@@ -3402,7 +3466,8 @@ async function exportHtml(tab = fileTab()) {
     } catch { img.remove(); }
   }
   body.querySelectorAll('a.internal, a.tag').forEach((a) => a.removeAttribute('href'));
-  body.querySelectorAll('.drawing-embed, .mmd-embed').forEach((e) => { for (const k of ['title', 'data-path', 'data-label']) e.removeAttribute(k); });
+  body.querySelectorAll('.drawing-embed, .mmd-embed, .note-embed').forEach((e) => { for (const k of ['title', 'data-path', 'data-label', 'data-target']) e.removeAttribute(k); });
+  body.querySelectorAll('.note-embed-head').forEach((e) => e.removeAttribute('title'));
   body.querySelectorAll('.diagram-copy').forEach((b) => b.remove());
   body.querySelectorAll('pre[data-source]').forEach((pre) => { pre.removeAttribute('data-source'); pre.querySelector('img')?.removeAttribute('title'); });
   body.querySelectorAll('input.task').forEach((i) => i.setAttribute('disabled', ''));
@@ -3425,6 +3490,7 @@ main{max-width:760px;margin:0 auto;padding:48px 24px}${css}</style></head><body>
 async function printNote(tab = fileTab()) {
   if (!tab) return;
   const sheet = h('div', { id: 'print-sheet', class: 'md', html: documentHtml(tab) });
+  await fillNoteEmbeds(sheet);
   await fillMermaidEmbeds(sheet);
   await renderDiagrams(sheet);
   await fillDrawingEmbeds(sheet);
@@ -3964,7 +4030,7 @@ function connectEvents() {
     const changed = new Set(paths);
     const affected = S.tabs.filter((t) => isDoc(t) && (!paths.length || changed.has(t.path)));
     if (affected.length) await syncTabs(affected);
-    for (const p of paths) if (isDrawing(p) || isMermaidFile(p)) refreshEmbeds(p);
+    for (const p of paths) if (isDrawing(p) || isMermaidFile(p) || isNote(p)) refreshEmbeds(p);
     if (paths.some((p) => /\.(md|markdown|mdx|txt)$/i.test(p))) { loadTags(); const t = fileTab(); if (t) loadBacklinks(t.path); }
     loadGitSoon();
   }, 60));

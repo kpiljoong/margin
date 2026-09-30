@@ -149,6 +149,8 @@ The shortcuts above (except typing behaviours like Tab, Enter, and bracket pairi
   - **Backlinks** (Linked from)
   - **Unlinked mentions**: Places in other notes where this note's name is written without a link. The **Link** button turns it into `[[Name|original wording]]`.
   - **Tag list**: Counts both `tags:` in front matter and `#tag` in the body.
+- **Note embeds**: `![[Note]]` shows another note in place, and `![[Note#Section]]` only that section (up to the next heading as high). Its diagrams and drawings are drawn too, it follows changes to that note, and it goes into HTML export and print. Click its label to open the note. A note embedded inside an embedded note stays a link (no loops).
+- **Local history**: Margin keeps earlier versions of notes in `.agent-notes/history/` (ignored by git), so text can be brought back even in a folder without git. A version is kept when a save replaces text that is at least 5 minutes old, when another program changes the note (Claude Code, another editor, sync), before agent changes are applied or undone, before links are rewritten by a rename, and before restoring. Up to 50 per note; ones older than 30 days are removed, but the newest 5 always stay. They follow a renamed note. See them in ⋯ › **History…**.
 - **Link hover preview**: Hovering a `[[link]]` in the preview shows the note — or only the section it names — in a small window (in the editor, hold ⌘/Ctrl while hovering). Click its title to open the note; typing, scrolling, or clicking elsewhere closes it.
 - **Labs**: Turn experimental features on and off in Labs at the bottom of Settings (⌘,). They may change or go away.
   - **Canvas: the wheel moves**: On the canvas, the wheel or two-finger scroll pans, and pinch or ⌘/Ctrl+wheel zooms. When off, the wheel zooms.
@@ -266,7 +268,7 @@ If the workspace is a git repository, the ⎇ panel on the left and the tree sho
 
 - **Commit**: Write a message and press ⌘↵ to commit all changes. Checking files commits only those files.
 - **View changes**: Clicking a file opens its diff against the last commit, and "Discard changes…" reverts it (Undo available).
-- **Note history**: See the commit list via ⋯ menu › History. Picking a version shows the difference from the current one, and **Restore this version** restores it (Undo available).
+- **Note history**: ⋯ menu › **History…** (palette: *History of current note*) lists the note's commits together with the versions Margin kept itself (see *Local history*). Picking a version shows the difference from the current one, and **Restore this version** restores it (Undo available).
 - **Auto-commit agent changes**: If "Commit to git" is on in the review screen, only the applied files are committed separately.
   - The author is `<agent name> (Margin) <agent@agent-notes.local>`, and the committer is your git account.
   - So agent-made changes (✦) and human-made changes are distinguishable in the history.
@@ -364,6 +366,7 @@ The only data created inside the workspace is `.agent-notes/`, which has its own
 .agent-notes/runs/<id>/base|work     snapshot at start / agent proposal
 .agent-notes/runs/<id>/backup        files just before applying (for Undo)
 .agent-notes/trash/                  files removed by delete or revert (including deleted notes)
+.agent-notes/history/<note>/         earlier versions of each note (local history)
 ```
 
 ## Known limitations

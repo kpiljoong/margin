@@ -175,6 +175,7 @@ function writeFileAtomic(abs, data) {
   const tmp = `${abs}.${process.pid}.${Date.now()}.tmp`;
   fs.writeFileSync(tmp, data);
   fs.renameSync(tmp, abs);
+  wroteNote(abs, data);
 }
 
 function walk(base, limit = 20000) {
@@ -250,15 +251,17 @@ function statFile(relPath) {
   catch { return { path: relPath, exists: false }; }
 }
 
-function saveFile({ path: relPath, content, baseHash, force }) {
+function saveFile({ path: relPath, content, baseHash, force, reason }) {
   if (typeof content !== 'string') throw httpError(400, 'content must be a string');
   const abs = workspacePath(relPath);
-  if (!force && fs.existsSync(abs)) {
-    const current = hashOf(fs.readFileSync(abs));
+  const old = fs.existsSync(abs) ? fs.readFileSync(abs) : null;
+  if (!force && old) {
+    const current = hashOf(old);
     if (baseHash && current !== baseHash) {
       throw httpError(409, 'File changed on disk since you opened it', { currentHash: current });
     }
   }
+  if (old && !old.includes(0) && old.toString('utf8') !== content) keepVersion(relOf(abs), old.toString('utf8'), reason === 'restore' ? 'restore' : 'save');
   writeFileAtomic(abs, content);
   return { path: relOf(abs), hash: hashOf(Buffer.from(content, 'utf8')) };
 }
@@ -350,7 +353,15 @@ function startWatcher() {
   let timer = null;
   const flush = () => {
     if (structural) treeCache = null;
-    for (const p of pending) textCache.delete(p);
+    for (const p of pending) {
+      // Changed by another program: keep the text it replaced.
+      const was = textCache.get(p);
+      textCache.delete(p);
+      if (!was || !NOTE_EXT.has(extOf(p))) continue;
+      let now = null;
+      try { now = readText(path.join(ROOT, p)); } catch { continue; } // moved or deleted: not a change of text
+      if (now != null && now !== was.text) keepVersion(p, was.text, 'outside');
+    }
     broadcast('fs', { paths: [...pending], structural });
     pending = new Set();
     structural = false;
@@ -430,6 +441,86 @@ function listHeadings() {
     if (headings.length >= 50000) break;
   }
   return { headings };
+}
+
+// ---------------------------------------------------------------- local history
+// Earlier versions of notes, so text that a save, an agent run, a link update
+// or another program replaced can be brought back — with or without git. They
+// live in .agent-notes/history/<note path>/<time>.<reason> (ignored by git,
+// not in the tree). A save keeps the text it replaces at most every few
+// minutes; a change from outside keeps it unless one was just kept; the rest
+// always do. Old ones go: past HISTORY_KEEP per note, or HISTORY_DAYS old
+// (but never the newest HISTORY_MIN).
+const HISTORY_DIR = path.join(DATA_DIR, 'history');
+const HISTORY_EVERY = { save: 5 * 60 * 1000, outside: 60 * 1000 };
+const HISTORY_KEEP = 50;
+const HISTORY_DAYS = 30;
+const HISTORY_MIN = 5;
+const HISTORY_MAX_BYTES = 1024 * 1024;
+const VERSION_RE = /^(\d{13})\.(save|outside|agent|links|restore)$/;
+
+const historyDir = (rel) => resolveInside(HISTORY_DIR, rel);
+
+function versionsOf(rel) {
+  let names;
+  try { names = fs.readdirSync(historyDir(rel)); } catch { return []; }
+  return names.map((id) => VERSION_RE.exec(id)).filter(Boolean)
+    .map((m) => ({ id: m[0], date: Number(m[1]), reason: m[2] }))
+    .sort((a, b) => b.date - a.date);
+}
+
+function keepVersion(rel, text, reason) {
+  if (!NOTE_EXT.has(extOf(rel)) || typeof text !== 'string' || !text.trim() || Buffer.byteLength(text) > HISTORY_MAX_BYTES) return;
+  try {
+    const dir = historyDir(rel);
+    const list = versionsOf(rel);
+    const every = HISTORY_EVERY[reason];
+    const recent = every && list.find((v) => reason === 'save' || v.reason === reason);
+    if (recent && Date.now() - recent.date < every) return;
+    if (list[0] && fs.readFileSync(path.join(dir, list[0].id), 'utf8') === text) return;
+    ensureDataDir();
+    fs.mkdirSync(dir, { recursive: true });
+    let now = Date.now();
+    while (list.some((v) => v.date === now)) now++;
+    fs.writeFileSync(path.join(dir, `${now}.${reason}`), text);
+    const old = Date.now() - HISTORY_DAYS * 86400000;
+    [{ date: now }, ...list].forEach((v, i) => {
+      if (v.id && (i >= HISTORY_KEEP || (i >= HISTORY_MIN && v.date < old))) fs.rmSync(path.join(dir, v.id), { force: true });
+    });
+  } catch { /* history is a safety net: never let it break a save */ }
+}
+
+function listVersions(rel) {
+  const abs = workspacePath(rel);
+  return { path: relOf(abs), versions: versionsOf(relOf(abs)) };
+}
+
+function getVersion(rel, id) {
+  if (!VERSION_RE.test(String(id || ''))) throw httpError(400, 'Invalid version');
+  const file = path.join(historyDir(relOf(workspacePath(rel))), id);
+  try { return { id, content: fs.readFileSync(file, 'utf8') }; } catch { throw httpError(404, 'That version does not exist'); }
+}
+
+// Our own writes to notes: remember the new text, so the watcher doesn't
+// take them for changes from outside.
+function wroteNote(abs, data) {
+  if (!isInside(ROOT, abs) || isInside(DATA_DIR, abs) || !NOTE_EXT.has(extOf(abs))) return;
+  try {
+    const st = fs.statSync(abs);
+    const text = Buffer.isBuffer(data) ? data.toString('utf8') : String(data);
+    textCache.set(relOf(abs), { mtimeMs: st.mtimeMs, size: st.size, text, lower: text.toLowerCase() });
+  } catch { /* the cache fills itself on the next read */ }
+}
+
+// A note moved or renamed: its history goes with it.
+function moveHistory(fromRel, toRel) {
+  try {
+    const from = historyDir(fromRel);
+    if (!fs.existsSync(from)) return;
+    const to = historyDir(toRel);
+    fs.mkdirSync(path.dirname(to), { recursive: true });
+    if (!fs.existsSync(to)) fs.renameSync(from, to);
+  } catch { /* keep it where it was */ }
 }
 
 // ---------------------------------------------------------------- attachments
@@ -561,6 +652,7 @@ function renamePath({ from, to }) {
   fs.mkdirSync(path.dirname(dst), { recursive: true });
   fs.renameSync(src, dst);
   treeCache = null;
+  for (const [a, b] of moved) moveHistory(a, b);
 
   const updated = [];
   for (const f of all) {
@@ -571,7 +663,7 @@ function renamePath({ from, to }) {
     try { text = fs.readFileSync(abs, 'utf8'); } catch { continue; }
     if (!text.includes('](') && !text.includes('[[')) continue;
     const next = rewriteLinks(text, f, now, moved, renamedStems);
-    if (next !== null) { writeFileAtomic(abs, next); updated.push(now); }
+    if (next !== null) { keepVersion(now, text, 'links'); writeFileAtomic(abs, next); updated.push(now); }
   }
   return { from: fromRel, to: toRel, moved: Object.fromEntries(moved), updated };
 }
@@ -1043,10 +1135,12 @@ function applyRun(id, decisions) {
       }
       // Keep exactly what was on disk so "Undo apply" restores it byte for byte.
       writeFileAtomic(path.join(dir, 'backup', c.path), before);
+      keepVersion(c.path, before.toString('utf8'), 'agent');
       writeFileAtomic(target, out);
       applied.push({ path: c.path, status: c.status, hunks: [...sel].sort((x, y) => x - y), of: c.hunks.length, merged, hash: hashOf(Buffer.from(out, 'utf8')) });
     } else if (d.file && (c.status === 'added' || c.status === 'modified')) {
       const data = fs.readFileSync(path.join(dir, 'work', c.path));
+      if (fs.existsSync(target)) keepVersion(c.path, fs.readFileSync(target, 'utf8'), 'agent');
       writeFileAtomic(target, data);
       applied.push({ path: c.path, status: c.status, hash: hashOf(data) });
     } else if (d.file && c.status === 'deleted') {
@@ -1089,6 +1183,7 @@ function revertRun(id) {
     const target = workspacePath(f.path);
     if (f.status === 'modified') {
       const backup = path.join(dir, 'backup', f.path);
+      keepVersion(f.path, fs.readFileSync(target, 'utf8'), 'agent');
       writeFileAtomic(target, fs.readFileSync(fs.existsSync(backup) ? backup : path.join(dir, 'base', f.path)));
     }
     else if (f.status === 'added') {
@@ -1183,6 +1278,8 @@ async function routeApi(method, url, body) {
   if (method === 'GET' && p === '/api/search') return search(q('q'));
   if (method === 'GET' && p === '/api/tags') return listTags();
   if (method === 'GET' && p === '/api/headings') return listHeadings();
+  if (method === 'GET' && p === '/api/history') return listVersions(q('path'));
+  if (method === 'GET' && p === '/api/history/version') return getVersion(q('path'), q('id'));
   if (method === 'POST' && p === '/api/asset') return saveAsset(body || {});
   if (method === 'POST' && p === '/api/rename') return renamePath(body || {});
   if (method === 'POST' && p === '/api/delete') return deletePath(body || {});

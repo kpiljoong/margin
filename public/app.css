@@ -518,6 +518,7 @@ input[type=checkbox] { accent-color: var(--accent); }
 .history { flex: 1; min-height: 0; display: grid; grid-template-columns: minmax(220px, 300px) 1fr; }
 .history-list { overflow: auto; border-right: 1px solid var(--border); background: var(--bg-2); padding-bottom: 20px; }
 .history-row { padding: 6px 12px; cursor: pointer; border-left: 2px solid transparent; }
+.history-foot { padding: 10px 12px; font-size: 12px; color: var(--fg-faint); }
 .history-row:hover { background: var(--bg-hover); }
 .history-row.sel { background: var(--bg-3); border-left-color: var(--accent); }
 .history-detail { padding: 16px 20px 40px; }
@@ -561,6 +562,12 @@ iframe.mermaid-frame { position: fixed; left: -10000px; top: 0; width: 1600px; h
 #drawing-layer .drawing-frame { position: fixed; border: 0; pointer-events: auto; background: var(--bg); }
 #drawing-layer .drawing-frame.offscreen { left: -10000px; top: 0; width: 1200px; height: 800px; visibility: hidden; pointer-events: none; }
 .toolbar .badge { font-size: 11px; padding: 1px 7px; border: 1px solid var(--border); border-radius: 10px; color: var(--fg-dim); }
+.md .note-embed { margin: 0 0 1em; padding: 2px 0 2px 14px; border-left: 2px solid var(--border); }
+.md .note-embed-head { margin-bottom: 4px; font-size: 12px; color: var(--fg-dim); cursor: pointer; }
+.md .note-embed-head:hover { color: var(--accent); }
+.md .note-embed-body > :last-child { margin-bottom: 0; }
+.md span.note-embed { display: block; color: var(--fg-dim); font-size: 13px; }
+.md span.note-embed.error { color: var(--bad); }
 .md .drawing-embed { display: block; margin: 8px 0; cursor: pointer; color: var(--fg-dim); font-size: 13px; }
 .md .drawing-embed img { display: block; max-width: 100%; height: auto; border: 1px solid var(--border); border-radius: 6px; }
 .md .drawing-embed.error { cursor: default; color: var(--danger, #e06c75); }

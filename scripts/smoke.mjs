@@ -27,7 +27,7 @@ fs.writeFileSync(path.join(ws, 'flow.md'), [
   '```flow', 'PR -> Review -> Waiting for approval !', 'Waiting for approval -> Pass?', '  yes -(auto)-> Deploy', '  no -> Changes -> Review', '```', '',
   '## Proposal', '', '```flow', 'PR -> Review -> Deploy', '```', '',
 ].join('\n'));
-fs.writeFileSync(path.join(ws, 'sub', 'links.md'), '# Links\n\nSee [[flow#Proposal]].\n\n> [!tip] Hint\n> Body.\n');
+fs.writeFileSync(path.join(ws, 'sub', 'links.md'), '# Links\n\nSee [[flow#Proposal]].\n\n> [!tip] Hint\n> Body.\n\n![[flow#Proposal]]\n');
 // Enough search hits that the results list scrolls.
 fs.mkdirSync(path.join(ws, 'hits'));
 for (let i = 0; i < 12; i++) fs.writeFileSync(path.join(ws, 'hits', `h${i}.md`), Array.from({ length: 5 }, (_, j) => `needle ${i}.${j}`).join('\n\n') + '\n');
@@ -238,6 +238,13 @@ await check('a callout shows, and a link shows its section on hover', `
   return { callout, shown, gone: !$('.link-preview') };
 `, (v) => (v?.callout?.[0] === 'callout callout-tip' && v.callout[1] === 'Hint' && v.shown?.head === 'flow › Proposal' && /Proposal/.test(v.shown.text) && !/Waiting/.test(v.shown.text) && v.gone ? null : 'no callout, or the hover preview was wrong'));
 
+await check('![[note#section]] shows that section in place', `
+  const p = $$('.preview').find((x) => x.offsetParent && x.querySelector('.callout'));
+  const box = await until(() => p.querySelector('div.note-embed'));
+  const drawn = await until(() => box?.querySelector('pre.diagram img, pre.diagram svg'), 8000);
+  return { head: box?.querySelector('.note-embed-head').textContent, text: box?.textContent, drawn: !!drawn, lines: box?.querySelectorAll('.note-embed-body [data-line]').length, line: box?.dataset.line };
+`, (v) => (v?.head === '↳ flow › Proposal' && /Proposal/.test(v.text) && !/Waiting/.test(v.text) && v.drawn && v.lines === 0 && v.line ? null : 'the section was not shown in place'));
+
 await check('@ in quick open finds a heading in any note', `
   const mac = navigator.platform.startsWith('Mac');
   await sleep(200);
@@ -291,10 +298,36 @@ await check('a review: pick one change, the count follows, apply writes it', `
   return { hunks: heads.length, all, one, applied: /Applied/.test($('.review').textContent) };
 `, (v) => (v?.hunks > 1 && v.one === 'Apply 1 selected' && v.all !== v.one && v.applied ? null : 'picking or applying did not work'));
 
-const text = fs.readFileSync(path.join(ws, 'sub', 'messy.md'), 'utf8');
-const changed = text.split('\n').filter((l) => /^(#+ |- )/.test(l)).length;
+const applied = fs.readFileSync(path.join(ws, 'sub', 'messy.md'), 'utf8');
+const changed = applied.split('\n').filter((l) => /^(#+ |- )/.test(l)).length;
 console.log(`${changed === 1 ? '✓' : '✗'} exactly the picked change reached the file`);
 if (changed !== 1) failed = true;
 
-console.log(failed ? `\nSmoke test failed (${results.filter((r) => !r.ok).length} of ${results.length + 1}).` : `\nAll ${results.length + 1} checks passed.`);
+await check('history shows the version from before the agent changes, and restores it', `
+  const mac = navigator.platform.startsWith('Mac');
+  await openNote('sub/messy.md');
+  await sleep(200);
+  document.body.dispatchEvent(new KeyboardEvent('keydown', { code: 'KeyP', key: 'p', bubbles: true, cancelable: true, metaKey: mac, ctrlKey: !mac }));
+  const input = await until(() => !$('#overlay').hidden && $('#overlay input'));
+  input.value = '>History of current note';
+  input.dispatchEvent(new Event('input'));
+  await sleep(100);
+  input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }));
+  const row = await until(() => $$('.history-row').find((r) => /Before agent changes/.test(r.textContent)));
+  if (!row) return { error: 'no kept version', rows: $$('.history-row').map((r) => r.textContent) };
+  row.click();
+  const restore = await until(() => button('Restore this version'));
+  restore.click();
+  const ok = await until(() => button('Replace', $('.dialog.confirm')));
+  ok.click();
+  await until(() => /Restored/.test($('.toast')?.textContent || ''), 5000);
+  return { restored: true };
+`, (v) => (v?.restored ? null : 'no kept version to restore'));
+
+const text = fs.readFileSync(path.join(ws, 'sub', 'messy.md'), 'utf8');
+const original = text.startsWith('#Title\ntext');
+console.log(`${original ? '✓' : '✗'} the restored file is the one from before`);
+if (!original) failed = true;
+
+console.log(failed ? `\nSmoke test failed (${results.filter((r) => !r.ok).length} of ${results.length + 2}).` : `\nAll ${results.length + 2} checks passed.`);
 done(failed ? 1 : 0);
