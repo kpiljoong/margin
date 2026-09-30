@@ -169,6 +169,16 @@ kbd { font: 11px var(--mono); padding: 1px 5px; border: 1px solid var(--border);
 .md pre code { background: none; padding: 0; }
 .md blockquote { border-left: 3px solid var(--accent-2); padding: 2px 14px; color: var(--fg-dim); }
 .md blockquote > :last-child { margin-bottom: 0; }
+.md .callout { --c: var(--accent); margin: 0 0 1em; border-left: 3px solid var(--c); border-radius: var(--radius); background: color-mix(in srgb, var(--c) 9%, transparent); padding: 8px 14px; }
+.md .callout-tip { --c: var(--ok); }
+.md .callout-important { --c: var(--accent-2); }
+.md .callout-warning { --c: var(--warn); }
+.md .callout-danger { --c: var(--bad); }
+.md .callout-quote { --c: var(--fg-dim); }
+.md .callout-title { color: var(--c); font-weight: 600; }
+.md summary.callout-title { cursor: pointer; }
+.md .callout-body { margin-top: 4px; }
+.md .callout-body > :last-child { margin-bottom: 0; }
 .md a { color: var(--accent); text-decoration: none; }
 .md a:hover { text-decoration: underline; }
 .md a.internal { border-bottom: 1px dashed var(--accent); }
@@ -652,3 +662,12 @@ iframe.mermaid-frame { position: fixed; left: -10000px; top: 0; width: 1600px; h
 .node-hit.shape-round { border-radius: 999px; }
 .canvas-pane.presenting .canvas-links, .canvas-pane.presenting .node-hit::after { display: none; }
 .canvas-pane.presenting .node-hit.similar { outline: 0; }
+
+/* Hover preview of a [[link]] */
+.link-preview { position: fixed; z-index: 40; width: min(460px, 90vw); max-height: min(360px, 60vh); display: flex; flex-direction: column; background: var(--bg-2); border: 1px solid var(--border); border-radius: 8px; box-shadow: 0 10px 30px var(--shadow); overflow: hidden; }
+.link-preview-head { all: unset; flex: none; cursor: pointer; padding: 7px 14px; font-size: 12px; font-weight: 600; color: var(--fg); border-bottom: 1px solid var(--border); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.link-preview-head:hover { background: var(--bg-hover); }
+.link-preview-head .dim { color: var(--fg-dim); font-weight: 400; }
+.link-preview-body { overflow: auto; padding: 10px 14px; font-size: 13px; line-height: 1.6; }
+.link-preview-body > :first-child { margin-top: 0; }
+.link-preview-body > :last-child { margin-bottom: 0; }

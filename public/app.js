@@ -393,6 +393,102 @@ async function followLink(target, fromPath) {
   return true;
 }
 
+// ---------------------------------------------------------------- link preview
+// Hovering a [[link]] in a preview (or, holding ⌘/Ctrl, in the editor) shows
+// the note — or just the section it names — in a small window. Clicking the
+// window's title opens it.
+const linkPop = { el: null, key: '', timer: 0, hideTimer: 0 };
+
+// The part of a note a link shows: the section from its heading to the next
+// heading as high, or the whole note.
+function linkSection(content, heading) {
+  if (!heading) return { text: content, line: null };
+  const line = headingLine(content, heading);
+  if (line == null) return null;
+  const heads = outline(content);
+  const level = heads.find((o) => o.line === line).level;
+  const end = heads.find((o) => o.line > line && o.level <= level)?.line;
+  return { text: content.split('\n').slice(line, end).join('\n'), line };
+}
+
+function hideLinkPreview() {
+  clearTimeout(linkPop.timer); clearTimeout(linkPop.hideTimer);
+  linkPop.key = '';
+  linkPop.el?.remove();
+  linkPop.el = null;
+}
+
+// Hide soon, unless the pointer comes back to the link or into the window.
+function leaveLinkPreview() {
+  clearTimeout(linkPop.timer);
+  clearTimeout(linkPop.hideTimer);
+  linkPop.hideTimer = setTimeout(hideLinkPreview, 300);
+}
+
+function hoverLink(target, fromPath, rect) {
+  const key = `${fromPath}\n${target}`;
+  clearTimeout(linkPop.hideTimer);
+  if (linkPop.key === key) return;
+  clearTimeout(linkPop.timer);
+  linkPop.timer = setTimeout(() => showLinkPreview(target, fromPath, rect, key), linkPop.el ? 0 : 350);
+}
+
+async function showLinkPreview(target, fromPath, rect, key) {
+  const { note, heading } = splitLink(target);
+  const path = note ? resolveLink(note, fromPath) : (isNote(fromPath || '') ? fromPath : null);
+  if (!path || !isNote(path)) return;
+  const open = S.tabs.find((t) => t.kind === 'file' && t.path === path && t.content != null);
+  let content = open?.content;
+  if (content == null) try { content = (await api('GET', `/api/file?path=${encodeURIComponent(path)}`)).content; } catch { return; }
+  const part = linkSection(content, heading);
+  hideLinkPreview();
+  linkPop.key = key;
+  const body = h('div', { class: 'link-preview-body md' });
+  body.innerHTML = part ? renderMarkdown(part.text, { image: (url) => localImage(url, path) }) : '';
+  if (!part) body.append(h('div', { class: 'empty' }, `No section “${heading}”.`));
+  else if (!part.text.trim()) body.append(h('div', { class: 'empty' }, 'Empty note.'));
+  const go = () => { hideLinkPreview(); followLink(target, fromPath); };
+  const el = h('div', { class: 'link-preview', onmouseenter: () => clearTimeout(linkPop.hideTimer), onmouseleave: leaveLinkPreview },
+    h('button', { class: 'link-preview-head', title: 'Open', onclick: go }, stem(path), heading ? h('span', { class: 'dim' }, ` › ${heading}`) : null),
+    body);
+  // Links inside it open their note too; nothing else in it acts.
+  body.addEventListener('click', (e) => {
+    const a = e.target.closest('a.internal');
+    if (a?.dataset.target) { e.preventDefault(); hideLinkPreview(); followLink(a.dataset.target, path); }
+    else if (a) e.preventDefault();
+  });
+  document.body.append(el);
+  linkPop.el = el;
+  renderDiagrams(body);
+  // Below the link, or above it when there's more room there.
+  const w = el.offsetWidth;
+  const hgt = el.offsetHeight;
+  const below = innerHeight - rect.bottom;
+  el.style.left = `${Math.max(8, Math.min(rect.left, innerWidth - w - 8))}px`;
+  el.style.top = `${below >= hgt + 12 || below >= rect.top ? rect.bottom + 6 : Math.max(8, rect.top - hgt - 6)}px`;
+}
+
+// A preview pane: plain hover.
+function previewLinkHover(e, tab) {
+  const a = e.target.closest('a.internal');
+  if (!a || a.closest('.link-preview')) return;
+  let target = a.dataset.target || a.dataset.href;
+  try { if (a.dataset.href) target = decodeURIComponent(target); } catch { /* as written */ }
+  if (!a.dataset.target && /^[a-z][\w+.-]*:/i.test(target)) return;
+  hoverLink(target, tab.path, a.getBoundingClientRect());
+  a.addEventListener('mouseleave', leaveLinkPreview, { once: true });
+}
+
+// The editor: a [[link]] under the pointer while ⌘/Ctrl is held. The coloured
+// layer under the text has a span for each link.
+function editorLinkHover(e, ed, tab) {
+  if (!(isMac ? e.metaKey : e.ctrlKey)) { if (linkPop.el || linkPop.timer) leaveLinkPreview(); return; }
+  const span = [...ed.hlLayer.querySelectorAll('.md-wikilink')].find((sp) => [...sp.getClientRects()].some((r) => e.clientX >= r.left && e.clientX <= r.right && e.clientY >= r.top && e.clientY <= r.bottom));
+  if (!span) { leaveLinkPreview(); return; }
+  if (span.previousElementSibling?.textContent.startsWith('!')) return; // an embed
+  hoverLink(span.textContent.split('|')[0], tab.path, span.getBoundingClientRect());
+}
+
 // Textareas normalise line breaks to LF; remember CRLF files (common on
 // Windows) and write them back with CRLF so saving never rewrites every line.
 function fromDisk(text) {
@@ -1255,7 +1351,7 @@ function renderContent(g = S.focus) {
   }
 
   const ed = editorFor(tab);
-  const preview = h('div', { class: 'preview md', onclick: (e) => previewClick(e, tab) });
+  const preview = h('div', { class: 'preview md', onclick: (e) => previewClick(e, tab), onmouseover: (e) => previewLinkHover(e, tab) });
   let mode = groupMode(tab);
   if (mode === 'canvas' && !isNote(tab.path)) mode = 'split';
   const wrap = h('div', { class: `editor-wrap mode-${hasPreview(tab.path) ? mode : 'edit'}` }, ed.el, preview, mode === 'canvas' ? canvasFor(tab).el : null,
@@ -1322,6 +1418,8 @@ function editorFor(tab) {
   ed.value = tab.content;
   ed.setOptions({ highlight: S.settings.highlight, spellcheck: S.settings.spellcheck });
   tab.editor = ed;
+  ed.ta.addEventListener('mousemove', (e) => editorLinkHover(e, ed, tab));
+  ed.ta.addEventListener('mouseleave', () => { if (linkPop.el || linkPop.timer) leaveLinkPreview(); });
   return ed;
 }
 
@@ -2060,6 +2158,7 @@ const COMMANDS = [
   ['Find in note', () => fileTab()?.editor.openFind(), { key: 'find' }],
   ['Replace in note', () => fileTab()?.editor.openFind({ replace: true }), { key: 'replace' }],
   ['Go to heading…', () => setTimeout(() => openPalette('#'), 0), '#'],
+  ['Go to heading in any note…', () => setTimeout(() => openPalette('@'), 0), '@'],
   ['Go to line…', () => setTimeout(() => openPalette(':'), 0), ':'],
   ['Save', () => saveTab(), { key: 'save' }],
   ['Settings', () => openSettings(), { key: 'settings' }],
@@ -2158,12 +2257,25 @@ function picker({ placeholder, initial = '', source, onMove, onCancel }) {
   overlay.hidden = false;
   update();
   input.focus();
-  return { setIndex: (i) => { sel = i; update(); } };
+  return { setIndex: (i) => { sel = i; update(); }, refresh: () => { if (input.isConnected) update(); } };
+}
+
+// Every heading in the workspace for "@" in quick open, fetched when asked
+// for and kept a few seconds. Open notes count as they are in the editor.
+const allHeadings = { at: 0, list: null, loading: null };
+function workspaceHeadings(then) {
+  if (allHeadings.list && Date.now() - allHeadings.at < 5000) return allHeadings.list;
+  allHeadings.loading ||= api('GET', '/api/headings')
+    .then((r) => { allHeadings.list = r.headings; allHeadings.at = Date.now(); then(); })
+    .catch((e) => toast(e.message, 'error'))
+    .finally(() => { allHeadings.loading = null; });
+  return allHeadings.list; // the last list meanwhile (null the first time)
 }
 
 function openPalette(initial = '') {
-  picker({
-    placeholder: `Go to note (${MOD}↵ opens to the side)   > commands   # headings   : line`,
+  let pk = null;
+  pk = picker({
+    placeholder: `Go to note (${MOD}↵ opens to the side)   > commands   # headings   @ all headings   : line`,
     initial,
     source: (q) => {
       if (q.startsWith('>')) {
@@ -2179,6 +2291,18 @@ function openPalette(initial = '') {
         return outline(tab.content).map((o) => ({ o, m: fuzzy(hq, o.text) })).filter((x) => x.m)
           .sort((a, b) => (hq ? b.m.score - a.m.score : a.o.line - b.o.line))
           .map(({ o, m }) => ({ label: [`${'  '.repeat(o.level - 1)}`, ...marked(o.text, m.idx)], hint: `H${o.level}`, run: () => gotoLine(o.line + 1) }));
+      }
+      if (q.startsWith('@')) {
+        const list = workspaceHeadings(() => pk?.refresh());
+        if (!list) return [{ label: ['Reading headings…'], run: () => {} }];
+        const open = new Map(S.tabs.filter((t) => t.kind === 'file' && t.content != null).map((t) => [t.path, t]));
+        const heads = [...list.filter((x) => !open.has(x.path)), ...[...open.values()].flatMap((t) => (isNote(t.path) ? outline(t.content).map((o) => ({ path: t.path, ...o })) : []))];
+        const hq = q.slice(1).trim();
+        if (!hq) return [];
+        return heads.map((x) => ({ x, m: fuzzy(hq, x.text) })).filter((y) => y.m)
+          .sort((a, b) => b.m.score - a.m.score || a.x.path.localeCompare(b.x.path) || a.x.line - b.x.line).slice(0, 60)
+          .map(({ x, m }) => ({ label: marked(x.text, m.idx), hint: `${stem(x.path)} · H${x.level}`,
+            run: (e) => openFile(x.path, { line: x.line + 1, side: !!(e?.metaKey || e?.ctrlKey) }) }));
       }
       if (q.startsWith(':')) {
         const n = parseInt(q.slice(1), 10);
@@ -3283,7 +3407,7 @@ async function exportHtml(tab = fileTab()) {
   body.querySelectorAll('pre[data-source]').forEach((pre) => { pre.removeAttribute('data-source'); pre.querySelector('img')?.removeAttribute('title'); });
   body.querySelectorAll('input.task').forEach((i) => i.setAttribute('disabled', ''));
   const vars = getComputedStyle(document.documentElement);
-  const pick = ['bg', 'bg-2', 'bg-3', 'fg', 'fg-dim', 'fg-faint', 'border', 'accent', 'accent-2', 'warn', 'syn-tag', 'syn-comment', 'syn-string', 'syn-number', 'syn-keyword', 'syn-link', 'sans', 'mono'];
+  const pick = ['bg', 'bg-2', 'bg-3', 'fg', 'fg-dim', 'fg-faint', 'border', 'accent', 'accent-2', 'ok', 'warn', 'bad', 'syn-tag', 'syn-comment', 'syn-string', 'syn-number', 'syn-keyword', 'syn-link', 'sans', 'mono'];
   const rootVars = pick.map((k) => `--${k}:${vars.getPropertyValue(`--${k}`).trim()};`).join('');
   const css = [...document.styleSheets].flatMap((sh) => { try { return [...sh.cssRules]; } catch { return []; } })
     .map((r) => r.cssText).filter((t) => /^\.md\b|^\.tk-/.test(t)).join('\n');
@@ -3801,6 +3925,10 @@ $('#btn-settings').addEventListener('click', openSettings);
 window.addEventListener('focus', () => { if (!liveEvents) { loadTree(); syncOpenTabs(); } });
 document.addEventListener('visibilitychange', () => { if (document.hidden) S.tabs.forEach((t) => (t.kind === 'file' ? flushAutosave(t) : t.kind === 'drawing' && S.settings.autosave && !t.conflict && saveDrawing(t, { flush: true }))); });
 window.addEventListener('resize', placeFramesSoon);
+// The link preview goes away on typing, scrolling elsewhere, or a click outside.
+document.addEventListener('keydown', (e) => { if (linkPop.el && !['Meta', 'Control'].includes(e.key)) hideLinkPreview(); }, true);
+document.addEventListener('mousedown', (e) => { if (linkPop.el && !e.target.closest('.link-preview')) hideLinkPreview(); }, true);
+document.addEventListener('scroll', (e) => { if (linkPop.el && !linkPop.el.contains(e.target)) hideLinkPreview(); }, true);
 window.addEventListener('beforeunload', (e) => {
   if (S.tabs.some((t) => (t.kind === 'file' && t.content !== t.saved) || (t.kind === 'drawing' && t.text !== t.saved))) { e.preventDefault(); e.returnValue = ''; }
 });

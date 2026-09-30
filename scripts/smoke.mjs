@@ -27,7 +27,7 @@ fs.writeFileSync(path.join(ws, 'flow.md'), [
   '```flow', 'PR -> Review -> Waiting for approval !', 'Waiting for approval -> Pass?', '  yes -(auto)-> Deploy', '  no -> Changes -> Review', '```', '',
   '## Proposal', '', '```flow', 'PR -> Review -> Deploy', '```', '',
 ].join('\n'));
-fs.writeFileSync(path.join(ws, 'sub', 'links.md'), '# Links\n\nSee [[flow#Proposal]].\n');
+fs.writeFileSync(path.join(ws, 'sub', 'links.md'), '# Links\n\nSee [[flow#Proposal]].\n\n> [!tip] Hint\n> Body.\n');
 // Enough search hits that the results list scrolls.
 fs.mkdirSync(path.join(ws, 'hits'));
 for (let i = 0; i < 12; i++) fs.writeFileSync(path.join(ws, 'hits', `h${i}.md`), Array.from({ length: 5 }, (_, j) => `needle ${i}.${j}`).join('\n\n') + '\n');
@@ -225,6 +225,33 @@ await check('a [[note#section]] link opens the note at that section', `
   const at = await until(() => { const v = ta.value; const s = v.lastIndexOf('\\n', ta.selectionStart - 1) + 1; return v.slice(s, v.indexOf('\\n', s)).startsWith('## Proposal') && v.slice(s, v.indexOf('\\n', s)); }, 5000);
   return { at };
 `, (v) => (v?.at === '## Proposal' ? null : 'the link did not land on the section'));
+
+await check('a callout shows, and a link shows its section on hover', `
+  await openNote('sub/links.md');
+  const p = await until(() => $$('.preview').find((x) => x.offsetParent && x.querySelector('.callout')));
+  const callout = p && [p.querySelector('.callout').className, p.querySelector('.callout-title').textContent];
+  const a = p.querySelector('a.internal');
+  a.dispatchEvent(new MouseEvent('mouseover', { bubbles: true }));
+  const pop = await until(() => $('.link-preview'), 3000);
+  const shown = pop && { head: pop.querySelector('.link-preview-head').textContent, text: pop.querySelector('.link-preview-body').textContent };
+  key('Escape', {}, document.body);
+  return { callout, shown, gone: !$('.link-preview') };
+`, (v) => (v?.callout?.[0] === 'callout callout-tip' && v.callout[1] === 'Hint' && v.shown?.head === 'flow › Proposal' && /Proposal/.test(v.shown.text) && !/Waiting/.test(v.shown.text) && v.gone ? null : 'no callout, or the hover preview was wrong'));
+
+await check('@ in quick open finds a heading in any note', `
+  const mac = navigator.platform.startsWith('Mac');
+  await sleep(200);
+  document.body.dispatchEvent(new KeyboardEvent('keydown', { code: 'KeyP', key: 'p', bubbles: true, cancelable: true, metaKey: mac, ctrlKey: !mac }));
+  const input = await until(() => !$('#overlay').hidden && $('#overlay input'));
+  input.value = '@propos';
+  input.dispatchEvent(new Event('input'));
+  const item = await until(() => $$('#overlay .palette-item').find((x) => /flow/.test(x.querySelector('.hint')?.textContent || '')));
+  const hint = item?.querySelector('.hint').textContent;
+  input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }));
+  const ta = await until(() => $('.tab.active')?.textContent.includes('flow.md') && $$('.editor-wrap textarea').find((t) => t.offsetParent));
+  const at = ta && await until(() => { const v = ta.value; const s = v.lastIndexOf('\\n', ta.selectionStart - 1) + 1; return v.slice(s, v.indexOf('\\n', s)); }, 3000);
+  return { hint, at };
+`, (v) => (v?.hint === 'flow · H2' && v.at === '## Proposal' ? null : 'the heading was not found or not opened'));
 
 await check('the search results keep their scroll position when one is opened', `
   $('#activity [data-view="search"]').click();

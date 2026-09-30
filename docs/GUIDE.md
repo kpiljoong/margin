@@ -98,7 +98,7 @@ Built without external libraries to stay lightweight. The editor is a native `te
 
 | Shortcut | Action |
 |---|---|
-| ⌘P | Quick open: recent notes first, fuzzy search, create if missing. `>` commands · `#` jump to a heading in the current note · `:` line number |
+| ⌘P | Quick open: recent notes first, fuzzy search, create if missing. `>` commands · `#` jump to a heading in the current note · `@` a heading in any note · `:` line number |
 | ⌘⇧P | Command palette |
 | ⌘⇧F | Workspace full-text search (`#tag` search works too) |
 | ⌘F / ⌘⌥F | Find / replace in note (case and regex options, ⌘G next) |
@@ -149,6 +149,7 @@ The shortcuts above (except typing behaviours like Tab, Enter, and bracket pairi
   - **Backlinks** (Linked from)
   - **Unlinked mentions**: Places in other notes where this note's name is written without a link. The **Link** button turns it into `[[Name|original wording]]`.
   - **Tag list**: Counts both `tags:` in front matter and `#tag` in the body.
+- **Link hover preview**: Hovering a `[[link]]` in the preview shows the note — or only the section it names — in a small window (in the editor, hold ⌘/Ctrl while hovering). Click its title to open the note; typing, scrolling, or clicking elsewhere closes it.
 - **Labs**: Turn experimental features on and off in Labs at the bottom of Settings (⌘,). They may change or go away.
   - **Canvas: the wheel moves**: On the canvas, the wheel or two-finger scroll pans, and pinch or ⌘/Ctrl+wheel zooms. When off, the wheel zooms.
   - **Steady live drawing**: While typing inside a ` ```flow ` block, the drawing stays as is and is redrawn once the line is complete (not ending in an arrow or ` :`) and typing pauses briefly. Boxes don't jitter with every character.
@@ -163,6 +164,7 @@ The shortcuts above (except typing behaviours like Tab, Enter, and bracket pairi
 - **Heading folding**: In the preview, hovering a heading shows ▾; clicking it folds up to the next heading of the same level. The palette also has fold all/unfold all.
   - The editor uses a native textarea for speed and stable Korean input, and a textarea can't hide lines, so it doesn't support folding.
 - **Preview**: Tables, task checkboxes (clicking toggles the source too), code block syntax highlighting (JS/TS, Python, Shell, Go, Rust, C/Java, SQL, CSS, etc.). ` ```mermaid ` blocks are drawn as diagrams (flowchart, sequence, class, state, gantt, pie, etc.). It uses the mermaid bundled with the app offline, draws in a sandbox iframe separated from the app UI and token, follows the current theme colors, and also applies to the review Result, HTML export, and print. Syntax errors are shown below the code block. The palette's **Insert Mermaid diagram…** inserts a flowchart, sequence, gantt, state, class, ER, mindmap, pie, or timeline skeleton. Editor and preview scrolling are synced line by line.
+- **Callouts**: A quote starting with `[!type]` is a callout, as on GitHub and in Obsidian: `> [!warning] Title` on the first line, the body on the following `>` lines. Types are coloured by kind — note/info, tip/success, important/question/example, warning/caution, danger/error/bug, quote — and any other type is a note with its own name. `[!type]-` makes it folded (click the title to open), `[!type]+` foldable but open.
 - **View larger**: Clicking a diagram in the preview (or right-click → **View larger**) shows it enlarged to fit the whole window. Wheel or pinch zooms around the pointer, drag pans, and double-click toggles between fit and 100%. Keyboard: + − 0 (fit) 1 (100%), Esc to close. Wide diagrams cut off in a narrow window can be seen in full here too.
 - **Copy/save diagrams as images**: Hovering a diagram shows a ⧉ button at the top right, which copies it to the clipboard as PNG (3x resolution). The context menu has **Copy as image (PNG)** / **Copy as SVG** / **Save as PNG…** / **Save as SVG…**. Copies are filled with the current theme's background, so they don't look transparent and empty in dark themes. Saving goes to `assets/` next to the file (blocks in a note become `note-diagram.png`, with `-1`, `-2` on name clashes). Drawings in notes (`![[x.excalidraw]]`) use the same menu, and are copied/saved in the drawing's own colors regardless of theme.
 - **Mermaid files (`.mmd`, `.mermaid`)**: Opened from the tree (marked ◈), they show as a diagram rather than text (Preview by default). Editing the source in Edit / Split / Preview (⌘E) redraws immediately. The toolbar ⧉ copies PNG; the ⋯ menu has Copy embed, View larger, and PNG/SVG copy and save. Create new files from the palette's **New Mermaid diagram file (.mmd)…** or folder right-click **New Mermaid diagram here…** by choosing a skeleton (flowchart, sequence, etc.); they open in Split. Writing `![[flow.mmd]]` in a note embeds the diagram; clicking it opens the file, and it follows changes to the file (including HTML export and print).

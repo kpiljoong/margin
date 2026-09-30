@@ -160,7 +160,7 @@ function renderBlocks(src, offset) {
       const at = i;
       const buf = [];
       while (i < lines.length && /^\s{0,3}>/.test(lines[i])) buf.push(lines[i++].replace(/^\s{0,3}>\s?/, ''));
-      out.push(`<blockquote data-line="${at + offset}">${renderBlocks(buf.join('\n'), at + offset)}</blockquote>`);
+      out.push(callout(buf, at + offset) || `<blockquote data-line="${at + offset}">${renderBlocks(buf.join('\n'), at + offset)}</blockquote>`);
       continue;
     }
     if (LIST_RE.test(line)) {
@@ -185,6 +185,30 @@ function renderBlocks(src, offset) {
     out.push(`<p data-line="${at + offset}">${buf.map((l) => inline(l.trim()) + (/ {2,}$/.test(l) ? '<br>' : '')).join(' ')}</p>`);
   }
   return out.join('\n');
+}
+
+// A quote that starts with [!type] is a callout, as on GitHub and in Obsidian:
+// "> [!warning] Title". + or - after it (Obsidian) makes it fold, open or shut.
+// Types are grouped by colour; an unknown one is a note with its own name.
+const CALLOUTS = {
+  note: 'note', info: 'note', todo: 'note', abstract: 'note', summary: 'note', tldr: 'note',
+  tip: 'tip', hint: 'tip', success: 'tip', check: 'tip', done: 'tip',
+  important: 'important', question: 'important', help: 'important', faq: 'important', example: 'important',
+  warning: 'warning', caution: 'warning', attention: 'warning',
+  danger: 'danger', error: 'danger', bug: 'danger', failure: 'danger', fail: 'danger', missing: 'danger',
+  quote: 'quote', cite: 'quote',
+};
+export const calloutKind = (type) => CALLOUTS[type.toLowerCase()] || 'note';
+
+function callout(lines, line) {
+  const m = lines[0].match(/^\s*\[!([\w-]+)\]([+-]?)\s*(.*)$/);
+  if (!m) return null;
+  const type = m[1].toLowerCase();
+  const title = m[3].trim() ? inline(m[3].trim()) : esc(type[0].toUpperCase() + type.slice(1));
+  const body = renderBlocks(lines.slice(1).join('\n'), line + 1);
+  const cls = `callout callout-${calloutKind(type)}`;
+  if (m[2]) return `<details class="${cls}" data-line="${line}" data-callout="${esc(type)}"${m[2] === '+' ? ' open' : ''}><summary class="callout-title">${title}</summary>${body ? `<div class="callout-body">${body}</div>` : ''}</details>`;
+  return `<div class="${cls}" data-line="${line}" data-callout="${esc(type)}"><div class="callout-title">${title}</div>${body ? `<div class="callout-body">${body}</div>` : ''}</div>`;
 }
 
 // Outline for the sidebar: [{level, text, line}]

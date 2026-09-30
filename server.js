@@ -405,6 +405,33 @@ function listTags() {
   return { tags: [...counts].map(([tag, count]) => ({ tag, count })).sort((a, b) => b.count - a.count || a.tag.localeCompare(b.tag)) };
 }
 
+// Every heading in the workspace, for "@" in quick open. Lines count from 0.
+function noteHeadings(c) {
+  if (!c.heads) {
+    c.heads = [];
+    let fence = null;
+    c.text.replace(/^\uFEFF/, '').split('\n').forEach((l, i) => {
+      l = l.replace(/\r$/, '');
+      const f = l.match(/^\s{0,3}(```+|~~~+)/);
+      if (f && (!fence || f[1].startsWith(fence))) { fence = fence ? null : f[1]; return; }
+      const m = !fence && l.match(/^(#{1,6})\s+(.*?)\s*#*\s*$/);
+      if (m && m[2]) c.heads.push({ level: m[1].length, text: m[2], line: i });
+    });
+  }
+  return c.heads;
+}
+
+function listHeadings() {
+  const headings = [];
+  for (const rel of workspaceFiles()) {
+    if (!NOTE_EXT.has(extOf(rel))) continue;
+    const c = cachedText(rel);
+    if (c) for (const h of noteHeadings(c)) headings.push({ path: rel, ...h });
+    if (headings.length >= 50000) break;
+  }
+  return { headings };
+}
+
 // ---------------------------------------------------------------- attachments
 
 const RAW_MIME = {
@@ -1155,6 +1182,7 @@ async function routeApi(method, url, body) {
   if (method === 'POST' && p === '/api/file') return createFile(body || {});
   if (method === 'GET' && p === '/api/search') return search(q('q'));
   if (method === 'GET' && p === '/api/tags') return listTags();
+  if (method === 'GET' && p === '/api/headings') return listHeadings();
   if (method === 'POST' && p === '/api/asset') return saveAsset(body || {});
   if (method === 'POST' && p === '/api/rename') return renamePath(body || {});
   if (method === 'POST' && p === '/api/delete') return deletePath(body || {});
