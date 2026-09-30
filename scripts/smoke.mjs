@@ -28,6 +28,9 @@ fs.writeFileSync(path.join(ws, 'flow.md'), [
   '## Proposal', '', '```flow', 'PR -> Review -> Deploy', '```', '',
 ].join('\n'));
 fs.writeFileSync(path.join(ws, 'sub', 'links.md'), '# Links\n\nSee [[flow#Proposal]].\n');
+// Enough search hits that the results list scrolls.
+fs.mkdirSync(path.join(ws, 'hits'));
+for (let i = 0; i < 12; i++) fs.writeFileSync(path.join(ws, 'hits', `h${i}.md`), Array.from({ length: 5 }, (_, j) => `needle ${i}.${j}`).join('\n\n') + '\n');
 const filler = (p) => Array.from({ length: 10 }, (_, i) => `${p} ${i}`);
 fs.writeFileSync(path.join(ws, 'sub', 'messy.md'), ['#Title', 'text', ...filler('a'), '* one', ...filler('b'), '##Sub', 'more', ...filler('c'), '+ two', ''].join('\n'));
 fs.writeFileSync(path.join(userData, 'config.json'), JSON.stringify({
@@ -222,6 +225,25 @@ await check('a [[note#section]] link opens the note at that section', `
   const at = await until(() => { const v = ta.value; const s = v.lastIndexOf('\\n', ta.selectionStart - 1) + 1; return v.slice(s, v.indexOf('\\n', s)).startsWith('## Proposal') && v.slice(s, v.indexOf('\\n', s)); }, 5000);
   return { at };
 `, (v) => (v?.at === '## Proposal' ? null : 'the link did not land on the section'));
+
+await check('the search results keep their scroll position when one is opened', `
+  $('#activity [data-view="search"]').click();
+  const input = await until(() => $('#search-input'));
+  input.value = 'needle';
+  input.dispatchEvent(new Event('input', { bubbles: true }));
+  const box = $('#search-results');
+  await until(() => box.querySelectorAll('.search-hit').length >= 60);
+  box.scrollTop = box.scrollHeight;
+  const before = box.scrollTop;
+  const hit = [...box.querySelectorAll('.search-hit')].find((x) => x.offsetTop >= before + 20);
+  const name = hit.previousElementSibling && [...box.querySelectorAll('.search-file')].filter((f) => f.offsetTop < hit.offsetTop).pop().title;
+  hit.click();
+  await until(() => $('.tab.active')?.textContent.includes(name.split('/').pop()));
+  await sleep(300);
+  const after = $('#search-results').scrollTop;
+  $('#activity [data-view="files"]').click();
+  return { before, after };
+`, (v) => (v?.before > 0 && Math.abs(v.after - v.before) < 2 ? null : 'the results list jumped'));
 
 await check('a review: pick one change, the count follows, apply writes it', `
   const ta = await openNote('sub/messy.md');

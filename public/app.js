@@ -907,8 +907,7 @@ function highlight(text, q) {
   return frag;
 }
 
-function renderSearchResults() {
-  const box = $('#search-results');
+function renderSearchResults(box = $('#search-results')) {
   if (!box) return;
   const r = S.searchResults;
   if (!r) { box.replaceChildren(h('div', { class: 'empty' }, 'Search file names and contents. Case-insensitive.')); return; }
@@ -930,7 +929,9 @@ function searchPanel() {
   const input = h('input', { class: 'input', id: 'search-input', placeholder: 'Search workspace', value: S.searchQuery,
     oninput: (e) => { S.searchQuery = e.target.value; runSearch(); } });
   const list = h('div', { class: 'panel-body', id: 'search-results' });
-  queueMicrotask(renderSearchResults);
+  // Filled now, not later: renderSidebar puts the scroll position back right
+  // after this, and an empty list would take it back to the top.
+  renderSearchResults(list);
   return [h('div', { class: 'panel-head' }, h('span', { class: 'title' }, 'Search')), h('div', { class: 'search-box' }, input), list];
 }
 
