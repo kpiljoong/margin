@@ -116,18 +116,21 @@ function openDisk() {
   });
   return disk;
 }
-async function diskGet(keys) {
-  const db = await openDisk();
-  if (!db) return [];
-  return new Promise((resolve) => {
+// The disk never holds drawing up: what it hasn't answered within DISK_WAIT
+// is drawn as usual.
+const DISK_WAIT = 200;
+function diskGet(keys) {
+  const read = openDisk().then((db) => (!db ? [] : new Promise((resolve) => {
     try {
       const st = db.transaction('pictures').objectStore('pictures');
       const out = [];
       keys.forEach((k, i) => { const r = st.get(k); r.onsuccess = () => { out[i] = r.result; }; });
       st.transaction.oncomplete = () => resolve(out);
       st.transaction.onerror = () => resolve([]);
+      st.transaction.onabort = () => resolve([]);
     } catch { resolve([]); }
-  });
+  })));
+  return Promise.race([read, new Promise((resolve) => setTimeout(() => resolve([]), DISK_WAIT))]);
 }
 let pruned = false;
 async function diskPut(key, result) {
@@ -224,7 +227,9 @@ export function renderDiagrams(container) {
   const key = themeKey;
   const ordered = todo.length > 1 ? byDistance(todo) : todo;
   const job = queue.then(async () => {
-    // Drawn in an earlier session?
+    // Drawn in an earlier session? (Mermaid loads meanwhile, in case not.)
+    const loading = renderer();
+    loading.catch(() => {}); // reported below, if it is needed
     const kept = await diskGet(ordered.map(({ source }) => key + '\n' + source));
     const left = [];
     ordered.forEach((t, n) => {
@@ -236,7 +241,7 @@ export function renderDiagrams(container) {
       shown[t.i] = result.url;
     });
     if (!left.length) return;
-    await renderer();
+    await loading;
     const config = mermaidConfig(theme.vars);
     for (const { pre, source, raw, i } of left) {
       const ck = key + '\n' + source;
