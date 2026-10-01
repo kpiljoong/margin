@@ -28,6 +28,10 @@ fs.writeFileSync(path.join(ws, 'flow.md'), [
   '## Proposal', '', '```flow', 'PR -> Review -> Deploy', '```', '',
 ].join('\n'));
 fs.writeFileSync(path.join(ws, 'sub', 'links.md'), '# Links\n\nSee [[flow#Proposal]].\n\n> [!tip] Hint\n> Body.\n\n![[flow#Proposal]]\n');
+// A picture larger than any window, for the image viewer.
+fs.mkdirSync(path.join(ws, 'assets'));
+fs.writeFileSync(path.join(ws, 'assets', 'big.svg'), '<svg xmlns="http://www.w3.org/2000/svg" width="3000" height="2000"><rect width="3000" height="2000" fill="#48c"/></svg>');
+fs.writeFileSync(path.join(ws, 'pics.md'), '# Pics\n\n![Big picture](assets/big.svg)\n');
 // Enough search hits that the results list scrolls.
 fs.mkdirSync(path.join(ws, 'hits'));
 for (let i = 0; i < 12; i++) fs.writeFileSync(path.join(ws, 'hits', `h${i}.md`), Array.from({ length: 5 }, (_, j) => `needle ${i}.${j}`).join('\n\n') + '\n');
@@ -259,6 +263,46 @@ await check('@ in quick open finds a heading in any note', `
   const at = ta && await until(() => { const v = ta.value; const s = v.lastIndexOf('\\n', ta.selectionStart - 1) + 1; return v.slice(s, v.indexOf('\\n', s)); }, 3000);
   return { hint, at };
 `, (v) => (v?.hint === 'flow · H2' && v.at === '## Proposal' ? null : 'the heading was not found or not opened'));
+
+await check('a picture in the preview opens larger, fitted; 100%, Esc and a click beside close it', `
+  await openNote('pics.md');
+  const img = await until(() => $$('.preview img').find((x) => x.offsetParent && x.naturalWidth));
+  if (!img) return { error: 'no picture' };
+  img.click();
+  const v = await until(() => $('.viewer'));
+  await until(() => $('.viewer-img')?.naturalWidth);
+  await sleep(100);
+  const fitted = $('.viewer-zoom').textContent;
+  button('100%', v).click();
+  const full = $('.viewer-zoom').textContent;
+  window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }));
+  const escClosed = !$('.viewer');
+  img.click();
+  const stage = (await until(() => $('.viewer-stage')));
+  stage.dispatchEvent(new PointerEvent('pointerdown', { button: 0, bubbles: true, clientX: 5, clientY: 300 }));
+  stage.dispatchEvent(new PointerEvent('pointerup', { button: 0, bubbles: true, clientX: 5, clientY: 300 }));
+  return { title: v.querySelector('.viewer-title').textContent, fitted, full, escClosed, besideClosed: !$('.viewer') };
+`, (v) => (v?.title === 'Big picture' && parseInt(v.fitted, 10) < 100 && v.full === '100%' && v.escClosed && v.besideClosed ? null : 'the picture did not open, fit or close'));
+
+await check('the tree follows the active tab, and the toggle turns it off (and is saved)', `
+  const tabTo = async (name) => { $$('.tab').find((t) => t.textContent.includes(name)).click(); await sleep(250); };
+  const collapse = async () => { const r = $$('#sidebar .tree-row').find((x) => x.title === 'sub'); if ($$('#sidebar .tree-row').some((x) => x.dataset.path?.startsWith('sub/'))) { r.click(); await sleep(150); } };
+  const row = () => $$('#sidebar .tree-row').find((x) => x.dataset.path === 'sub/links.md');
+  await tabTo('pics.md');
+  await collapse();
+  await tabTo('links.md');
+  const r1 = row();
+  const shown = !!r1 && r1.classList.contains('active') && (() => { const b = r1.closest('.panel-body').getBoundingClientRect(); const a = r1.getBoundingClientRect(); return a.top >= b.top && a.bottom <= b.bottom; })();
+  const on = $('.follow-tab').getAttribute('aria-pressed');
+  $('.follow-tab').click(); await sleep(100);
+  const saved = JSON.parse(localStorage.getItem('an.settings')).followTab;
+  await tabTo('pics.md');
+  await collapse();
+  await tabTo('links.md');
+  const stayed = !row();
+  $('.follow-tab').click(); await sleep(100);
+  return { shown, on, saved, stayed, back: JSON.parse(localStorage.getItem('an.settings')).followTab };
+`, (v) => (v?.shown && v.on === 'true' && v.saved === false && v.stayed && v.back === true ? null : 'the tree did not follow, or the toggle did not take'));
 
 await check('the search results keep their scroll position when one is opened', `
   $('#activity [data-view="search"]').click();

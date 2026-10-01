@@ -54,6 +54,7 @@ kbd { font: 11px var(--mono); padding: 1px 5px; border: 1px solid var(--border);
 .tree-row:hover { background: var(--bg-hover); }
 .tree-row.active { background: var(--bg-3); color: var(--accent); }
 .tree-row.located { animation: located 1.2s ease-out; }
+.panel-head .icon-btn.follow-tab.on { color: var(--accent); }
 @keyframes located { from { background: color-mix(in srgb, var(--accent) 35%, transparent); } }
 .tree-row .chev { width: 12px; color: var(--fg-faint); font-size: 10px; text-align: center; }
 .tree-row .name { overflow: hidden; text-overflow: ellipsis; }
@@ -582,6 +583,7 @@ iframe.mermaid-frame { position: fixed; left: -10000px; top: 0; width: 1600px; h
 .viewer-stage.panning { cursor: grabbing; }
 .viewer-img { position: absolute; left: 0; top: 0; transform-origin: 0 0; max-width: none; user-select: none; }
 .md pre.diagram:not(.mmd-embed) img { cursor: zoom-in; }
+.preview :not(a, pre, .drawing-embed, .mmd-embed) > img { cursor: zoom-in; }
 /* "layout: figures": each section's text with its pictures beside it */
 .preview.figures { padding-left: max(28px, calc((100% - 1400px) / 2)); padding-right: max(28px, calc((100% - 1400px) / 2)); container-type: inline-size; }
 .mode-split .preview.figures { padding: 20px 20px; }

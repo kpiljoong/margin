@@ -216,7 +216,8 @@ const DEFAULT_SETTINGS = {
   autosave: true, highlight: true, spellcheck: false, sidebarWidth: 260,
   // Labs: off until turned on in Settings.
   labSteadyDraw: false, labWheelPans: false,
-  treeFollows: false,
+  // The file tree shows the active tab's file (as VS Code's Auto Reveal).
+  followTab: true,
 };
 const ACCENTS = ['#7aa2f7', '#bb9af7', '#2ac3de', '#9ece6a', '#e0af68', '#ff9e64', '#f7768e', '#c0caf5'];
 const LINE_HEIGHTS = { 1.5: 'Compact', 1.7: 'Normal', 1.9: 'Relaxed' };
@@ -235,8 +236,13 @@ const FONTS = {
 const WIDTHS = { narrow: ['Narrow', '640px'], normal: ['Normal', '760px'], wide: ['Wide', '980px'], full: ['Full', '100%'] };
 
 function loadSettings() {
-  try { return { ...DEFAULT_SETTINGS, ...JSON.parse(localStorage.getItem('an.settings') || '{}') }; }
-  catch { return { ...DEFAULT_SETTINGS }; }
+  try {
+    const saved = JSON.parse(localStorage.getItem('an.settings') || '{}');
+    // Before 0.5.17 this was "treeFollows", off unless turned on.
+    if (!('followTab' in saved) && saved.treeFollows) saved.followTab = true;
+    delete saved.treeFollows;
+    return { ...DEFAULT_SETTINGS, ...saved };
+  } catch { return { ...DEFAULT_SETTINGS }; }
 }
 
 function applySettings() {
@@ -530,7 +536,7 @@ function activate(id) {
   navRecord(tab);
   persist();
   render();
-  if (S.settings.treeFollows && (tab.kind === 'file' || tab.kind === 'drawing')) requestAnimationFrame(() => showInTree(tab.path, { quiet: true }));
+  if (S.settings.followTab && (tab.kind === 'file' || tab.kind === 'drawing')) requestAnimationFrame(() => showInTree(tab.path, { quiet: true }));
 }
 
 // ------------------------------------------------------------------ back / forward
@@ -856,10 +862,12 @@ function renderSidebar() {
   const sb = $('#sidebar');
   // The panel is rebuilt on every change: keep its scroll position.
   const keep = sb.dataset.view === S.view ? sb.querySelector('.panel-body')?.scrollTop : 0;
+  const shown = sb.dataset.view !== S.view && S.view === 'files';
   sb.dataset.view = S.view;
   sb.replaceChildren(...(S.view === 'search' ? searchPanel() : S.view === 'agent' ? agentPanel() : S.view === 'git' ? gitPanel() : filesPanel()));
   const body = sb.querySelector('.panel-body');
   if (body && keep) body.scrollTop = keep;
+  if (shown && S.settings.followTab) sb.querySelector('.tree-row.active')?.scrollIntoView({ block: 'nearest' });
   renderActivity();
 }
 
@@ -919,20 +927,35 @@ function locateFile() {
   showInTree(path);
 }
 
-// quiet (the tree following the open file): only if the file tree is
-// showing, only scrolled as far as needed, no flash.
+// quiet (the tree following the active tab): its folders are opened even
+// while the tree is hidden, so it's there when the tree shows; scrolled only
+// as far as needed, and flashed only if the tree had to move to show it.
 function showInTree(path, { quiet = false } = {}) {
-  if (quiet && (S.view !== 'files' || $('#app').classList.contains('no-sidebar'))) return;
-  for (let d = dirname(path); d; d = dirname(d)) S.expanded.add(d);
+  const hidden = S.view !== 'files' || $('#app').classList.contains('no-sidebar');
+  let opened = false;
+  for (let d = dirname(path); d; d = dirname(d)) if (!S.expanded.has(d)) { S.expanded.add(d); opened = true; }
+  if (quiet && hidden) { if (opened) persist(); return; }
   if (!quiet) { S.view = 'files'; $('#app').classList.remove('no-sidebar'); }
   persist();
-  renderSidebar();
+  if (opened || !quiet) renderSidebar();
   const row = [...$('#sidebar').querySelectorAll('.tree-row')].find((r) => r.dataset.path === path);
   if (!row) { if (!quiet) toast('The open file is not in this workspace’s tree'); return; }
+  const body = row.closest('.panel-body');
+  const before = body?.scrollTop;
   row.scrollIntoView({ block: quiet ? 'nearest' : 'center' });
-  if (quiet) return;
+  if (quiet && !opened && body?.scrollTop === before) return;
+  row.classList.remove('located');
+  void row.offsetWidth; // restart the flash
   row.classList.add('located');
   setTimeout(() => row.classList.remove('located'), 1200);
+}
+
+function toggleFollowTab() {
+  setSetting('followTab', !S.settings.followTab);
+  toast(S.settings.followTab ? 'The tree follows the active tab' : 'The tree no longer follows the active tab');
+  renderSidebar();
+  const path = (fileTab() || drawingTab())?.path;
+  if (S.settings.followTab && path) showInTree(path, { quiet: true });
 }
 
 function filesPanel() {
@@ -940,6 +963,7 @@ function filesPanel() {
   const out = [
     h('div', { class: 'panel-head' },
       h('span', { class: 'title', title: S.info?.root }, S.info?.name || 'Workspace'),
+      h('button', { class: `icon-btn follow-tab${S.settings.followTab ? ' on' : ''}`, title: `Follow the active tab: ${S.settings.followTab ? 'on' : 'off'}`, 'aria-pressed': String(!!S.settings.followTab), onclick: toggleFollowTab }, '⇅'),
       h('button', { class: 'icon-btn', title: 'Show the open file in the tree', onclick: locateFile }, '◎'),
       h('button', { class: 'icon-btn', title: 'Today’s journal note', onclick: openDaily }, '◷'),
       h('button', { class: 'icon-btn', title: 'New note', onclick: () => newNote() }, '+'),
@@ -2045,6 +2069,10 @@ function searchFor(q) {
 }
 
 function previewClick(e, tab) {
+  // A picture in the note: shown larger (not a diagram or drawing, which have
+  // their own view, nor a picture that is a link).
+  const pic = e.target.closest('img');
+  if (pic && !pic.closest('a, pre, .drawing-embed, .mmd-embed') && pic.naturalWidth) { viewImage(pic); return; }
   const fold = e.target.closest('.fold-toggle');
   if (fold) {
     const id = fold.parentElement.id;
@@ -2167,6 +2195,7 @@ const COMMANDS = [
   ['Search in workspace', () => showView('search'), { key: 'search' }],
   ['Find in note', () => fileTab()?.editor.openFind(), { key: 'find' }],
   ['Replace in note', () => fileTab()?.editor.openFind({ replace: true }), { key: 'replace' }],
+  ['Toggle: tree follows the active tab', toggleFollowTab],
   ['Go to heading…', () => setTimeout(() => openPalette('#'), 0), '#'],
   ['Go to heading in any note…', () => setTimeout(() => openPalette('@'), 0), '@'],
   ['Go to line…', () => setTimeout(() => openPalette(':'), 0), ':'],
@@ -2415,6 +2444,8 @@ function toggleLightDark() {
 function toggleSidebar() {
   $('#app').classList.toggle('no-sidebar');
   renderActivity();
+  const path = (fileTab() || drawingTab())?.path;
+  if (S.settings.followTab && path && !$('#app').classList.contains('no-sidebar')) showInTree(path, { quiet: true });
 }
 
 function toggleFocusMode() {
@@ -2599,7 +2630,7 @@ function openSettings({ keys = false } = {}) {
         toggle('autosave', 'Autosave', 'Save shortly after you stop typing. Conflicts with outside edits are never overwritten.'),
         toggle('highlight', 'Markdown syntax colors', 'Color headings, emphasis, links and code while editing.'),
         toggle('spellcheck', 'Spellcheck', 'Uses the system dictionary; nothing is sent anywhere.'),
-        toggle('treeFollows', 'Tree follows the open file', 'Switching notes scrolls the file tree to the one you open. Off: use ◎ in the tree.')),
+        toggle('followTab', 'Tree follows the active tab', 'Selecting a tab opens its folders in the file tree and scrolls to it (also ⇅ at the top of the tree). Off: use ◎ in the tree.')),
       h('div', { class: 'set-label' }, 'Labs'),
       h('p', { class: 'set-detail' }, 'Experiments you can turn on and off. They may change or go away.'),
       h('div', { class: 'set-toggles' },
@@ -3122,6 +3153,15 @@ async function savePicture(pic, format = 'png') {
     loadTree();
     toast(`Saved ${r.workspacePath}`, '', { label: 'Open', run: () => openFile(r.workspacePath) });
   } catch (e) { toast(`Could not save: ${e.message}`, 'error'); }
+}
+
+// An image from a note, fitted to the window but never enlarged past its own
+// size; 100% (or a double-click) for every pixel.
+function viewImage(img) {
+  const m = /[?&]path=([^&]+)/.exec(img.getAttribute('src') || '');
+  const path = m ? decodeURIComponent(m[1]) : '';
+  const v = openViewer({ src: img.currentSrc || img.src, title: img.alt || basename(path) || 'Image', maxFit: 1,
+    actions: path ? [{ label: 'Open', title: `Open ${path}`, run: () => { v.close(); openImage(path); } }] : [] });
 }
 
 function viewPicture(pic, title) {

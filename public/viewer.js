@@ -1,6 +1,7 @@
 // A diagram or drawing enlarged over the app: it opens fitted to the window;
 // the wheel (or a pinch) zooms at the pointer, dragging pans, a double-click
-// switches between fitted and 100%; + − 0 1 on the keyboard; Esc closes.
+// switches between fitted and 100%; + − 0 1 on the keyboard; Esc or a click
+// beside the picture closes.
 
 let current = null;
 
@@ -12,7 +13,8 @@ const el = (tag, cls, ...kids) => {
 };
 
 // src: an image URL. actions: [{ label, title, run }] shown in the bar.
-export function openViewer({ src, title = '', actions = [] }) {
+// maxFit: how far fitting may enlarge a small picture (1: never, for photos).
+export function openViewer({ src, title = '', actions = [], maxFit = 2 }) {
   current?.close();
   const img = el('img', 'viewer-img');
   img.alt = title;
@@ -50,7 +52,7 @@ export function openViewer({ src, title = '', actions = [] }) {
   function fit() {
     const r = stage.getBoundingClientRect();
     const [w, h] = size();
-    k = Math.max(0.05, Math.min(2, (r.width - 48) / w, (r.height - 48) / h));
+    k = Math.max(0.05, Math.min(maxFit, (r.width - 48) / w, (r.height - 48) / h));
     x = (r.width - w * k) / 2;
     y = (r.height - h * k) / 2;
     fitted = true;
@@ -77,19 +79,24 @@ export function openViewer({ src, title = '', actions = [] }) {
   let drag = null;
   stage.addEventListener('pointerdown', (e) => {
     if (e.button !== 0) return;
-    drag = { px: e.clientX, py: e.clientY, x, y };
-    stage.setPointerCapture(e.pointerId);
+    drag = { px: e.clientX, py: e.clientY, x, y, moved: false, beside: e.target !== img };
+    try { stage.setPointerCapture(e.pointerId); } catch { /* not a live pointer */ }
     stage.classList.add('panning');
   });
   stage.addEventListener('pointermove', (e) => {
     if (!drag) return;
+    if (Math.abs(e.clientX - drag.px) + Math.abs(e.clientY - drag.py) > 4) drag.moved = true;
     x = drag.x + e.clientX - drag.px;
     y = drag.y + e.clientY - drag.py;
     fitted = false;
     apply();
   });
   const endDrag = () => { drag = null; stage.classList.remove('panning'); };
-  stage.addEventListener('pointerup', endDrag);
+  stage.addEventListener('pointerup', () => {
+    const clickedBeside = drag && drag.beside && !drag.moved;
+    endDrag();
+    if (clickedBeside) close();
+  });
   stage.addEventListener('pointercancel', endDrag);
   stage.addEventListener('dblclick', (e) => {
     const r = stage.getBoundingClientRect();
