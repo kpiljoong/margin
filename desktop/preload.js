@@ -25,6 +25,10 @@ contextBridge.exposeInMainWorld('agentNotesDesktop', {
   getShortcuts: () => ipcRenderer.invoke('desktop:get-shortcuts'),
   setShortcuts: (custom) => ipcRenderer.invoke('desktop:set-shortcuts', custom),
   recordingKeys: (on) => ipcRenderer.send('desktop:recording-keys', !!on),
+  // The page's small settings, kept in the app's config (see main.js): a
+  // snapshot as the page starts (null the first time), and changes.
+  pageStore: () => ipcRenderer.sendSync('desktop:page-store'),
+  pageStoreSet: (entries) => ipcRenderer.send('desktop:page-store-set', entries),
   // The UI loaded: tells the launcher this app version works.
   uiReady: () => ipcRenderer.send('desktop:ui-ready'),
 });

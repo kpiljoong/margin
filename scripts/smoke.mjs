@@ -18,7 +18,7 @@ const PORT = 9400 + Math.floor(Math.random() * 400);
 const keep = process.argv.includes('--keep');
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'margin-smoke-'));
 const userData = path.join(tmp, 'user-data');
-const ws = path.join(tmp, 'notes');
+const ws = path.join(tmp, 'notes (노트)'); // settings keys hold this path: any characters
 fs.mkdirSync(userData);
 fs.mkdirSync(path.join(ws, 'sub'), { recursive: true });
 
@@ -32,6 +32,9 @@ fs.writeFileSync(path.join(ws, 'sub', 'links.md'), '# Links\n\nSee [[flow#Propos
 fs.mkdirSync(path.join(ws, 'assets'));
 fs.writeFileSync(path.join(ws, 'assets', 'big.svg'), '<svg xmlns="http://www.w3.org/2000/svg" width="3000" height="2000"><rect width="3000" height="2000" fill="#48c"/></svg>');
 fs.writeFileSync(path.join(ws, 'pics.md'), '# Pics\n\n![Big picture](assets/big.svg)\n');
+// A note template.
+fs.mkdirSync(path.join(ws, 'templates'));
+fs.writeFileSync(path.join(ws, 'templates', 'Meeting.md'), '# {{title}}\n\nDate: {{date:YYYY}}\n\n## Notes\n\n{{cursor}}\n');
 // Enough search hits that the results list scrolls.
 fs.mkdirSync(path.join(ws, 'hits'));
 for (let i = 0; i < 12; i++) fs.writeFileSync(path.join(ws, 'hits', `h${i}.md`), Array.from({ length: 5 }, (_, j) => `needle ${i}.${j}`).join('\n\n') + '\n');
@@ -277,6 +280,19 @@ await check('a callout shows, and a link shows its section on hover', `
   return { callout, shown, gone: !$('.link-preview') };
 `, (v) => (v?.callout?.[0] === 'callout callout-tip' && v.callout[1] === 'Hint' && v.shown?.head === 'flow › Proposal' && /Proposal/.test(v.shown.text) && !/Waiting/.test(v.shown.text) && v.gone ? null : 'no callout, or the hover preview was wrong'));
 
+await check('⌘/Ctrl-click on a link in the editor follows it', `
+  const ta = await openNote('sub/links.md');
+  const mac = navigator.platform.startsWith('Mac');
+  const at = ta.value.indexOf('[[flow#Proposal]]') + 4;
+  ta.focus();
+  ta.setSelectionRange(at, at);
+  ta.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, button: 0, metaKey: mac, ctrlKey: !mac }));
+  const ta2 = await until(() => $('.tab.active')?.textContent.includes('flow.md') && $$('.editor-wrap textarea').find((t) => t.offsetParent));
+  const line = ta2 && await until(() => { const v = ta2.value; const s = v.lastIndexOf('\\n', ta2.selectionStart - 1) + 1; const l = v.slice(s, v.indexOf('\\n', s)); return l.startsWith('## Proposal') && l; }, 5000);
+  await openNote('sub/links.md');
+  return { line };
+`, (v) => (v?.line === '## Proposal' ? null : 'the link was not followed'));
+
 await check('![[note#section]] shows that section in place', `
   const p = $$('.preview').find((x) => x.offsetParent && x.querySelector('.callout'));
   const box = await until(() => p.querySelector('div.note-embed'));
@@ -330,14 +346,64 @@ await check('the tree follows the active tab, and the toggle turns it off (and i
   const shown = !!r1 && r1.classList.contains('active') && (() => { const b = r1.closest('.panel-body').getBoundingClientRect(); const a = r1.getBoundingClientRect(); return a.top >= b.top && a.bottom <= b.bottom; })();
   const on = $('.follow-tab').getAttribute('aria-pressed');
   $('.follow-tab').click(); await sleep(100);
-  const saved = JSON.parse(localStorage.getItem('an.settings')).followTab;
+  const saved = JSON.parse((await import('/store.js')).store.getItem('an.settings')).followTab;
   await tabTo('pics.md');
   await collapse();
   await tabTo('links.md');
   const stayed = !row();
   $('.follow-tab').click(); await sleep(100);
-  return { shown, on, saved, stayed, back: JSON.parse(localStorage.getItem('an.settings')).followTab };
+  return { shown, on, saved, stayed, back: JSON.parse((await import('/store.js')).store.getItem('an.settings')).followTab };
 `, (v) => (v?.shown && v.on === 'true' && v.saved === false && v.stayed && v.back === true ? null : 'the tree did not follow, or the toggle did not take'));
+
+await check('a bookmarked file shows at the top of the tree, opens, and can be removed', `
+  const menu = async (row, label) => { row.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: 50, clientY: 50 })); (await until(() => $$('.ctx-item').find((b) => b.textContent === label))).click(); await sleep(100); };
+  $$('.tab').find((t) => t.textContent.includes('links.md')).click(); await sleep(150);
+  await menu($$('#sidebar .tree-row').find((x) => x.dataset.path === 'pics.md'), 'Bookmark');
+  await menu($$('#sidebar .tree-row').find((x) => x.dataset.path === 'sub/links.md'), 'Bookmark');
+  const marks = () => $$('#sidebar .bookmark-row').map((r) => r.title);
+  const first = $('#sidebar .panel-body .tree-row');
+  const top = first?.classList.contains('bookmark-row') && first.title === 'pics.md';
+  const both = marks().join();
+  first.click();
+  const opened = !!(await until(() => $('.tab.active')?.textContent.includes('pics.md')));
+  const active = $('#sidebar .bookmark-row.active')?.title;
+  await menu($$('#sidebar .bookmark-row').find((r) => r.title === 'sub/links.md'), 'Remove bookmark');
+  return { top, both, opened, active, left: marks().join() };
+`, (v) => (v?.top && v.both === 'pics.md,sub/links.md' && v.opened && v.active === 'pics.md' && v.left === 'pics.md' ? null : 'the bookmark was not shown, opened or removed'));
+
+await check('a new note from a template has its title, date and caret filled in', `
+  const folder = $$('#sidebar .tree-row').find((x) => x.title === 'sub' && !x.dataset.path);
+  folder.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: 50, clientY: 50 }));
+  (await until(() => $$('.ctx-item').find((b) => b.textContent === 'New note from template here…'))).click();
+  const pick = await until(() => !$('#overlay').hidden && $$('#overlay .palette-item').find((x) => /Meeting/.test(x.textContent)) && $('#overlay input'));
+  pick.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }));
+  const name = await until(() => $('#overlay .dialog input'));
+  const asked = name?.value;
+  name.value = 'sub/Standup';
+  name.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }));
+  const ta = await until(() => $('.tab.active')?.textContent.includes('Standup') && $$('.editor-wrap textarea').find((t) => t.offsetParent));
+  await sleep(200);
+  return { asked, text: ta?.value, caret: ta && ta.value.slice(0, ta.selectionStart) };
+`, (v) => (v?.asked === 'sub/' && v.text === `# Standup\n\nDate: ${new Date().getFullYear()}\n\n## Notes\n\n\n` && v.caret === v.text.slice(0, -1) ? null : 'the template was not filled in'));
+
+await check('drawn diagrams are kept on disk for the next start', `
+  const db = await new Promise((res, rej) => { const r = indexedDB.open('margin-diagrams'); r.onsuccess = () => res(r.result); r.onerror = () => rej(r.error); });
+  const n = await new Promise((res) => { const q = db.transaction('pictures').objectStore('pictures').count(); q.onsuccess = () => res(q.result); });
+  db.close();
+  return { n };
+`, (v) => (v?.n >= 2 ? null : 'nothing was kept'));
+
+// The settings went to the app's config, not just this port's browser storage.
+{
+  await sleep(600);
+  let page = null;
+  try { page = JSON.parse(fs.readFileSync(path.join(userData, 'config.json'), 'utf8')).page; } catch { /* none */ }
+  const marks = Object.entries(page || {}).find(([k]) => k.startsWith('an.bookmarks.'))?.[1];
+  const ok = JSON.parse(page?.['an.settings'] || '{}').followTab === true && marks === '["pics.md"]';
+  results.push({ name: 'settings and bookmarks are kept in the app config', ok });
+  console.log(`${ok ? '✓' : '✗'} settings and bookmarks are kept in the app config${ok ? '' : `\n    got: ${JSON.stringify(page)?.slice(0, 300)}`}`);
+  if (!ok) failed = true;
+}
 
 await check('the search results keep their scroll position when one is opened', `
   $('#activity [data-view="search"]').click();

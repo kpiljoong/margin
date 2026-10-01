@@ -1,4 +1,7 @@
 import { renderMarkdown, outline, slug } from './markdown.js';
+import { store } from './store.js';
+import { linkAt } from './links.js';
+import { fillTemplate, isTemplate, TEMPLATE_DIR } from './templates.js';
 import { MarkdownEditor, setEditorKeys } from './editor.js';
 import { renderDiagrams } from './diagrams.js';
 import { flowToMermaid, flowsAsMermaid, parseFlow, isStepText, flowStepNames, nameKey, flowTour, flowLineAt } from './flow.js';
@@ -41,13 +44,13 @@ applyKeys();
 const kbd = (id) => keyLabel(KEYS[id] || '', isMac);
 const withKey = (text, id) => (kbd(id) ? `${text} (${kbd(id)})` : text);
 async function loadShortcuts() {
-  try { customKeys = (desktop?.getShortcuts ? await desktop.getShortcuts() : JSON.parse(localStorage.getItem('an.shortcuts') || '{}')) || {}; } catch { customKeys = {}; }
+  try { customKeys = (desktop?.getShortcuts ? await desktop.getShortcuts() : JSON.parse(store.getItem('an.shortcuts') || '{}')) || {}; } catch { customKeys = {}; }
   applyKeys();
 }
 async function saveShortcuts(keys) {
   customKeys = customOnly(keyDefs(), keys, isMac);
   applyKeys();
-  if (!desktop?.setShortcuts) { localStorage.setItem('an.shortcuts', JSON.stringify(customKeys)); return; }
+  if (!desktop?.setShortcuts) { store.setItem('an.shortcuts', JSON.stringify(customKeys)); return; }
   const r = await desktop.setShortcuts(customKeys);
   if (r && r.quickCapture === false) toast(`${kbd('quick-capture')} is taken by another app: quick capture has no system-wide shortcut now.`, 'error');
 }
@@ -181,9 +184,9 @@ const timeAgo = (iso) => {
 const S = {
   info: null,
   files: [],
-  expanded: new Set(JSON.parse(localStorage.getItem('an.expanded') || '[]')),
-  view: localStorage.getItem('an.view') || 'files',
-  mode: localStorage.getItem('an.mode') || 'split',
+  expanded: new Set(JSON.parse(store.getItem('an.expanded') || '[]')),
+  view: store.getItem('an.view') || 'files',
+  mode: store.getItem('an.mode') || 'split',
   tabs: [],
   active: null,
   runs: [],
@@ -196,15 +199,16 @@ const S = {
   tags: [],
   dirs: [],
   recent: [],
+  bookmarks: [], // paths, in the order they were added
   settings: null, // loaded below
 };
 
 // Editor groups (panes). Each tab belongs to one group; each group has its
 // own active tab and view mode. At most two groups, side by side.
-S.groups = [{ active: null, mode: localStorage.getItem('an.mode') || 'split' }];
+S.groups = [{ active: null, mode: store.getItem('an.mode') || 'split' }];
 S.focus = 0;
 const attachedByGroup = [null, null]; // file tab whose editor is in each pane
-let splitRatio = Number(localStorage.getItem('an.splitRatio')) || 0.5; // left pane's share in a split
+let splitRatio = Number(store.getItem('an.splitRatio')) || 0.5; // left pane's share in a split
 const isAttached = (tab) => attachedByGroup[tab.group] === tab;
 const groupMode = (tab) => (tab?.kind === 'file' && isMermaidFile(tab.path) ? tab.mmdMode || 'preview' : S.groups[tab?.group ?? S.focus]?.mode || S.mode);
 
@@ -225,7 +229,7 @@ const themePair = () => ({ light: S.settings.systemLight, dark: S.settings.syste
 const currentTheme = () => resolveTheme(S.settings.theme, themePair());
 
 function loadCustomThemes() {
-  try { setCustomThemes(JSON.parse(localStorage.getItem('an.customThemes') || '[]')); } catch { setCustomThemes([]); }
+  try { setCustomThemes(JSON.parse(store.getItem('an.customThemes') || '[]')); } catch { setCustomThemes([]); }
 }
 loadCustomThemes();
 const FONTS = {
@@ -237,7 +241,7 @@ const WIDTHS = { narrow: ['Narrow', '640px'], normal: ['Normal', '760px'], wide:
 
 function loadSettings() {
   try {
-    const saved = JSON.parse(localStorage.getItem('an.settings') || '{}');
+    const saved = JSON.parse(store.getItem('an.settings') || '{}');
     // Before 0.5.17 this was "treeFollows", off unless turned on.
     if (!('followTab' in saved) && saved.treeFollows) saved.followTab = true;
     delete saved.treeFollows;
@@ -265,7 +269,7 @@ S.settings = loadSettings();
 
 function setSetting(key, value) {
   S.settings[key] = value;
-  localStorage.setItem('an.settings', JSON.stringify(S.settings));
+  store.setItem('an.settings', JSON.stringify(S.settings));
   applySettings();
   renderStatus();
 }
@@ -277,10 +281,10 @@ const fileTab = () => { const t = activeTab(); return t && t.kind === 'file' ? t
 const drawingTab = () => { const t = activeTab(); return t && t.kind === 'drawing' ? t : null; };
 const isDoc = (t) => !!t && (t.kind === 'file' || t.kind === 'drawing'); // tabs that stand for a file
 const persist = () => {
-  localStorage.setItem('an.expanded', JSON.stringify([...S.expanded]));
-  localStorage.setItem('an.view', S.view);
-  localStorage.setItem('an.mode', S.groups[0].mode);
-  localStorage.setItem(`an.tabs.${S.info?.root}`, JSON.stringify({
+  store.setItem('an.expanded', JSON.stringify([...S.expanded]));
+  store.setItem('an.view', S.view);
+  store.setItem('an.mode', S.groups[0].mode);
+  store.setItem(`an.tabs.${S.info?.root}`, JSON.stringify({
     groups: S.groups.map((g, i) => ({
       open: S.tabs.filter((t) => isDoc(t) && t.group === i).map((t) => t.path),
       active: isDoc(activeIn(i)) ? activeIn(i).path : null,
@@ -488,8 +492,9 @@ function previewLinkHover(e, tab) {
 // The editor: a [[link]] under the pointer while ⌘/Ctrl is held. The coloured
 // layer under the text has a span for each link.
 function editorLinkHover(e, ed, tab) {
-  if (!(isMac ? e.metaKey : e.ctrlKey)) { if (linkPop.el || linkPop.timer) leaveLinkPreview(); return; }
+  if (!(isMac ? e.metaKey : e.ctrlKey)) { ed.ta.classList.remove('over-link'); if (linkPop.el || linkPop.timer) leaveLinkPreview(); return; }
   const span = [...ed.hlLayer.querySelectorAll('.md-wikilink')].find((sp) => [...sp.getClientRects()].some((r) => e.clientX >= r.left && e.clientX <= r.right && e.clientY >= r.top && e.clientY <= r.bottom));
+  ed.ta.classList.toggle('over-link', !!span);
   if (!span) { leaveLinkPreview(); return; }
   if (span.previousElementSibling?.textContent.startsWith('!')) return; // an embed
   hoverLink(span.textContent.split('|')[0], tab.path, span.getBoundingClientRect());
@@ -520,7 +525,7 @@ async function openFile(path, { line, focus = true, group, side = false, text = 
   else if (focus) requestAnimationFrame(() => { if (isAttached(tab)) tab.editor.focus(); });
   for (let d = dirname(path); d; d = dirname(d)) S.expanded.add(d);
   S.recent = [path, ...S.recent.filter((p) => p !== path)].slice(0, 30);
-  localStorage.setItem(`an.recent.${S.info?.root}`, JSON.stringify(S.recent));
+  store.setItem(`an.recent.${S.info?.root}`, JSON.stringify(S.recent));
   loadBacklinks(path);
 }
 
@@ -734,15 +739,63 @@ async function syncTabs(tabs) {
 
 const syncOpenTabs = () => syncTabs(S.tabs.filter(isDoc));
 
-async function newNote(folder) {
-  const base = folder ?? (fileTab() ? dirname(fileTab().path) : '');
-  const name = await askText({ title: 'New note', label: 'Path relative to the workspace. “.md” is added if missing.', value: base ? `${base}/` : '', placeholder: 'folder/My note', okLabel: 'Create' });
+async function newNote(folder, template) {
+  const base = folder ?? (fileTab() && !isTemplate(fileTab().path) ? dirname(fileTab().path) : '');
+  const name = await askText({ title: template ? `New note from “${stem(template)}”` : 'New note', label: 'Path relative to the workspace. “.md” is added if missing.', value: base ? `${base}/` : '', placeholder: 'folder/My note', okLabel: 'Create' });
   if (!name || name.endsWith('/')) return;
   try {
-    const f = await api('POST', '/api/file', { path: name });
+    const filled = template ? await templateText(template, basename(name).replace(/\.md$/i, '')) : null;
+    const f = await api('POST', '/api/file', { path: name, content: filled?.text });
     await loadTree();
-    openFile(f.path);
+    await openFile(f.path);
+    if (filled?.cursor != null) placeCursor(f.path, filled.cursor);
   } catch (e) { toast(e.message, 'error'); }
+}
+
+// Templates: the notes in templates/ (see templates.js).
+const templateFiles = () => S.files.filter((f) => f.note && isTemplate(f.path)).sort((a, b) => a.path.localeCompare(b.path));
+async function templateText(path, title) {
+  const open = S.tabs.find((t) => t.kind === 'file' && t.path === path);
+  const src = open ? open.content : (await api('GET', `/api/file?path=${encodeURIComponent(path)}`)).content.replace(/\r\n/g, '\n');
+  return fillTemplate(src, { title });
+}
+function placeCursor(path, offset) {
+  const tab = S.tabs.find((t) => t.kind === 'file' && t.path === path);
+  if (!tab?.editor) return;
+  requestAnimationFrame(() => { tab.editor.selectRange(offset, offset); tab.editor.scrollToOffset(offset); });
+}
+// Choose a template, then do this with it.
+function pickTemplate(then, placeholder = 'New note from template…') {
+  const all = templateFiles();
+  if (!all.length) {
+    toast(`No templates yet: notes in the ${TEMPLATE_DIR}/ folder are templates`, '', { label: 'Create one', run: createTemplate });
+    return;
+  }
+  picker({
+    placeholder,
+    source: (q) => all.map((f) => ({ f, m: fuzzy(q, stem(f.path)) })).filter((x) => x.m).map(({ f, m }) => ({
+      icon: '❏', label: marked(stem(f.path), m.idx), hint: dirname(f.path), run: () => then(f.path),
+    })),
+  });
+}
+async function createTemplate() {
+  const p = `${TEMPLATE_DIR}/Template.md`;
+  try {
+    if (!S.files.some((f) => f.path === p)) await api('POST', '/api/file', { path: p, content: '# {{title}}\n\nCreated {{date}} {{time}}\n\n{{cursor}}\n' });
+    await loadTree();
+    openFile(p);
+  } catch (e) { toast(e.message, 'error'); }
+}
+// Insert a template at the caret in the open note.
+async function insertTemplate(path) {
+  const tab = fileTab();
+  if (!tab?.editor) { toast('No note is open'); return; }
+  const { text, cursor } = await templateText(path, stem(tab.path));
+  const ed = tab.editor;
+  const at = ed.ta.selectionStart;
+  ed.replace(at, ed.ta.selectionEnd, text);
+  if (cursor != null) ed.selectRange(at + cursor, at + cursor);
+  ed.focus();
 }
 
 const todayPath = () => {
@@ -755,15 +808,15 @@ const todayPath = () => {
 function quickCapture() {
   const overlay = $('#overlay');
   const close = () => { overlay.hidden = true; overlay.replaceChildren(); };
-  let target = localStorage.getItem('an.captureTarget') || 'inbox';
+  let target = store.getItem('an.captureTarget') || 'inbox';
   const text = h('textarea', { class: 'capture-text', placeholder: 'Capture a thought, task or link…', rows: 3 });
-  const asTask = h('input', { type: 'checkbox', checked: localStorage.getItem('an.captureTask') !== 'false' });
+  const asTask = h('input', { type: 'checkbox', checked: store.getItem('an.captureTask') !== 'false' });
   const opt = (value, label) => h('label', {}, h('input', { type: 'radio', name: 'capture-target', value, checked: target === value, onchange: () => { target = value; } }), label);
   const save = async () => {
     const line = text.value.trim();
     if (!line) { close(); return; }
-    localStorage.setItem('an.captureTarget', target);
-    localStorage.setItem('an.captureTask', String(asTask.checked));
+    store.setItem('an.captureTarget', target);
+    store.setItem('an.captureTask', String(asTask.checked));
     const p = target === 'journal' ? todayPath() : 'Inbox.md';
     const time = new Date().toTimeString().slice(0, 5);
     const entry = line.split('\n').map((l, i) => (i === 0 ? `- ${asTask.checked ? '[ ] ' : ''}${target === 'journal' ? `${time} ` : ''}${l}` : `  ${l}`)).join('\n');
@@ -799,12 +852,21 @@ function quickCapture() {
   text.focus();
 }
 
+// A new journal note uses templates/Daily.md (or Journal.md) if there is one.
 async function openDaily() {
   const p = todayPath();
+  let cursor = null;
   if (!S.files.some((f) => f.path === p)) {
-    try { await api('POST', '/api/file', { path: p }); await loadTree(); } catch (e) { return toast(e.message, 'error'); }
+    try {
+      const t = templateFiles().find((f) => /^(daily|journal)\.md$/i.test(basename(f.path)));
+      const filled = t ? await templateText(t.path, stem(p)) : null;
+      cursor = filled?.cursor ?? null;
+      await api('POST', '/api/file', { path: p, content: filled?.text });
+      await loadTree();
+    } catch (e) { return toast(e.message, 'error'); }
   }
-  openFile(p);
+  await openFile(p);
+  if (cursor != null) placeCursor(p, cursor);
 }
 
 const escRe = (x) => x.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
@@ -867,7 +929,7 @@ function renderSidebar() {
   sb.replaceChildren(...(S.view === 'search' ? searchPanel() : S.view === 'agent' ? agentPanel() : S.view === 'git' ? gitPanel() : filesPanel()));
   const body = sb.querySelector('.panel-body');
   if (body && keep) body.scrollTop = keep;
-  if (shown && S.settings.followTab) sb.querySelector('.tree-row.active')?.scrollIntoView({ block: 'nearest' });
+  if (shown && S.settings.followTab) sb.querySelector('.tree-row.active[data-path]')?.scrollIntoView({ block: 'nearest' });
   renderActivity();
 }
 
@@ -950,6 +1012,54 @@ function showInTree(path, { quiet = false } = {}) {
   setTimeout(() => row.classList.remove('located'), 1200);
 }
 
+// Bookmarks: files kept at the top of the tree, per workspace. One that is
+// gone (deleted, or not there yet) stays bookmarked but isn't shown.
+const isBookmarked = (path) => S.bookmarks.includes(path);
+function saveBookmarks() { store.setItem(`an.bookmarks.${S.info?.root}`, JSON.stringify(S.bookmarks)); }
+function toggleBookmark(path) {
+  if (!path) { toast('No file is open'); return; }
+  const on = !isBookmarked(path);
+  S.bookmarks = on ? [...S.bookmarks, path] : S.bookmarks.filter((p) => p !== path);
+  saveBookmarks();
+  toast(on ? `Bookmarked ${basename(path)}` : `Removed the bookmark on ${basename(path)}`);
+  renderSidebar();
+}
+function moveBookmark(path, by) {
+  const i = S.bookmarks.indexOf(path);
+  const j = i + by;
+  if (i < 0 || j < 0 || j >= S.bookmarks.length) return;
+  const b = [...S.bookmarks];
+  [b[i], b[j]] = [b[j], b[i]];
+  S.bookmarks = b;
+  saveBookmarks();
+  renderSidebar();
+}
+function bookmarkRows() {
+  const files = new Map(S.files.map((f) => [f.path, f]));
+  const shown = S.bookmarks.filter((p) => files.has(p));
+  if (!shown.length) return [];
+  const active = (fileTab() || drawingTab())?.path;
+  return [h('div', { class: 'section-label' }, 'Bookmarks'), ...shown.map((p, i) => {
+    const f = files.get(p);
+    const name = f.note ? stem(p) : basename(p);
+    const row = h('div', { class: `tree-row bookmark-row${p === active ? ' active' : ''}`, title: p, 'data-bookmark': p,
+      onclick: (e) => (/\.(png|jpe?g|gif|webp|avif|svg|bmp)$/i.test(p) ? openImage(p) : openFile(p, { side: e.metaKey || e.ctrlKey })),
+      oncontextmenu: (e) => contextMenu(e, [
+        { label: 'Open', run: () => openFile(p) },
+        f.note ? { label: 'Open to the side', key: `${MOD}click`, run: () => openFile(p, { side: true }) } : null,
+        { label: 'Show in the tree', run: () => showInTree(p) },
+        '-',
+        i > 0 ? { label: 'Move up', run: () => moveBookmark(p, -1) } : null,
+        i < shown.length - 1 ? { label: 'Move down', run: () => moveBookmark(p, 1) } : null,
+        { label: 'Remove bookmark', run: () => toggleBookmark(p) },
+      ]) },
+    h('span', { class: 'chev' }, '★'), h('span', { class: 'name' }, name),
+    dirname(p) ? h('span', { class: 'bookmark-dir' }, dirname(p)) : null);
+    row.style.paddingLeft = '8px';
+    return row;
+  }), h('div', { class: 'section-label' }, 'Files')];
+}
+
 function toggleFollowTab() {
   setSetting('followTab', !S.settings.followTab);
   toast(S.settings.followTab ? 'The tree follows the active tab' : 'The tree no longer follows the active tab');
@@ -972,6 +1082,7 @@ function filesPanel() {
   ];
   const body = h('div', { class: 'panel-body' });
   const rows = treeRows(buildTree(S.files), 0, []);
+  body.append(...bookmarkRows());
   body.append(...(rows.length ? rows : [h('div', { class: 'empty' }, 'No files yet. Create a note with +.')]));
   if (S.tags.length) {
     body.append(h('div', { class: 'section-label' }, `Tags (${S.tags.length})`),
@@ -1151,7 +1262,7 @@ function setSplitRatio(r, save = false) {
   splitRatio = Math.max(0.15, Math.min(0.85, r));
   const first = $('#panes')?.children[0];
   if (first) first.style.flexGrow = S.groups.length > 1 ? String(splitRatio / (1 - splitRatio)) : '';
-  if (save) localStorage.setItem('an.splitRatio', String(splitRatio));
+  if (save) store.setItem('an.splitRatio', String(splitRatio));
   placeFramesSoon();
 }
 function resizePanes(e) {
@@ -1176,7 +1287,7 @@ const paneEl = (g) => $(`#panes .pane[data-g="${g}"]`);
 
 // Width of the editor next to the preview or canvas, as a share of the
 // note's area; remembered separately for split and canvas.
-const editorRatio = (() => { try { return JSON.parse(localStorage.getItem('an.editorRatio')) || {}; } catch { return {}; } })();
+const editorRatio = (() => { try { return JSON.parse(store.getItem('an.editorRatio')) || {}; } catch { return {}; } })();
 const wrapMode = (wrap) => (wrap.classList.contains('mode-canvas') ? 'canvas' : 'split');
 function setEditorRatio(wrap, r, save = false) {
   r = Math.max(0.2, Math.min(0.8, r));
@@ -1185,7 +1296,7 @@ function setEditorRatio(wrap, r, save = false) {
   wrap.style.setProperty('--ed-at', `${r * 100}%`);
   if (save) {
     editorRatio[wrapMode(wrap)] = r;
-    localStorage.setItem('an.editorRatio', JSON.stringify(editorRatio));
+    store.setItem('an.editorRatio', JSON.stringify(editorRatio));
   }
   placeFramesSoon();
 }
@@ -1443,6 +1554,7 @@ function editorFor(tab) {
   ed.setOptions({ highlight: S.settings.highlight, spellcheck: S.settings.spellcheck });
   tab.editor = ed;
   ed.ta.addEventListener('mousemove', (e) => editorLinkHover(e, ed, tab));
+  ed.ta.addEventListener('click', (e) => editorLinkClick(e, ed, tab));
   ed.ta.addEventListener('mouseleave', () => { if (linkPop.el || linkPop.timer) leaveLinkPreview(); });
   return ed;
 }
@@ -2112,15 +2224,45 @@ function previewClick(e, tab) {
   // Markdown links may be URL-encoded ("my%20note.md#next-steps").
   let link = target;
   if (a.dataset.href) try { link = decodeURIComponent(target); } catch { /* keep as written */ }
-  followLink(link, tab.path).then(async (found) => {
-    if (found) return;
-    // A new note is named without the section.
-    const name = splitLink(link).note;
-    if (!name) { toast('No such note'); return; }
-    if (!(await askConfirm(`"${name}" doesn't exist yet. Create it?`, { okLabel: 'Create' }))) return;
-    const p = a.dataset.target ? `${dirname(tab.path) ? `${dirname(tab.path)}/` : ''}${name}` : [dirname(tab.path), name].filter(Boolean).join('/');
-    api('POST', '/api/file', { path: p }).then((f) => loadTree().then(() => openFile(f.path))).catch((err) => toast(err.message, 'error'));
-  });
+  followOrCreate(link, tab.path);
+}
+
+// Follow a link from a note; one to a note that doesn't exist offers to
+// create it, next to this one.
+async function followOrCreate(link, fromPath) {
+  if (await followLink(link, fromPath)) return;
+  // A new note is named without the section.
+  const name = splitLink(link).note;
+  if (!name) { toast('No such note'); return; }
+  if (!(await askConfirm(`"${name}" doesn't exist yet. Create it?`, { okLabel: 'Create' }))) return;
+  const p = [dirname(fromPath), name].filter(Boolean).join('/');
+  api('POST', '/api/file', { path: p }).then((f) => loadTree().then(() => openFile(f.path))).catch((err) => toast(err.message, 'error'));
+}
+
+// ⌘/Ctrl-click in the editor follows the link under the pointer (the click
+// has already put the caret there).
+function editorLinkClick(e, ed, tab) {
+  if (!(isMac ? e.metaKey : e.ctrlKey) || e.shiftKey || e.altKey || e.button !== 0) return;
+  const text = ed.value;
+  const pos = ed.ta.selectionStart;
+  if (pos !== ed.ta.selectionEnd) return; // a selection being made
+  const start = text.lastIndexOf('\n', pos - 1) + 1;
+  const end = text.indexOf('\n', pos);
+  const l = linkAt(text.slice(start, end < 0 ? text.length : end), pos - start);
+  if (!l) return;
+  e.preventDefault();
+  hideLinkPreview();
+  if (l.kind === 'url' || /^(https?:|mailto:)/i.test(l.target)) { window.open(l.target, '_blank', 'noopener,noreferrer'); return; }
+  if (/^[a-z][\w+.-]*:/i.test(l.target)) return; // javascript:, file: … never
+  if (l.kind === 'wiki') { followOrCreate(l.target, tab.path); return; }
+  let target = l.target;
+  try { target = decodeURIComponent(target); } catch { /* as written */ }
+  if (l.image) {
+    const m = /[?&]path=([^&]+)/.exec(localImage(l.target, tab.path) || '');
+    if (m) openImage(decodeURIComponent(m[1]));
+    return;
+  }
+  followOrCreate(target, tab.path);
 }
 
 function renderStatus() {
@@ -2187,6 +2329,8 @@ function marked(text, idx) {
 
 const COMMANDS = [
   ['New note', () => newNote()],
+  ['New note from template…', () => setTimeout(() => pickTemplate((t) => newNote(undefined, t)), 0)],
+  ['Insert template…', () => setTimeout(() => pickTemplate(insertTemplate, 'Insert template…'), 0)],
   ['Open today’s journal note', openDaily],
   ['Quick capture…', () => setTimeout(quickCapture, 0), desktop ? { key: 'quick-capture' } : undefined],
   ['Delegate a task to the agent…', () => openTaskDialog(), { key: 'delegate' }],
@@ -2196,6 +2340,7 @@ const COMMANDS = [
   ['Find in note', () => fileTab()?.editor.openFind(), { key: 'find' }],
   ['Replace in note', () => fileTab()?.editor.openFind({ replace: true }), { key: 'replace' }],
   ['Toggle: tree follows the active tab', toggleFollowTab],
+  ['Bookmark / remove bookmark for this file', () => toggleBookmark((fileTab() || drawingTab())?.path)],
   ['Go to heading…', () => setTimeout(() => openPalette('#'), 0), '#'],
   ['Go to heading in any note…', () => setTimeout(() => openPalette('@'), 0), '@'],
   ['Go to line…', () => setTimeout(() => openPalette(':'), 0), ':'],
@@ -2438,7 +2583,7 @@ function toggleLightDark() {
   const cur = currentTheme();
   setSetting('theme', cur.kind === 'dark' ? (S.settings.lastLight || 'paper') : (S.settings.lastDark || 'midnight'));
   S.settings[cur.kind === 'dark' ? 'lastDark' : 'lastLight'] = cur.id;
-  localStorage.setItem('an.settings', JSON.stringify(S.settings));
+  store.setItem('an.settings', JSON.stringify(S.settings));
 }
 
 function toggleSidebar() {
@@ -2468,9 +2613,9 @@ function importTheme() {
     if (!file) return;
     try {
       const theme = validateTheme(JSON.parse(await file.text()));
-      const list = JSON.parse(localStorage.getItem('an.customThemes') || '[]').filter((t) => validateTheme(t, false)?.id !== theme.id);
+      const list = JSON.parse(store.getItem('an.customThemes') || '[]').filter((t) => validateTheme(t, false)?.id !== theme.id);
       list.push({ name: theme.name, kind: theme.kind, vars: theme.vars });
-      localStorage.setItem('an.customThemes', JSON.stringify(list));
+      store.setItem('an.customThemes', JSON.stringify(list));
       loadCustomThemes();
       setSetting('theme', theme.id);
       toast(`Theme “${theme.name}” imported`);
@@ -2481,8 +2626,8 @@ function importTheme() {
 }
 
 function removeCustomTheme(id) {
-  const list = JSON.parse(localStorage.getItem('an.customThemes') || '[]').filter((t) => validateTheme(t, false)?.id !== id);
-  localStorage.setItem('an.customThemes', JSON.stringify(list));
+  const list = JSON.parse(store.getItem('an.customThemes') || '[]').filter((t) => validateTheme(t, false)?.id !== id);
+  store.setItem('an.customThemes', JSON.stringify(list));
   loadCustomThemes();
   if (S.settings.theme === id) setSetting('theme', 'system');
   openSettings();
@@ -2669,6 +2814,7 @@ function fileMenu(e, f) {
     f.note ? { label: 'Copy [[link]]', run: () => navigator.clipboard.writeText(`[[${stem(f.path)}]]`).then(() => toast('Link copied')) } : null,
     { label: 'Copy path', run: () => navigator.clipboard.writeText(f.path).then(() => toast('Path copied')) },
     revealItem(f.path),
+    { label: isBookmarked(f.path) ? 'Remove bookmark' : 'Bookmark', run: () => toggleBookmark(f.path) },
     '-',
     { label: 'Rename / move…', key: 'F2', run: () => renameItem(f.path) },
     { label: 'Delete', danger: true, run: () => deleteItem(f.path) },
@@ -2678,6 +2824,7 @@ function fileMenu(e, f) {
 function folderMenu(e, dir) {
   contextMenu(e, [
     { label: 'New note here…', run: () => newNote(dir) },
+    { label: 'New note from template here…', run: () => pickTemplate((t) => newNote(dir, t)) },
     { label: 'New folder here…', run: () => newFolder(dir) },
     { label: 'New drawing here…', run: () => newDrawing(dir) },
     { label: 'New Mermaid diagram here…', run: () => newMermaidFile(dir) },
@@ -2710,6 +2857,7 @@ async function renameItem(p, isDir = false) {
       if (wasActive) grp.active = t.id;
     }
     S.recent = S.recent.map((x) => r.moved[x] || x);
+    if (S.bookmarks.some((x) => r.moved[x])) { S.bookmarks = S.bookmarks.map((x) => r.moved[x] || x); saveBookmarks(); }
     await loadTree();
     navRenamed(r.moved);
     if (isDir) for (const d of [...S.expanded]) if (d === r.from || d.startsWith(`${r.from}/`)) { S.expanded.delete(d); S.expanded.add(r.to + d.slice(r.from.length)); }
@@ -2783,7 +2931,7 @@ async function openDrawing(path, { focus = true, group, side = false } = {}) {
   if (focus) requestAnimationFrame(() => tab.frame?.el.focus());
   for (let d = dirname(path); d; d = dirname(d)) S.expanded.add(d);
   S.recent = [path, ...S.recent.filter((p) => p !== path)].slice(0, 30);
-  localStorage.setItem(`an.recent.${S.info?.root}`, JSON.stringify(S.recent));
+  store.setItem(`an.recent.${S.info?.root}`, JSON.stringify(S.recent));
 }
 
 async function newDrawing(folder) {
@@ -3569,7 +3717,7 @@ async function openTaskDialog(presetTask = '') {
   const selection = ed && isNote(tab.path) ? ed.value.slice(ed.selectionStart, ed.selectionEnd) : '';
   const useSel = h('input', { type: 'checkbox', checked: !!selection.trim() });
   const agents = S.info.agents || [];
-  const lastAgent = localStorage.getItem('an.lastAgent');
+  const lastAgent = store.getItem('an.lastAgent');
   let agentId = agents.some((a) => a.id === lastAgent) ? lastAgent : S.info.agent.id;
   const agentPicker = agents.length > 1 ? h('select', { class: 'agent-select', onchange: (e) => { agentId = e.target.value; syncAgent(); } },
     agents.map((a) => h('option', { value: a.id, selected: a.id === agentId }, a.label))) : null;
@@ -3578,12 +3726,12 @@ async function openTaskDialog(presetTask = '') {
   const modelKey = () => `an.model.${agentOf()?.label || ''}`;
   let model = '';
   const modelPicker = h('select', { class: 'agent-select model-select', title: 'Model for this task',
-    onchange: (e) => { model = e.target.value; localStorage.setItem(modelKey(), model); } });
+    onchange: (e) => { model = e.target.value; store.setItem(modelKey(), model); } });
   const agentNote = h('div', { hidden: true });
   function syncAgent() {
     const a = agentOf();
     const models = a?.models || [];
-    const saved = localStorage.getItem(modelKey()) || '';
+    const saved = store.getItem(modelKey()) || '';
     model = models.some((m) => m.id === saved) ? saved : '';
     modelPicker.replaceChildren(h('option', { value: '' }, `Default model${a?.model ? ` (${a.model})` : ''}`),
       ...models.map((m) => h('option', { value: m.id, selected: m.id === model }, m.label)));
@@ -3616,7 +3764,7 @@ async function openTaskDialog(presetTask = '') {
     if (!task.value.trim()) { task.focus(); return; }
     runBtn.disabled = true;
     try {
-      localStorage.setItem('an.lastAgent', agentId);
+      store.setItem('an.lastAgent', agentId);
       const run = await api('POST', '/api/runs', { task: task.value, scope, focus, selection: useSel.checked ? selection : '', agentId, model });
       close();
       await loadRuns();
@@ -3934,7 +4082,7 @@ function reviewView(tab) {
       wrap.append(h('div', { class: 'review-actions' },
         h('span', { class: 'grow' }, `${run.changes.length} file${run.changes.length === 1 ? '' : 's'} changed · ${n} change${n === 1 ? '' : 's'} selected`),
         S.git?.repo ? h('label', { class: 'commit-toggle', title: 'Commit the applied files to git, authored by the agent (local only)' },
-          h('input', { type: 'checkbox', checked: localStorage.getItem('an.commitOnApply') !== 'false', onchange: (e) => localStorage.setItem('an.commitOnApply', String(e.target.checked)) }), 'Commit to git') : null,
+          h('input', { type: 'checkbox', checked: store.getItem('an.commitOnApply') !== 'false', onchange: (e) => store.setItem('an.commitOnApply', String(e.target.checked)) }), 'Commit to git') : null,
         h('button', { class: 'btn', onclick: () => followUp(tab) }, 'Follow up…'),
         h('button', { class: 'btn danger', onclick: () => discardRun(tab) }, 'Discard'),
         h('button', { class: 'btn primary', disabled: !n, onclick: () => applyRun(tab) }, `Apply ${n} selected`)));
@@ -3955,7 +4103,7 @@ async function applyRun(tab) {
   const dirtyOpen = S.tabs.filter((t) => t.kind === 'file' && t.content !== t.saved && decisions[t.path]);
   if (dirtyOpen.length && !(await askConfirm(`You have unsaved edits in ${dirtyOpen.map((t) => t.path).join(', ')}. Applying will create a conflict with them. Continue?`, { okLabel: 'Apply' }))) return;
   try {
-    const commit = !!S.git?.repo && localStorage.getItem('an.commitOnApply') !== 'false';
+    const commit = !!S.git?.repo && store.getItem('an.commitOnApply') !== 'false';
     const r = await api('POST', `/api/runs/${tab.runId}/apply`, { decisions, commit });
     const n = r.applied.files.length;
     toast(`Applied changes to ${n} file${n === 1 ? '' : 's'}${r.commit?.hash ? ` · committed ${r.commit.hash}` : ''}.`, r.commit?.error ? 'error' : '');
@@ -4184,9 +4332,10 @@ async function boot() {
   }
   document.title = `${S.info.name} — Margin`;
   $('#titlebar').textContent = `${S.info.name} — Margin`;
-  S.recent = JSON.parse(localStorage.getItem(`an.recent.${S.info.root}`) || '[]');
+  S.recent = JSON.parse(store.getItem(`an.recent.${S.info.root}`) || '[]');
+  try { S.bookmarks = JSON.parse(store.getItem(`an.bookmarks.${S.info.root}`) || '[]').filter((p) => typeof p === 'string'); } catch { S.bookmarks = []; }
   await Promise.all([loadTree(), loadRuns(), loadTags(), loadGit()]);
-  const saved = JSON.parse(localStorage.getItem(`an.tabs.${S.info.root}`) || 'null');
+  const saved = JSON.parse(store.getItem(`an.tabs.${S.info.root}`) || 'null');
   // v0.2 format was { open, active }; v0.3 stores one entry per pane.
   const groups = saved?.groups || (saved ? [{ open: saved.open, active: saved.active }] : []);
   for (const [g, grp] of groups.slice(0, 2).entries()) {

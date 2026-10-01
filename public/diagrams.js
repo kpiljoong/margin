@@ -94,6 +94,77 @@ async function renderOne(source, config) {
   return { error: String(r.error || '').split('\n').filter(Boolean).slice(0, 3).join('\n') || 'Invalid diagram' };
 }
 
+// Pictures drawn before are kept on disk (IndexedDB) too, so after a restart a
+// note full of diagrams shows at once instead of being drawn one by one. Only
+// pictures, not errors; the oldest go once there are more than DISK_MAX.
+const DISK_VERSION = 1; // bump when the pictures would come out differently
+const DISK_MAX = 600;
+let disk = null;
+function openDisk() {
+  if (disk) return disk;
+  disk = new Promise((resolve) => {
+    try {
+      const r = indexedDB.open('margin-diagrams', DISK_VERSION);
+      r.onupgradeneeded = () => {
+        for (const name of [...r.result.objectStoreNames]) r.result.deleteObjectStore(name);
+        r.result.createObjectStore('pictures');
+      };
+      r.onsuccess = () => resolve(r.result);
+      r.onerror = () => resolve(null);
+      r.onblocked = () => resolve(null);
+    } catch { resolve(null); }
+  });
+  return disk;
+}
+async function diskGet(keys) {
+  const db = await openDisk();
+  if (!db) return [];
+  return new Promise((resolve) => {
+    try {
+      const st = db.transaction('pictures').objectStore('pictures');
+      const out = [];
+      keys.forEach((k, i) => { const r = st.get(k); r.onsuccess = () => { out[i] = r.result; }; });
+      st.transaction.oncomplete = () => resolve(out);
+      st.transaction.onerror = () => resolve([]);
+    } catch { resolve([]); }
+  });
+}
+let pruned = false;
+async function diskPut(key, result) {
+  const db = await openDisk();
+  if (!db || !result.url) return;
+  try {
+    const st = db.transaction('pictures', 'readwrite').objectStore('pictures');
+    st.put({ url: result.url, nodes: result.nodes, t: Date.now() }, key);
+    if (pruned) return;
+    pruned = true;
+    // Once a session: drop the oldest beyond DISK_MAX.
+    st.transaction.oncomplete = () => {
+      const all = [];
+      const tx = db.transaction('pictures', 'readwrite');
+      tx.objectStore('pictures').openCursor().onsuccess = (e) => {
+        const c = e.target.result;
+        if (c) { all.push([c.key, c.value?.t || 0]); c.continue(); return; }
+        if (all.length <= DISK_MAX) return;
+        all.sort((a, b) => a[1] - b[1]);
+        for (const [k] of all.slice(0, all.length - DISK_MAX)) tx.objectStore('pictures').delete(k);
+      };
+    };
+  } catch { /* storage unavailable: drawn again next time */ }
+}
+
+function remember(ck, result) {
+  cache.set(ck, result);
+  if (cache.size > 200) cache.delete(cache.keys().next().value);
+}
+
+// The ones on screen first, then outwards.
+function byDistance(todo) {
+  const vh = window.innerHeight;
+  const dist = (pre) => { const r = pre.getBoundingClientRect(); return r.bottom < 0 ? -r.bottom : r.top > vh ? r.top - vh : 0; };
+  return todo.map((t) => [t, dist(t.pre)]).sort((a, b) => a[1] - b[1]).map(([t]) => t);
+}
+
 function show(pre, result, source) {
   pre.classList.remove('diagram-pending');
   pre.querySelector('.diagram-error')?.remove();
@@ -151,18 +222,31 @@ export function renderDiagrams(container) {
   lastByContainer.set(container, shown);
   if (!todo.length) return Promise.resolve();
   const key = themeKey;
+  const ordered = todo.length > 1 ? byDistance(todo) : todo;
   const job = queue.then(async () => {
+    // Drawn in an earlier session?
+    const kept = await diskGet(ordered.map(({ source }) => key + '\n' + source));
+    const left = [];
+    ordered.forEach((t, n) => {
+      const hit = kept[n];
+      if (!hit?.url) { left.push(t); return; }
+      const result = { url: hit.url, nodes: Array.isArray(hit.nodes) ? hit.nodes : [] };
+      remember(key + '\n' + t.source, result);
+      show(t.pre, result, t.raw);
+      shown[t.i] = result.url;
+    });
+    if (!left.length) return;
     await renderer();
     const config = mermaidConfig(theme.vars);
-    for (const { pre, source, raw, i } of todo) {
+    for (const { pre, source, raw, i } of left) {
       const ck = key + '\n' + source;
       let result = cache.get(ck);
       if (!result) {
         // Skip work for previews that were re-rendered in the meantime.
         if (pre.isConnected === false && container.isConnected) continue;
         result = await renderOne(source, config);
-        cache.set(ck, result);
-        if (cache.size > 200) cache.delete(cache.keys().next().value);
+        remember(ck, result);
+        diskPut(ck, result);
       }
       show(pre, result, raw);
       if (result.url) shown[i] = result.url;

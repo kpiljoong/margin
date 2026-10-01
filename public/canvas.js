@@ -23,6 +23,7 @@
 // layer of hit boxes goes over it.
 
 import { similarNames } from './flow.js';
+import { store } from './store.js';
 
 const el = (tag, cls, ...kids) => {
   const e = document.createElement(tag);
@@ -75,7 +76,7 @@ export class FigureCanvas {
     this.k = 1; this.x = 0; this.y = 0;
     this.fresh = true; // no camera position yet
     this.view = 'picture'; // or 'all'
-    try { this.zoomFor = { picture: null, allRatio: null, ...JSON.parse(localStorage.getItem(ZOOM_KEY) || '{}') }; } catch { this.zoomFor = { picture: null, allRatio: null }; }
+    try { this.zoomFor = { picture: null, allRatio: null, ...JSON.parse(store.getItem(ZOOM_KEY) || '{}') }; } catch { this.zoomFor = { picture: null, allRatio: null }; }
     this.sig = null; // what the camera was last moved to
     this.goal = null; // { section, fig, nodes: [{ pre, id }] }
     this.sections = [];
@@ -88,7 +89,7 @@ export class FigureCanvas {
     this.walkAt = null; // { pre, id }
     this.trail = []; // [{ from, to }]
     this.choice = null; // { list: [{ pre, id, label }], i, from, back }
-    this.linksAll = localStorage.getItem(LINKS_KEY) === 'all';
+    this.linksAll = store.getItem(LINKS_KEY) === 'all';
     this.linkLayer = document.createElementNS(SVG, 'svg');
     this.linkLayer.setAttribute('class', 'canvas-links');
     this.linkLayer.setAttribute('width', '1');
@@ -690,7 +691,7 @@ export class FigureCanvas {
   toggleLinks() {
     this.linksAll = !this.linksAll;
     this.linkButton.classList.toggle('on', this.linksAll);
-    try { localStorage.setItem(LINKS_KEY, this.linksAll ? 'all' : 'picture'); } catch { /* private mode */ }
+    try { store.setItem(LINKS_KEY, this.linksAll ? 'all' : 'picture'); } catch { /* private mode */ }
     this.drawLinks();
   }
 
@@ -798,7 +799,7 @@ export class FigureCanvas {
     if (this.view === 'all') this.zoomFor.allRatio = next / (this.fitAllK || next);
     else this.zoomFor.picture = next;
     clearTimeout(this.saveTimer);
-    this.saveTimer = setTimeout(() => { try { localStorage.setItem(ZOOM_KEY, JSON.stringify(this.zoomFor)); } catch { /* private mode */ } }, 400);
+    this.saveTimer = setTimeout(() => { try { store.setItem(ZOOM_KEY, JSON.stringify(this.zoomFor)); } catch { /* private mode */ } }, 400);
   }
 
   zoomBy(f) {

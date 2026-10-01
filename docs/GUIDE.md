@@ -140,7 +140,7 @@ The shortcuts above (except typing behaviours like Tab, Enter, and bracket pairi
   - Pick your own accent color
   - Choose the dark/light themes used in System mode (e.g. Nord at night, Sepia by day)
   - **User theme files**: JSON import/export. Only color values are allowed; values that could make external requests, like `url()`, are rejected.
-- **Writing settings**: Font (Mono/Sans/Serif), size, line height, line width, autosave, syntax coloring, spell check. Settings are stored on this device only.
+- **Writing settings**: Font (Mono/Sans/Serif), size, line height, line width, autosave, syntax coloring, spell check. Settings are stored on this device only: in the desktop app they live in the app's settings file (`page` in `config.json`), together with layout, open tabs, recent notes and bookmarks, so a second copy of the app (which gets another port) starts with the same settings. In browser mode they are stored in that browser.
 - **Autosave** (on by default): Saves 0.7 seconds after you stop typing. If another program changed the file in the meantime, it doesn't overwrite and shows a conflict banner. CRLF line endings and BOM are preserved.
 - **Typing helpers**: Enter continues lists, tasks, and quotes; Enter on an empty item ends the list. Brackets and backticks are closed automatically. Typing `[[` autocompletes note names, `[[Note#` (or `[[#` for this note) its section headings, and `#` autocompletes existing tags. Pasting a URL with text selected makes `[text](URL)`.
 - **Images and attachments**: Pasting or dropping saves the file in an `assets/` folder next to the note and inserts a relative link. Local images show in the preview, but **remote images are not loaded, to prevent tracking**. Clicking an image in the tree opens the image viewer.
@@ -152,6 +152,9 @@ The shortcuts above (except typing behaviours like Tab, Enter, and bracket pairi
 - **Note embeds**: `![[Note]]` shows another note in place, and `![[Note#Section]]` only that section (up to the next heading as high). Its diagrams and drawings are drawn too, it follows changes to that note, and it goes into HTML export and print. Click its label to open the note. A note embedded inside an embedded note stays a link (no loops).
 - **Local history**: Margin keeps earlier versions of notes in `.agent-notes/history/` (ignored by git), so text can be brought back even in a folder without git. A version is kept when a save replaces text that is at least 5 minutes old, when another program changes the note (Claude Code, another editor, sync), before agent changes are applied or undone, before links are rewritten by a rename, and before restoring. Up to 50 per note; ones older than 30 days are removed, but the newest 5 always stay. They follow a renamed note. See them in ⋯ › **History…**.
 - **Link hover preview**: Hovering a `[[link]]` in the preview shows the note — or only the section it names — in a small window (in the editor, hold ⌘/Ctrl while hovering). Click its title to open the note; typing, scrolling, or clicking elsewhere closes it.
+- **Following links from the editor**: ⌘-click (Windows/Linux: Ctrl-click) a `[[link]]`, `[text](link)`, or URL in the editor to follow it, as in the preview — a note opens (at its section), a missing note can be created, an image opens in the viewer, and web addresses open in the browser.
+- **Bookmarks**: Right-click a file in the tree › **Bookmark** (palette: **Bookmark / remove bookmark for this file**). Bookmarked files are listed at the top of the tree; right-click one to move it up or down, show it in the tree, or remove the bookmark. They follow renames and are remembered per workspace.
+- **Templates**: Notes in the workspace's `templates/` folder are templates. Palette **New note from template…** (or right-click a folder › **New note from template here…**) makes a new note from one; **Insert template…** inserts one at the cursor. In the template, `{{title}}` becomes the note's name, `{{date}}` and `{{time}}` today and now, `{{date:dddd D/M}}`-style formats (YYYY YY MM M DD D HH H mm ss dddd ddd), `{{yesterday}}` and `{{tomorrow}}`, and `{{cursor}}` where the cursor goes. A new journal note (◷) uses `templates/Daily.md` (or `Journal.md`) if there is one.
 - **Labs**: Turn experimental features on and off in Labs at the bottom of Settings (⌘,). They may change or go away.
   - **Canvas: the wheel moves**: On the canvas, the wheel or two-finger scroll pans, and pinch or ⌘/Ctrl+wheel zooms. When off, the wheel zooms.
   - **Steady live drawing**: While typing inside a ` ```flow ` block, the drawing stays as is and is redrawn once the line is complete (not ending in an arrow or ` :`) and typing pauses briefly. Boxes don't jitter with every character.
@@ -338,7 +341,10 @@ public/keys.js         shortcuts: key combo notation, recognition (by keyboard p
 public/editor.js       Markdown editor (syntax coloring layer, find/replace, autocomplete, editing commands)
 public/markdown.js     dependency-free safe Markdown renderer (+outline)
 public/codehl.js       ultra-light syntax highlighting for code blocks
-public/diagrams.js     renders ```mermaid blocks as diagrams (lazy loaded, theme colors, shown as <img>)
+public/diagrams.js     renders ```mermaid blocks as diagrams (lazy loaded, theme colors, shown as <img>; the ones on screen first; kept in IndexedDB so they show at once after a restart)
+public/store.js        where the page keeps its settings (desktop: the app's config.json; browser: localStorage)
+public/links.js        the link under the cursor in the editor (pure logic)
+public/templates.js    note templates: filling in {{title}}, {{date}}… (pure logic)
 public/mermaid-frame.*  hidden sandbox iframe where mermaid actually draws (opaque origin, dedicated CSP)
 public/viewer.js       enlarged view for diagrams and drawings (zoom, pan)
 public/flow.js         ```flow simple notation → mermaid flowchart translation (per-box line and text positions, arrows, problem markers), presentation order, name list and similar names

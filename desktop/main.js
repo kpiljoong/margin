@@ -538,6 +538,31 @@ ipcMain.on('desktop:background', (e, color) => {
   saveConfig();
 });
 
+// The page's own small settings (theme, layout, tabs…: { key: string }),
+// kept here rather than in browser storage, which is per port — so a second
+// running app that got another port would start from scratch. Read once,
+// synchronously, as the page starts; null until the page has stored any.
+// Keys hold the workspace path (any characters: \ on Windows, Korean names…).
+const PAGE_KEY_RE = /^an\.[^\u0000-\u001f\u007f]{1,1000}$/u;
+const PAGE_MAX = 4 * 1024 * 1024;
+let pageSaveTimer = null;
+const savePageSoon = () => { clearTimeout(pageSaveTimer); pageSaveTimer = setTimeout(saveConfig, 300); };
+ipcMain.on('desktop:page-store', (e) => { e.returnValue = fromMain(e) && config.page ? { ...config.page } : null; });
+ipcMain.on('desktop:page-store-set', (e, entries) => {
+  if (!fromMain(e) || !entries || typeof entries !== 'object') return;
+  const page = { ...(config.page || {}) };
+  for (const [k, v] of Object.entries(entries)) {
+    if (!PAGE_KEY_RE.test(k)) continue;
+    if (v == null) delete page[k];
+    else if (typeof v === 'string') page[k] = v;
+  }
+  if (JSON.stringify(page).length > PAGE_MAX) return;
+  config.page = page;
+  savePageSoon();
+});
+// Written by now: the window (and its last writes) closes before will-quit.
+app.on('will-quit', () => { if (pageSaveTimer) { clearTimeout(pageSaveTimer); pageSaveTimer = null; saveConfig(); } });
+
 // Menu items that act inside the web UI.
 ipcMain.handle('desktop:get-shortcuts', (e) => (fromMain(e) ? { ...(config.shortcuts || {}) } : null));
 // Stores the changed shortcuts and puts them in the menu and the system.
@@ -729,8 +754,11 @@ if (!app.requestSingleInstanceLock()) {
 
   app.on('activate', () => { if (!win) { createWindow(); showServer(); } });
   app.on('window-all-closed', () => { if (!isMac) app.quit(); });
-  app.on('before-quit', () => { quitting = true; stopServer(); });
+  // The server stops only once the quit is certain: a window with unsaved
+  // notes may still cancel it, and then it must go on working.
   app.on('will-quit', () => {
+    quitting = true;
+    stopServer();
     globalShortcut.unregisterAll();
     if (restartPending) app.relaunch();
   });

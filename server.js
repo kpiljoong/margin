@@ -266,12 +266,13 @@ function saveFile({ path: relPath, content, baseHash, force, reason }) {
   return { path: relOf(abs), hash: hashOf(Buffer.from(content, 'utf8')) };
 }
 
-function createFile({ path: relPath }) {
+// content: the new note's text (from a template); a title heading otherwise.
+function createFile({ path: relPath, content }) {
   if (!NOTE_EXT.has(extOf(relPath || ''))) relPath = `${relPath}.md`;
   const abs = workspacePath(relPath);
   if (fs.existsSync(abs)) throw httpError(409, 'A file with that name already exists');
   const title = path.basename(relPath).replace(/\.[^.]+$/, '');
-  writeFileAtomic(abs, `# ${title}\n\n`);
+  writeFileAtomic(abs, typeof content === 'string' ? content : `# ${title}\n\n`);
   return getFile(relOf(abs));
 }
 
