@@ -180,6 +180,41 @@ await check('presenting steps through the flow and ends', `
   return { first, second, presenting, after: $('.canvas-pane').classList.contains('presenting') };
 `, (v) => (v.presenting && /1 \//.test(v.first || '') && /2 \//.test(v.second || '') && !v.after ? null : 'presenting did not start, step or end'));
 
+await check('presenting zoomed in: the camera keeps each step in view, and the zoom', `
+  const stage = $('.canvas-stage');
+  stage.focus();
+  key('p', {}, stage);
+  await until(() => $('.cap-head')?.textContent);
+  key('Home', {}, stage); await sleep(400);
+  const width = () => $('.node-hit.walk-at')?.getBoundingClientRect().width || 0;
+  const fitted = width();
+  for (let i = 0; i < 4; i++) key('+', {}, stage);
+  await sleep(100);
+  const zoomed = width();
+  // Where the step's box is, against the view above the caption.
+  const inView = () => {
+    const b = $('.node-hit.walk-at')?.getBoundingClientRect();
+    const v = stage.getBoundingClientRect();
+    const cap = $('.canvas-caption');
+    const bottom = cap && !cap.hidden ? Math.min(v.bottom, cap.getBoundingClientRect().top) : v.bottom;
+    return !!b && b.left >= v.left - 1 && b.right <= v.right + 1 && b.top >= v.top - 1 && b.bottom <= bottom + 1;
+  };
+  const seen = [];
+  const go = async (k) => {
+    key(k, {}, stage); await sleep(450);
+    const b = $('.node-hit.walk-at')?.getBoundingClientRect();
+    seen.push({ k, step: $('.cap-head')?.textContent, ok: inView(), box: b && [b.left, b.top, b.right, b.bottom].map(Math.round), view: [stage.clientWidth, stage.clientHeight, Math.round($('.canvas-caption').getBoundingClientRect().top)] });
+  };
+  for (let i = 0; i < 4; i++) await go(' ');
+  await go('ArrowLeft');
+  await go('ArrowRight');
+  const kept = width(); // still in the same picture
+  await go('End');
+  await go('Home');
+  key('Escape', {}, stage); await sleep(300);
+  return { fitted, zoomed, kept, seen };
+`, (v) => (v?.zoomed > v.fitted * 1.5 && v.kept > v.fitted * 1.5 && v.seen.length === 8 && v.seen.every((x) => x.ok) ? null : 'a step was off screen, or the zoom was lost'));
+
 await check('the whole canvas saves as one image', `
   button('⤓').click(); await sleep(200);
   $$('.ctx-item').find((b) => b.textContent.startsWith('Save as PNG')).click();

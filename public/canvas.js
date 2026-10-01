@@ -378,6 +378,7 @@ export class FigureCanvas {
     const first = Math.max(0, steps.findIndex((st) => st.pre === at?.pre && st.id === at?.id));
     this.presenting = { steps, i: -1, prefer };
     this.framed = null;
+    this.userCam = false;
     this.el.classList.add('presenting');
     this.setView('picture');
     // Not awaited: without a user gesture the promise may never settle, and
@@ -461,7 +462,9 @@ export class FigureCanvas {
 
   // Presenting: the picture as large as fits above the caption, centred —
   // moved only when the picture changes. One too large to read that way is
-  // followed box by box instead.
+  // followed box by box instead. Once the presenter zooms or pans in a
+  // picture (userCam), that zoom stays and the camera only glides as far as
+  // needed to keep each step's box in view; a new picture is framed afresh.
   frame(st, force) {
     const card = this.cardOf(st.pre);
     if (!card) return;
@@ -473,17 +476,36 @@ export class FigureCanvas {
       const c = this.bounds([card]);
       const fit = Math.min(2, w / c.w, h / c.h);
       const box = st.id && this.hit(st.pre, st.id);
+      const b = box ? this.bounds([box]) : c;
+      const same = this.framed === card && !force;
+      if (same && this.userCam) { this.reveal(b, s.width, s.height - cap); return; }
+      this.userCam = false;
+      this.framed = card;
       if (fit >= 0.5) {
-        if (this.framed === card && !force) return;
-        this.framed = card;
+        if (same) return;
         this.moveTo(fit, s.width / 2 - (c.x + c.w / 2) * fit, PAD + (h - c.h * fit) / 2 - c.y * fit, true);
         return;
       }
-      this.framed = null;
-      const b = box ? this.bounds([box]) : c;
       const k = 0.8;
       this.moveTo(k, s.width / 2 - (b.x + b.w / 2) * k, PAD + h / 2 - (b.y + b.h / 2) * k, true);
     });
+  }
+
+  // Pan, at the current zoom, just enough that b (world units) is inside a
+  // w × h view with a margin; centred on an axis where it can't fit.
+  reveal(b, w, h) {
+    const m = Math.min(PAD * 2, w * 0.1, h * 0.1);
+    const along = (pos, size, at, view) => {
+      const from = pos * this.k + at;
+      const to = from + size * this.k;
+      if (to - from > view - 2 * m) return at + (view / 2 - (from + to) / 2);
+      if (from < m) return at + (m - from);
+      if (to > view - m) return at - (to - (view - m));
+      return at;
+    };
+    const x = along(b.x, b.w, this.x, w);
+    const y = along(b.y, b.h, this.y, h);
+    if (x !== this.x || y !== this.y) this.moveTo(this.k, x, y, true);
   }
 
   endPresent() {
@@ -767,6 +789,7 @@ export class FigureCanvas {
     cancelAnimationFrame(this.anim);
     next = Math.max(0.05, Math.min(8, next));
     this.pin = null;
+    this.userCam = true;
     this.x = cx - (cx - this.x) * (next / this.k);
     this.y = cy - (cy - this.y) * (next / this.k);
     this.k = next;
@@ -807,6 +830,7 @@ export class FigureCanvas {
         cancelAnimationFrame(this.anim);
         const line = e.deltaMode === 1 ? 16 : 1;
         this.pin = null;
+        this.userCam = true;
         this.x -= (e.shiftKey && !e.deltaX ? e.deltaY : e.deltaX) * line;
         this.y -= (e.shiftKey && !e.deltaX ? 0 : e.deltaY) * line;
         this.fresh = false;
@@ -850,6 +874,7 @@ export class FigureCanvas {
         this.editing?.remove();
       }
       this.pin = null;
+      this.userCam = true;
       this.x = press.x + dx;
       this.y = press.y + dy;
       this.fresh = false;
