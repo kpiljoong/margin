@@ -677,6 +677,8 @@ iframe.mermaid-frame { position: fixed; left: -10000px; top: 0; width: 1600px; h
 .link-preview-head { all: unset; flex: none; cursor: pointer; padding: 7px 14px; font-size: 12px; font-weight: 600; color: var(--fg); border-bottom: 1px solid var(--border); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .link-preview-head:hover { background: var(--bg-hover); }
 .ed-input.over-link { cursor: pointer; }
+::highlight(preview-find) { background-color: color-mix(in srgb, var(--warn) 38%, transparent); }
+::highlight(preview-find-cur) { background-color: color-mix(in srgb, var(--accent) 55%, transparent); }
 .bookmark-row .chev { color: var(--accent); }
 .bookmark-dir { margin-left: auto; padding-left: 8px; color: var(--fg-faint); font-size: 11px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; flex: 0 1 auto; }
 .link-preview-head .dim { color: var(--fg-dim); font-weight: 400; }

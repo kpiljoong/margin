@@ -407,10 +407,14 @@ function noteTags(text) {
   return [...found].map((t) => t.replace(/^#/, '').replace(/^["']|["']$/g, '')).filter(Boolean);
 }
 
+// Notes in templates/ are patterns for new notes (public/templates.js): their
+// tags and headings aren't the workspace's.
+const isTemplatePath = (rel) => /^templates\//i.test(rel);
+
 function listTags() {
   const counts = new Map();
   for (const rel of workspaceFiles()) {
-    if (!NOTE_EXT.has(extOf(rel))) continue;
+    if (!NOTE_EXT.has(extOf(rel)) || isTemplatePath(rel)) continue;
     const c = cachedText(rel);
     if (c) for (const t of noteTags(c.text)) counts.set(t, (counts.get(t) || 0) + 1);
   }
@@ -436,7 +440,7 @@ function noteHeadings(c) {
 function listHeadings() {
   const headings = [];
   for (const rel of workspaceFiles()) {
-    if (!NOTE_EXT.has(extOf(rel))) continue;
+    if (!NOTE_EXT.has(extOf(rel)) || isTemplatePath(rel)) continue;
     const c = cachedText(rel);
     if (c) for (const h of noteHeadings(c)) headings.push({ path: rel, ...h });
     if (headings.length >= 50000) break;

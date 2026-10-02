@@ -1,6 +1,7 @@
 import { renderMarkdown, outline, slug } from './markdown.js';
 import { store } from './store.js';
 import { linkAt } from './links.js';
+import { PreviewFind } from './previewfind.js';
 import { fillTemplate, isTemplate, TEMPLATE_DIR } from './templates.js';
 import { MarkdownEditor, setEditorKeys } from './editor.js';
 import { renderDiagrams } from './diagrams.js';
@@ -493,8 +494,10 @@ function previewLinkHover(e, tab) {
 // layer under the text has a span for each link.
 function editorLinkHover(e, ed, tab) {
   if (!(isMac ? e.metaKey : e.ctrlKey)) { ed.ta.classList.remove('over-link'); if (linkPop.el || linkPop.timer) leaveLinkPreview(); return; }
-  const span = [...ed.hlLayer.querySelectorAll('.md-wikilink')].find((sp) => [...sp.getClientRects()].some((r) => e.clientX >= r.left && e.clientX <= r.right && e.clientY >= r.top && e.clientY <= r.bottom));
-  ed.ta.classList.toggle('over-link', !!span);
+  // Any link can be ⌘-clicked; [[links]] also show a preview.
+  const under = [...ed.hlLayer.querySelectorAll('.md-wikilink, .md-link, .md-url')].find((sp) => [...sp.getClientRects()].some((r) => e.clientX >= r.left && e.clientX <= r.right && e.clientY >= r.top && e.clientY <= r.bottom));
+  ed.ta.classList.toggle('over-link', !!under);
+  const span = under?.classList.contains('md-wikilink') ? under : null;
   if (!span) { leaveLinkPreview(); return; }
   if (span.previousElementSibling?.textContent.startsWith('!')) return; // an embed
   hoverLink(span.textContent.split('|')[0], tab.path, span.getBoundingClientRect());
@@ -752,6 +755,18 @@ async function newNote(folder, template) {
   } catch (e) { toast(e.message, 'error'); }
 }
 
+// + in the tree: a blank note, or — when there are templates — one of them.
+function newNoteMenu(e) {
+  const all = templateFiles();
+  if (!all.length) { newNote(); return; }
+  const r = e.currentTarget.getBoundingClientRect();
+  contextMenu({ preventDefault() {}, stopPropagation() {}, clientX: r.left, clientY: r.bottom + 4 }, [
+    { label: 'Blank note', run: () => newNote() },
+    '-',
+    ...all.slice(0, 20).map((f) => ({ label: `From “${stem(f.path)}”`, run: () => newNote(undefined, f.path) })),
+  ]);
+}
+
 // Templates: the notes in templates/ (see templates.js).
 const templateFiles = () => S.files.filter((f) => f.note && isTemplate(f.path)).sort((a, b) => a.path.localeCompare(b.path));
 async function templateText(path, title) {
@@ -882,9 +897,9 @@ async function loadBacklinks(path) {
       api('GET', `/api/search?q=${encodeURIComponent(`[[${name}`)}`),
       name.length >= 3 ? api('GET', `/api/search?q=${encodeURIComponent(name)}`) : { results: [] },
     ]);
-    S.backlinks = linked.results.filter((x) => x.path !== path && x.matches.some((m) => linkRe.test(m.text)));
+    S.backlinks = linked.results.filter((x) => x.path !== path && !isTemplate(x.path) && x.matches.some((m) => linkRe.test(m.text)));
     S.mentions = plain.results
-      .filter((x) => x.path !== path && isNote(x.path))
+      .filter((x) => x.path !== path && isNote(x.path) && !isTemplate(x.path))
       .map((x) => ({ path: x.path, matches: x.matches.filter((m) => mentionRe.test(m.text.replace(/\[\[[^\]]*\]\]/g, ''))) }))
       .filter((x) => x.matches.length)
       .slice(0, 20);
@@ -1024,11 +1039,14 @@ function toggleBookmark(path) {
   toast(on ? `Bookmarked ${basename(path)}` : `Removed the bookmark on ${basename(path)}`);
   renderSidebar();
 }
+// Swap with the next shown one (a missing file's bookmark isn't shown).
 function moveBookmark(path, by) {
-  const i = S.bookmarks.indexOf(path);
-  const j = i + by;
-  if (i < 0 || j < 0 || j >= S.bookmarks.length) return;
+  const shown = S.bookmarks.filter((p) => S.files.some((f) => f.path === p));
+  const other = shown[shown.indexOf(path) + by];
+  if (!other || !shown.includes(path)) return;
   const b = [...S.bookmarks];
+  const i = b.indexOf(path);
+  const j = b.indexOf(other);
   [b[i], b[j]] = [b[j], b[i]];
   S.bookmarks = b;
   saveBookmarks();
@@ -1076,7 +1094,7 @@ function filesPanel() {
       h('button', { class: `icon-btn follow-tab${S.settings.followTab ? ' on' : ''}`, title: `Follow the active tab: ${S.settings.followTab ? 'on' : 'off'}`, 'aria-pressed': String(!!S.settings.followTab), onclick: toggleFollowTab }, '⇅'),
       h('button', { class: 'icon-btn', title: 'Show the open file in the tree', onclick: locateFile }, '◎'),
       h('button', { class: 'icon-btn', title: 'Today’s journal note', onclick: openDaily }, '◷'),
-      h('button', { class: 'icon-btn', title: 'New note', onclick: () => newNote() }, '+'),
+      h('button', { class: 'icon-btn new-note', title: 'New note', onclick: newNoteMenu }, '+'),
       h('button', { class: 'icon-btn', title: 'New folder', onclick: () => newFolder() }, '⊞'),
       h('button', { class: 'icon-btn', title: 'Refresh', onclick: () => loadTree().then(syncOpenTabs) }, '↻')),
   ];
@@ -1499,7 +1517,7 @@ function renderContent(g = S.focus) {
     h('span', { class: 'crumbs' }, tab.path.split('/').join('  ›  ')),
     hasPreview(tab.path) ? seg : null,
     isMermaidFile(tab.path) ? h('button', { class: 'icon-btn', title: 'Copy diagram as image (PNG)', onclick: () => copyPicture(mermaidFilePicture(tab)) }, '⧉') : null,
-    h('button', { class: 'icon-btn', title: withKey('Find in note', 'find'), onclick: () => { S.focus = tab.group; if (groupMode(tab) === 'preview') setMode('split'); tab.editor.openFind(); } }, '⌕'),
+    h('button', { class: 'icon-btn', title: withKey('Find in note', 'find'), onclick: () => findInNote(tab) }, '⌕'),
     h('button', { class: 'icon-btn', title: S.groups.length > 1 ? 'Move to the other pane' : withKey('Open to the side', 'split'), onclick: () => (S.groups.length > 1 ? moveTab(tab, tab.group === 0 ? 1 : 0) : splitRight()) }, '◫'),
     h('button', { class: 'icon-btn', title: withKey('Focus mode', 'focus'), onclick: toggleFocusMode }, '⛶'),
     h('button', { class: 'icon-btn', title: 'More actions', onclick: (e) => { const r = e.currentTarget.getBoundingClientRect(); contextMenu({ preventDefault() {}, stopPropagation() {}, clientX: r.right - 200, clientY: r.bottom + 4 }, [
@@ -1530,6 +1548,9 @@ function renderContent(g = S.focus) {
   c.replaceChildren(toolbar, banner, wrap);
   attachedByGroup[g] = tab;
   renderPreview(tab);
+  // Finding in the preview: only while it is shown in this pane.
+  for (const t of S.tabs) if (t.pfind?.open && t.group === g && t !== tab) t.pfind.close();
+  if (tab.pfind) { if (mode === 'preview') tab.pfind.mount(wrap, preview); else tab.pfind.close(); }
   renderBanner(tab);
   requestAnimationFrame(() => {
     if (!isAttached(tab)) return;
@@ -1716,6 +1737,34 @@ function renderPreview(tab) {
   renderDiagrams(p);
   if (p.querySelector('.drawing-embed:not(.ready)')) fillDrawingEmbeds(p);
   if (p.querySelector('.mmd-embed.loading')) fillMermaidEmbeds(p).then(() => renderDiagrams(p));
+  if (tab.pfind?.open) tab.pfind.run(false);
+}
+
+// ⌘F: in Preview, find in the rendered note (it stays in Preview); in Edit
+// and Split, the editor's find. Replacing edits the text, so it is the
+// editor's — from Preview that switches to Split.
+function previewFindFor(tab) {
+  return tab.pfind || (tab.pfind = new PreviewFind({
+    onReplace: (q) => findInNote(tab, { replace: true, query: q }),
+    keys: (e) => { const k = eventKeys(e, isMac); return !k ? null : k === KEYS['find-next'] ? 'next' : k === KEYS['find-prev'] ? 'prev' : null; },
+  }));
+}
+function findInNote(tab = fileTab(), { replace = false, query = null } = {}) {
+  if (!tab?.editor) return;
+  S.focus = tab.group;
+  const inPreview = groupMode(tab) === 'preview' && hasPreview(tab.path) && !isMermaidFile(tab.path);
+  if (inPreview && !replace) {
+    const f = previewFindFor(tab);
+    const sel = window.getSelection();
+    const picked = sel && !sel.isCollapsed && tab.previewEl?.contains(sel.anchorNode) ? sel.toString().trim() : '';
+    f.mount(tab.previewEl.parentElement, tab.previewEl);
+    f.show(picked && !picked.includes('\n') ? picked : '');
+    return;
+  }
+  const q = query ?? (tab.pfind?.open ? tab.pfind.query : null);
+  tab.pfind?.close();
+  if (groupMode(tab) === 'preview') setMode('split');
+  tab.editor.openFind({ replace, query: q });
 }
 
 // "layout: figures" in a note's front matter: each section (from one heading
@@ -2337,8 +2386,8 @@ const COMMANDS = [
   ['Show current file in the tree', () => locateFile()],
   ['Show agent runs', () => showView('agent'), { key: 'runs' }],
   ['Search in workspace', () => showView('search'), { key: 'search' }],
-  ['Find in note', () => fileTab()?.editor.openFind(), { key: 'find' }],
-  ['Replace in note', () => fileTab()?.editor.openFind({ replace: true }), { key: 'replace' }],
+  ['Find in note', () => findInNote(), { key: 'find' }],
+  ['Replace in note', () => findInNote(undefined, { replace: true }), { key: 'replace' }],
   ['Toggle: tree follows the active tab', toggleFollowTab],
   ['Bookmark / remove bookmark for this file', () => toggleBookmark((fileTab() || drawingTab())?.path)],
   ['Go to heading…', () => setTimeout(() => openPalette('#'), 0), '#'],
@@ -2873,13 +2922,20 @@ async function deleteItem(p, isDir = false) {
   if (tab && tab.content !== tab.saved && !(await askConfirm(`${p} has unsaved changes. Delete anyway?`, { okLabel: 'Delete', danger: true }))) return;
   try {
     const r = await api('POST', '/api/delete', { path: p });
+    // Bookmarks go with it, and come back with Undo.
+    const marks = S.bookmarks.filter((b) => b === p || b.startsWith(`${p}/`));
+    if (marks.length) { S.bookmarks = S.bookmarks.filter((b) => !marks.includes(b)); saveBookmarks(); }
     for (const t of [...S.tabs]) if (isDoc(t) && (t.path === p || t.path.startsWith(`${p}/`))) { t.saved = t.kind === 'drawing' ? t.text : t.content; t.discard = true; await closeTab(t.id); }
     await loadTree();
     navPrune();
     updateNavButtons();
     toast(`Deleted ${p}${isDir ? '/' : ''}`, '', { label: 'Undo', run: async () => {
-      try { await api('POST', '/api/restore', { trash: r.trash, path: r.path }); await loadTree(); if (!isDir && (isNote(r.path) || isDrawing(r.path))) openFile(r.path); }
-      catch (e) { toast(e.message, 'error'); }
+      try {
+        await api('POST', '/api/restore', { trash: r.trash, path: r.path });
+        if (marks.length) { S.bookmarks = [...S.bookmarks, ...marks.filter((b) => !S.bookmarks.includes(b))]; saveBookmarks(); }
+        await loadTree();
+        if (!isDir && (isNote(r.path) || isDrawing(r.path))) openFile(r.path);
+      } catch (e) { toast(e.message, 'error'); }
     } });
   } catch (e) { toast(e.message, 'error'); }
 }
@@ -4162,8 +4218,7 @@ document.addEventListener('keydown', (e) => {
     // In the editor it opens its find bar itself; elsewhere, the note's.
     if (!fileTab() || e.target.closest?.('.ed')) return;
     e.preventDefault();
-    if (groupMode(fileTab()) === 'preview') setMode('split');
-    fileTab().editor.openFind({ replace: id === 'replace' });
+    findInNote(fileTab(), { replace: id === 'replace' });
     return;
   }
   if (id === 'rename' && !fileTab()) return;

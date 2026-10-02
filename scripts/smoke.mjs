@@ -393,6 +393,36 @@ await check('drawn diagrams are kept on disk for the next start', `
   return { n };
 `, (v) => (v?.n >= 2 ? null : 'nothing was kept'));
 
+await check('⌘F in Preview finds in the preview (it stays Preview); Replace… goes to the editor', `
+  const mac = navigator.platform.startsWith('Mac');
+  await openNote('flow.md');
+  button('Preview').click();
+  await sleep(300);
+  document.activeElement?.blur();
+  document.body.dispatchEvent(new KeyboardEvent('keydown', { code: 'KeyF', key: 'f', bubbles: true, cancelable: true, metaKey: mac, ctrlKey: !mac }));
+  const input = await until(() => $$('.preview-find').find((b) => !b.hidden)?.querySelector('input'));
+  const wrap = input?.closest('.editor-wrap');
+  input.value = 'pro'; // approval, Proposal
+  input.dispatchEvent(new Event('input'));
+  await sleep(100);
+  const count = input.closest('.preview-find').querySelector('.ed-find-count').textContent;
+  const marks = CSS.highlights.get('preview-find')?.size;
+  input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }));
+  const next = input.closest('.preview-find').querySelector('.ed-find-count').textContent;
+  const stayed = wrap.classList.contains('mode-preview');
+  input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }));
+  const cleared = !CSS.highlights.has('preview-find') || CSS.highlights.get('preview-find').size === 0;
+  document.body.dispatchEvent(new KeyboardEvent('keydown', { code: 'KeyF', key: 'f', bubbles: true, cancelable: true, metaKey: mac, ctrlKey: !mac }));
+  const again = await until(() => $$('.preview-find').find((b) => !b.hidden));
+  button('Replace…', again).click();
+  const edFind = await until(() => $$('.ed-find:not(.preview-find)').find((b) => !b.hidden && b.offsetParent));
+  const split = !!$$('.editor-wrap').find((w) => w.offsetParent && w.classList.contains('mode-split'));
+  const replaceRow = edFind?.classList.contains('with-replace');
+  const query = edFind?.querySelector('input').value;
+  edFind?.querySelector('input').dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }));
+  return { count, marks, next, stayed, cleared, split, replaceRow, query };
+`, (v) => (/^1 \/ [2-9]/.test(v?.count || '') && v.marks >= 2 && /^2 \//.test(v.next) && v.stayed && v.cleared && v.split && v.replaceRow && v.query === 'pro' ? null : 'finding in the preview did not work'));
+
 // The settings went to the app's config, not just this port's browser storage.
 {
   await sleep(600);

@@ -226,9 +226,11 @@ export class MarkdownEditor {
 
   insert(text) { this.replace(this.ta.selectionStart, this.ta.selectionEnd, text); }
 
-  openFind({ replace = false } = {}) {
+  // query: what to find (else the selection, else the last one).
+  openFind({ replace = false, query = null } = {}) {
     const sel = this.ta.value.slice(this.ta.selectionStart, this.ta.selectionEnd);
-    if (sel && !sel.includes('\n')) this.find.query = sel;
+    if (query) this.find.query = query;
+    else if (sel && !sel.includes('\n')) this.find.query = sel;
     this.find.open = true;
     this.findBar.hidden = false;
     this.findBar.classList.toggle('with-replace', replace || this.findBar.classList.contains('with-replace'));
