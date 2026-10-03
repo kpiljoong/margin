@@ -706,3 +706,4 @@ iframe.mermaid-frame { position: fixed; left: -10000px; top: 0; width: 1600px; h
 /* Rows and the preview, focused from the keyboard. */
 #sidebar :is(.tree-row, .outline-row, .search-file, .search-hit):focus { outline: 1px solid var(--accent); outline-offset: -1px; }
 .preview:focus { outline: none; box-shadow: inset 2px 0 0 var(--accent); }
+#status .rec { color: var(--bad); font-weight: 600; }

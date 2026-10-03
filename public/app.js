@@ -3,6 +3,7 @@ import { store } from './store.js';
 import { linkAt } from './links.js';
 import { PreviewFind } from './previewfind.js';
 import { openLeader, linkHints } from './leader.js';
+import { Macros, describe as describeMacro } from './macro.js';
 import { fillTemplate, isTemplate, TEMPLATE_DIR } from './templates.js';
 import { MarkdownEditor, setEditorKeys } from './editor.js';
 import { renderDiagrams } from './diagrams.js';
@@ -2421,6 +2422,7 @@ function renderStatus() {
     h('span', { class: 'grow' }),
     h('span', { class: 'item clickable', title: 'Change theme', onclick: () => pickTheme() }, `◐ ${currentTheme().name}${S.settings.theme === 'system' ? ' (auto)' : ''}`),
   ];
+  if (macros.recording) items.splice(2, 0, h('span', { class: 'item rec clickable', title: 'Click to stop recording', onclick: stopRecording }, `● Recording macro · ${kbd('macro-play') || '⌥X q q'} stops`));
   if (tab?.kind === 'file') {
     const ed = tab.editor;
     if (ed) {
@@ -2614,7 +2616,7 @@ function openPalette(initial = '') {
         const cq = q.slice(1).trim();
         return COMMANDS.map(([name, run, key]) => ({ name, run, key, m: fuzzy(cq, name) })).filter((x) => x.m)
           .sort((a, b) => b.m.score - a.m.score)
-          .map((x) => ({ label: marked(x.name, x.m.idx), hint: x.key?.key ? kbd(x.key.key) : x.key, run: () => { remember(x.name, x.run); x.run(); } }));
+          .map((x) => ({ label: marked(x.name, x.m.idx), hint: x.key?.key ? kbd(x.key.key) : x.key, run: () => { remember(x.name, x.run); macros.command(x.name, x.run); } }));
       }
       if (q.startsWith('#')) {
         const tab = fileTab();
@@ -4422,6 +4424,8 @@ const ACTIONS = {
   'copy-drawing': () => drawingTab()?.frame && copyPicture(drawingPicture(drawingTab())),
   leader: openLeaderMenu,
   repeat: repeatLast,
+  'macro-record': toggleRecording,
+  'macro-play': () => (macros.recording ? stopRecording() : playMacro(1)),
   'search-next': () => stepSearch(1),
   'search-prev': () => stepSearch(-1),
 };
@@ -4506,6 +4510,14 @@ function leaderTree() {
       { key: 't', label: 'Theme…', run: pickTheme },
       { key: 'z', label: 'Focus mode', run: toggleFocusMode },
     ] },
+    { key: 'q', label: 'macro', items: [
+      { key: 'q', label: macros.recording ? 'Stop recording' : 'Start recording', run: toggleRecording },
+      { key: 'r', label: 'Play', when: () => !!macros.last, run: () => playMacro(1) },
+      { key: 'n', label: 'Play N times…', when: () => !!macros.last, run: playMacroTimes },
+      { key: 'e', label: 'Play until it can’t go on', when: () => !!macros.last, run: () => playMacro(Infinity) },
+      { key: 's', label: 'Play at every search result', when: () => !!macros.last && !!S.searchQuery.trim(), run: playAtResults },
+      { key: 'v', label: 'Show the macro', when: () => !!macros.last, run: () => toast(describeMacro(macros.last)) },
+    ] },
     { key: '.', label: lastRun ? `Repeat: ${lastRun.label}` : 'Repeat the last command', run: repeatLast },
     { key: ',', label: 'Settings', run: () => openSettings() },
     { key: 'k', label: 'Keyboard shortcuts…', run: () => openSettings({ keys: true }) },
@@ -4517,10 +4529,75 @@ function openLeaderMenu() {
   openLeader(leaderTree(), {
     title: kbd('leader') || 'Commands',
     // Again with ⌥X .: the same keys, looked up again (for the tab you're on then).
-    onRun: (keys, it) => { if (keys[0] !== '.' && keys[0] !== 'SPC') remember(it.label, () => runLeaderKeys(keys)); },
+    onRun: (keys, it) => {
+      if (['.', 'SPC', 'q'].includes(keys[0])) return;
+      const run = () => runLeaderKeys(keys);
+      remember(it.label, run);
+      macros.note(it.label, run);
+    },
     isLeader: (e) => !!KEYS.leader && eventKeys(e, isMac) === KEYS.leader,
     onLeader: () => openPalette('>'),
   });
+}
+
+// Keyboard macros (macro.js): F3 records, F4 stops, then plays.
+const macros = new Macros({
+  editorNow: () => { const t = fileTab(); return t?.editor && editorShown(t) ? t.editor : null; },
+  onChange: () => renderStatus(),
+  isAppKey: (e) => appKeys.has(eventKeys(e, isMac)),
+  mac: isMac,
+});
+macros.onWarn = (m) => toast(m, 'error');
+const twoFrames = () => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
+
+function toggleRecording() {
+  if (macros.recording) { stopRecording(); return; }
+  macros.start();
+  toast(`Recording a macro: ${kbd('macro-play') || '⌥X q q'} stops`);
+}
+function stopRecording() {
+  const steps = macros.stop();
+  toast(steps ? `Macro: ${describeMacro(steps)}. ${kbd('macro-play') || '⌥X q r'} plays it` : 'Nothing was recorded');
+}
+async function playMacro(times) {
+  if (!macros.last) { toast(`No macro yet: ${kbd('macro-record') || '⌥X q q'} starts recording`); return; }
+  const n = await macros.play(times);
+  if (times !== 1 && n) toast(`The macro ran ${n} time${n === 1 ? '' : 's'}`);
+}
+async function playMacroTimes() {
+  const v = await askText({ title: 'Play the macro', label: 'How many times?', value: '10', okLabel: 'Play' });
+  const n = Number.parseInt(v, 10);
+  if (n > 0) playMacro(n);
+}
+// Once at every search result, searched again first (the macro may have
+// changed them); in each note from the bottom up, so lines don't move.
+async function playAtResults() {
+  try {
+    const r = await api('GET', `/api/search?q=${encodeURIComponent(S.searchQuery)}`);
+    // Notes open with changes not saved yet: their lines as they are now.
+    const q = S.searchQuery.trim().toLowerCase();
+    for (const t of S.tabs) {
+      if (t.kind !== 'file' || t.content === t.saved) continue;
+      const matches = t.content.split('\n').map((text, i) => ({ line: i + 1, text: text.slice(0, 240) })).filter((m) => m.text.toLowerCase().includes(q)).slice(0, 50);
+      const at = r.results.findIndex((f) => f.path === t.path);
+      if (at >= 0) r.results[at] = { ...r.results[at], matches };
+      else if (matches.length) r.results.push({ path: t.path, nameHit: false, matches });
+    }
+    S.searchResults = r;
+    S.searchAt = null;
+    renderSearchResults();
+  } catch (e) { toast(e.message, 'error'); return; }
+  const hits = searchHits();
+  const fileOrder = [...new Set(hits.map((x) => x.path))];
+  const order = hits.map((x, i) => i).sort((a, b) => fileOrder.indexOf(hits[a].path) - fileOrder.indexOf(hits[b].path) || hits[b].line - hits[a].line);
+  let n = 0;
+  for (const i of order) {
+    await openSearchHit(i);
+    await twoFrames();
+    if (!(await macros.play(1))) break;
+    n++;
+  }
+  toast(`The macro ran at ${n} of ${hits.length} result${hits.length === 1 ? '' : 's'}`);
 }
 
 function runLeaderKeys(keys) {
@@ -4627,13 +4704,17 @@ function runCommand(name) {
   const now = performance.now();
   if (lastCommand.name === name && now - lastCommand.t < 150) return;
   lastCommand = { name, t: now };
-  if (!NOT_REPEATED.has(name) && ACTIONS[name]) remember(keyDefs().find((d) => d.id === name)?.label || name, () => ACTIONS[name]());
-  ACTIONS[name]?.();
+  if (!ACTIONS[name]) return;
+  if (NOT_REPEATED.has(name)) { ACTIONS[name](); return; }
+  const label = keyDefs().find((d) => d.id === name)?.label || name;
+  const run = () => ACTIONS[name]();
+  remember(label, run);
+  macros.command(label, run);
 }
 
 // Repeat the last command (Emacs C-x z, Vim's .): from the leader menu, the
 // palette or a shortcut. Opening a menu or a picker isn't one.
-const NOT_REPEATED = new Set(['leader', 'palette', 'quick-open', 'repeat', 'save', 'settings']);
+const NOT_REPEATED = new Set(['leader', 'palette', 'quick-open', 'repeat', 'save', 'settings', 'macro-record', 'macro-play']);
 let lastRun = null;
 function remember(label, run) { lastRun = { label, run }; }
 function repeatLast() {

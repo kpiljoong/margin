@@ -102,6 +102,7 @@ Built without external libraries to stay lightweight. The editor is a native `te
 | ⌘⇧P | Command palette |
 | ⌥X | Leader key: a menu of commands by letter (see below) |
 | ⌥. | Repeat the last command (from the leader menu, the palette or a shortcut) |
+| F3 / F4 | Keyboard macro: F3 starts recording, F4 stops; then F4 plays it (see below) |
 | F8 / ⇧F8 | Next / previous search result, from the note: the match is selected, the results list follows |
 | ⌘⇧F | Workspace full-text search (`#tag` search works too) |
 | ⌘F / ⌘⌥F | Find / replace in note (case and regex options, ⌘G next). In Preview, ⌘F finds in the rendered note and stays in Preview; replacing switches to Split |
@@ -145,10 +146,16 @@ The shortcuts above (except typing behaviours like Tab, Enter, and bracket pairi
 | `g` git | `g` the Git panel · `d` changes since the last commit · `h` this file's history |
 | `a` agent | `a` delegate a task · `r` agent runs |
 | `t` toggles | `f` tree follows the tab · `s` sidebar · `t` theme · `z` focus mode |
+| `q` macro | `q` start/stop recording · `r` play · `n` play N times · `e` play until it can't go on · `s` play at every search result · `v` show it |
 | `.` | Repeat the last command (it shows which) |
 | `,` / `k` | Settings / keyboard shortcuts |
 
 **Back and forward (⌘[ / ⌘]) return to the place**, not just the note, as Vim's jump list: the cursor and the scroll where you left. A jump inside a note (a heading from the outline or `#`, `:` a line, a search result) is a step too, so ⌘[ after jumping to a heading goes back to where you were typing.
+
+**Keyboard macros (as in Emacs).** F3 starts recording (the status bar shows ● Recording), F4 stops; F4 again plays it where the cursor is now. What is kept is what the keys did: text typed (Korean too, as composed), deletions, cursor moves (characters, words with ⌥, line ends with ⌘←/→ or ⌃A/⌃E, up/down, pages, ⌘A), a find (⌘F, Enter, Esc: "the next match of …", counted from the cursor), Replace and Replace all in the find bar, cut/copy/paste (the macro's own clipboard: what this run cut), the editor's own keys (Enter continuing a list, Tab, ⌘B, ⌥↑…) and commands (⌥X, the palette, shortcuts like F8). Deleting a word or to the line's end is done again from where the cursor is then. Mouse clicks aren't recorded (you're told once).
+- **Play until it can't go on** (⌥X q e): again and again, until a move hits the start or end of the note, a find finds nothing more, or a run changes nothing.
+- **Play at every search result** (⌥X q s): searches again (open notes as they are, saved or not), then at each result selects the match and plays the macro once; in each note from the bottom up, so line numbers stay right. Record it starting from a selected match (F8 to the first one, F3, edit, F4); the result you edited while recording isn't found again if the edit removed the match.
+- Only the last macro is kept, for this session. On a Mac, F3/F4 may need fn (or use ⌥X q q / q r).
 
 **Without the mouse.** In the sidebar's lists (tree, bookmarks, outline, backlinks, search results): ↑↓ or `j`/`k` move, `g`/`G` (Home/End) jump to the ends, Enter opens (⌘Enter to the side), →/← or `l`/`h` open and close folders (← on a file goes to its folder), F2 renames, ⌘⌫ deletes (with Undo), Esc goes back to the editor. In the search box ↓ or Enter goes to the results. In a focused preview (⌥X w p): `j`/`k` scroll, `d`/`u` half a page, Space a page, `g`/`G` top/bottom, `/` find, `f` link hints (a letter on every link in view; type it to follow, as in Vimium), Esc back to the editor.
 

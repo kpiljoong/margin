@@ -32,6 +32,12 @@ fs.writeFileSync(path.join(ws, 'sub', 'links.md'), '# Links\n\nSee [[flow#Propos
 fs.mkdirSync(path.join(ws, 'assets'));
 fs.writeFileSync(path.join(ws, 'assets', 'big.svg'), '<svg xmlns="http://www.w3.org/2000/svg" width="3000" height="2000"><rect width="3000" height="2000" fill="#48c"/></svg>');
 fs.writeFileSync(path.join(ws, 'pics.md'), '# Pics\n\n![Big picture](assets/big.svg)\n');
+// Lines for a keyboard macro, and notes to run one at every search result.
+fs.writeFileSync(path.join(ws, 'macro.md'), 'apple\nbanana\ncherry');
+fs.writeFileSync(path.join(ws, 'ime.md'), 'a\nb\n');
+fs.mkdirSync(path.join(ws, 'todo'));
+fs.writeFileSync(path.join(ws, 'todo', 'a.md'), 'TODO one\n\nTODO two\n');
+fs.writeFileSync(path.join(ws, 'todo', 'b.md'), 'TODO three\n');
 // A note template.
 fs.mkdirSync(path.join(ws, 'templates'));
 fs.writeFileSync(path.join(ws, 'templates', 'Meeting.md'), '# {{title}}\n\nDate: {{date:YYYY}}\n\n## Notes\n\n{{cursor}}\n');
@@ -463,7 +469,7 @@ await check('the leader key (⌥X): f f finds a file, Space all commands; w h go
   key('Escape');
   const back = await until(() => !document.activeElement?.closest('#sidebar'));
   return { focused, groups, files, quick: !!quick, quickValue, typedInEditor, paletteValue, from, moved, opened, back: !!back };
-`, (v) => (v?.focused && v.groups === 'fsbwmlgat' && v.files && v.quick && v.quickValue === '' && !v.typedInEditor && v.paletteValue === '>' && v.from === 'flow.md' && v.moved && v.opened && v.back ? null : 'the leader key did not work'));
+`, (v) => (v?.focused && v.groups === 'fsbwmlgatq' && v.files && v.quick && v.quickValue === '' && !v.typedInEditor && v.paletteValue === '>' && v.from === 'flow.md' && v.moved && v.opened && v.back ? null : 'the leader key did not work'));
 
 await check('link hints in a focused preview: f, then a letter, follows that link', `
   await openNote('sub/links.md');
@@ -548,6 +554,92 @@ await check('F8 / ⇧F8 step through the search results from the note; ⌥. repe
   $('#activity [data-view="files"]').click();
   return { a, b, c, d, e };
 `, (v) => (v?.a?.toast === '1 / 60' && v.a.sel === 'needle' && v.b.toast === '2 / 60' && v.c.toast === '1 / 60' && v.d.toast === '2 / 60' && v.e.toast === '3 / 60' && v.e.current === 2 ? null : 'stepping through the results did not work'));
+
+// Keyboard macros, with real keys (the browser types and moves the caret).
+{
+  const mac = process.platform === 'darwin';
+  const key = async (k, code, vk, modifiers = 0, commands) => {
+    await send('Input.dispatchKeyEvent', { type: 'rawKeyDown', key: k, code, windowsVirtualKeyCode: vk, modifiers, ...(commands ? { commands } : {}) });
+    await send('Input.dispatchKeyEvent', { type: 'keyUp', key: k, code, windowsVirtualKeyCode: vk, modifiers });
+  };
+  const lineEnd = () => (mac ? key('ArrowRight', 'ArrowRight', 39, 4, ['moveToEndOfLine']) : key('End', 'End', 35));
+  const lineStart = () => (mac ? key('ArrowLeft', 'ArrowLeft', 37, 4, ['moveToBeginningOfLine']) : key('Home', 'Home', 36));
+  const down = () => key('ArrowDown', 'ArrowDown', 40, 0, mac ? ['moveDown'] : undefined);
+  const type = (text) => send('Input.insertText', { text });
+  const value = `await sleep(250); return $$('.editor-wrap textarea').find((t) => t.offsetParent)?.value;`;
+  const leader = (...codes) => inPage(`
+    const press = (code, key, opts = {}) => document.activeElement.dispatchEvent(new KeyboardEvent('keydown', { code, key, bubbles: true, cancelable: true, ...opts }));
+    press('KeyX', '≈', { altKey: true });
+    await until(() => $('.leader'));
+    for (const c of ${JSON.stringify(codes)}) press('Key' + c.toUpperCase(), c);
+    await sleep(100);
+  `);
+  let got = {};
+  let problem = null;
+  try {
+    await inPage(`const ta = await openNote('macro.md'); ta.focus(); ta.setSelectionRange(0, 0);`);
+    await key('F3', 'F3', 114);
+    got.rec = await inPage(`return !!$('#status .rec');`);
+    await type('- ');
+    await lineEnd();
+    await type('!');
+    await down();
+    await lineStart();
+    await key('F4', 'F4', 115);
+    got.recorded = await inPage(value);
+    await key('F4', 'F4', 115);
+    got.once = await inPage(value);
+    await leader('q', 'e');
+    got.all = await inPage(value);
+    // Typed with an IME (Korean): the composed text is what's kept.
+    await inPage(`const ta = await openNote('ime.md'); ta.focus(); ta.setSelectionRange(0, 0);`);
+    await key('F3', 'F3', 114);
+    for (const t of ['ㅎ', '하', '한']) await send('Input.imeSetComposition', { text: t, selectionStart: t.length, selectionEnd: t.length });
+    await type('한');
+    for (const t of ['ㄱ', '글']) await send('Input.imeSetComposition', { text: t, selectionStart: t.length, selectionEnd: t.length });
+    await type('글');
+    await type(' ');
+    await down();
+    await lineStart();
+    await key('F4', 'F4', 115);
+    got.imeMacro = await inPage(`await sleep(250); return $('#toast')?.textContent;`);
+    await key('F4', 'F4', 115);
+    got.ime = await inPage(value);
+    await inPage(`await openNote('macro.md');`);
+    if (!got.rec || got.recorded !== '- apple!\nbanana\ncherry' || got.once !== '- apple!\n- banana!\ncherry' || got.all !== '- apple!\n- banana!\n- cherry!' || got.ime !== '한글 a\n한글 b\n' || !got.imeMacro?.startsWith('Macro: “한글 ” · ↓ · ⇤')) problem = 'the macro did not record or play';
+
+    await inPage(`
+      $('#activity [data-view="search"]').click();
+      const input = await until(() => $('#search-input'));
+      input.value = 'TODO';
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+      await until(() => $$('#search-results .search-hit').length === 3);
+      $('#activity [data-view="files"]').click();
+      const ta = await openNote('todo/a.md');
+      ta.focus();
+      ta.setSelectionRange(0, 0);
+      document.activeElement.dispatchEvent(new KeyboardEvent('keydown', { code: 'F8', key: 'F8', bubbles: true, cancelable: true }));
+      await until(() => ta.value.slice(ta.selectionStart, ta.selectionEnd) === 'TODO');
+    `);
+    await key('F3', 'F3', 114);
+    await type('DONE');
+    await key('F4', 'F4', 115);
+    await leader('q', 's');
+    got.results = await inPage(`
+      await until(() => $('#toast')?.textContent.startsWith('The macro ran at'), 5000);
+      const toastText = $('#toast')?.textContent;
+      await openNote('todo/b.md');
+      const b = $$('.editor-wrap textarea').find((t) => t.offsetParent).value;
+      const a = (await openNote('todo/a.md')).value;
+      return { toastText, a, b };
+    `);
+    if (!problem && (got.results?.a !== 'DONE one\n\nDONE two\n' || got.results.b !== 'DONE three\n' || got.results.toastText !== 'The macro ran at 2 of 2 results')) problem = 'the macro did not run at every search result';
+  } catch (e) { problem = e.message; }
+  const name = 'a keyboard macro (F3 … F4) records typing and moves, plays once, until the end, and at every search result';
+  results.push({ name, ok: !problem });
+  console.log(`${problem ? '✗' : '✓'} ${name}${problem ? `\n    ${problem}\n    got: ${JSON.stringify(got)}` : ''}`);
+  if (problem) failed = true;
+}
 
 // The settings went to the app's config, not just this port's browser storage.
 {

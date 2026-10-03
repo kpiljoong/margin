@@ -104,6 +104,19 @@ export function setEditorKeys(keys) {
 }
 const commandOf = (e) => commandKeys.get(eventKeys(e, isMac));
 
+// Watching editors from outside (keyboard macros, macro.js): the keys an
+// editor acted on itself, its edits made outside a key (replacing from the
+// find bar), and where a find ended.
+export const editorWatch = { key: null, edit: null, find: null, replaceAll: null };
+
+// What a find looks for, as a RegExp (null: nothing, or a broken pattern).
+export function findPattern({ query, caseSensitive, regex }) {
+  if (!query) return null;
+  try {
+    return new RegExp(regex ? query : query.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), caseSensitive ? 'gu' : 'giu');
+  } catch { return null; }
+}
+
 export class MarkdownEditor {
   constructor({ onChange, onScroll, onCursor, complete, onPasteFiles } = {}) {
     this.onChange = onChange || (() => {});
@@ -134,7 +147,11 @@ export class MarkdownEditor {
     this.ta.addEventListener('mousedown', () => this._clearMulti());
     this.ta.addEventListener('compositionstart', () => this._clearMulti());
     this.ta.addEventListener('scroll', () => this._syncScroll());
-    this.ta.addEventListener('keydown', (e) => this._keydown(e));
+    this.ta.addEventListener('keydown', (e) => {
+      this.handlingKey = true;
+      try { this._keydown(e); } finally { this.handlingKey = false; }
+      editorWatch.key?.(this, e, commandOf(e));
+    });
     this.ta.addEventListener('keyup', () => this.onCursor());
     this.ta.addEventListener('click', () => { this._closePopup(); this.onCursor(); });
     this.ta.addEventListener('blur', () => setTimeout(() => { if (document.activeElement !== this.ta) this._closePopup(); }, 150));
@@ -214,6 +231,13 @@ export class MarkdownEditor {
   // Replace a range through execCommand so the native undo stack keeps working.
   replace(start, end, text, selStart = start + text.length, selEnd = selStart) {
     const ta = this.ta;
+    if (!this.handlingKey && !this.quietEdit) editorWatch.edit?.(this, { start, end, text, selStart: ta.selectionStart, selEnd: ta.selectionEnd });
+    this.busy = true;
+    try { this._replace(start, end, text, selStart, selEnd); } finally { this.busy = false; }
+  }
+
+  _replace(start, end, text, selStart, selEnd) {
+    const ta = this.ta;
     ta.focus({ preventScroll: true });
     ta.setSelectionRange(start, end);
     // execCommand targets the focused element: only use it when that is us
@@ -231,6 +255,7 @@ export class MarkdownEditor {
     const sel = this.ta.value.slice(this.ta.selectionStart, this.ta.selectionEnd);
     if (query) this.find.query = query;
     else if (sel && !sel.includes('\n')) this.find.query = sel;
+    if (!this.find.open) this.findFrom = this.ta.selectionEnd;
     this.find.open = true;
     this.findBar.hidden = false;
     this.findBar.classList.toggle('with-replace', replace || this.findBar.classList.contains('with-replace'));
@@ -241,6 +266,10 @@ export class MarkdownEditor {
   }
 
   closeFind() {
+    if (this.find.open && editorWatch.find) {
+      const { query, caseSensitive, regex, matches } = this.find;
+      editorWatch.find(this, { query, caseSensitive, regex, matches, from: this.findFrom ?? 0, sel: [this.ta.selectionStart, this.ta.selectionEnd] });
+    }
     this.find.open = false;
     this.findBar.hidden = true;
     this.find.matches = [];
@@ -808,12 +837,33 @@ export class MarkdownEditor {
     return bar;
   }
 
-  _pattern() {
-    const { query, caseSensitive, regex } = this.find;
-    if (!query) return null;
-    try {
-      return new RegExp(regex ? query : query.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), caseSensitive ? 'gu' : 'giu');
-    } catch { return null; }
+  _pattern() { return findPattern(this.find); }
+
+  // The k-th match after the selection (no wrapping), selected: a find made
+  // while recording a macro, played back. False when there isn't one.
+  findNth(spec, k = 1) {
+    const re = findPattern(spec);
+    if (!re) return false;
+    re.lastIndex = this.ta.selectionEnd;
+    let m;
+    for (let n = 0; (m = re.exec(this.ta.value));) {
+      if (m[0] === '') { re.lastIndex++; continue; }
+      if (++n === k) { this.selectRange(m.index, m.index + m[0].length); return true; }
+    }
+    return false;
+  }
+
+  // Replace every match of spec.query with spec.replace (Replace all).
+  replaceAllMatches(spec) {
+    const re = findPattern(spec);
+    if (!re) return 0;
+    const one = new RegExp(re.source, re.flags.replace('g', ''));
+    let count = 0;
+    const next = this.ta.value.replace(re, (m) => { count++; return spec.regex ? m.replace(one, spec.replace) : spec.replace; });
+    if (!count) return 0;
+    this.quietEdit = true;
+    try { this.replace(0, this.ta.value.length, next, 0); } finally { this.quietEdit = false; }
+    return count;
   }
 
   _runFind(jump) {
@@ -878,9 +928,9 @@ export class MarkdownEditor {
   _replaceAll() {
     const re = this._pattern();
     if (!re || !this.find.matches.length) return;
-    const count = this.find.matches.length;
-    const next = this.ta.value.replace(re, (m) => this._replacement(m));
-    this.replace(0, this.ta.value.length, next, 0);
+    const { query, caseSensitive, regex, replace } = this.find;
+    const count = this.replaceAllMatches({ query, caseSensitive, regex, replace });
+    editorWatch.replaceAll?.(this, { query, caseSensitive, regex, replace });
     this._runFind(false);
     this.findCount.textContent = `Replaced ${count}`;
   }
