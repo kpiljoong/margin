@@ -27,7 +27,7 @@ npm start            # run the app in development mode
     - In the delegate dialog you can pick a **model per task** (Claude: Haiku/Sonnet/Opus, Codex: GPT-6 Luna/Sol). The server accepts only models on the list.
     - The delegate dialog and Agent panel check the CLI **login status** (`claude auth status`, `codex login status`) in advance and tell you if a login is needed.
     - To change the model, just change `--model`/`-m` in the command. To add another CLI agent as a preset, add one line to `AGENT_PRESETS` in `desktop/main.js` (requirements: runs non-interactively, takes the prompt on stdin, and edits files in the current folder).
-  - The demo agent is not AI. It only understands keywords (tidy/summarize/tasks); for any other request it changes nothing and says so.
+  - The demo agent is not AI. It only understands keywords (tidy/summarize/tasks/red pen, and draw: a step on each flow and a callout on each picture); for any other request it changes nothing and says so.
   - Registered agents are chosen per task in the delegate dialog.
   - The login shell's `PATH` is read only when an external CLI agent is configured (to find CLIs in `~/.nvm`, Homebrew, etc.).
 - **Quick capture**: Even when the app is in the background, **⌃⌥N** (Windows: Ctrl+Alt+N) writes a line to the Inbox or today's journal. It can be turned off in the File menu.
@@ -93,7 +93,9 @@ The text is yours, the margin is the agent's. The review draws the agent's propo
 | `v` | red pen ↔ diff, for every review (remembered) |
 | `o` / Enter | open the note at the mark |
 
-Clicking a mark picks its margin note; ✓ and ✗ on each note do what `y` and `n` do. A mark is one change of the run (a hunk): lines changed one for one, as in a proofread list, are a change each, while two edits on one line are one mark with both reasons in its note. Accepting and applying are exactly those of the diff: the same apply, undo and 3-way merge, no other way of writing. Marks still open are not applied. Changes that overlap your own edits are shown but can't be accepted. Code blocks show as code (diagrams aren't drawn here), and a change of only spaces or empty lines is marked with ¶. The red pen shows in dark and light themes alike and uses a handwriting font of the system (Bradley Hand, Segoe Print, Ink Free…, and Nanum Pen Script for Korean where it is installed, as on macOS); nothing is downloaded. A long margin note shows three lines until it is the one in view. Notes on overlapping words share a place in the margin.
+Clicking a mark picks its margin note; ✓ and ✗ on each note do what `y` and `n` do. A mark is one change of the run (a hunk): lines changed one for one, as in a proofread list, are a change each, while two edits on one line are one mark with both reasons in its note. Accepting and applying are exactly those of the diff: the same apply, undo and 3-way merge, no other way of writing. Marks still open are not applied. Changes that overlap your own edits are shown but can't be accepted. Code blocks show as code, and a change of only spaces or empty lines is marked with ¶.
+
+**On pictures.** A change inside a ` ```flow ` block, or inside the ` ```ink ` marks of a picture, is drawn on the picture instead of as text: the flow with the proposal in it, a new step or arrow ringed in red, a removed one crossed out; on a screenshot the new marks drawn on it, glowing, the removed ones dashed and faint. Its margin note says what changes (`+ Retry · − Fax · arrows +1 −1`, `+ box, “Too small”`). `y` and `n` work as for text — taken, a new step turns green and a removed one fades; left, a new one fades — and **Result** shows the picture as it will be. A change that also touches the lines around the block (or the fence itself) stays text. The red pen shows in dark and light themes alike and uses a handwriting font of the system (Bradley Hand, Segoe Print, Ink Free…, and Nanum Pen Script for Korean where it is installed, as on macOS); nothing is downloaded. A long margin note shows three lines until it is the one in view. Notes on overlapping words share a place in the margin.
 
 Two recipes ask the agent to write **in the margin only**, not in the note:
 
@@ -194,6 +196,8 @@ private: true        # or  agent: never
 private/
 *.secret.md
 ```
+
+Pictures are not shared, except for a task about pictures (it mentions a picture, screenshot, image, ink, annotating…): then the local pictures the shared notes show — not ones `.agentnotesignore` excludes, none over 10 MB — are copied in with them, and the task dialog lists them before running.
 
 Agent commands run with your user permissions. Staging is isolation for convenience, not a security sandbox, so only configure agents you trust. If an agent uses a cloud model, shared notes are sent to that service.
 
@@ -441,6 +445,7 @@ Login request -> Auth server -> Success?
   - **Tools**: click a picture (or look at it) and the tool bar shows at the top right: `D` pen, `A` arrow, `R` box, `T` words (click where they go, type, Enter), `E` eraser (click a mark), `C` colour (then a number). The same key again, or `Esc`, puts the tool down. With a tool on, a drag on the picture draws; beside it the canvas still pans.
   - Each mark is one ⌘Z. Erasing the last mark takes the block out. The colour is optional (red), any of the flow colours (`blue`, `green`, …). Lines that aren't marks are left alone; `#` starts a comment.
   - The preview draws the marks on the picture too; other apps show the picture and the lines as code.
+  - **An agent marks it up too**: a task about pictures ("mark the problems on the screenshot", "스크린샷에 표시해줘" — words like picture, screenshot, image, ink, annotate) gets the ` ```ink ` notation and the sizes of the pictures, and the pictures the shared notes show are shared with it (the task dialog lists them). Its marks come back as red pen on the picture, each block's change to take or leave.
 
 ## Drawings (Excalidraw)
 
@@ -485,7 +490,7 @@ The configured command runs in a shell with `cwd = the staging copy` and receive
 
 | Input | Contents |
 |---|---|
-| stdin, `$AGENT_NOTES_PROMPT` | Role description + focus note + task (includes prior context in follow-up rounds) |
+| stdin, `$AGENT_NOTES_PROMPT` | Role description + focus note + task (includes prior context in follow-up rounds); the ` ```flow ` notation when the task mentions a flow or the note has one, the ` ```ink ` notation and the pictures' sizes for tasks about pictures |
 | `$AGENT_NOTES_TASK` | The task as written by the user |
 | `$AGENT_NOTES_SCOPE`, `$AGENT_NOTES_FOCUS`, `$AGENT_NOTES_ROUND` | Scope, the note being viewed, round number |
 
@@ -536,6 +541,8 @@ server.js              local HTTP server + JSON API (files, search and tags, att
 lib/diff.js            line-level diff, hunk generation/selective apply, 3-way merge
 lib/privacy.js         .agentnotesignore globs, front matter privacy check
 lib/agentlog.js        turns agent output (Claude stream-json / Codex --json / plain text) into activity, answer, and usage
+lib/pictures.js        the local pictures a note shows and their pixel sizes (for tasks about pictures)
+lib/flow-notation.md, lib/ink-notation.md  the ```flow and ```ink notations, as given to agents
 public/index.html      UI shell (strict CSP, no inline scripts)
 public/app.js          app shell: tabs, tree, search, palette, settings, delegate dialog, review screen
 public/keys.js         shortcuts: key combo notation, recognition (by keyboard position), conflicts, display (pure logic). Defaults in public/shortcuts.json (also read by the menu)
@@ -550,6 +557,8 @@ public/previewfind.js  find in the preview (CSS Custom Highlight API, the markup
 public/mermaid-frame.*  hidden sandbox iframe where mermaid actually draws (opaque origin, dedicated CSP)
 public/viewer.js       enlarged view for diagrams and drawings (zoom, pan)
 public/flow.js         ```flow simple notation → mermaid flowchart translation (per-box line and text positions, arrows, problem markers), presentation order, name list and similar names
+public/ink.js          ```ink marks on a picture: parsing, writing, drawing (pure logic but the SVG)
+public/penpic.js       red pen on pictures: which changes are in a flow or ink block, what each one adds and removes, drawn on the picture
 public/figure-goal.js  resolves the figure/box the cursor points at, finds mentions in text, box description list items (pure logic, no DOM)
 public/canvas.js       canvas view: section cards, pan and zoom, cursor following, linking same-name boxes, follow the flow, present, box renaming
 public/vendor/mermaid/ mermaid 12.0.0 (MIT) bundle, unmodified
@@ -560,7 +569,7 @@ vendor/excalidraw/     source of the bundle above: pinned package.json and lockf
 build/check-vendor.js  checks that public/vendor/excalidraw matches the recorded build (CI)
 public/themes.js       theme definitions (CSS variable sets)
 public/app.css         layout and component styles
-scripts/demo-agent.js  offline deterministic demo agent (tidy/summarize/collect tasks by keyword)
+scripts/demo-agent.js  offline deterministic demo agent (tidy/summarize/collect tasks/red pen/draw by keyword)
 scripts/demo.js        npm run demo launcher
 test/*.test.mjs        npm test (node --test). Not included in the app package
 example-workspace/     sample notes (includes a private note and a .agentnotesignore example)

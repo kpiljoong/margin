@@ -12,6 +12,7 @@ const { spawn, execFile } = require('child_process');
 const { buildHunks, applyHunks, mergeHunks } = require('./lib/diff');
 const { loadIgnore, isPrivateNote } = require('./lib/privacy');
 const { parseAgentLog } = require('./lib/agentlog');
+const { picturesIn, pictureSize } = require('./lib/pictures');
 
 const APP_DIR = __dirname;
 const PUBLIC_DIR = path.join(APP_DIR, 'public');
@@ -1122,9 +1123,10 @@ function writeMeta(meta) {
 
 // Which files an agent would see for a given scope, and which ones the
 // privacy rules withhold. The UI shows this before anything runs.
-function resolveScope(scope, focus) {
+function resolveScope(scope, focus, task = '') {
   const ignored = loadIgnore(ROOT);
-  let files = walk(ROOT).filter((f) => NOTE_EXT.has(extOf(f)));
+  const all = walk(ROOT);
+  let files = all.filter((f) => NOTE_EXT.has(extOf(f)));
   if (scope === 'file') {
     files = files.filter((f) => f === focus);
     if (!files.length) throw httpError(400, 'Open a Markdown or text note to use "this note" scope');
@@ -1142,7 +1144,20 @@ function resolveScope(scope, focus) {
     if (reason) excluded.push({ path: f, reason });
     else included.push(f);
   }
-  return { scope, focus: focus || null, included, excluded, instructions: agentInstructions() ? INSTRUCTIONS : null };
+  // A task about pictures sees the ones the shared notes show.
+  const pictures = [];
+  if (PICTURE_TASK.test(task)) {
+    const there = new Set(all);
+    for (const f of included) {
+      let text = '';
+      try { text = readText(path.join(ROOT, f)) || ''; } catch { continue; }
+      for (const p of picturesIn(text, f, all)) {
+        if (pictures.length >= MAX_PICTURES || pictures.includes(p) || !there.has(p) || ignored(p)) continue;
+        try { if (fs.statSync(path.join(ROOT, p)).size <= MAX_PICTURE_BYTES) pictures.push(p); } catch { /* gone */ }
+      }
+    }
+  }
+  return { scope, focus: focus || null, included, excluded, pictures, instructions: agentInstructions() ? INSTRUCTIONS : null };
 }
 
 // The folder's own instructions for agents: AGENTS.md at its top (the file
@@ -1157,11 +1172,33 @@ function agentInstructions() {
   return readText(abs)?.trim() || null;
 }
 
-// The ```flow notation, for tasks that mention it (lib/flow-notation.md).
+// The ```flow notation, for tasks that mention it or notes that have one
+// (lib/flow-notation.md).
 let flowNotation = null;
-const flowGuide = (text) => (/\bflow\b/i.test(text)
+const flowGuide = (text, note) => (/\bflow\b/i.test(text) || /^\s*```flow\s*$/m.test(note)
   ? (flowNotation ??= fs.readFileSync(path.join(APP_DIR, 'lib', 'flow-notation.md'), 'utf8').trim())
   : '');
+
+// Tasks about pictures (in English or Korean): the ```ink notation
+// (lib/ink-notation.md), and the pictures the shared notes show are copied
+// in with them, their sizes in the prompt.
+const PICTURE_TASK = /\b(ink|pictures?|screenshots?|screen ?shots?|images?|photos?|annotat\w*|mark up|draw on)\b|\uADF8\uB9BC|\uC2A4\uD06C\uB9B0\s?\uC0F7|\uC774\uBBF8\uC9C0|\uC0AC\uC9C4/i;
+const MAX_PICTURES = 40;
+const MAX_PICTURE_BYTES = 10 * 1024 * 1024;
+let inkNotation = null;
+const inkGuide = (text, note) => (PICTURE_TASK.test(text) || /^\s*```ink\s*$/m.test(note)
+  ? (inkNotation ??= fs.readFileSync(path.join(APP_DIR, 'lib', 'ink-notation.md'), 'utf8').trim())
+  : '');
+const picturesLine = (pictures = []) => {
+  if (!pictures.length) return '';
+  const sized = pictures.map((p) => {
+    let size = null;
+    try { size = pictureSize(fs.readFileSync(path.join(ROOT, p))); } catch { /* gone */ }
+    return size ? `${p} (${size[0]}×${size[1]})` : p;
+  });
+  return `The pictures these notes show are in this directory too, so you can look at them (width×height in pixels): ${sized.join(', ')}.`;
+};
+const noteText = (rel) => { try { return rel ? readText(path.join(ROOT, rel)) || '' : ''; } catch { return ''; } };
 
 // Margin notes: how to comment (and suggest) instead of editing, for tasks
 // that ask for it (the red pen recipes).
@@ -1171,8 +1208,10 @@ const COMMENTS_GUIDE = `To write in the margin instead of in the text, put a JSO
 Quote the note exactly as it is, and as little as is needed to find the place. Write comments in the language of the note. Each comment is shown in the margin next to the quote; the user accepts or rejects each suggestion.`;
 const commentsGuide = (text) => (text.includes(COMMENTS_FILE) || /\b(red pen|margin (notes|comments))\b/i.test(text) ? COMMENTS_GUIDE : '');
 
-function buildPrompt(task, focus, followUp = '') {
-  const flow = flowGuide(`${task}\n${followUp}`);
+function buildPrompt(task, focus, followUp = '', pictures = []) {
+  const note = noteText(focus);
+  const flow = flowGuide(`${task}\n${followUp}`, note);
+  const ink = inkGuide(`${task}\n${followUp}`, note);
   const margin = commentsGuide(`${task}\n${followUp}`);
   const own = agentInstructions();
   return [
@@ -1183,6 +1222,8 @@ function buildPrompt(task, focus, followUp = '') {
     'Work without asking questions: nobody can answer them. If the task is unclear, make the most reasonable edit.',
     'Diagrams render from ```mermaid code blocks.',
     flow ? `\n${flow}\n` : '',
+    ink ? `\n${ink}\n` : '',
+    pictures.length ? picturesLine(pictures) : '',
     margin ? `\n${margin}\n` : '',
     own ? `\nInstructions for this notes folder (from ${INSTRUCTIONS}):\n${own}\n` : '',
     focus ? `The note the user is looking at: ${focus}` : '',
@@ -1202,14 +1243,14 @@ function startRun({ task, scope, focus, selection, agentId, model, recipe }) {
   const command = agentCommand(agent, typeof model === 'string' ? model : '');
   task = String(task || '').trim();
   if (!task) throw httpError(400, 'Describe the task for the agent');
-  const { included, excluded } = resolveScope(scope, focus);
+  const { included, excluded, pictures } = resolveScope(scope, focus, task);
   if (!included.length) throw httpError(400, 'Nothing to share: every note in scope is excluded by privacy rules');
   if (included.length > 5000) throw httpError(400, 'Scope is too large (over 5000 notes); pick a folder');
 
   ensureDataDir();
   const id = newRunId();
   const dir = runDir(id);
-  for (const f of included) {
+  for (const f of [...included, ...pictures]) {
     for (const sub of ['base', 'work']) {
       const dst = path.join(dir, sub, f);
       fs.mkdirSync(path.dirname(dst), { recursive: true });
@@ -1225,9 +1266,9 @@ function startRun({ task, scope, focus, selection, agentId, model, recipe }) {
     recipe: typeof recipe === 'string' ? recipe.replace(/\s+/g, ' ').trim().slice(0, 80) : '',
     agent: agent.label, agentId: agent.id, command, model: (command === agent.command ? agent.model : model) || '',
     status: 'running', startedAt: new Date().toISOString(), finishedAt: null,
-    exitCode: null, files: included, excluded, applied: null, selection: sel ? sel.length : 0,
+    exitCode: null, files: included, pictures, excluded, applied: null, selection: sel ? sel.length : 0,
   };
-  let prompt = buildPrompt(task, focusShared);
+  let prompt = buildPrompt(task, focusShared, '', pictures);
   const mine = focusShared ? commentsForAgent(focusShared) : '';
   if (mine) prompt += `\n\n${mine}`;
   if (sel) prompt += `\n\nThe user selected this passage in ${focusShared}; focus the task on it:\n<<<\n${sel}\n>>>`;
@@ -1260,7 +1301,7 @@ function followUpRun(prevId, { task }) {
     exitCode: null, signal: null, usage: undefined, resolvedModel: undefined, cancelReason: undefined, applied: null, child: undefined,
   };
   const prompt = [
-    buildPrompt(meta.originalTask, meta.focus, task),
+    buildPrompt(meta.originalTask, meta.focus, task, meta.pictures),
     '',
     `This is round ${round}. Your earlier edits are already in this directory and are still pending human review.`,
     `The reviewer's follow-up: ${task}`,
@@ -1644,7 +1685,7 @@ async function routeApi(method, url, body) {
   if (method === 'GET' && p === '/api/git/log') return gitLog(q('path'), q('limit'));
   if (method === 'GET' && p === '/api/git/show') return gitShow(q('rev'), q('path'));
   if (method === 'POST' && p === '/api/git/commit') return gitCommit({ message: (body || {}).message, paths: (body || {}).paths });
-  if (method === 'GET' && p === '/api/scope') return resolveScope(q('scope'), q('focus'));
+  if (method === 'GET' && p === '/api/scope') return resolveScope(q('scope'), q('focus'), q('task') || '');
   if (method === 'GET' && p === '/api/runs') return { runs: listRuns() };
   if (method === 'GET' && p === '/api/agents/status') {
     const fresh = q('fresh') === '1';

@@ -10,6 +10,7 @@ import { hunksOf } from './track.js';
 import { renderDiagrams } from './diagrams.js';
 import { flowToMermaid, flowsAsMermaid, parseFlow, isStepText, flowStepNames, nameKey, flowTour, flowLineAt, COLORS } from './flow.js';
 import { pairInk, addMark, removeMark } from './ink.js';
+import { pictureHunks, penPlaces, pictureSummary, showPicture, PLACE } from './penpic.js';
 import { connect, addBox, freshName, nextAnswer, setColor, setDirection, removeBox, removeArrow, setArrowKind, setArrowLabel, reverseArrow, setShape, arrowSpot } from './flowedit.js';
 import { FigureCanvas } from './canvas.js';
 import { goalAt, boxAt, mentionRanges, definitionLines, leadLines } from './figure-goal.js';
@@ -4562,15 +4563,21 @@ async function openTaskDialog(presetTask = '', { scope: presetScope = null, reci
   const runBtn = h('button', { class: 'btn primary', onclick: submit }, 'Run on staged copy');
   const close = () => { overlay.hidden = true; overlay.replaceChildren(); };
 
+  let asked = 0;
   async function refreshScope() {
-    filesBox.replaceChildren('…');
+    const n = ++asked;
+    if (!filesBox.childElementCount) filesBox.replaceChildren('…');
     try {
-      const r = await api('GET', `/api/scope?scope=${scope}${focus ? `&focus=${encodeURIComponent(focus)}` : ''}`);
+      // A task about pictures also shares the pictures the notes show.
+      const r = await api('GET', `/api/scope?scope=${scope}${focus ? `&focus=${encodeURIComponent(focus)}` : ''}&task=${encodeURIComponent(task.value.slice(0, 500))}`);
+      if (n !== asked) return;
+      const pics = r.pictures || [];
       filesBox.replaceChildren(
         r.instructions ? h('div', { class: 'instr', title: 'The folder’s instructions for agents, sent with every task' }, `${r.instructions}  (instructions)`) : '',
         ...r.included.map((p) => h('div', {}, p)),
+        ...pics.map((p) => h('div', { class: 'instr', title: 'A picture the notes show, shared because the task is about pictures' }, `${p}  (picture)`)),
         ...r.excluded.map((x) => h('div', { class: 'ex', title: `withheld: ${x.reason}` }, `${x.path}  (private)`)));
-      shareLine.textContent = `${r.included.length} note${r.included.length === 1 ? '' : 's'} will be shared${r.excluded.length ? `, ${r.excluded.length} withheld as private` : ''}${r.instructions ? `, with ${r.instructions}` : ''}.`;
+      shareLine.textContent = `${r.included.length} note${r.included.length === 1 ? '' : 's'}${pics.length ? ` and ${pics.length} picture${pics.length === 1 ? '' : 's'}` : ''} will be shared${r.excluded.length ? `, ${r.excluded.length} withheld as private` : ''}${r.instructions ? `, with ${r.instructions}` : ''}.`;
       runBtn.disabled = !r.included.length;
     } catch (e) { filesBox.replaceChildren(e.message); runBtn.disabled = true; }
   }
@@ -4591,6 +4598,8 @@ async function openTaskDialog(presetTask = '', { scope: presetScope = null, reci
   const scopeOpt = (value, label, disabled) => h('label', {},
     h('input', { type: 'radio', name: 'scope', value, checked: scope === value, disabled, onchange: () => { scope = value; refreshScope(); } }), label);
 
+  const refreshSoon = debounce(refreshScope, 300);
+  task.addEventListener('input', refreshSoon);
   task.addEventListener('keydown', (e) => {
     if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) { e.preventDefault(); submit(); }
     if (e.key === 'Escape') close();
@@ -4607,7 +4616,8 @@ async function openTaskDialog(presetTask = '', { scope: presetScope = null, reci
       h('div', { class: 'recipes' }, recipes.list.map((r) => h('button', { class: 'chip', title: r.prompt, onclick: () => {
         task.value = r.prompt;
         recipeName = r.name;
-        if (r.scope && (r.scope !== 'file' || focus)) { scope = r.scope; overlay.querySelectorAll('input[name=scope]').forEach((x) => { x.checked = x.value === scope; }); refreshScope(); }
+        if (r.scope && (r.scope !== 'file' || focus)) { scope = r.scope; overlay.querySelectorAll('input[name=scope]').forEach((x) => { x.checked = x.value === scope; }); }
+        refreshScope();
         task.focus();
       } }, r.name)),
       h('button', { class: 'chip add', title: `Your own recipes, as commands: ${RECIPES_FILE}`, onclick: () => { close(); editRecipes(); } }, '＋')),
@@ -5056,7 +5066,7 @@ function fileCard(c, tab, locked) {
   else if (view === 'result') {
     // Render the note as it would read with exactly the selected changes.
     const text = c.status === 'added' ? c.lines.join('\n') : applySelected(c.base, c.hunks, dec.hunks);
-    const result = h('div', { class: 'preview md result-preview', html: renderMarkdown(text) });
+    const result = h('div', { class: 'preview md result-preview', html: renderMarkdown(text, { image: (url) => localImage(url, c.path) }) });
     renderDiagrams(result);
     body.push(result);
   } else if (c.binary) body.push(h('div', { class: 'review-note' }, 'Binary file — shown as a whole-file change.'));
@@ -5095,18 +5105,26 @@ function markState(tab, path, m, lock) {
 
 function penPage(c, tab, lock) {
   const notes = (tab.run.comments || []).map((x, n) => ({ ...x, n })).filter((x) => x.file === c.path);
-  const { text, marks, general } = pen.penSource(c.base, c.hunks || [], notes);
-  const doc = pen.decorate(h('div', { class: 'pen-doc md', html: renderMarkdown(text) }));
+  // Changes inside a ```flow or ```ink block are drawn on its picture
+  // (public/penpic.js); the rest of the note is marked as text.
+  const hunks = c.hunks || [];
+  const pics = pictureHunks(c.base, hunks);
+  const placed = penPlaces(c.base, hunks, pics);
+  const { text, marks, general } = pen.penSource(placed.base, placed.hunks, notes);
+  for (const m of marks) m.line = m.kind === 'hunk' ? hunks[m.i].baseStart : placed.back[m.line] ?? m.line;
+  const doc = pen.decorate(h('div', { class: 'pen-doc md', html: renderMarkdown(text, { image: (url) => localImage(url, c.path) }) }));
   const conflicts = new Set(lock ? [] : c.conflicts || []);
   const cards = marks.map((m) => {
     const st = markState(tab, c.path, m, lock);
     for (const el of doc.querySelectorAll(`[data-mark="${m.key}"]`)) el.classList.add(`pen-${st}`);
     const stuck = lock || conflicts.has(m.i);
     const what = m.kind === 'note' ? ['Noted', 'Dismiss'] : tab.kind === 'outside' ? ['Keep', 'Undo'] : ['Accept', 'Reject'];
-    return h('div', { class: `pen-card kb-item pen-${st}${m.notes.length ? ' noted' : ''}`, 'data-path': c.path, 'data-hunk': m.key, 'data-mark': m.key, 'data-line': m.line + 1 },
+    const drawn = m.picture != null;
+    return h('div', { class: `pen-card kb-item pen-${st}${m.notes.length || drawn ? ' noted' : ''}`, 'data-path': c.path, 'data-hunk': m.key, 'data-mark': m.key, 'data-line': m.line + 1 },
       stuck ? null : h('div', { class: 'pen-acts' },
         h('button', { class: 'pen-yes', title: `${what[0]} (y)`, onclick: () => penDecide(tab, c.path, m.key, 'y', false) }, '✓'),
         h('button', { class: 'pen-no', title: `${what[1]} (n)`, onclick: () => penDecide(tab, c.path, m.key, 'n', false) }, '✗')),
+      drawn ? h('div', { class: 'pen-note pen-pic-what' }, pictureSummary(pics[m.picture], m.i)) : null,
       m.notes.map((x) => h('div', { class: 'pen-note', title: x.comment || x.suggest },
         x.speaker ? h('span', { class: 'pen-who' }, `@${x.speaker}`) : null, x.time ? h('span', { class: 'pen-when' }, hhmm(x.time)) : null,
         x.comment || `→ ${x.suggest}`, x.replies?.length ? h('span', { class: 'pen-when' }, ` +${x.replies.length}`) : null)),
@@ -5125,7 +5143,14 @@ function penPage(c, tab, lock) {
     const card = mark && page.querySelector(`.pen-card[data-mark="${mark.dataset.mark}"]`);
     if (card) setReviewCur(tab, card, false);
   });
-  pen.watchMargin(page.querySelector('.pen-body'));
+  // The pictures, where their placeholders are.
+  const state = (key) => { const m = marks.find((x) => x.key === key); return m ? markState(tab, c.path, m, lock) : 'open'; };
+  const body = page.querySelector('.pen-body');
+  for (const p of [...doc.querySelectorAll('p')]) {
+    const k = new RegExp(`^${PLACE}(\\d+)${PLACE}$`).exec(p.textContent.trim())?.[1];
+    if (k != null && pics[k]) showPicture(p, pics[k], { state, render: renderDiagrams, drawn: () => pen.layoutMargin(body) });
+  }
+  pen.watchMargin(body);
   return page;
 }
 
@@ -5968,7 +5993,7 @@ function reviewView(tab) {
       run.usage ? h('span', { title: usageTitle(run.usage) }, usageText(run.usage)) : null,
       h('span', {}, `scope: ${run.scope}${run.focus ? ` (${run.focus})` : ''}`),
       run.selection ? h('span', {}, `selection: ${run.selection} chars`) : null,
-      h('span', { title: run.files.join('\n') }, `shared ${run.files.length} note${run.files.length === 1 ? '' : 's'}`),
+      h('span', { title: [...run.files, ...(run.pictures || [])].join('\n') }, `shared ${run.files.length} note${run.files.length === 1 ? '' : 's'}${run.pictures?.length ? `, ${run.pictures.length} picture${run.pictures.length === 1 ? '' : 's'}` : ''}`),
       run.excluded?.length ? h('span', { title: run.excluded.map((x) => x.path).join('\n') }, `withheld ${run.excluded.length} private`) : null,
       h('span', {}, `started ${timeAgo(run.startedAt)}`),
       took ? h('span', {}, `took ${took}`) : null,

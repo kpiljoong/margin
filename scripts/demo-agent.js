@@ -84,7 +84,56 @@ const SHORTER = ['shorter', 'short', '\uC9E7'];
 // Red pen (빨간펜): marks in the margin instead of edits; "comments only" (코멘트만): remarks without suggestions.
 const RED = ['red pen', 'comments.json', '\uBE68\uAC04\uD39C'];
 const REMARKS_ONLY = ['comments only', 'remarks only', '\uCF54\uBA58\uD2B8\uB9CC'];
-const understood = wants(...TIDY, ...SUMMARY, ...TASKS, ...RED) || (round > 1 && wants(...SHORTER));
+// Pictures (그림): a step added to each ```flow, a callout on each picture (its ```ink lines).
+const DRAW = ['draw', 'picture', 'mark up', '\uADF8\uB9BC'];
+const understood = wants(...TIDY, ...SUMMARY, ...TASKS, ...RED, ...DRAW) || (round > 1 && wants(...SHORTER));
+
+// A picture's size in pixels (PNG, or an SVG's width and height), else a guess.
+function sizeOf(file) {
+  try {
+    const b = fs.readFileSync(file);
+    if (b.slice(1, 4).toString() === 'PNG') return [b.readUInt32BE(16), b.readUInt32BE(20)];
+    const svg = b.toString('utf8', 0, 2000);
+    const w = /\swidth="(\d+)/.exec(svg);
+    const h = /\sheight="(\d+)/.exec(svg);
+    if (w && h) return [Number(w[1]), Number(h[1])];
+  } catch { /* not there: guessed */ }
+  return [800, 600];
+}
+
+// After each ```flow block's lines, one more step from its first line's last;
+// under each picture on a line of its own, a box and words in its ```ink block.
+function drawOn(f, text) {
+  const lines = text.split('\n');
+  const out = [];
+  for (let i = 0; i < lines.length; i++) {
+    const l = lines[i];
+    out.push(l);
+    if (/^\s*```flow\s*$/i.test(l)) {
+      const arrow = lines.slice(i + 1).find((x) => x.includes('->')) || '';
+      const first = arrow.split('>').pop().trim().replace(/^[[(]+|[\])]+$/g, '');
+      let j = i + 1;
+      while (j < lines.length && !/^\s*```\s*$/.test(lines[j])) out.push(lines[j++]);
+      if (first) out.push(`${first} -> Double-check`);
+      if (j < lines.length) out.push(lines[j]);
+      i = j;
+      continue;
+    }
+    const pic = /^\s*!\[[^\]]*\]\(([^)\s]+)\)\s*$/.exec(l);
+    if (!pic) continue;
+    const [w, h] = sizeOf(path.join(path.dirname(f), decodeURI(pic[1])));
+    const marks = [`box red: ${Math.round(w * 0.1)},${Math.round(h * 0.1)} ${Math.round(w * 0.4)}x${Math.round(h * 0.25)}`, `text red: ${Math.round(w * 0.1)},${Math.round(h * 0.38)} Look here`];
+    let j = i + 1;
+    while (j < lines.length && !lines[j].trim()) j++;
+    if (/^\s*```ink\s*$/i.test(lines[j] || '')) {
+      for (let k = i + 1; k <= j; k++) out.push(lines[k]);
+      for (j++; j < lines.length && !/^\s*```\s*$/.test(lines[j]); j++) out.push(lines[j]);
+      out.push(...marks);
+      i = j - 1; // the closing fence comes next
+    } else out.push('', '```ink', ...marks, '```');
+  }
+  return out.join('\n');
+}
 
 // A few mechanical proofreading marks: a repeated word, "very", a long sentence.
 function marks(f, text) {
@@ -107,7 +156,7 @@ setTimeout(() => {
   if (!understood) {
     console.log([
       "I'm the offline demo agent, not an AI, so I can't do this task.",
-      'I only understand a few keywords: tidy / format, summarize / TL;DR, and tasks / todo (in English or Korean).',
+      'I only understand a few keywords: tidy / format, summarize / TL;DR, tasks / todo, and draw (in English or Korean).',
       'For real tasks, add Claude Code or Codex in Agent › Manage Agents… and pick it when you delegate.',
     ].join('\n'));
     return;
@@ -139,6 +188,7 @@ setTimeout(() => {
     let text = fs.readFileSync(f, 'utf8');
     if (wants(...SUMMARY)) text = addTldr(text);
     if (wants(...TIDY)) text = tidy(text);
+    if (wants(...DRAW)) text = drawOn(f, text);
     if (round > 1 && wants(...SHORTER)) text = text.replace(/^> \*\*TL;DR\*\* (.{0,60}).*$/m, '> **TL;DR** $1…');
     write(f, text, 'formatting / summary');
   }

@@ -922,3 +922,37 @@ iframe.mermaid-frame { position: fixed; left: -10000px; top: 0; width: 1600px; h
 /* Presenting: marks still to come. */
 .ink-mark { transition: opacity .25s; }
 .ink-mark.unseen { opacity: 0; }
+
+/* Red pen on a picture (public/penpic.js): boxes and arrows coming in ringed,
+   ones going crossed out; taken (y) quieter, left (n) faded or plain. */
+.pen-pic pre.diagram { background: var(--bg); }
+.pen-pic-frame { position: relative; display: inline-block; max-width: 100%; line-height: 0; }
+.pen-pic-frame > img { display: block; max-width: 100%; }
+.pen-overlay { position: absolute; inset: 0; width: 100%; height: 100%; overflow: visible; pointer-events: none; }
+.pen-overlay g { cursor: pointer; }
+.pen-overlay :is(rect, polyline, path) { fill: none; vector-effect: non-scaling-stroke; stroke-linecap: round; stroke-linejoin: round; }
+.pen-overlay .pen-hit { fill: transparent; stroke: transparent; stroke-width: 14px; pointer-events: all; }
+.pen-overlay polyline.pen-hit { fill: none; pointer-events: stroke; }
+.pen-overlay .pen-ring { stroke: var(--pen); stroke-width: 2.5px; }
+.pen-overlay rect.pen-ring { rx: .004; }
+.pen-overlay .pen-cross { stroke: var(--pen); stroke-width: 2.5px; }
+.pen-overlay .pen-pic-del polyline.pen-ring { stroke-dasharray: 6 5; }
+.pen-overlay .pen-veil { stroke: none; opacity: 0; }
+.pen-overlay rect.pen-veil { fill: var(--bg); }
+.pen-overlay polyline.pen-veil { stroke: var(--bg); stroke-width: 7px; }
+.pen-overlay .pen-on .pen-ring, .pen-overlay .pen-on .pen-cross { stroke-width: 4px; }
+/* Taken: what comes in is in; what goes is gone. */
+.pen-overlay .pen-y.pen-pic-add .pen-ring { stroke: var(--ok); stroke-width: 1.5px; }
+.pen-overlay .pen-y.pen-pic-del .pen-veil { opacity: .7; }
+.pen-overlay .pen-y.pen-pic-del :is(.pen-ring, .pen-cross) { opacity: .4; }
+/* Left: what would come in fades; what would go stays. */
+.pen-overlay .pen-n.pen-pic-add .pen-veil { opacity: .7; }
+.pen-overlay .pen-n :is(.pen-ring, .pen-cross) { display: none; }
+/* Marks on a picture. */
+.ink-mark.pen-pic-add.pen-open { filter: drop-shadow(0 0 3px var(--pen)); }
+.ink-mark.pen-pic-add.pen-n { opacity: .2; }
+.ink-mark.pen-pic-del.pen-open { opacity: .45; stroke-dasharray: 8 6; }
+.ink-mark.pen-pic-del.pen-y { opacity: .12; }
+.ink-mark.pen-on { filter: drop-shadow(0 0 5px var(--pen)); }
+.pen-doc .ink-figure .ink-mark { pointer-events: auto; cursor: pointer; }
+.pen-pic-what { color: var(--fg-dim); }

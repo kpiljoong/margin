@@ -109,7 +109,8 @@ function spotOf(piece, at) {
 // The Mermaid source, each step with the block lines it appears on
 // (0-based), where its text is written, its note, problem mark and shape:
 // { id, text, lines, spots, note, flag, shape }, and
-// the arrows between steps: { from, to, kind, label } (ids, Mermaid kind).
+// the arrows between steps: { from, to, kind, label, line } (ids, Mermaid
+// kind, the block line that drew it).
 export function parseFlow(src) {
   const nodes = new Map(); // text -> { id, text, shape, note, group, lines, spots }
   const groups = []; // { id, title, parent }
@@ -186,7 +187,7 @@ export function parseFlow(src) {
       if (!n) return;
       // Writing the step above again ("Screen -> …" under "Screen") just continues from it.
       into = null;
-      if (prev && prev !== n) edges.push((into = { from: prev, to: n, kind: arrow.kind, label: arrow.label }));
+      if (prev && prev !== n) edges.push((into = { from: prev, to: n, kind: arrow.kind, label: arrow.label, line: lineNo }));
       prev = n;
     });
     if (note && prev) { notes.push({ node: prev, note, edge: into }); if (!prev.lines.includes(lineNo)) prev.lines.push(lineNo); }
@@ -240,7 +241,7 @@ export function parseFlow(src) {
     mermaid: out.join('\n'),
     direction,
     nodes: [...nodes.values()].map(({ id, text, lines, spots, note, flag, shape, color }) => ({ id, text, lines, spots, note, flag, shape, color: color || null })),
-    edges: edges.map((e) => ({ from: e.from.id, to: e.to.id, kind: e.kind, label: e.label })),
+    edges: edges.map((e) => ({ from: e.from.id, to: e.to.id, kind: e.kind, label: e.label, line: e.line })),
   };
 }
 

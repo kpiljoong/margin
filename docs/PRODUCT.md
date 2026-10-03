@@ -8,7 +8,7 @@ An agent works on your notes the way an editor works on a manuscript: it writes 
 
 Whatever would change your notes comes through the same review, change by change, before it is yours: a run you delegated, an agent working in the folder from a terminal or another editor (*Changed outside*), and later git pull and sync too. Nothing has its own way in.
 
-*Today:* agent runs, changes from outside, your own suggestions (tracked changes, for a meeting) and renaming, moving and trashing files by editing a folder as text (dired) go through it (hunk by hunk, 3-way merge, undo), drawn on the note with the red pen — yours in blue: struck through, written in above a caret, the reasons in the margin. git pull and sync are next.
+*Today:* agent runs, changes from outside, your own suggestions (tracked changes, for a meeting) and renaming, moving and trashing files by editing a folder as text (dired) go through it (hunk by hunk, 3-way merge, undo), drawn on the note with the red pen — yours in blue: struck through, written in above a caret, the reasons in the margin; a change to a flow or to a picture's marks drawn on the picture itself. git pull and sync are next.
 
 ### Principle 2 — Everything is a note
 
@@ -20,7 +20,7 @@ What shapes Margin is plain Markdown in the folder, readable and editable anywhe
 
 The agent never writes to your notes. It proposes, on a copy; you pick what to take, and can take it back.
 
-*Today:* the Red pen and Comments only recipes ask the agent for margin notes instead of edits; they are kept with the run, never in the note, and a suggested text reaches the note only when you accept its mark.
+*Today:* the Red pen and Comments only recipes ask the agent for margin notes instead of edits; they are kept with the run, never in the note, and a suggested text reaches the note only when you accept its mark. A task about pictures marks them up the same way: ` ```ink ` lines under the picture, reviewed as red pen on it.
 
 
 ## One-line definition

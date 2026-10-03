@@ -37,7 +37,9 @@ export { wordOps };
 // The note with the marks of `hunks` (the run's, against `base`) and of
 // `comments` (the agent's margin notes on this note: { quote, comment,
 // suggest, made, n } — n their number in the run).
-// → { text, marks: [{ key, kind: 'hunk' | 'note', i?, line, notes: [comment] }], general: [comment] }
+// A hunk with `picture` (a number, public/penpic.js) is drawn on its picture:
+// only its mark is made, no lines.
+// → { text, marks: [{ key, kind: 'hunk' | 'note', i?, line, notes: [comment], picture? }], general: [comment] }
 // marks in the order of the note.
 export function penSource(base, hunks = [], comments = []) {
   const lines = base.split('\n');
@@ -96,8 +98,10 @@ export function penSource(base, hunks = [], comments = []) {
   };
   hunks.forEach((hk, i) => {
     for (; pos < hk.baseStart; pos++) out.push(plain(pos));
-    pos = hk.baseEnd;
     const key = `h${i}`;
+    // A change drawn on its picture (public/penpic.js): only its mark here.
+    if (hk.picture != null) { marks.push({ key, kind: 'hunk', i, line: hk.baseStart, notes: byHunk.get(i) || [], picture: hk.picture }); return; }
+    pos = hk.baseEnd;
     const id = idChar(key);
     let seen = false;
     const wrap = (kind, s) => { if (s.trim()) seen = true; return s ? kind + id + s + END : ''; };

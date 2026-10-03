@@ -61,6 +61,7 @@ fs.mkdirSync(path.join(ws, 'hits'));
 for (let i = 0; i < 12; i++) fs.writeFileSync(path.join(ws, 'hits', `h${i}.md`), Array.from({ length: 5 }, (_, j) => `needle ${i}.${j}`).join('\n\n') + '\n');
 const filler = (p) => Array.from({ length: 10 }, (_, i) => `${p} ${i}`);
 fs.writeFileSync(path.join(ws, 'sub', 'proof.md'), '# Proof\n\nThis is a very good plan for the the team.\n\nWe ship on Friday.\n');
+fs.writeFileSync(path.join(ws, 'sub', 'drawn.md'), '# Drawn\n\n```flow\nOrder -> Pay -> Ship\n```\n\n![Screen](../assets/screen.svg)\n\n```ink\nbox blue: 10,10 50x40\n```\n');
 fs.writeFileSync(path.join(ws, 'sub', 'meet.md'), '# Meet\n\nWe ship on Monday.\nDocs by Friday.\n');
 fs.writeFileSync(path.join(ws, 'sub', 'messy.md'), ['#Title', 'text', ...filler('a'), '* one', ...filler('b'), '##Sub', 'more', ...filler('c'), '+ two', ''].join('\n'));
 fs.writeFileSync(path.join(userData, 'config.json'), JSON.stringify({
@@ -969,6 +970,38 @@ await check('red pen: the marks on the note, the reasons in the margin; y takes 
   const t = fs.readFileSync(path.join(ws, 'sub', 'proof.md'), 'utf8');
   const good = t === '# Proof\n\nThis is a good plan for the team.\n\nWe ship on Friday.\n';
   console.log(`${good ? '✓' : '✗'} the accepted marks reached the note, nothing else`);
+  if (!good) failed = true;
+}
+
+await check('red pen on pictures: a flow step and an ink callout drawn on them; y takes the step, n leaves the callout', `
+  const ta = await openNote('sub/drawn.md');
+  ta.focus();
+  document.dispatchEvent(new KeyboardEvent('keydown', { key: 'k', code: 'KeyK', metaKey: navigator.platform.startsWith('Mac'), ctrlKey: !navigator.platform.startsWith('Mac'), bubbles: true }));
+  const o = await until(() => !$('#overlay').hidden && $('#overlay'));
+  const task = o.querySelector('textarea');
+  task.value = 'draw on the pictures';
+  task.dispatchEvent(new Event('input', { bubbles: true }));
+  button('Run on staged copy', o).click();
+  await until(() => button('Apply', $('#main')), 20000);
+  if (!$('.pen-card')) { key('v'); await until(() => $('.pen-card')); }
+  await until(() => $('.pen-doc .pen-pic g.pen-pic-add[data-mark] .pen-ring') && $('.pen-doc .ink-figure g.ink-mark.pen-pic-add[data-mark]'));
+  const says = $$('.pen-card .pen-pic-what').map((x) => x.textContent);
+  key('U'); await sleep(150);
+  // A click on the new step picks its card; y goes on to the callout's.
+  $('.pen-doc .pen-pic g.pen-pic-add[data-mark] .pen-hit').dispatchEvent(new MouseEvent('click', { bubbles: true })); await sleep(50);
+  key('y'); await sleep(200); key('n'); await sleep(200);
+  // Drawn again for the decisions: the marks as they are now.
+  const step = await until(() => $('.pen-doc .pen-pic g.pen-pic-add[data-mark] .pen-ring'));
+  const callout = await until(() => $('.pen-doc .ink-figure g.ink-mark.pen-pic-add[data-mark]'));
+  const states = [step.closest('g').getAttribute('class'), callout.getAttribute('class')];
+  key('a');
+  await until(() => /Applied/.test($('.review')?.textContent || ''), 10000);
+  return { says, states, text: !!$('.pen-doc .pen-del, .pen-doc .pen-insl, .pen-doc .pen-ins') };
+`, (v) => (v?.says?.join(' | ') === '+ Double-check · arrows +1 | + box, “Look here”' && /pen-y/.test(v.states[0]) && /pen-n/.test(v.states[1]) && !v.text ? null : `got ${JSON.stringify(v)}`));
+{
+  const t = fs.readFileSync(path.join(ws, 'sub', 'drawn.md'), 'utf8');
+  const good = t === '# Drawn\n\n```flow\nOrder -> Pay -> Ship\nShip -> Double-check\n```\n\n![Screen](../assets/screen.svg)\n\n```ink\nbox blue: 10,10 50x40\n```\n';
+  console.log(`${good ? '✓' : '✗'} the step reached the flow, the callout stayed out`);
   if (!good) failed = true;
 }
 

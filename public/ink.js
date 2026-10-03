@@ -185,6 +185,18 @@ export function pairInk(root, { all = false } = {}) {
   return Promise.all(drawn);
 }
 
+// A paragraph holding only a picture, made a figure with the marks of
+// `source` in its place. → { fig, drawn: a promise, once the marks are on },
+// or null when it isn't such a paragraph.
+export function inkOn(p, source) {
+  const img = soleImage(p);
+  if (!img) return null;
+  const drawn = [];
+  const fig = inkFigure(img, p.dataset.line, '', source, drawn);
+  p.replaceWith(fig);
+  return { fig, drawn: Promise.all(drawn) };
+}
+
 const soleImage = (p) => (p?.tagName === 'P' && p.children.length === 1 && p.firstElementChild.tagName === 'IMG' && !p.textContent.trim() ? p.firstElementChild : null);
 
 function inkFigure(img, line, inkLine, source, drawn) {
