@@ -76,6 +76,10 @@ If you edited the same file while the agent was working, a 3-way merge lets you 
 
 **Reviewing by keyboard (as in magit).** The review tab takes the focus when it opens. `j`/`k` (or `n`/`p`, ↓/↑) step through the changes, `J`/`K` through the files, `g`/`G` first/last. `x` or Space picks or unpicks the change (`X` the whole file), `A`/`U` all/none. `a` applies, `d` discards, `f` follows up, `u` undoes an apply. `=` switches the file between Diff and Result, `o` or Enter opens the note at that change, `l` shows the log. A click works too and the keys go on from there. ⌥X a v opens the run that has waited longest for a look.
 
+### Tasks in all notes
+
+⌥X f x (palette: `Tasks in all notes`) lists every `- [ ]` in the workspace in one tab, like org-mode's agenda or Obsidian Tasks: **Overdue**, **Today** and **Upcoming** by their date (`📅 2026-10-05` or `due:2026-10-05` anywhere in the line), then the rest by note. Tasks in code blocks and in `templates/` are left out. `j`/`k` move, `x` or Space checks one off in its note (or on again), `o`/Enter opens the note at it, `a` opens it and asks the agent to do it (the task is prefilled; the agent checks it off in its proposal), `h` shows the done ones too. The list follows changes to the notes.
+
 ### Changes from outside (an agent in a terminal, another editor)
 
 Agents don't have to run inside Margin: Claude Code or Codex can work in the notes folder directly. When another program changes a note while Margin is open, the status bar shows **↯ N changed outside**. Click it (or ⌥X a o) to review those changes like a run — from the text before the first change, change by change, with the same keys. Everything is kept unless you unpick it: **Undo 1, keep 3** (`a`) undoes the unpicked ones (the note must not have unsaved edits here) and marks the rest as seen. A note the other program changes back drops off by itself. The texts it replaced are in each note's local history as well. Notes it creates or deletes are not listed (the tree shows them).
@@ -122,6 +126,9 @@ Built without external libraries to stay lightweight. The editor is a native `te
 | ⌘B / ⌘I / ⌘⇧X | Bold / italic / strikethrough (wraps or unwraps the selection) |
 | ⌘↵ | Toggle the task checkbox on the current line |
 | ⌥↑ / ⌥↓, ⌘⇧D | Move line, duplicate line |
+| ⌥⇧↑ / ⌥⇧↓ | Expand the selection to the next larger piece of the note — word → inside the brackets, quotes or `**marks**` → with them → sentence → the line's text → the line → the list item with what is under it → the paragraph or list → the text under the heading → the section → the larger section → the whole note — and shrink it back (Emacs expand-region, Vim text objects). Also ⌥X v / ⌥X V; ⌥. expands again |
+| ⌃; | Jump: a letter on every word in view; type one to put the cursor there (avy / hop / flash). Two letters when there are many words; a step in back/forward. Also ⌥X j |
+| ⌘⇧V | Paste from the copy history: what you copied or cut in Margin this session, newest first (Emacs kill ring, Sublime's paste from history). Kept in memory only. Also ⌥X y |
 | Tab / ⇧Tab | Indent / outdent (works on multiple lines) |
 | ⌘[ / ⌘] | Go to previous / next file (in the order opened, like a browser). The mouse back/forward buttons and the ← → buttons above the editor do the same |
 | F2 | Rename / move the current note |
@@ -152,6 +159,7 @@ The shortcuts above (except typing behaviours like Tab, Enter, and bracket pairi
 | `m` mode | `e` Edit · `s` Split · `c` Canvas · `p` Preview |
 | `l` links | `l` follow the link at the cursor · `f` pick a link in the preview · `b` back |
 | `g` git | `g` the Git panel · `d` changes since the last commit · `h` this file's history |
+| top level | `j` jump to a word · `v` / `V` expand / shrink the selection · `y` paste from the copy history · `` ` `` the note before · `.` repeat · Space every command |
 | `a` agent | `a` delegate a task · `1`–`6` a recipe (Tidy, Summarize…) · `v` review the next run · `o` changes from outside · `r` agent runs |
 | `t` toggles | `f` tree follows the tab · `s` sidebar · `t` theme · `z` focus mode |
 | `q` macro | `q` start/stop recording · `r` play · `n` play N times · `e` play until it can't go on · `s` play at every search result · `v` show it |

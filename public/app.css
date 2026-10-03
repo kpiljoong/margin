@@ -714,3 +714,15 @@ iframe.mermaid-frame { position: fixed; left: -10000px; top: 0; width: 1600px; h
 .review:not(:focus-within) .review-keys { display: none; }
 .outside-when { max-width: 1000px; margin: 0 auto 4px; font-size: 11.5px; color: var(--fg-dim); }
 #status .outside-count { color: var(--warn); }
+.tasks .task-group { max-width: 1000px; margin: 0 auto 14px; }
+.tasks .task-group h3 { font-size: 12px; text-transform: uppercase; letter-spacing: .04em; color: var(--fg-dim); margin: 10px 0 4px; font-weight: 600; }
+.task-row { display: flex; align-items: center; gap: 10px; padding: 5px 10px; border-radius: var(--radius); }
+.task-row:hover { background: var(--bg-2); }
+.task-row.done .task-text { text-decoration: line-through; color: var(--fg-dim); }
+.task-row .task-text { flex: 1; min-width: 0; }
+.task-due { font: 11.5px var(--mono); color: var(--fg-dim); }
+.task-due.today { color: var(--accent); }
+.task-due.overdue { color: var(--danger, #e5534b); }
+.task-note { font-size: 12px; color: var(--fg-dim); text-decoration: none; }
+.task-note:hover { color: var(--accent); text-decoration: underline; }
+.review:focus .task-row.kb-cur { background: color-mix(in srgb, var(--accent) 14%, var(--bg-2)); }

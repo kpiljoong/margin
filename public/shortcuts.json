@@ -26,6 +26,8 @@
   { "id": "macro-play", "label": "Keyboard macro: stop recording, or play", "group": "General", "keys": "F4", "scope": "app" },
   { "id": "other-note", "label": "Back to the note before (alternate buffer)", "group": "View", "keys": "Ctrl+6", "scope": "app" },
   { "id": "buffers", "label": "Switch note (buffer list)", "group": "View", "keys": "CmdOrCtrl+Shift+B", "scope": "app" },
+  { "id": "jump", "label": "Jump to a word in view (letters on the words)", "group": "Editor", "keys": "Ctrl+;", "scope": "app" },
+  { "id": "paste-history", "label": "Paste from the copy history", "group": "Editor", "keys": "CmdOrCtrl+Shift+V", "scope": "app" },
   { "id": "nav-back", "label": "Go back", "group": "View", "keys": "CmdOrCtrl+[", "scope": "app" },
   { "id": "nav-forward", "label": "Go forward", "group": "View", "keys": "CmdOrCtrl+]", "scope": "app" },
 
@@ -49,6 +51,8 @@
   { "id": "duplicate-line", "label": "Duplicate line", "group": "Editor", "keys": "CmdOrCtrl+Shift+D", "scope": "editor" },
   { "id": "move-line-up", "label": "Move line up", "group": "Editor", "keys": "Alt+Up", "scope": "editor" },
   { "id": "move-line-down", "label": "Move line down", "group": "Editor", "keys": "Alt+Down", "scope": "editor" },
+  { "id": "expand-selection", "label": "Expand the selection (word → sentence → paragraph → section)", "group": "Editor", "keys": "Alt+Shift+Up", "scope": "editor" },
+  { "id": "shrink-selection", "label": "Shrink the selection back", "group": "Editor", "keys": "Alt+Shift+Down", "scope": "editor" },
   { "id": "format-table", "label": "Format table", "group": "Editor", "keys": "CmdOrCtrl+Alt+T", "scope": "editor" },
 
   { "id": "quick-capture", "label": "Quick capture (from any app)", "group": "System-wide", "keys": "Ctrl+Alt+N", "scope": "global" }

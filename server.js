@@ -422,6 +422,52 @@ function listTags() {
   return { tags: [...counts].map(([tag, count]) => ({ tag, count })).sort((a, b) => b.count - a.count || a.tag.localeCompare(b.tag)) };
 }
 
+// Every task (- [ ] …) in the workspace, for the Tasks view (an agenda, as
+// in org-mode or Obsidian Tasks). A date after 📅 or due: is when it is due.
+// Lines count from 1.
+const TASK_RE = /^\s*(?:[-*+]|\d+[.)])\s+\[([ xX])\]\s+(.*)$/;
+const DUE_RE = /(?:📅\s*|\bdue:\s*)(\d{4}-\d{2}-\d{2})/u;
+function noteTasks(c) {
+  if (!c.tasks) {
+    c.tasks = [];
+    let fence = null;
+    c.text.replace(/^\uFEFF/, '').split('\n').forEach((l, i) => {
+      l = l.replace(/\r$/, '');
+      const f = l.match(/^\s{0,3}(```+|~~~+)/);
+      if (f && (!fence || f[1].startsWith(fence))) { fence = fence ? null : f[1]; return; }
+      const m = !fence && TASK_RE.exec(l);
+      if (m && m[2].trim()) c.tasks.push({ line: i + 1, done: m[1] !== ' ', text: m[2].trim(), due: DUE_RE.exec(m[2])?.[1] || null });
+    });
+  }
+  return c.tasks;
+}
+
+function listTasks() {
+  const tasks = [];
+  for (const rel of workspaceFiles()) {
+    if (!NOTE_EXT.has(extOf(rel)) || isTemplatePath(rel)) continue;
+    const c = cachedText(rel);
+    if (c) for (const t of noteTasks(c)) tasks.push({ path: rel, ...t });
+    if (tasks.length > 5000) break;
+  }
+  return { tasks };
+}
+
+// Check a task off (or on again), if that line is still that task.
+function toggleTask({ path: relPath, line, text }) {
+  const abs = workspacePath(relPath);
+  const old = fs.readFileSync(abs, 'utf8');
+  const lines = old.split('\n');
+  const l = lines[Number(line) - 1];
+  const m = l != null && TASK_RE.exec(l.replace(/\r$/, ''));
+  if (!m || m[2].trim() !== text) throw httpError(409, 'That task moved or changed; refresh the list');
+  lines[line - 1] = l.replace(/\[([ xX])\]/, m[1] === ' ' ? '[x]' : '[ ]');
+  const content = lines.join('\n');
+  keepVersion(relOf(abs), old, 'save');
+  writeFileAtomic(abs, content);
+  return { path: relOf(abs), done: m[1] === ' ', hash: hashOf(Buffer.from(content, 'utf8')) };
+}
+
 // Every heading in the workspace, for "@" in quick open. Lines count from 0.
 function noteHeadings(c) {
   if (!c.heads) {
@@ -1332,6 +1378,8 @@ async function routeApi(method, url, body) {
   if (method === 'GET' && p === '/api/history') return listVersions(q('path'));
   if (method === 'GET' && p === '/api/history/version') return getVersion(q('path'), q('id'));
   if (method === 'GET' && p === '/api/outside') return listOutside();
+  if (method === 'GET' && p === '/api/tasks') return listTasks();
+  if (method === 'POST' && p === '/api/tasks/toggle') return toggleTask(body || {});
   if (method === 'GET' && p === '/api/outside/diff') return outsideDiff(q('path'));
   if (method === 'POST' && p === '/api/outside/seen') return outsideSeen(body || {});
   if (method === 'POST' && p === '/api/asset') return saveAsset(body || {});

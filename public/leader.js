@@ -98,27 +98,36 @@ export function openLeader(tree, { isLeader, onLeader, onRun, title = 'Commands'
 
 // Link hints (as in Vimium): a letter on every link in view; typing it
 // clicks that link. Resolves with the link, or null.
+export async function linkHints(root, selector = 'a[href], a.internal, .note-embed-head') {
+  const view = root.getBoundingClientRect();
+  const links = [...root.querySelectorAll(selector)].filter((a) => {
+    const r = a.getClientRects()[0];
+    return r && r.bottom > view.top && r.top < view.bottom && r.right > view.left && r.left < view.right;
+  });
+  const a = await pickHint(links.map((el) => { const r = el.getClientRects()[0]; return { left: r.left, top: r.top, value: el }; }));
+  if (a) a.click();
+  return a;
+}
+
+// Letters on places on the screen ({ left, top, value }, the first ones get
+// the single letters); typing one picks that place. Resolves with its value,
+// or null (Esc, a click, a letter that is on none).
 const HINT_KEYS = 'asdfghjklqwertyuiopzxcvbnm';
-export function linkHints(root, selector = 'a[href], a.internal, .note-embed-head') {
+export function pickHint(points) {
   return new Promise((resolve) => {
-    const view = root.getBoundingClientRect();
-    const links = [...root.querySelectorAll(selector)].filter((a) => {
-      const r = a.getClientRects()[0];
-      return r && r.bottom > view.top && r.top < view.bottom && r.right > view.left && r.left < view.right;
-    });
-    if (!links.length) { resolve(null); return; }
-    const two = links.length > HINT_KEYS.length;
-    const labels = links.map((_, i) => (two ? HINT_KEYS[Math.floor(i / HINT_KEYS.length)] + HINT_KEYS[i % HINT_KEYS.length] : HINT_KEYS[i]));
+    if (!points.length) { resolve(null); return; }
+    const n = points.length;
+    const two = n > HINT_KEYS.length;
+    const labels = points.map((_, i) => (two ? HINT_KEYS[Math.floor(i / HINT_KEYS.length)] + HINT_KEYS[i % HINT_KEYS.length] : HINT_KEYS[i]));
     const layer = document.createElement('div');
     layer.className = 'link-hints';
     layer.tabIndex = -1;
-    const marks = links.map((a, i) => {
-      const r = a.getClientRects()[0];
+    const marks = points.map((p, i) => {
       const m = document.createElement('span');
       m.className = 'link-hint';
       m.textContent = labels[i];
-      m.style.left = `${r.left}px`;
-      m.style.top = `${r.top}px`;
+      m.style.left = `${p.left}px`;
+      m.style.top = `${p.top}px`;
       layer.append(m);
       return m;
     });
@@ -126,13 +135,12 @@ export function linkHints(root, selector = 'a[href], a.internal, .note-embed-hea
     document.body.append(layer);
     layer.focus({ preventScroll: true });
     let typed = '';
-    const done = (a) => {
+    const done = (v) => {
       layer.remove();
       window.removeEventListener('keydown', onKey, true);
       document.removeEventListener('mousedown', cancel, true);
-      if (!a && before?.isConnected) before.focus({ preventScroll: true });
-      resolve(a);
-      if (a) a.click();
+      if (before?.isConnected) before.focus({ preventScroll: true });
+      resolve(v);
     };
     const cancel = () => done(null);
     const onKey = (e) => {
@@ -143,7 +151,7 @@ export function linkHints(root, selector = 'a[href], a.internal, .note-embed-hea
       if (e.key === 'Backspace') typed = typed.slice(0, -1);
       else { const k = menuKey(e); if (!k || k.length !== 1) return; typed += k.toLowerCase(); }
       const hit = labels.indexOf(typed);
-      if (hit >= 0) { done(links[hit]); return; }
+      if (hit >= 0) { done(points[hit].value); return; }
       let any = false;
       marks.forEach((m, i) => { const on = labels[i].startsWith(typed); m.hidden = !on; any ||= on; });
       if (!any) done(null);

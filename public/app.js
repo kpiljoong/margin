@@ -2,7 +2,7 @@ import { renderMarkdown, outline, slug } from './markdown.js';
 import { store } from './store.js';
 import { linkAt } from './links.js';
 import { PreviewFind } from './previewfind.js';
-import { openLeader, linkHints } from './leader.js';
+import { openLeader, linkHints, pickHint } from './leader.js';
 import { Macros, describe as describeMacro } from './macro.js';
 import { fillTemplate, isTemplate, TEMPLATE_DIR } from './templates.js';
 import { MarkdownEditor, setEditorKeys } from './editor.js';
@@ -1491,7 +1491,7 @@ function renderTabs() {
   const bar = paneEl(g).querySelector('.tabs');
   bar.replaceChildren(...S.tabs.filter((t) => t.group === g).map((t) => {
     const dirty = (t.kind === 'file' && t.content !== t.saved) || (t.kind === 'drawing' && t.text !== t.saved);
-    const label = t.kind === 'review' ? `Review: ${t.title}` : t.kind === 'outside' ? '↯ Changed outside' : t.kind === 'gitdiff' ? `Δ ${basename(t.path)}` : t.kind === 'history' ? `History: ${stem(t.path)}` : basename(t.path);
+    const label = t.kind === 'review' ? `Review: ${t.title}` : t.kind === 'outside' ? '↯ Changed outside' : t.kind === 'tasks' ? '☐ Tasks' : t.kind === 'gitdiff' ? `Δ ${basename(t.path)}` : t.kind === 'history' ? `History: ${stem(t.path)}` : basename(t.path);
     return h('div', { class: `tab${t.id === grp.active ? ' active' : ''}${dirty ? ' dirty' : ''}`, title: t.path || t.title, draggable: 'true',
       'data-id': t.id,
       ondragstart: (e) => { e.dataTransfer.setData('text/x-agent-notes-tab', t.id); e.dataTransfer.effectAllowed = 'move'; document.body.classList.add('tab-dragging'); },
@@ -1638,7 +1638,7 @@ function renderContent(g = S.focus) {
   const tab = activeIn(g);
   if (attachedByGroup[g] && attachedByGroup[g] !== tab) attachedByGroup[g] = null;
   if (!tab) { c.replaceChildren(g === 0 ? welcome() : h('div', { class: 'empty pane-empty' }, 'Open a note here with ', h('kbd', {}, kbd('quick-open') || 'the palette'), '.')); return; }
-  if (tab.kind === 'review' || tab.kind === 'outside') { showReview(c, tab); return; }
+  if (tab.kind === 'review' || tab.kind === 'outside' || tab.kind === 'tasks') { showReview(c, tab); return; }
   if (tab.kind === 'gitdiff') { c.replaceChildren(gitDiffView(tab)); return; }
   if (tab.kind === 'history') { c.replaceChildren(historyView(tab)); return; }
   if (tab.kind === 'drawing') { drawingView(tab, c); return; }
@@ -2541,6 +2541,9 @@ const COMMANDS = [
   ['Switch note (buffers)…', () => setTimeout(pickTab, 0), { key: 'buffers' }],
   ['Back to the note before', otherBuffer, { key: 'other-note' }],
   ['Messages…', () => setTimeout(showMessages, 0)],
+  ['Tasks in all notes (agenda)', () => openTasks()],
+  ['Paste from the copy history…', () => setTimeout(pasteFromHistory, 0), { key: 'paste-history' }],
+  ['Jump to a word in view…', () => setTimeout(jumpInNote, 0), { key: 'jump' }],
   ['Changes from outside (agents, other editors)…', () => openOutside()],
   ['Review the next agent run', () => reviewNext()],
   ['New note', () => newNote()],
@@ -4114,6 +4117,96 @@ function outsideView(tab) {
   return wrap;
 }
 
+// ------------------------------------------------------------------ tasks
+// Every "- [ ]" in the workspace in one list (org-mode's agenda, Obsidian
+// Tasks): overdue, today and upcoming by their date (📅 2026-10-05 or
+// due:2026-10-05), the rest by note. Keys as in a review: j/k, x checks it
+// off, o opens it, a hands it to the agent.
+
+function openTasks() {
+  let tab = S.tabs.find((t) => t.kind === 'tasks');
+  if (!tab) {
+    tab = { id: 'tasks', kind: 'tasks', title: 'Tasks', tasks: null, showDone: false, group: S.focus };
+    S.tabs.push(tab);
+  }
+  tab.wantFocus = true;
+  activate(tab.id);
+  refreshTasks(tab);
+}
+
+async function refreshTasks(tab) {
+  try { tab.tasks = (await api('GET', '/api/tasks')).tasks; } catch (e) { toast(e.message, 'error'); return; }
+  if (S.groups[tab.group]?.active === tab.id) renderContent(tab.group);
+}
+const refreshTasksSoon = debounce(() => { const t = S.tabs.find((x) => x.kind === 'tasks'); if (t) refreshTasks(t); }, 200);
+
+const today = () => { const d = new Date(); return new Date(d - d.getTimezoneOffset() * 60000).toISOString().slice(0, 10); };
+
+function tasksView(tab) {
+  const wrap = h('div', { class: 'review tasks', tabindex: 0, 'data-tab': tab.id, onkeydown: (e) => tasksKeys(e, tab),
+    onmousedown: (e) => { const it = e.target.closest('.kb-item'); if (it) setReviewCur(tab, it, false); } });
+  const all = tab.tasks;
+  if (!all) { wrap.append(h('div', { class: 'empty' }, 'Loading…')); return wrap; }
+  const open = all.filter((t) => !t.done);
+  const list = tab.showDone ? all : open;
+  const notes = new Set(open.map((t) => t.path)).size;
+  wrap.append(h('div', { class: 'review-head' },
+    h('div', { class: 'task' }, 'Tasks'),
+    h('div', { class: 'meta' },
+      h('span', {}, `${open.length} open in ${notes} note${notes === 1 ? '' : 's'}${all.length > open.length ? ` · ${all.length - open.length} done` : ''}`),
+      h('span', { class: 'review-keys', title: 'j / k  next / previous\nx or space  check off / again\no or Enter  open it in its note\na  ask the agent to do it\nh  show / hide done ones\nr  refresh' }, 'j k · x done · o open · a agent · h done'))));
+  if (!list.length) { wrap.append(h('div', { class: 'review-note ok' }, all.length ? 'Nothing left to do.' : 'No tasks yet: a line like “- [ ] call Alex 📅 2026-10-05” in any note shows here.')); return wrap; }
+  const now = today();
+  const groups = [['Overdue', (t) => t.due && t.due < now && !t.done], ['Today', (t) => t.due === now], ['Upcoming', (t) => t.due && t.due > now]];
+  const shown = new Set();
+  const row = (t) => h('div', { class: `task-row kb-item${t.done ? ' done' : ''}`, 'data-path': t.path, 'data-hunk': t.line, 'data-line': t.line },
+    h('input', { type: 'checkbox', checked: t.done, onclick: (e) => { e.preventDefault(); toggleTaskAt(tab, t); } }),
+    h('span', { class: 'task-text' }, t.text.replace(/(?:📅\s*|\bdue:\s*)\d{4}-\d{2}-\d{2}/u, '').trim()),
+    t.due ? h('span', { class: `task-due${t.due < now && !t.done ? ' overdue' : t.due === now ? ' today' : ''}` }, t.due) : null,
+    h('a', { class: 'task-note', href: '#', onclick: (e) => { e.preventDefault(); openFile(t.path, { line: t.line }); } }, stem(t.path)));
+  for (const [name, test] of groups) {
+    const items = list.filter((t) => !shown.has(t) && test(t)).sort((a, b) => a.due.localeCompare(b.due));
+    if (!items.length) continue;
+    items.forEach((t) => shown.add(t));
+    wrap.append(h('div', { class: 'task-group' }, h('h3', {}, name), items.map(row)));
+  }
+  const rest = new Map();
+  for (const t of list) if (!shown.has(t)) { if (!rest.has(t.path)) rest.set(t.path, []); rest.get(t.path).push(t); }
+  for (const [p, items] of rest) wrap.append(h('div', { class: 'task-group' }, h('h3', { title: p }, stem(p)), items.map(row)));
+  return wrap;
+}
+
+async function toggleTaskAt(tab, t) {
+  if (S.tabs.some((x) => x.kind === 'file' && x.path === t.path && x.content !== x.saved)) { toast(`${t.path} has unsaved edits; save it first.`, 'error'); return; }
+  try { await api('POST', '/api/tasks/toggle', { path: t.path, line: t.line, text: t.text }); } catch (e) { toast(e.message, 'error'); }
+  await syncOpenTabs();
+  await refreshTasks(tab);
+}
+
+function tasksKeys(e, tab) {
+  const wrap = e.currentTarget;
+  if (e.metaKey || e.ctrlKey || e.altKey || e.isComposing || e.target !== wrap) return;
+  const items = reviewItems(wrap);
+  const i = items.findIndex((el) => itemKey(el) === tab.cur);
+  const cur = items[i];
+  const t = cur && tab.tasks.find((x) => x.path === cur.dataset.path && x.line === Number(cur.dataset.line));
+  const go = (el) => { if (el) setReviewCur(tab, el); };
+  const k = e.key;
+  if (['j', 'n', 'ArrowDown', 'k', 'p', 'ArrowUp', 'g', 'G', 'x', ' ', 'o', 'Enter', 'a', 'h', 'r'].includes(k)) e.preventDefault();
+  if (k === 'j' || k === 'n' || k === 'ArrowDown') go(items[Math.min(i + 1, items.length - 1)]);
+  else if (k === 'k' || k === 'p' || k === 'ArrowUp') go(items[Math.max(i - 1, 0)]);
+  else if (k === 'g') go(items[0]);
+  else if (k === 'G') go(items.at(-1));
+  else if ((k === 'x' || k === ' ') && t) {
+    // Stay on the same place in the list: the next one moves up into it.
+    toggleTaskAt(tab, t).then(() => { const next = reviewItems(paneEl(tab.group).querySelector('.review') || wrap); go(next[Math.min(i, next.length - 1)]); });
+  } else if ((k === 'o' || k === 'Enter') && t) openFile(t.path, { line: t.line });
+  else if (k === 'a' && t) {
+    openFile(t.path, { line: t.line }).then(() => openTaskDialog(`Do this task from the note (line ${t.line}): “${t.text}”. When it is done, check it off (- [x]).`));
+  } else if (k === 'h') { tab.showDone = !tab.showDone; renderContent(tab.group); }
+  else if (k === 'r') refreshTasks(tab);
+}
+
 // Undo the changes that are not kept; all of them are looked at, then.
 async function keepOutside(tab) {
   const changes = tab.run?.changes || [];
@@ -4336,7 +4429,7 @@ function showReview(c, tab) {
   const same = old?.dataset.tab === tab.id;
   const had = old?.contains(document.activeElement);
   const top = old?.scrollTop;
-  const wrap = (tab.kind === 'outside' ? outsideView : reviewView)(tab);
+  const wrap = ({ outside: outsideView, tasks: tasksView }[tab.kind] || reviewView)(tab);
   c.replaceChildren(wrap);
   if (same) wrap.scrollTop = top;
   const cur = reviewItems(wrap).find((el) => itemKey(el) === tab.cur);
@@ -4652,7 +4745,7 @@ function connectEvents() {
     const affected = S.tabs.filter((t) => isDoc(t) && (!paths.length || changed.has(t.path)));
     if (affected.length) await syncTabs(affected);
     for (const p of paths) if (isDrawing(p) || isMermaidFile(p) || isNote(p)) refreshEmbeds(p);
-    if (paths.some((p) => /\.(md|markdown|mdx|txt)$/i.test(p))) { loadTags(); loadOutside(); const t = fileTab(); if (t) loadBacklinks(t.path); }
+    if (paths.some((p) => /\.(md|markdown|mdx|txt)$/i.test(p))) { loadTags(); loadOutside(); refreshTasksSoon(); const t = fileTab(); if (t) loadBacklinks(t.path); }
     loadGitSoon();
   }, 60));
   es.addEventListener('runs', () => loadRuns().then(() => {
@@ -4702,6 +4795,8 @@ const ACTIONS = {
   leader: openLeaderMenu,
   repeat: repeatLast,
   'other-note': otherBuffer,
+  jump: jumpInNote,
+  'paste-history': pasteFromHistory,
   buffers: pickTab,
   // From the Edit menu: the editor's own history when a note has the focus.
   undo: () => { const t = S.tabs.find((x) => x.editor?.ta === document.activeElement); if (t) t.editor.undo(); else document.execCommand('undo'); },
@@ -4732,6 +4827,7 @@ function leaderTree() {
       { key: 'n', label: 'New note…', run: () => newNote() },
       { key: 't', label: 'New note from template…', run: () => pickTemplate((t) => newNote(undefined, t)) },
       { key: 'j', label: 'Today’s journal', run: openDaily },
+      { key: 'x', label: 'Tasks in all notes', run: openTasks },
       { key: 'r', label: 'Rename / move…', when: () => !!doc, run: () => renameItem(doc.path) },
       { key: 'b', label: doc && isBookmarked(doc.path) ? 'Remove bookmark' : 'Bookmark', when: () => !!doc, run: () => toggleBookmark(doc.path) },
       { key: 'y', label: 'Copy [[link]]', when: () => note, run: () => navigator.clipboard.writeText(`[[${stem(tab.path)}]]`).then(() => toast('Link copied')) },
@@ -4806,6 +4902,10 @@ function leaderTree() {
       { key: 's', label: 'Play at every search result', when: () => !!macros.last && !!S.searchQuery.trim(), run: playAtResults },
       { key: 'v', label: 'Show the macro', when: () => !!macros.last, run: () => toast(describeMacro(macros.last)) },
     ] },
+    { key: 'j', label: 'Jump to a word in view…', when: () => editorShown(tab), run: jumpInNote },
+    { key: 'v', label: 'Expand the selection', when: () => editorShown(tab), run: () => tab.editor.expandSelection() },
+    { key: 'V', label: 'Shrink the selection', when: () => editorShown(tab), run: () => tab.editor.shrinkSelection() },
+    { key: 'y', label: 'Paste from the copy history…', when: () => copied.length > 0, run: pasteFromHistory },
     { key: '.', label: lastRun ? `Repeat: ${lastRun.label}` : 'Repeat the last command', run: repeatLast },
     { key: ',', label: 'Settings', run: () => openSettings() },
     { key: 'k', label: 'Keyboard shortcuts…', run: () => openSettings({ keys: true }) },
@@ -5019,9 +5119,60 @@ function runCommand(name) {
   macros.command(label, run);
 }
 
+// Jump labels (avy, hop.nvim, flash.nvim): a letter or two on every word in
+// view; typing one puts the cursor there. A step in the jump list.
+async function jumpInNote() {
+  const tab = fileTab();
+  if (!editorShown(tab)) return;
+  const ed = tab.editor;
+  if (document.activeElement !== ed.ta) ed.focus();
+  const offset = await pickHint(ed.jumpTargets().map((p) => ({ left: p.left, top: p.top, value: p.offset })));
+  if (offset == null) return;
+  navJump(tab);
+  ed.selectRange(offset);
+}
+
+// Copy history (Emacs kill ring, Sublime's paste from history): what was
+// copied or cut in Margin during this session, newest first. Kept only in
+// memory.
+const copied = [];
+function rememberCopy() {
+  const el = document.activeElement;
+  const text = el && (el.tagName === 'TEXTAREA' || (el.tagName === 'INPUT' && el.type === 'text'))
+    ? el.value.slice(el.selectionStart, el.selectionEnd) : String(getSelection());
+  if (!text.trim() || text.length > 100_000) return;
+  const i = copied.indexOf(text);
+  if (i >= 0) copied.splice(i, 1);
+  copied.unshift(text);
+  if (copied.length > 30) copied.pop();
+}
+document.addEventListener('copy', rememberCopy, true);
+document.addEventListener('cut', rememberCopy, true);
+
+function pasteFromHistory() {
+  const tab = fileTab();
+  const ed = editorShown(tab) ? tab.editor : null;
+  if (!ed) { toast('Open a note in the editor to paste into it.'); return; }
+  if (!copied.length) { toast('Nothing copied yet in this session.'); return; }
+  const at = [ed.selectionStart, ed.selectionEnd];
+  const one = (x) => x.replace(/\s+/g, ' ').trim();
+  picker({
+    placeholder: 'Paste from the copy history…  (this session, newest first)',
+    source: (q) => copied.map((x, i) => ({ x, i, m: fuzzy(q, one(x).slice(0, 300)) })).filter((y) => y.m)
+      .sort((a, b) => (q ? b.m.score - a.m.score : a.i - b.i))
+      .map(({ x, i }) => ({
+        icon: String(i + 1),
+        label: one(x).slice(0, 120),
+        hint: x.includes('\n') ? `${x.split('\n').length} lines` : `${x.length} chars`,
+        run: () => { ed.focus(); ed.replace(at[0], at[1], x); },
+      })),
+    onCancel: () => ed.focus(),
+  });
+}
+
 // Repeat the last command (Emacs C-x z, Vim's .): from the leader menu, the
 // palette or a shortcut. Opening a menu or a picker isn't one.
-const NOT_REPEATED = new Set(['undo', 'redo', 'leader', 'palette', 'quick-open', 'repeat', 'save', 'settings', 'macro-record', 'macro-play']);
+const NOT_REPEATED = new Set(['undo', 'redo', 'leader', 'palette', 'quick-open', 'repeat', 'save', 'settings', 'macro-record', 'macro-play', 'jump', 'paste-history', 'buffers']);
 let lastRun = null;
 function remember(label, run) { lastRun = { label, run }; }
 function repeatLast() {

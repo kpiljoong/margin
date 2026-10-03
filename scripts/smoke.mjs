@@ -36,6 +36,8 @@ fs.writeFileSync(path.join(ws, 'pics.md'), '# Pics\n\n![Big picture](assets/big.
 fs.writeFileSync(path.join(ws, 'macro.md'), 'apple\nbanana\ncherry');
 fs.writeFileSync(path.join(ws, 'ime.md'), 'a\nb\n');
 fs.writeFileSync(path.join(ws, 'outside.md'), Array.from({ length: 20 }, (_, i) => `line ${i + 1}`).join('\n') + '\n');
+fs.writeFileSync(path.join(ws, 'expand.md'), '# Expand\n\nFirst one. A **bold** word here.\n\n## Part\n\nalpha beta gamma\n');
+fs.writeFileSync(path.join(ws, 'tasks.md'), '# Tasks\n\n- [ ] late one 📅 2020-01-01\n- [ ] someday\n- [x] finished\n');
 fs.writeFileSync(path.join(ws, 'buf.md'), '# Buffer\n\nfirst line\nsecond line\n');
 fs.mkdirSync(path.join(ws, 'todo'));
 fs.writeFileSync(path.join(ws, 'todo', 'a.md'), 'TODO one\n\nTODO two\n');
@@ -733,6 +735,7 @@ await check('the search results keep their scroll position when one is opened', 
   box.scrollTop = box.scrollHeight;
   const before = box.scrollTop;
   const hit = [...box.querySelectorAll('.search-hit')].find((x) => x.offsetTop >= before + 20);
+  if (!hit) return { error: 'no hit below', hits: box.querySelectorAll('.search-hit').length, view: $('#sidebar').dataset.view, app: $('#app').className, active: document.activeElement.className, overlay: !$('#overlay').hidden, layer: !!$('.link-hints'), leader: !!$('.leader'), text: box.textContent.slice(0, 200) };
   const name = hit.previousElementSibling && [...box.querySelectorAll('.search-file')].filter((f) => f.offsetTop < hit.offsetTop).pop().title;
   hit.click();
   await until(() => $('.tab.active')?.textContent.includes(name.split('/').pop()));
@@ -827,5 +830,74 @@ const original = text.startsWith('#Title\ntext');
 console.log(`${original ? '✓' : '✗'} the restored file is the one from before`);
 if (!original) failed = true;
 
-console.log(failed ? `\nSmoke test failed (${results.filter((r) => !r.ok).length} of ${results.length + 3}).` : `\nAll ${results.length + 3} checks passed.`);
+await check('expand / shrink the selection, jump to a word by its letters, paste from the copy history', `
+  const mac = navigator.platform.startsWith('Mac');
+  const press = (code, key, opts = {}) => document.activeElement.dispatchEvent(new KeyboardEvent('keydown', { code, key, bubbles: true, cancelable: true, ...opts }));
+  const ta = await openNote('expand.md');
+  ta.focus();
+  const at = ta.value.indexOf('old');
+  ta.setSelectionRange(at, at);
+  const sel = () => ta.value.slice(ta.selectionStart, ta.selectionEnd);
+  const grew = [];
+  for (let i = 0; i < 3; i++) { press('ArrowUp', 'ArrowUp', { altKey: true, shiftKey: true }); grew.push(sel()); }
+  press('ArrowDown', 'ArrowDown', { altKey: true, shiftKey: true });
+  const shrunk = sel();
+  // Jump: letters on the words in view; the one on "gamma" puts the caret there.
+  const want = ta.value.indexOf('gamma');
+  let n = 0;
+  let jumped = false;
+  const tries = [];
+  for (let i = 0; i < 26 && !jumped; i++) {
+    await sleep(200); // the same command twice within 150 ms runs once
+    ta.focus();
+    ta.setSelectionRange(0, 0);
+    press('Semicolon', ';', { ctrlKey: true });
+    const hints = await until(() => $$('.link-hint').length && $$('.link-hint'));
+    if (!hints) break;
+    n = hints.length;
+    const l = hints[i]?.textContent;
+    press(l ? 'Key' + l.toUpperCase() : 'Escape', l || 'Escape');
+    if (!l) break;
+    await sleep(50);
+    tries.push([l, ta.selectionStart, document.activeElement === ta]);
+    jumped = ta.selectionStart === want && document.activeElement === ta;
+  }
+  // Copy a word, then paste it from the history.
+  ta.setSelectionRange(want, want + 5);
+  document.dispatchEvent(new Event('copy', { bubbles: true }));
+  ta.setSelectionRange(ta.value.length, ta.value.length);
+  press('KeyV', 'v', { metaKey: mac, ctrlKey: !mac, shiftKey: true });
+  const input = await until(() => !$('#overlay').hidden && $('#overlay input'));
+  const item = $('.palette-item.sel')?.textContent;
+  input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }));
+  await sleep(100);
+  return { grew, shrunk, n, jumped, tries: jumped ? null : tries, item, end: ta.value.slice(-6), focused: document.activeElement === ta };
+`, (v) => (v?.grew?.join('|') === 'bold|**bold**|A **bold** word here.' && v.shrunk === '**bold**' && v.n > 5 && v.jumped
+  && /gamma/.test(v.item) && v.end === '\ngamma' && v.focused ? null : 'expanding, jumping or pasting from history did not work'));
+
+await check('the tasks of all notes: overdue first; x checks one off in its note, h shows the done ones', `
+  const press = (code, key, opts = {}) => document.activeElement.dispatchEvent(new KeyboardEvent('keydown', { code, key, bubbles: true, cancelable: true, ...opts }));
+  press('KeyX', '≈', { altKey: true });
+  await until(() => $('.leader'));
+  press('KeyF', 'f');
+  press('KeyX', 'x');
+  const wrap = await until(() => $('.tasks .task-row') && $('.tasks'));
+  const groups = $$('.tasks .task-group h3').map((x) => x.textContent);
+  const rows = $$('.tasks .task-row').map((x) => x.querySelector('.task-text').textContent);
+  const focused = document.activeElement === wrap;
+  key('j'); key('x');
+  await until(() => !$$('.tasks .task-row').some((x) => /late one/.test(x.textContent)), 5000);
+  const left = $$('.tasks .task-row').map((x) => x.querySelector('.task-text').textContent);
+  key('h'); await sleep(100);
+  const all = $$('.tasks .task-row').length;
+  return { groups, rows, focused, left, all };
+`, (v) => (v?.focused && v.groups[0] === 'Overdue' && v.rows.join('|').startsWith('late one|someday') && v.left.join('|') === 'someday' && v.all >= 3 ? null : 'the tasks view did not work'));
+{
+  const t = fs.readFileSync(path.join(ws, 'tasks.md'), 'utf8');
+  const ok = t.includes('- [x] late one');
+  console.log(`${ok ? '✓' : '✗'} the task was checked off in its note`);
+  if (!ok) failed = true;
+}
+
+console.log(failed ? `\nSmoke test failed (${results.filter((r) => !r.ok).length} of ${results.length + 4}).` : `\nAll ${results.length + 4} checks passed.`);
 done(failed ? 1 : 0);

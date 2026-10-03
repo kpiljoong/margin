@@ -6,6 +6,7 @@
 
 import { eventKeys } from './keys.js';
 import { UndoHistory } from './undo.js';
+import { expandRange } from './expand.js';
 
 const esc = (s) => s.replace(/[&<>]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c]));
 const MAX_HIGHLIGHT = 300_000; // chars; beyond this we fall back to plain text
@@ -500,8 +501,72 @@ export class MarkdownEditor {
       'duplicate-line': () => this._duplicateLine(),
       'move-line-up': () => this._moveLines(-1),
       'move-line-down': () => this._moveLines(1),
+      'expand-selection': () => this.expandSelection(),
+      'shrink-selection': () => this.shrinkSelection(),
     }[cmd];
     return !!run && run() !== false;
+  }
+
+  // Word starts in view, nearest the caret first, with where they are on the
+  // screen: for jump labels (avy, hop, flash).
+  jumpTargets(max = 26 * 26) {
+    const ta = this.ta;
+    const text = ta.value;
+    const view = ta.getBoundingClientRect();
+    const lh = this.lineHeight();
+    // The lines in view, from the line positions in the mirror layout.
+    const ys = this._lineOffsets();
+    const starts = [];
+    for (let i = 0, p = 0; i < ys.length; i++) { starts.push(p); p = text.indexOf('\n', p) + 1 || text.length + 1; }
+    const top = ta.scrollTop - lh;
+    const bottom = ta.scrollTop + ta.clientHeight;
+    let first = 0;
+    while (first + 1 < ys.length && ys[first + 1] <= top) first++;
+    let last = first;
+    while (last + 1 < ys.length && ys[last + 1] < bottom) last++;
+    const from = starts[first];
+    const to = last + 1 < starts.length ? starts[last + 1] - 1 : text.length;
+    const offsets = [];
+    for (const m of text.slice(from, to).matchAll(/[\p{L}\p{N}_]+|[^\s\p{L}\p{N}_]+/gu)) offsets.push(from + m.index);
+    if (!offsets.length) return [];
+    const probe = this._probe();
+    let html = '';
+    let pos = 0;
+    offsets.forEach((o, i) => { html += `${esc(text.slice(pos, o))}<span data-j="${i}"></span>`; pos = o; });
+    probe.innerHTML = `${html}${esc(text.slice(pos, to))}`;
+    // The probe isn't scrolled: move its places up by the text box's scroll.
+    const pr = probe.getBoundingClientRect();
+    const out = [];
+    for (const span of probe.querySelectorAll('span[data-j]')) {
+      const r = span.getBoundingClientRect();
+      const y = view.top + (r.top - pr.top) - ta.scrollTop;
+      if (y < view.top - 2 || y > view.bottom - lh / 2) continue;
+      out.push({ offset: offsets[span.dataset.j], left: view.left + (r.left - pr.left), top: y });
+    }
+    probe.textContent = '';
+    const caret = ta.selectionStart;
+    out.sort((x, y) => Math.abs(x.offset - caret) - Math.abs(y.offset - caret));
+    return out.slice(0, max);
+  }
+
+  // Larger and smaller pieces of the note (expand.js). Shrinking goes back
+  // through the selections expanding went through.
+  expandSelection() {
+    const { selectionStart: a, selectionEnd: b } = this.ta;
+    const top = this._expanded?.at(-1);
+    if (!top || top.to[0] !== a || top.to[1] !== b) this._expanded = [];
+    const r = expandRange(this.ta.value, a, b);
+    if (!r) return;
+    this._expanded.push({ from: [a, b], to: r });
+    this.selectRange(r[0], r[1]);
+  }
+
+  shrinkSelection() {
+    const { selectionStart: a, selectionEnd: b } = this.ta;
+    const top = this._expanded?.at(-1);
+    if (!top || top.to[0] !== a || top.to[1] !== b) { this._expanded = []; return; }
+    this._expanded.pop();
+    this.selectRange(top.from[0], top.from[1]);
   }
 
   _wrap(open, close = open) {
