@@ -961,7 +961,7 @@ await check('M-x (⌥X :) runs a recipe from RECIPES.md by name; the runs, the r
   const closed = await until(() => !$$('.tab').some((t) => /Review: Shout/.test(t.textContent)));
   const runsTabs = $$('.tab').filter((t) => /Agent runs/.test(t.textContent)).length;
   return { label, done: !!done, runText, review: !!review, first, closed: !!closed, runsTabs };
-`, (v) => (v && /^✦Recipe: Shout.*⌥X r s/.test(v.label) && v.done && /^Shout · /.test(v.runText || '') && v.review && /^◆Review: /.test(v.first || '') && v.closed && v.runsTabs === 1 ? null : 'M-x, recipes or buffers did not work'));
+`, (v) => (v && /^✦Recipe: Shout.*(⌥X|Alt\+X) r s/.test(v.label) && v.done && /^Shout · /.test(v.runText || '') && v.review && /^◆Review: /.test(v.first || '') && v.closed && v.runsTabs === 1 ? null : 'M-x, recipes or buffers did not work'));
 
 console.log(failed ? `\nSmoke test failed (${results.filter((r) => !r.ok).length} of ${results.length + 4}).` : `\nAll ${results.length + 4} checks passed.`);
 done(failed ? 1 : 0);
