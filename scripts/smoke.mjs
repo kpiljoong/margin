@@ -267,6 +267,7 @@ await check('drawing on a flow writes its text: add, connect, colour, delete, un
   ptr('pointerdown', from, at(from)); ptr('pointermove', stage, at(box('B'))); ptr('pointermove', stage, at(box('A'))); ptr('pointerup', stage, at(box('A')));
   await until(() => flow().includes('C -> A'), 8000);
   out.connect = flow();
+  out.wireGone = getComputedStyle($('.canvas-wire')).display === 'none';
   // Select B, colour it (C, then a number), delete it, undo that.
   await until(() => box('B'), 8000); await sleep(400);
   ptr('pointerdown', box('B'), at(box('B'))); ptr('pointerup', box('B'), at(box('B'))); box('B').click(); await sleep(200);
@@ -282,7 +283,7 @@ await check('drawing on a flow writes its text: add, connect, colour, delete, un
   await until(() => flow().includes('B'), 8000);
   out.undo = flow();
   return out;
-`, (v) => (v?.add === 'A -> B -> C' && v.connect === 'A -> B -> C -> A' && v.color === 'A -> B -> C -> A\ncolor blue: B' && v.del === 'A -> C -> A' && v.undo === v.color ? null : `got ${JSON.stringify(v)}`));
+`, (v) => (v?.add === 'A -> B -> C' && v.connect === 'A -> B -> C -> A' && v.wireGone && v.color === 'A -> B -> C -> A\ncolor blue: B' && v.del === 'A -> C -> A' && v.undo === v.color ? null : `got ${JSON.stringify(v)}`));
 
 await check('Settings shows Labs', `
   document.dispatchEvent(new KeyboardEvent('keydown', { key: ',', metaKey: navigator.platform.startsWith('Mac'), ctrlKey: !navigator.platform.startsWith('Mac'), bubbles: true }));

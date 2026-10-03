@@ -128,8 +128,7 @@ export class FigureCanvas {
     this.caption = el('div', 'canvas-caption');
     this.caption.hidden = true;
     this.wire = document.createElementNS(SVG, 'svg');
-    this.wire.setAttribute('class', 'canvas-wire');
-    this.wire.hidden = true;
+    this.wire.setAttribute('class', 'canvas-wire'); // shown while dragging (.on)
     this.wireLine = document.createElementNS(SVG, 'path');
     this.wire.append(this.wireLine);
     this.empty = el('div', 'canvas-empty');
@@ -1183,7 +1182,7 @@ export class FigureCanvas {
     const s = this.stage.getBoundingClientRect();
     const x = e.clientX - s.left;
     const y = e.clientY - s.top;
-    this.wire.hidden = false;
+    this.wire.classList.add('on');
     this.wireLine.setAttribute('d', `M${w.x0},${w.y0} L${x},${y}`);
     const under = document.elementsFromPoint(e.clientX, e.clientY).find((x) => x.classList?.contains('node-hit'));
     const to = under && under.closest('pre') === w.pre && under.dataset.id !== w.from ? under : null;
@@ -1194,7 +1193,7 @@ export class FigureCanvas {
   endWire(commit) {
     const w = this.wiring;
     this.wiring = null;
-    this.wire.hidden = true;
+    this.wire.classList.remove('on');
     this.stage.classList.remove('wiring');
     w.to?.classList.remove('wire-to');
     this.dragged = w.moved;
