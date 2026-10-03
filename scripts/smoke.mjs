@@ -38,6 +38,7 @@ fs.writeFileSync(path.join(ws, 'dots.md'), '# Dots\n\n![Screen](assets/screen.sv
 fs.writeFileSync(path.join(ws, 'shot.md'), '# Shot\n\n![Screen](assets/screen.svg)\n\nAfter.\n');
 // Lines for a keyboard macro, and notes to run one at every search result.
 fs.writeFileSync(path.join(ws, 'macro.md'), 'apple\nbanana\ncherry');
+fs.writeFileSync(path.join(ws, 'emacs.md'), 'one two three\nfour five\nsix\n');
 fs.writeFileSync(path.join(ws, 'ime.md'), 'a\nb\n');
 fs.writeFileSync(path.join(ws, 'outside.md'), Array.from({ length: 20 }, (_, i) => `line ${i + 1}`).join('\n') + '\n');
 fs.writeFileSync(path.join(ws, 'expand.md'), '# Expand\n\nFirst one. A **bold** word here.\n\n## Part\n\nalpha beta gamma\n');
@@ -719,7 +720,7 @@ await check('the leader key (⌥X): f f finds a file, Space all commands; w h go
   key('Escape');
   const back = await until(() => !document.activeElement?.closest('#sidebar'));
   return { focused, groups, files, quick: !!quick, quickValue, typedInEditor, paletteValue, from, moved, opened, back: !!back };
-`, (v) => (v?.focused && v.groups === 'fsbwmnlgartpqh' && v.files && v.quick && v.quickValue === '' && !v.typedInEditor && v.paletteValue === '>' && v.from === 'flow.md' && v.moved && v.opened && v.back ? null : 'the leader key did not work'));
+`, (v) => (v?.focused && v.groups === 'fsbwmnexlgartpqh' && v.files && v.quick && v.quickValue === '' && !v.typedInEditor && v.paletteValue === '>' && v.from === 'flow.md' && v.moved && v.opened && v.back ? null : 'the leader key did not work'));
 
 await check('link hints in a focused preview: f, then a letter, follows that link', `
   await openNote('sub/links.md');
@@ -886,6 +887,87 @@ await check('F8 / ⇧F8 step through the search results from the note; ⌥. repe
     if (!problem && (got.results?.a !== 'DONE one\n\nDONE two\n' || got.results.b !== 'DONE three\n' || got.results.toastText !== 'The macro ran at 2 of 2 results')) problem = 'the macro did not run at every search result';
   } catch (e) { problem = e.message; }
   const name = 'a keyboard macro (F3 … F4) records typing and moves, plays once, until the end, and at every search result';
+  results.push({ name, ok: !problem });
+  console.log(`${problem ? '✗' : '✓'} ${name}${problem ? `\n    ${problem}\n    got: ${JSON.stringify(got)}` : ''}`);
+  if (problem) failed = true;
+}
+
+// Emacs keys (Settings), with real keys: on Windows and Linux too, where
+// Ctrl+W, Ctrl+X and Ctrl+S are the app's menu keys when the setting is off.
+{
+  const CODE = { ' ': ['Space', 32], '%': ['Digit5', 53], '<': ['Comma', 188], '>': ['Period', 190], '/': ['Slash', 191] };
+  // "C-x", "M-%", "C-SPC", "RET", "ESC", a letter.
+  const press = async (combo) => {
+    let mods = 0;
+    let k = combo;
+    for (let m; (m = /^([CMS])-(.+)$/.exec(k)); k = m[2]) mods |= { C: 2, M: 1, S: 8 }[m[1]];
+    k = { SPC: ' ', RET: 'Enter', ESC: 'Escape' }[k] || k;
+    if ('%<>'.includes(k)) mods |= 8;
+    const [code, vk] = CODE[k] || (k.length === 1 ? [`Key${k.toUpperCase()}`, k.toUpperCase().charCodeAt(0)] : [k, { Enter: 13, Escape: 27 }[k]]);
+    const text = !(mods & 7) && k.length === 1 ? k : undefined;
+    await send('Input.dispatchKeyEvent', { type: text ? 'keyDown' : 'rawKeyDown', key: k, code, windowsVirtualKeyCode: vk, modifiers: mods, text });
+    await send('Input.dispatchKeyEvent', { type: 'keyUp', key: k, code, windowsVirtualKeyCode: vk, modifiers: mods });
+    await sleep(40);
+  };
+  const keys = async (seq) => { for (const k of seq.split(' ')) await press(k); await sleep(150); };
+  const state = () => inPage(`const ta = $$('.editor-wrap textarea').find((t) => t.offsetParent); return { v: ta?.value, s: ta?.selectionStart, e: ta?.selectionEnd, tab: $('.tab.active')?.textContent, echo: $('#status .echo')?.textContent || '' };`);
+  const setting = (on) => inPage(`
+    document.dispatchEvent(new KeyboardEvent('keydown', { key: ',', metaKey: navigator.platform.startsWith('Mac'), ctrlKey: !navigator.platform.startsWith('Mac'), bubbles: true }));
+    const d = await until(() => $('.dialog.settings'));
+    const box = $$('.set-toggle', d).find((l) => l.textContent.includes('Emacs keys'))?.querySelector('input');
+    if (box && box.checked !== ${on}) box.click();
+    button('Done', d)?.click();
+    return box?.checked;
+  `);
+  const got = {};
+  let problem = null;
+  try {
+    if (!(await setting(true))) throw new Error('no Emacs keys setting');
+    await inPage(`const ta = await openNote('emacs.md'); ta.focus(); ta.setSelectionRange(0, 0);`);
+    // Kills in a row are one; C-y puts it back; C-w kills the region (and not the tab), M-y the kill before.
+    await keys('C-k C-k C-e C-y');
+    got.yank = await state();
+    await keys('M-< C-SPC M-f C-x C-x C-x C-x C-w');
+    got.region = await state();
+    await keys('C-y M-y');
+    got.yankPop = await state();
+    // C-u 3 then a letter: three of it; ESC f is M-f.
+    await inPage(`const ta = $$('.editor-wrap textarea').find((t) => t.offsetParent); ta.focus(); ta.select(); document.execCommand('insertText', false, 'cat dog cat\\nbird cat\\n'); ta.setSelectionRange(0, 0);`);
+    await keys('C-u 3 x ESC f');
+    got.arg = await state();
+    // Query replace: y, n, then ! for the rest.
+    await keys('M-< M-%');
+    await inPage(`const i = await until(() => document.activeElement.matches?.('.ed-find-input') && document.activeElement); i.value = ''; i.dispatchEvent(new Event('input', { bubbles: true }));`);
+    await send('Input.insertText', { text: 'cat' });
+    await keys('RET');
+    await send('Input.insertText', { text: 'CAT' });
+    await keys('RET');
+    await sleep(200);
+    await keys('y n');
+    got.query = await state();
+    await keys('!');
+    got.queryAll = await state();
+    // C-x C-s saves.
+    await keys('C-x C-s');
+    await sleep(400);
+    got.saved = fs.readFileSync(path.join(ws, 'emacs.md'), 'utf8');
+    // Occur (M-s o): its lines in a buffer; Enter on one goes there.
+    await keys('M-s o');
+    await inPage(`const i = await until(() => $('.dialog input')); i.value = 'cat';`);
+    await keys('RET');
+    got.occur = await inPage(`await until(() => $$('.occur-row').length); return $$('.occur-row').map((r) => r.textContent);`);
+    await keys('j j RET');
+    got.occurAt = await inPage(`await sleep(300); const ta = $$('.editor-wrap textarea').find((t) => t.offsetParent); return ta && document.activeElement === ta ? ta.value.slice(0, ta.selectionStart).split('\\n').length : null;`);
+    if (got.yank?.v !== 'four fiveone two three\n\nsix\n') problem = 'C-k C-k then C-y did not kill and yank the line';
+    else if (got.region?.v !== ' fiveone two three\n\nsix\n' || !got.region.tab?.includes('emacs.md')) problem = 'C-SPC … C-w did not kill the region (or closed the tab)';
+    else if (got.yankPop?.v !== 'one two three\n fiveone two three\n\nsix\n') problem = 'M-y did not swap in the kill before';
+    else if (got.arg?.v !== 'xxxcat dog cat\nbird cat\n' || got.arg.s !== 6) problem = 'C-u 3 x or ESC f did not work';
+    else if (got.query?.v !== 'xxxCAT dog cat\nbird cat\n' || got.queryAll?.v !== 'xxxCAT dog cat\nbird CAT\n') problem = 'query replace did not work';
+    else if (got.saved !== got.queryAll.v) problem = 'C-x C-s did not save';
+    else if (got.occur?.length !== 2 || got.occurAt !== 2) problem = 'occur did not list the lines or go to one';
+  } catch (e) { problem = e.message; }
+  await setting(false).catch(() => {});
+  const name = 'Emacs keys: kill and yank, the region, C-u, ESC, query replace, C-x C-s, occur';
   results.push({ name, ok: !problem });
   console.log(`${problem ? '✗' : '✓'} ${name}${problem ? `\n    ${problem}\n    got: ${JSON.stringify(got)}` : ''}`);
   if (problem) failed = true;

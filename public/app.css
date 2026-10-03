@@ -247,6 +247,7 @@ input[type=checkbox] { accent-color: var(--accent); }
 #status { grid-column: 2 / 4; display: flex; align-items: center; gap: 14px; padding: 0 10px; background: var(--bg-2); border-top: 1px solid var(--border); color: var(--fg-dim); font-size: 11.5px; white-space: nowrap; overflow: hidden; }
 #status .grow { flex: 1; }
 #status .item { cursor: default; }
+#status .item.echo { color: var(--fg); min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 #status .clickable { cursor: pointer; } #status .clickable:hover { color: var(--fg); }
 .lock { color: var(--ok); }
 
@@ -865,10 +866,10 @@ iframe.mermaid-frame { position: fixed; left: -10000px; top: 0; width: 1600px; h
 .review:focus .task-row.kb-cur { background: color-mix(in srgb, var(--accent) 14%, var(--bg-2)); }
 
 /* Margin's own buffers as lists: search results, agent runs, messages. */
-.buffer-list .search-buffer-list, .buffer-list > .run-row, .buffer-list > .message-row { max-width: 1000px; margin-left: auto; margin-right: auto; }
+.buffer-list .search-buffer-list, .buffer-list > .run-row, .buffer-list > .message-row, .buffer-list > .occur-row { max-width: 1000px; margin-left: auto; margin-right: auto; }
 .buffer-list .run-row { border-radius: var(--radius); border-left: 0; }
 .buffer-list .run-row .task { white-space: normal; }
-.review:focus .kb-cur:is(.run-row, .message-row, .search-hit) { background: color-mix(in srgb, var(--accent) 14%, var(--bg-2)); color: var(--fg); }
+.review:focus .kb-cur:is(.run-row, .message-row, .occur-row, .search-hit) { background: color-mix(in srgb, var(--accent) 14%, var(--bg-2)); color: var(--fg); }
 .search-buffer .search-box { padding: 4px 0 8px; }
 .search-buffer .search-hit { padding-left: 22px; border-radius: var(--radius); }
 .search-buffer .search-file { cursor: default; padding-left: 0; }
@@ -878,6 +879,11 @@ iframe.mermaid-frame { position: fixed; left: -10000px; top: 0; width: 1600px; h
 .message-row.copied { background: color-mix(in srgb, var(--ok) 18%, transparent); }
 .message-time { flex: none; color: var(--fg-faint); font: 12px/1.6 var(--mono); }
 .message-text { min-width: 0; white-space: pre-wrap; overflow-wrap: anywhere; }
+.occur-row { display: flex; gap: 12px; padding: 3px 10px; border-radius: var(--radius); font-size: 13px; cursor: pointer; }
+.occur-row:hover { background: var(--bg-2); }
+.occur-line { flex: none; min-width: 3em; text-align: right; color: var(--fg-faint); font: 12px/1.6 var(--mono); }
+.occur-text { min-width: 0; white-space: pre-wrap; overflow-wrap: anywhere; font-family: var(--mono); font-size: 12.5px; }
+.occur-text mark { background: color-mix(in srgb, var(--warn) 35%, transparent); color: inherit; border-radius: 2px; }
 .history:focus { outline: none; }
 .chip.add { padding: 1px 8px; }
 .pen-pick { display: inline-flex; align-items: center; gap: 5px; margin-right: 12px; font-size: 12px; color: var(--fg-dim); }

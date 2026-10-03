@@ -8,6 +8,7 @@ import { eventKeys } from './keys.js';
 import { UndoHistory } from './undo.js';
 import { expandRange } from './expand.js';
 import { combine, original, proposed, reconcile, provisional, strike, overlay } from './track.js';
+import { EmacsKeys, emacs, keyName } from './emacs.js';
 
 const esc = (s) => s.replace(/[&<>]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c]));
 const MAX_HIGHLIGHT = 300_000; // chars; beyond this we fall back to plain text
@@ -147,6 +148,8 @@ export class MarkdownEditor {
     this.track = null; // suggesting: { text, marks, undo, redo } (track.js)
     this.notes = []; // margin notes: { from, to, el, cur }
     this.nar = null; // narrowed: { head, tail, lines } (the note's text before and after the part in view)
+    this.emacs = new EmacsKeys(this); // Emacs keys (emacs.js)
+    this.query = null; // query replace, going: { at, end, cur, n, back }
 
     this.findLayer = h('div', 'ed-layer ed-find-layer');
     this.hlLayer = h('div', 'ed-layer ed-hl-layer');
@@ -170,18 +173,24 @@ export class MarkdownEditor {
       if (!this.busy) this._selBefore = [this.ta.selectionStart, this.ta.selectionEnd];
     });
     this.ta.addEventListener('beforeinput', (e) => this._multiInput(e));
-    this.ta.addEventListener('mousedown', () => { this._clearMulti(); this._closeStep(); });
+    this.ta.addEventListener('mousedown', () => { this._clearMulti(); this._closeStep(); this.emacs.mouse(); if (this.query) this._queryDone(); });
     this.ta.addEventListener('compositionstart', () => { this._clearMulti(); this._selBefore = [this.ta.selectionStart, this.ta.selectionEnd]; });
     this.ta.addEventListener('scroll', () => this._syncScroll());
     this.ta.addEventListener('keydown', (e) => {
       this.handlingKey = true;
       try { this._keydown(e); } finally { this.handlingKey = false; }
-      editorWatch.key?.(this, e, commandOf(e));
+      // Not the key that started recording a macro (⌃X ( ).
+      if (!this._noWatch) editorWatch.key?.(this, e, commandOf(e));
+      this._noWatch = false;
     });
     this.ta.addEventListener('keyup', () => { this._placeCurLine(); this.onCursor(); });
     this.ta.addEventListener('click', () => { this._closePopup(); this._placeCurLine(); this.onCursor(); });
     this.ta.addEventListener('selectionchange', () => this._placeCurLine());
-    this.ta.addEventListener('blur', () => setTimeout(() => { if (document.activeElement !== this.ta) this._closePopup(); }, 150));
+    this.ta.addEventListener('blur', () => setTimeout(() => {
+      if (document.activeElement === this.ta) return;
+      this._closePopup();
+      if (this.query) this._queryDone();
+    }, 150));
     this.ta.addEventListener('paste', (e) => this._paste(e));
     this.ta.addEventListener('drop', (e) => this._drop(e));
     this.ta.addEventListener('compositionend', () => this._changed());
@@ -407,8 +416,12 @@ export class MarkdownEditor {
   closeFind() {
     if (this.find.open && editorWatch.find) {
       const { query, caseSensitive, regex, matches } = this.find;
-      editorWatch.find(this, { query, caseSensitive, regex, matches, from: this.findFrom ?? 0, sel: [this.ta.selectionStart, this.ta.selectionEnd] });
+      editorWatch.find(this, { query, caseSensitive, regex, matches, from: this.findFrom ?? 0, sel: [this.ta.selectionStart, this.ta.selectionEnd], collapse: this._findEnd || null });
     }
+    this._findEnd = null;
+    this._isearch = null;
+    this._qr = null;
+    if (this.query) { this.query = null; this.ta.readOnly = false; }
     this.find.open = false;
     this.findBar.hidden = true;
     this.find.matches = [];
@@ -422,8 +435,10 @@ export class MarkdownEditor {
     if (!e?.isComposing) {
       const o = this._off;
       const before = this._selBefore && [this._selBefore[0] + o, this._selBefore[1] + o];
+      const old = this.history.value;
       this.history.record(this.value, before, [this.ta.selectionStart + o, this.ta.selectionEnd + o]);
       this._selBefore = null;
+      this.emacs.changed(old, this.value, before ? before[0] : this.ta.selectionStart + o);
     }
     this.hints = [];
     this._render();
@@ -725,6 +740,103 @@ export class MarkdownEditor {
     return res;
   }
 
+  // The rows a line of the text box takes on the screen (wrapped), from its
+  // start ls: [{ top, xs: [[offset in the line, x]] }] — the places in each
+  // row and how far from the left they are (the last row has the line's end).
+  _rows(ls) {
+    const v = this.ta.value;
+    const nl = v.indexOf('\n', ls);
+    const text = v.slice(ls, nl < 0 ? v.length : nl);
+    const probe = this._probe();
+    probe.textContent = text;
+    const node = probe.firstChild;
+    const box = probe.getBoundingClientRect();
+    const left = box.left + (parseFloat(getComputedStyle(probe).paddingLeft) || 0);
+    const rows = [];
+    const range = document.createRange();
+    let last = null;
+    for (let i = 0; i < text.length;) {
+      const n = /[\uD800-\uDBFF]/.test(text[i]) && /[\uDC00-\uDFFF]/.test(text[i + 1] || '') ? 2 : 1;
+      range.setStart(node, i);
+      range.setEnd(node, i + n);
+      const r = [...range.getClientRects()].find((x) => x.width || x.height) || range.getBoundingClientRect();
+      const top = r.top - box.top;
+      if (!rows.length || top >= rows.at(-1).top + r.height / 2) rows.push({ top, xs: [] });
+      rows.at(-1).xs.push([i, r.left - left]);
+      last = r;
+      i += n;
+    }
+    if (!rows.length) rows.push({ top: 0, xs: [] });
+    rows.at(-1).xs.push([text.length, last ? last.right - left : 0]);
+    probe.textContent = '';
+    return { len: text.length, rows };
+  }
+
+  // The place n rows on the screen below pos (above: n < 0), as near x
+  // `goal` as it goes (the caret's own x when null): Emacs's ⌃N and ⌃P in
+  // wrapped lines. → { pos, x }.
+  _screenLine(pos, n, goal = null) {
+    const v = this.ta.value;
+    let ls = v.lastIndexOf('\n', pos - 1) + 1;
+    let L = this._rows(ls);
+    const rowOf = (col) => { let r = 0; while (r + 1 < L.rows.length && L.rows[r + 1].xs[0][0] <= col) r++; return r; };
+    const col = pos - ls;
+    let r = rowOf(col);
+    const here = L.rows[r].xs.find(([o]) => o >= col) || L.rows[r].xs.at(-1);
+    const x = goal ?? here[1];
+    r += n;
+    while (r < 0) {
+      if (ls === 0) return { pos: 0, x };
+      ls = ls >= 2 ? v.lastIndexOf('\n', ls - 2) + 1 : 0;
+      L = this._rows(ls);
+      r += L.rows.length;
+    }
+    while (r >= L.rows.length) {
+      if (ls + L.len >= v.length) return { pos: v.length, x };
+      r -= L.rows.length;
+      ls += L.len + 1;
+      L = this._rows(ls);
+    }
+    let best = L.rows[r].xs[0];
+    for (const p of L.rows[r].xs) if (Math.abs(p[1] - x) < Math.abs(best[1] - x)) best = p;
+    return { pos: ls + best[0], x };
+  }
+
+  // Scroll so the caret at pos (in the text box) is in view, a line or two
+  // from the edge — setting the selection from a script doesn't.
+  _keepInView(pos) {
+    const ta = this.ta;
+    const v = ta.value;
+    let line = 0;
+    for (let i = v.indexOf('\n'); i >= 0 && i < pos; i = v.indexOf('\n', i + 1)) line++;
+    const ys = this._lineOffsets();
+    const pad = parseFloat(getComputedStyle(ta).paddingTop) || 0;
+    const lh = this.lineHeight();
+    let y = (ys[line] ?? 0) + pad;
+    if ((ys[line + 1] ?? Infinity) - (ys[line] ?? 0) > lh * 1.5) {
+      // A long line, wrapped: the row the caret is in.
+      const ls = v.lastIndexOf('\n', pos - 1) + 1;
+      const { rows } = this._rows(ls);
+      let r = 0;
+      while (r + 1 < rows.length && rows[r + 1].xs[0][0] <= pos - ls) r++;
+      y += rows[r].top;
+    }
+    const margin = Math.min(lh * 2, ta.clientHeight / 4);
+    if (y < ta.scrollTop + margin) ta.scrollTop = Math.max(0, y - margin);
+    else if (y + lh > ta.scrollTop + ta.clientHeight - margin) ta.scrollTop = y + lh - ta.clientHeight + margin;
+    else return;
+    this._syncScroll();
+  }
+
+  // ⌃L: the caret's line to the middle of the view, the top, the bottom.
+  recenter(where = 'middle') {
+    const ta = this.ta;
+    const y = this._caretCoords(ta.selectionDirection === 'backward' ? ta.selectionStart : ta.selectionEnd).top;
+    const lh = this.lineHeight();
+    ta.scrollTop = Math.max(0, where === 'top' ? y - lh : where === 'bottom' ? y - ta.clientHeight + lh * 2 : y - (ta.clientHeight - lh) / 2);
+    this._syncScroll();
+  }
+
   _probe() {
     if (!this._probeEl) {
       this._probeEl = h('div', 'ed-layer ed-probe');
@@ -751,6 +863,8 @@ export class MarkdownEditor {
     // there commit the composition and must not accept completions or indent.
     if (e.isComposing || e.keyCode === 229) return;
     if (!this.popup.hidden && this._popupKeys(e)) return;
+    if (this.query && this._queryKey(e)) return;
+    if (this.emacs.key(e)) return;
     const ta = this.ta;
     // Undo and redo: the editor's own history (undo.js).
     if (modKey(e) && !e.altKey && (e.code === 'KeyZ' || (!isMac && e.code === 'KeyY' && !e.shiftKey))) {
@@ -1272,6 +1386,7 @@ export class MarkdownEditor {
     };
     const caseBtn = btn('Aa', 'Match case', () => { this.find.caseSensitive = !this.find.caseSensitive; caseBtn.classList.toggle('on'); this._runFind(true); });
     const reBtn = btn('.*', 'Regular expression', () => { this.find.regex = !this.find.regex; reBtn.classList.toggle('on'); this._runFind(true); });
+    this.reBtn = reBtn;
     const toggleRep = btn('⇅', 'Toggle replace', () => { bar.classList.toggle('with-replace'); if (bar.classList.contains('with-replace')) rep.focus(); });
     const row1 = h('div', 'ed-find-row');
     row1.append(toggleRep, input, caseBtn, reBtn, count,
@@ -1283,6 +1398,17 @@ export class MarkdownEditor {
     input.addEventListener('input', () => { this.find.query = input.value; this._runFind(true); });
     rep.addEventListener('input', () => { this.find.replace = rep.value; });
     const keys = (e) => {
+      const em = emacs.on && !e.isComposing ? keyName(e) : null;
+      // Query replace, asked for: Enter goes to what to put instead, then starts.
+      if (this._qr && e.key === 'Enter' && !e.isComposing) {
+        e.preventDefault();
+        if (e.target === input) { rep.focus(); rep.select(); } else this._queryStart();
+        return;
+      }
+      if (em === 'C-s' || em === 'C-r') { e.preventDefault(); this.isearch(em === 'C-s' ? 1 : -1); return; }
+      if (em === 'C-g') { e.preventDefault(); this._isearchQuit(); return; }
+      if (em === 'M-%' || em === 'C-M-%') { e.preventDefault(); this.queryReplace({ regex: em === 'C-M-%', query: input.value }); return; }
+      if (this._isearch && e.key === 'Enter' && e.target === input && !e.shiftKey && !e.isComposing) { e.preventDefault(); this._isearchEnd(); return; }
       if (e.key === 'Escape') { e.preventDefault(); this.closeFind(); }
       else if (e.key === 'Enter' && e.target === input) { e.preventDefault(); this._step(e.shiftKey ? -1 : 1); }
       else if (e.key === 'Enter' && e.target === rep) { e.preventDefault(); (modKey(e) ? this._replaceAll() : this._replaceOne()); }
@@ -1291,8 +1417,156 @@ export class MarkdownEditor {
     input.addEventListener('keydown', keys);
     rep.addEventListener('keydown', keys);
     this.findInput = input;
+    this.replaceInput = rep;
     this.findCount = count;
     return bar;
+  }
+
+  // ---------------- Emacs's searches (emacs.js)
+  // ⌃S / ⌃R: the find bar, or the next (previous) match in it. Enter stays
+  // at the match, the mark where the search began; ⌃G goes back there.
+  isearch(dir) {
+    const ta = this.ta;
+    if (!this._isearch) this._isearch = { from: [ta.selectionStart, ta.selectionEnd], dir };
+    this._isearch.dir = dir;
+    if (this.find.open && document.activeElement === this.findInput) { this._step(dir); return; }
+    this.openFind();
+    const m = this.find.matches;
+    if (dir < 0 && m.length) {
+      let i = m.length - 1;
+      for (let k = 0; k < m.length; k++) if (m[k][0] < this._isearch.from[0]) i = k;
+      this.find.index = i;
+      this.findCount.textContent = `${i + 1}/${m.length}`;
+      this._renderFind();
+      this._reveal(i, false);
+    }
+  }
+
+  _isearchEnd() {
+    const s = this._isearch;
+    const m = this.find.matches[this.find.index];
+    if (m) { this.ta.setSelectionRange(m[0], m[1]); this._findEnd = s.dir < 0 ? 'start' : 'end'; }
+    this.closeFind();
+    if (!m) return;
+    const p = s.dir < 0 ? m[0] : m[1];
+    this.ta.setSelectionRange(p, p);
+    this.emacs.pushMark(s.from[0], { quiet: true });
+    emacs.hooks.echo?.('Mark saved where search started');
+  }
+
+  _isearchQuit() {
+    const s = this._isearch;
+    if (this._qr) { this.closeFind(); return; }
+    this.closeFind();
+    if (s) this._select(s.from[0], s.from[1]);
+    emacs.hooks.echo?.('Quit');
+  }
+
+  // Query replace (M-%, ⌥X s q): what to find and what to put instead in the
+  // find bar, Enter after each; then every match from the caret (in the
+  // selected lines, if some) asks: y or Space replaces, n or ⌫ skips, !
+  // replaces the rest, . replaces this one and stops, ^ goes back, q or
+  // Enter stops. One ⌘Z takes back one replacement (! all of them).
+  queryReplace({ regex = false, query = null } = {}) {
+    const ta = this.ta;
+    const [s, e] = [ta.selectionStart, ta.selectionEnd];
+    const lines = ta.value.slice(s, e).includes('\n');
+    if (lines) ta.setSelectionRange(s, s);
+    this.find.regex = regex;
+    this.reBtn.classList.toggle('on', regex);
+    this.openFind({ replace: true, query });
+    this._qr = { from: s, to: lines ? e : null };
+    this.findCount.textContent = regex ? 'Query replace regexp: Enter' : 'Query replace: Enter';
+    if (query) { this.replaceInput.focus(); this.replaceInput.select(); }
+  }
+
+  _queryStart() {
+    const q = this._qr;
+    this._qr = null;
+    if (!this._pattern()) return;
+    this.query = { at: q.from, end: q.to, n: 0, back: [], cur: null };
+    this.emacs.pushMark(q.from, { quiet: true });
+    // Read-only meanwhile: y and n (in Korean too) answer, they don't type.
+    this.ta.readOnly = true;
+    this.focus();
+    this._queryNext();
+  }
+
+  _queryNext() {
+    const q = this.query;
+    const re = this._pattern();
+    const v = this.ta.value;
+    re.lastIndex = q.at;
+    let m;
+    while ((m = re.exec(v)) && m[0] === '') re.lastIndex++;
+    if (!m || (q.end != null && m.index + m[0].length > q.end)) { this._queryDone(); return; }
+    q.cur = [m.index, m.index + m[0].length];
+    this.ta.setSelectionRange(q.cur[0], q.cur[1]);
+    this._runFind(false);
+    this.find.index = this.find.matches.findIndex(([a]) => a === q.cur[0]);
+    this._renderFind();
+    if (this.find.index >= 0) this._reveal(this.find.index, false);
+    const cut = (t) => (t.length > 24 ? `${t.slice(0, 23)}…` : t);
+    const ask = `Replace “${cut(m[0])}” with “${cut(this._replacement(m[0]))}”?  y n ! . ^ q`;
+    this.findCount.textContent = ask;
+    emacs.hooks.echo?.(ask, true);
+  }
+
+  _queryReplaceHere() {
+    const q = this.query;
+    const [a, b] = q.cur;
+    const rep = this._replacement(this.ta.value.slice(a, b));
+    this._closeStep();
+    this._edit(a, b, rep, a + rep.length);
+    q.n++;
+    q.back.push(a);
+    q.at = a + rep.length;
+    if (q.end != null) q.end += rep.length - (b - a);
+  }
+
+  // → true when the key answered (or was a lone modifier).
+  _queryKey(e) {
+    if (['Shift', 'Control', 'Alt', 'Meta', 'CapsLock'].includes(e.key)) return true;
+    const k = keyName(e);
+    const q = this.query;
+    if (k === 'y' || k === 'SPC') { this._queryReplaceHere(); this._queryNext(); }
+    else if (k === 'n' || k === 'DEL' || k === 'deletechar') { q.back.push(q.cur[0]); q.at = q.cur[1]; this._queryNext(); }
+    else if (k === '.') { this._queryReplaceHere(); this._queryDone(); }
+    else if (k === '^') { if (q.back.length) q.at = q.back.pop(); this._queryNext(); }
+    else if (k === '!') {
+      const re = this._pattern();
+      const v = this.ta.value;
+      const from = q.cur[0];
+      const end = q.end ?? v.length;
+      let out = '';
+      let last = from;
+      let count = 0;
+      re.lastIndex = from;
+      let m;
+      while ((m = re.exec(v))) {
+        if (m[0] === '') { re.lastIndex++; continue; }
+        if (m.index + m[0].length > end) break;
+        out += v.slice(last, m.index) + this._replacement(m[0]);
+        last = m.index + m[0].length;
+        count++;
+      }
+      if (count) { this._closeStep(); this._edit(from, last, out, from + out.length); q.n += count; q.at = from + out.length; }
+      this._queryDone();
+    } else if (['q', 'RET', 'ESC', 'C-g'].includes(k)) this._queryDone();
+    else { this._queryDone(); return false; } // another key: done, and the key does its own
+    e.preventDefault();
+    return true;
+  }
+
+  _queryDone() {
+    const q = this.query;
+    if (!q) return;
+    this.query = null;
+    this.ta.readOnly = false;
+    const p = Math.min(q.at, this.ta.value.length);
+    this.ta.setSelectionRange(p, p);
+    this.closeFind();
+    emacs.hooks.echo?.(`Replaced ${q.n} occurrence${q.n === 1 ? '' : 's'}`);
   }
 
   _pattern() { return findPattern(this.find); }

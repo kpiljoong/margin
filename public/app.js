@@ -6,6 +6,7 @@ import { openLeader, linkHints, pickHint } from './leader.js';
 import { Macros, describe as describeMacro } from './macro.js';
 import { fillTemplate, isTemplate, TEMPLATE_DIR } from './templates.js';
 import { MarkdownEditor, setEditorKeys } from './editor.js';
+import { emacs, occurLines, occurPattern, keyName as emacsKeyName, commandOf as emacsCommandOf, COMMAND_DOCS, PREFIXES as EMACS_PREFIXES } from './emacs.js';
 import { hunksOf } from './track.js';
 import { renderDiagrams } from './diagrams.js';
 import { flowToMermaid, flowsAsMermaid, parseFlow, isStepText, flowStepNames, nameKey, flowTour, flowLineAt, COLORS } from './flow.js';
@@ -182,6 +183,21 @@ function toast(msg, kind = '', action = null) {
   toastTimer = setTimeout(() => { el.hidden = true; }, action ? 8000 : kind === 'error' ? 6000 : 2800);
 }
 
+// The echo area (as Emacs's), in the status bar: a prefix waiting for its
+// key ("C-x-"), a word from a key ("Mark set"). Those also go to Messages.
+let echoText = '';
+let echoTimer;
+function showEcho(text, sticky = false) {
+  echoText = text || '';
+  clearTimeout(echoTimer);
+  if (echoText && !sticky) {
+    messages.push({ at: new Date(), msg: echoText, kind: '', seq: ++messageSeq });
+    if (messages.length > 200) messages.shift();
+    echoTimer = setTimeout(() => { echoText = ''; renderStatus(); }, 3000);
+  }
+  renderStatus();
+}
+
 const basename = (p) => p.split('/').pop();
 const dirname = (p) => (p.includes('/') ? p.slice(0, p.lastIndexOf('/')) : '');
 const stem = (p) => basename(p).replace(/\.[^.]+$/, '');
@@ -238,6 +254,8 @@ const DEFAULT_SETTINGS = {
   theme: 'system', font: 'mono', fontSize: 15, width: 'normal', lineHeight: 1.7,
   accent: '', systemLight: 'paper', systemDark: 'midnight',
   autosave: true, highlight: true, spellcheck: false, sidebarWidth: 260,
+  // Emacs keys in the editor (emacs.js), and where M-q wraps.
+  emacsKeys: false, fillColumn: 70,
   // Labs: off until turned on in Settings.
   labSteadyDraw: false, labWheelPans: false,
   // The file tree shows the active tab's file (as VS Code's Auto Reveal).
@@ -283,6 +301,8 @@ function applySettings() {
   r.setProperty('--ed-line-height', String(st.lineHeight || 1.7));
   for (const [v, key] of [['--pen-me', 'penMe'], ['--pen', 'penAgent']]) { if (st[key]) r.setProperty(v, st[key]); else r.removeProperty(v); }
   for (const t of S.tabs) t.editor?.setOptions({ highlight: st.highlight, spellcheck: st.spellcheck });
+  emacs.on = !!st.emacsKeys;
+  emacs.fillColumn = Number(st.fillColumn) || 70;
   // Diagrams are drawn in theme colours.
   for (const t of S.tabs) if (t.previewEl?.querySelector('pre.diagram, pre[data-lang="mermaid" i], .drawing-embed, .mmd-embed')) renderPreview(t);
   for (const t of S.tabs) if (t.kind === 'drawing') t.frame?.post({ type: 'theme', theme: isDarkTheme() ? 'dark' : 'light' });
@@ -2998,6 +3018,7 @@ function renderStatus() {
     items.splice(2, 0, h('span', { class: 'item clickable outside-count', title: 'Notes another program changed (an agent in a terminal, another editor). Click to review them change by change.', onclick: openOutside },
       `↯ ${S.outside.length} changed outside`));
   }
+  if (echoText) items.splice(2, 0, h('span', { class: 'item echo' }, echoText));
   if (macros.recording) items.splice(2, 0, h('span', { class: 'item rec clickable', title: 'Click to stop recording', onclick: stopRecording }, `● Recording macro · ${kbd('macro-play') || '⌥X q q'} stops`));
   // Suggesting, comments, meeting mode: what a meeting needs to see.
   const mine = [];
@@ -3214,12 +3235,15 @@ function picker({ placeholder, initial = '', source, onMove, onCancel }) {
   const input = h('input', { class: 'input', placeholder, value: initial, spellcheck: false });
   const list = h('div', { class: 'palette-list' });
   let done = false;
+  // Never mind: back where the keys were (an editor, a buffer).
+  const before = document.activeElement;
   const close = (cancelled) => {
     if (done) return;
     done = true;
     overlay.hidden = true;
     overlay.replaceChildren();
-    if (cancelled) onCancel?.();
+    if (cancelled && onCancel) onCancel();
+    else if (cancelled && before?.isConnected && before !== document.body) before.focus();
   };
   const choose = (it, ev) => { close(false); it.run(ev); };
   const update = () => {
@@ -3578,6 +3602,9 @@ function openSettings({ keys = false } = {}) {
         toggle('autosave', 'Autosave', 'Save shortly after you stop typing. Conflicts with outside edits are never overwritten.'),
         toggle('highlight', 'Markdown syntax colors', 'Color headings, emphasis, links and code while editing.'),
         toggle('spellcheck', 'Spellcheck', 'Uses the system dictionary; nothing is sent anywhere.'),
+        toggle('emacsKeys', 'Emacs keys in the editor', isMac
+          ? '⌃ and ⌥ keys move, mark, kill and yank as in Emacs, with ⌃X, ⌃U and registers (ESC then a key is ⌥ and the key). ⌥ then no longer types special characters in notes.'
+          : 'Ctrl and Alt keys move, mark, kill and yank as in Emacs, with Ctrl+X, Ctrl+U and registers. Ctrl+C, Ctrl+V and Ctrl+Z still copy, paste and undo; Ctrl+X is Emacs’s (cut: Ctrl+W).'),
         toggle('followTab', 'Tree follows the active tab', 'Selecting a tab opens its folders in the file tree and scrolls to it (also ⇅ at the top of the tree). Off: use ◎ in the tree.')),
       h('div', { class: 'set-label' }, 'Labs'),
       h('p', { class: 'set-detail' }, 'Experiments you can turn on and off. They may change or go away.'),
@@ -5737,13 +5764,29 @@ function leaderTopic(it, keys) {
 function describeKey() {
   toast(`Describe a key: press it (${kbd('leader') || '⌥X'} for the leader’s keys; Esc: never mind)`);
   desktop?.recordingKeys?.(true);
+  // With Emacs keys on, in the editor: their keys first, a prefix (C-x, ESC)
+  // waiting for the rest.
+  const inEditor = emacs.on && editorShown(activeTab());
+  const seq = [];
   const onKey = (e) => {
     if (['Shift', 'Control', 'Alt', 'Meta', 'CapsLock'].includes(e.key) || e.isComposing) return;
     e.preventDefault();
     e.stopImmediatePropagation();
-    window.removeEventListener('keydown', onKey, true);
-    desktop?.recordingKeys?.(false);
-    $('#toast').hidden = true;
+    if (inEditor && !(e.key === 'Escape' && !seq.length)) {
+      let name = emacsKeyName(e, isMac);
+      if (name === 'C-g') { done(); return; }
+      if (name && seq.at(-1) === 'ESC') { seq.pop(); name = name.startsWith('M-') ? null : `M-${name}`; }
+      const keys = name && [...seq, name].join(' ');
+      const cmd = keys && emacsCommandOf(keys);
+      if (cmd && (EMACS_PREFIXES[cmd] || cmd === 'meta-prefix')) {
+        seq.push(name);
+        toast(`Describe a key: ${seq.join(' ')} …`);
+        return;
+      }
+      if (cmd) { done(); openHelp(emacsTopic(cmd, keys)); return; }
+      if (seq.length) { done(); openHelp({ name: [...seq, name || e.key].join(' '), unbound: true, doc: 'Nothing is on these keys in the editor.', leaders: [] }); return; }
+    }
+    done();
     const plain = !e.metaKey && !e.ctrlKey && !e.altKey;
     if (e.key === 'Escape' && plain && !e.shiftKey) return;
     const k = eventKeys(e, isMac);
@@ -5762,7 +5805,18 @@ function describeKey() {
     }
     openHelp({ name: keyLabel(k || '', isMac) || e.key, unbound: true, doc: 'Nothing is on this key here.', leaders: [] });
   };
+  const done = () => {
+    window.removeEventListener('keydown', onKey, true);
+    desktop?.recordingKeys?.(false);
+    $('#toast').hidden = true;
+  };
   window.addEventListener('keydown', onKey, true);
+}
+
+// An Emacs key's command, for help: run on the note in view.
+function emacsTopic(cmd, keys) {
+  const tab = fileTab();
+  return { name: cmd, doc: COMMAND_DOCS[cmd] || '', emacsKey: keys, leaders: [], run: tab?.editor ? () => emacsRun(tab, cmd) : null };
 }
 
 function describeLeader() {
@@ -5800,18 +5854,20 @@ function helpView(tab) {
   const keys = [];
   if (t.shortcut && kbd(t.shortcut)) keys.push(h('li', {}, h('kbd', {}, kbd(t.shortcut)), t.where ? ` ${t.where}` : '', ' — a shortcut: change it in Settings › Keyboard shortcuts.'));
   if (t.prefix) keys.push(h('li', {}, 'Quick open with ', h('kbd', {}, t.prefix), ' first.'));
+  if (t.emacsKey) keys.push(h('li', {}, h('kbd', {}, t.emacsKey), ' — in the editor, with Emacs keys on (Settings).'));
   for (const p of t.leaders || []) {
     keys.push(h('li', {}, h('kbd', {}, `${L} ${p.keys.join(' ')}`),
       p.custom ? ` — yours, from ${LEADER_FILE} line ${p.custom}.` : ` — under the leader${p.off ? ' (not here: it needs a note, or a selection, in view)' : ''}.`));
   }
   if (t.inBuffer) keys.push(h('li', {}, h('kbd', {}, t.inBuffer.key), ` — in the ${SPECIAL[t.inBuffer.kind]?.title || t.inBuffer.kind} buffer.`));
-  if (!t.unbound) keys.push(h('li', {}, h('kbd', {}, `${L} :`), ' — by name, as every command (M-x).'));
+  if (!t.unbound && !t.emacsKey) keys.push(h('li', {}, h('kbd', {}, `${L} :`), ' — by name, as every command (M-x).'));
   wrap.append(h('h3', {}, 'Keys'), keys.length ? h('ul', { class: 'help-keys' }, keys) : h('p', {}, 'None.'));
   const example = `- \`o x\` ${t.name}`;
   wrap.append(h('h3', {}, 'To change them'),
-    h('p', {}, t.unbound ? `Put a command on it: a shortcut in Settings › Keyboard shortcuts, or a key after ${L} in ${LEADER_FILE}.`
-      : `A key after ${L} of your own (or one taken away, or moved) is a line in ${LEADER_FILE}, a note in this folder:`),
-    ...(t.unbound ? [] : [h('pre', { class: 'help-example' }, example)]),
+    h('p', {}, t.emacsKey ? 'Emacs keys are as Emacs has them, not changed one by one: turn them all off in Settings › Editor.'
+      : t.unbound ? `Put a command on it: a shortcut in Settings › Keyboard shortcuts, or a key after ${L} in ${LEADER_FILE}.`
+        : `A key after ${L} of your own (or one taken away, or moved) is a line in ${LEADER_FILE}, a note in this folder:`),
+    ...(t.unbound || t.emacsKey ? [] : [h('pre', { class: 'help-example' }, example)]),
     h('div', { class: 'help-actions' },
       t.run ? h('button', { class: 'btn primary', onclick: () => runTopic(t) }, 'Run it') : null,
       h('button', { class: 'btn', onclick: editLeaderKeys }, `Edit leader keys (${LEADER_FILE})`),
@@ -5848,6 +5904,7 @@ const SPECIAL = {
   gitdiff: { name: (t) => `Δ ${basename(t.path)}`, title: 'Changes since commit', view: gitDiffView, refresh: (t) => openGitDiff(t.path), open: (t) => t.data?.status !== 'deleted' && openFile(t.path) },
   dired: { name: (t) => `▤ ${t.dir ? `${t.dir}/` : 'Dired'}`, title: 'Dired', view: diredView, refresh: (t) => refreshDired(t), keys: diredKeys, open: diredOpen, make: () => diredHere() },
   help: { name: (t) => `? ${t.topic?.name || 'Help'}`, title: 'Help', view: helpView, refresh: (t) => renderContent(t.group), keys: helpOwnKeys, open: (t) => runTopic(t.topic) },
+  occur: { name: (t) => `≡ Occur: ${t.query}`, title: 'Occur', view: occurView, refresh: refreshOccur, open: openOccurAt },
 };
 // Each one's own keys, for M-x and the hint in its head.
 const BUFFER_KEYS = {
@@ -5861,6 +5918,7 @@ const BUFFER_KEYS = {
   gitdiff: [],
   dired: [['^', 'Up a folder'], ['e', 'Edit the names as text (wdired)'], ['R', 'Rename this one (edit, its name picked)'], ['y', 'Plan: take the change'], ['n', 'Plan: leave the change'], ['A', 'Plan: take all'], ['a', 'Plan: apply what is taken']],
   help: [['k', 'Describe a key…'], ['c', 'Describe a command…'], ['l', 'Edit leader keys']],
+  occur: [],
 };
 const COMMON_KEYS = [['o', 'Open'], ['g', 'Refresh'], ['q', 'Close']];
 
@@ -6280,7 +6338,7 @@ async function afterRunChange(tab) {
 document.addEventListener('keydown', (e) => {
   const overlay = $('#overlay');
   if (e.key === 'Escape' && !overlay.hidden) { overlay.hidden = true; overlay.replaceChildren(); return; }
-  if (e.key === 'Escape' && document.documentElement.classList.contains('focus-mode') && !fileTab()?.editor.find.open) { toggleFocusMode(); return; }
+  if (e.key === 'Escape' && document.documentElement.classList.contains('focus-mode') && !fileTab()?.editor.find.open && !(e.defaultPrevented && e.target.closest?.('.ed'))) { toggleFocusMode(); return; }
   if (e.key === '?' && !e.metaKey && !e.ctrlKey && !/INPUT|TEXTAREA|SELECT/.test(document.activeElement.tagName)) { S.focus = 0; S.groups[0].active = null; render(); return; }
   const id = appKeys.get(eventKeys(e, isMac));
   // The editor handles its own (and took this one).
@@ -6769,6 +6827,9 @@ function defaultLeaderTree() {
       { key: 'l', label: 'Go to line…', when: () => !!tab, run: () => openPalette(':') },
       { key: 'n', label: 'Next search result', run: () => stepSearch(1) },
       { key: 'p', label: 'Previous search result', run: () => stepSearch(-1) },
+      { key: 'q', label: 'Query replace…', cmd: 'Query replace (match by match: y n ! . ^ q)', when: () => !!tab, run: () => queryReplaceIn(tab) },
+      { key: 'Q', label: 'Query replace a regular expression…', cmd: 'Query replace regexp (match by match)', when: () => !!tab, run: () => queryReplaceIn(tab, true) },
+      { key: 'o', label: 'Occur: lines that match…', cmd: 'Occur: the lines of this note that match, as a buffer', when: () => !!tab, run: () => occur(tab) },
     ] },
     { key: 'b', label: 'buffers', items: [
       { key: 'b', label: 'Switch note (buffers)…', run: pickTab },
@@ -6803,6 +6864,31 @@ function defaultLeaderTree() {
     { key: 'n', label: 'narrow', when: () => note, items: [
       { key: 'n', label: tab && tab.editor && tab.editor.selectionStart !== tab.editor.selectionEnd ? 'Narrow to the selected lines' : 'Narrow to this section', cmd: 'Narrow to this section or the selected lines', run: () => narrowHere(tab) },
       { key: 'w', label: 'Widen: the whole note', cmd: 'Widen: show the whole note', when: () => !!tab.editor?.narrowed, run: () => widenHere(tab) },
+    ] },
+    { key: 'e', label: 'edit text', when: () => editorShown(tab), items: [
+      { key: 'u', label: 'Uppercase the word or selection', cmd: 'Edit: uppercase the word or selection', run: () => emacsRun(tab, 'upcase-word') },
+      { key: 'l', label: 'Lowercase the word or selection', cmd: 'Edit: lowercase the word or selection', run: () => emacsRun(tab, 'downcase-word') },
+      { key: 'c', label: 'Capitalize the word or selection', cmd: 'Edit: capitalize the word or selection', run: () => emacsRun(tab, 'capitalize-word') },
+      { key: 'q', label: `Fill the paragraph (wrap at ${emacs.fillColumn})`, cmd: 'Edit: fill the paragraph (wrap it at the fill column)', run: () => emacsRun(tab, 'fill-paragraph') },
+      { key: 'Q', label: 'Unfill the paragraph (one line)', cmd: 'Edit: unfill the paragraph (one line)', run: () => emacsRun(tab, 'unfill-paragraph') },
+      { key: 'f', label: 'Set the fill column…', cmd: 'Edit: set the fill column…', run: setFillColumn },
+      { key: 'j', label: 'Join this line to the one before', cmd: 'Edit: join this line to the one before', run: () => emacsRun(tab, 'join-line') },
+      { key: 't', label: 'Swap this line and the one before', cmd: 'Edit: transpose lines', run: () => emacsRun(tab, 'transpose-lines') },
+      { key: 's', label: 'Sort the selected lines', cmd: 'Edit: sort lines', run: () => emacsRun(tab, 'sort-lines') },
+      { key: 'S', label: 'Sort the selected lines, reversed', cmd: 'Edit: sort lines, reversed', run: () => emacsRun(tab, 'sort-lines', { raw: true }) },
+      { key: 'o', label: 'Delete the blank lines around', cmd: 'Edit: delete blank lines', run: () => emacsRun(tab, 'delete-blank-lines') },
+      { key: 'w', label: 'Delete trailing spaces', cmd: 'Edit: delete trailing whitespace', run: () => emacsRun(tab, 'delete-trailing-whitespace') },
+    ] },
+    { key: 'x', label: 'mark & registers', when: () => editorShown(tab) || emacs.registers.size > 0, items: [
+      { key: 'SPC', label: 'Set the mark', cmd: 'Mark: set the mark here', when: () => emacs.on && editorShown(tab), run: () => emacsRun(tab, 'set-mark') },
+      { key: 'x', label: 'Swap the cursor and the mark', cmd: 'Mark: exchange point and mark', when: () => emacs.on && editorShown(tab), run: () => emacsRun(tab, 'exchange-point-and-mark') },
+      { key: 'p', label: 'Back to the mark before', cmd: 'Mark: back to the mark before (pop)', when: () => editorShown(tab), run: () => emacsRun(tab, 'set-mark', { raw: true }) },
+      { key: 'h', label: 'Select the whole note', cmd: 'Mark: select the whole note', when: () => editorShown(tab), run: () => emacsRun(tab, 'mark-whole-buffer') },
+      { key: 'r', label: 'Keep this place in a register…', cmd: 'Register: keep this place (then a letter)', when: () => editorShown(tab), run: () => emacsRun(tab, 'point-to-register') },
+      { key: 'j', label: 'Go to a register…', cmd: 'Register: go to the place in it (then a letter)', when: () => editorShown(tab), run: () => emacsRun(tab, 'jump-to-register') },
+      { key: 's', label: 'Copy the selection to a register…', cmd: 'Register: copy the selection to it (then a letter)', when: () => editorShown(tab), run: () => emacsRun(tab, 'copy-to-register') },
+      { key: 'i', label: 'Insert a register…', cmd: 'Register: insert its text (then a letter)', when: () => editorShown(tab), run: () => emacsRun(tab, 'insert-register') },
+      { key: 'l', label: 'List the registers…', cmd: 'Registers: list them', run: listRegisters },
     ] },
     { key: 'l', label: 'links', items: [
       { key: 'l', label: 'Follow the link at the cursor', when: () => editorShown(tab), run: () => { if (!followLinkAt(tab.editor, tab)) toast('No link at the cursor'); } },
@@ -7144,16 +7230,15 @@ async function jumpInNote() {
 // Copy history (Emacs kill ring, Sublime's paste from history): what was
 // copied or cut in Margin during this session, newest first. Kept only in
 // memory.
-const copied = [];
+// It is the kill ring of Emacs keys too (emacs.js): what ⌃K and ⌃W killed
+// and M-w copied is here, and ⌃Y yanks what was copied.
+const copied = emacs.ring.items;
 function rememberCopy() {
   const el = document.activeElement;
   const text = el && (el.tagName === 'TEXTAREA' || (el.tagName === 'INPUT' && el.type === 'text'))
     ? el.value.slice(el.selectionStart, el.selectionEnd) : String(getSelection());
   if (!text.trim() || text.length > 100_000) return;
-  const i = copied.indexOf(text);
-  if (i >= 0) copied.splice(i, 1);
-  copied.unshift(text);
-  if (copied.length > 30) copied.pop();
+  emacs.ring.push(text);
 }
 document.addEventListener('copy', rememberCopy, true);
 document.addEventListener('cut', rememberCopy, true);
@@ -7177,6 +7262,161 @@ function pasteFromHistory() {
       })),
     onCancel: () => ed.focus(),
   });
+}
+
+// Emacs keys (emacs.js): what they do in the app.
+Object.assign(emacs.hooks, {
+  echo: showEcho,
+  save: () => runCommand('save'),
+  findFile: () => openPalette(),
+  buffers: pickTab,
+  killBuffer: () => activeTab() && closeTab(activeTab().id),
+  otherWindow: () => { if (S.groups.length > 1) { splitRight(); focusEditor(); } else showEcho('There is no other pane'); },
+  split: () => { if (S.groups.length < 2) { splitRight(); if (!document.querySelector('#overlay:not([hidden])')) focusEditor(); } else showEcho('Split already'); },
+  dired: () => diredHere(),
+  repeat: repeatLast,
+  macroStart: () => { if (!macros.recording) toggleRecording(); },
+  // ⌃X ) and ⌃X e while recording: the ⌃X before isn't part of the macro.
+  macroEnd: () => {
+    const r = macros.recording;
+    if (!r) { showEcho('Not recording a macro'); return; }
+    while (r.at(-1)?.t === 'key' && r.at(-1).ctrlKey && r.at(-1).code === 'KeyX') r.pop();
+    stopRecording();
+  },
+  macroPlay: (n) => (macros.recording ? emacs.hooks.macroEnd() : playMacro(n)),
+  navBack: () => navGo(-1),
+  gotoLine: () => openPalette(':'),
+  pasteHistory: pasteFromHistory,
+  occur: () => occur(),
+  nextMatch: (n) => stepOccur(n),
+  narrow: () => narrowHere(),
+  widen: () => widenHere(),
+  where: (ed) => S.tabs.find((t) => t.editor === ed)?.path ?? null,
+  jump: async (path, offset) => {
+    if (!path || !S.files.some((f) => f.path === path)) { showEcho('That note is gone'); return; }
+    await openFile(path);
+    const t = S.tabs.find((x) => x.kind === 'file' && x.path === path);
+    if (t?.editor) requestAnimationFrame(() => { navJump(t); gotoOffset(t, Math.min(offset, t.editor.value.length)); });
+  },
+  fillColumn: (c) => setSetting('fillColumn', c),
+});
+
+async function setFillColumn() {
+  const v = await askText({ title: 'Fill column', label: 'Where filling a paragraph wraps its lines (columns; Korean characters count two)', value: String(emacs.fillColumn), okLabel: 'Set' });
+  const n = Number.parseInt(v, 10);
+  if (n >= 10) { setSetting('fillColumn', n); showEcho(`Fill column set to ${n}`); }
+  fileTab()?.editor?.focus();
+}
+
+// An Emacs command from the leader menu (works with Emacs keys off too).
+function emacsRun(tab, cmd, { raw = false } = {}) {
+  const ed = tab?.editor;
+  if (!ed) return;
+  if (groupMode(tab) === 'preview') setMode('split');
+  ed.focus();
+  if (raw) ed.emacs.arg = { n: 4, u: true, digits: '', neg: false, open: false };
+  ed.emacs.command(cmd);
+}
+
+function queryReplaceIn(tab = fileTab(), regex = false) {
+  if (!tab?.editor) return;
+  if (groupMode(tab) === 'preview') setMode('split');
+  tab.editor.focus();
+  tab.editor.queryReplace({ regex });
+}
+
+// Registers (⌃X r): places and pieces of text kept for the session.
+function listRegisters() {
+  const tab = fileTab();
+  if (!emacs.registers.size) { toast('No registers yet: ⌥X x r keeps a place, ⌥X x s a piece of text'); return; }
+  picker({
+    placeholder: 'Registers…  (Enter: go to the place, put in the text)',
+    source: (q) => [...emacs.registers].filter(([k, r]) => fuzzy(q, `${k} ${r.text ?? r.path ?? ''}`)).map(([k, r]) => ({
+      icon: k,
+      label: r.text != null ? r.text.replace(/\s+/g, ' ').slice(0, 100) : `${r.path ? stem(r.path) : 'a note'} · ${r.offset}`,
+      hint: r.text != null ? `${r.text.length} chars` : 'a place',
+      run: () => {
+        if (r.text == null) { emacs.hooks.jump(r.path, r.offset); return; }
+        const ed = editorShown(tab) ? tab.editor : null;
+        if (!ed) { toast('Open a note in the editor to put it in.'); return; }
+        ed.focus();
+        ed.replace(ed.selectionStart, ed.selectionEnd, r.text);
+      },
+    })),
+    onCancel: () => fileTab()?.editor?.focus(),
+  });
+}
+
+// ------------------------------------------------------------------ occur
+// The lines of a note that match, in a buffer of their own (Emacs's occur,
+// M-s o, ⌥X s o): Enter or o goes to one, g looks again, M-g n / M-g p
+// step through them from the note.
+
+async function occur(tab = fileTab()) {
+  const ed = tab?.editor;
+  if (!ed) { toast('Open a note to look in it.'); return; }
+  const v = ed.value;
+  const [a, b] = [ed.selectionStart, ed.selectionEnd];
+  const picked = v.slice(a, b);
+  const word = /[\p{L}\p{N}_]*$/u.exec(v.slice(0, a))[0] + /^[\p{L}\p{N}_]*/u.exec(v.slice(a))[0];
+  const q = await askText({ title: 'Occur', label: `Lines of ${stem(tab.path)} that match (a regular expression; a capital letter makes case matter)`, value: picked && !picked.includes('\n') ? picked : word || S.occurQuery || '', okLabel: 'List' });
+  if (!q) { ed.focus(); return; }
+  S.occurQuery = q;
+  const t = openSpecial('occur', { path: tab.path, query: q });
+  Object.assign(t, { path: tab.path, query: q, hits: null, cur: null });
+  refreshOccur(t);
+}
+
+async function refreshOccur(t) {
+  let text = S.tabs.find((x) => x.kind === 'file' && x.path === t.path)?.content;
+  if (text == null) try { text = (await api('GET', `/api/file?path=${encodeURIComponent(t.path)}`)).content; } catch (e) { toast(e.message, 'error'); return; }
+  t.hits = occurLines(text, occurPattern(t.query));
+  if (S.groups[t.group]?.active === t.id) renderContent(t.group);
+}
+
+function occurView(tab) {
+  const wrap = h('div', { class: 'review buffer-list occur-buffer' });
+  const hits = tab.hits;
+  wrap.append(h('div', { class: 'review-head' },
+    h('div', { class: 'task' }, `Occur: “${tab.query}”`),
+    h('div', { class: 'meta' },
+      h('span', {}, hits ? `${hits.length} line${hits.length === 1 ? '' : 's'} in ${stem(tab.path)}` : 'Looking…'),
+      h('span', { class: 'review-keys', title: keysHint('occur') }, 'j k · o go · g again · q close'))));
+  if (hits && !hits.length) wrap.append(h('div', { class: 'review-note' }, 'No line matches.'));
+  for (const hit of hits || []) {
+    const parts = [];
+    let at = 0;
+    for (const [x, y] of hit.ranges) { parts.push(hit.text.slice(at, x), h('mark', {}, hit.text.slice(x, y))); at = y; }
+    parts.push(hit.text.slice(at));
+    wrap.append(h('div', { class: 'occur-row kb-item', 'data-path': tab.path, 'data-hunk': hit.line, 'data-line': hit.line, onclick: () => openOccurAt(tab, wrap.querySelector(`[data-line="${hit.line}"]`)) },
+      h('span', { class: 'occur-line' }, String(hit.line)), h('span', { class: 'occur-text' }, ...parts)));
+  }
+  return wrap;
+}
+
+async function openOccurAt(tab, el) {
+  const hit = el && tab.hits?.find((x) => x.line === Number(el.dataset.line));
+  if (!hit) return;
+  tab.cur = `${tab.path}#${hit.line}`;
+  await openFile(tab.path, { line: hit.line });
+  const t = S.tabs.find((x) => x.kind === 'file' && x.path === tab.path);
+  if (!t?.editor) return;
+  requestAnimationFrame(() => {
+    const o = lineOffset(t.editor.value, hit.line - 1);
+    gotoOffset(t, o + hit.ranges[0][0], o + hit.ranges[0][1]);
+  });
+}
+
+// M-g n / M-g p: the next occur line (else the next search result).
+function stepOccur(n) {
+  const t = S.tabs.find((x) => x.kind === 'occur');
+  if (!t?.hits?.length) { stepSearch(n); return; }
+  const lines = t.hits.map((x) => x.line);
+  const at = lines.indexOf(Number(t.cur?.split('#')[1]));
+  const i = at < 0 ? (n > 0 ? 0 : lines.length - 1) : at + n;
+  if (i < 0 || i >= lines.length) { showEcho(n > 0 ? 'No more lines' : 'No lines before'); return; }
+  openOccurAt(t, { dataset: { line: String(lines[i]) } });
+  showEcho(`${i + 1} / ${lines.length}`);
 }
 
 // Repeat the last command (Emacs C-x z, Vim's .): from the leader menu, the

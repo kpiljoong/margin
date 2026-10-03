@@ -227,7 +227,7 @@ Built without external libraries to stay lightweight. The editor is a native `te
 | ⌥↑ / ⌥↓, ⌘⇧D | Move line, duplicate line |
 | ⌥⇧↑ / ⌥⇧↓ | Expand the selection to the next larger piece of the note — word → inside the brackets, quotes or `**marks**` → with them → sentence → the line's text → the line → the list item with what is under it → the paragraph or list → the text under the heading → the section → the larger section → the whole note — and shrink it back (Emacs expand-region, Vim text objects). Also ⌥X v / ⌥X V; ⌥. expands again |
 | ⌃; | Jump: a letter on every word in view; type one to put the cursor there (avy / hop / flash). Two letters when there are many words; a step in back/forward. Also ⌥X j |
-| ⌘⇧V | Paste from the copy history: what you copied or cut in Margin this session, newest first (Emacs kill ring, Sublime's paste from history). Kept in memory only. Also ⌥X y |
+| ⌘⇧V | Paste from the copy history: what you copied or cut in Margin this session, newest first (Emacs kill ring, Sublime's paste from history). Kept in memory only. Also ⌥X y. With Emacs keys on it is their kill ring (⌃Y, ⌥Y) |
 | Tab / ⇧Tab | Indent / outdent (works on multiple lines) |
 | ⌘[ / ⌘] | Go to previous / next file (in the order opened, like a browser). The mouse back/forward buttons and the ← → buttons above the editor do the same |
 | F2 | Rename / move the current note |
@@ -252,11 +252,13 @@ The shortcuts above (except typing behaviours like Tab, Enter, and bracket pairi
 | Keys | |
 |---|---|
 | `f` files | `f` find a file · `n` new note · `t` from a template · `j` today's journal · `r` rename · `b` bookmark · `y` copy [[link]] · `l` show in the tree · `h` history · `e` export HTML · `d` a folder as text (dired) |
-| `s` search | `s` the workspace · `b` the results as a buffer · `f` find in note · `r` replace · `h` heading here · `a` heading in any note · `l` go to line · `n`/`p` next/previous search result |
+| `s` search | `s` the workspace · `b` the results as a buffer · `f` find in note · `r` replace · `q` / `Q` query replace (a regular expression), match by match · `o` occur: the lines that match, as a buffer · `h` heading here · `a` heading in any note · `l` go to line · `n`/`p` next/previous search result |
 | `b` buffers | `b` switch buffer (most recent first) · `` ` `` the note before · `m` messages · `r` agent runs · `s` search results · `x` tasks · `c` changed outside · `n`/`p` next/previous · `d` close · `o` close others · `[` `]` back/forward |
 | `w` windows | `h` the sidebar · `l` the editor · `p` the preview · `w` the other pane · `v` split · `s` show/hide the sidebar · `z` focus mode |
 | `m` mode | `e` Edit · `s` Split · `c` Canvas · `p` Preview |
 | `n` narrow | `n` narrow to this section (or the selected lines) · `w` widen: the whole note |
+| `e` edit text | `u` / `l` / `c` the word or selection in CAPITALS, small letters, Capitalized · `q` fill the paragraph · `Q` unfill it · `f` set the fill column · `j` join the line to the one before · `t` swap with the line before · `s` / `S` sort the selected lines (reversed) · `o` delete blank lines · `w` delete trailing spaces |
+| `x` mark & registers | `p` back to the mark before · `h` select the whole note · `r` keep this place in a register · `j` go to a register · `s` copy the selection to one · `i` insert one · `l` list them · with Emacs keys on: `SPC` set the mark · `x` swap the cursor and the mark |
 | `l` links | `l` follow the link at the cursor · `f` pick a link in the preview · `b` back |
 | `g` git | `g` the Git panel · `d` changes since the last commit · `h` this file's history |
 | top level | `j` jump to a word · `v` / `V` expand / shrink the selection · `y` paste from the copy history · `` ` `` the note before · `.` repeat · `:` or Space M-x |
@@ -296,7 +298,25 @@ Keys are a letter (`A` is Shift+a), a digit, `SPC`, or one of `` ` / . , ; ' [ ]
 **Keyboard macros (as in Emacs).** F3 starts recording (the status bar shows ● Recording), F4 stops; F4 again plays it where the cursor is now. What is kept is what the keys did: text typed (Korean too, as composed), deletions, cursor moves (characters, words with ⌥, line ends with ⌘←/→ or ⌃A/⌃E, up/down, pages, ⌘A), a find (⌘F, Enter, Esc: "the next match of …", counted from the cursor), Replace and Replace all in the find bar, cut/copy/paste (the macro's own clipboard: what this run cut), the editor's own keys (Enter continuing a list, Tab, ⌘B, ⌥↑…) and commands (⌥X, the palette, shortcuts like F8). Deleting a word or to the line's end is done again from where the cursor is then. Mouse clicks aren't recorded (you're told once).
 - **Play until it can't go on** (⌥X q e): again and again, until a move hits the start or end of the note, a find finds nothing more, or a run changes nothing.
 - **Play at every search result** (⌥X q s): searches again (open notes as they are, saved or not), then at each result selects the match and plays the macro once; in each note from the bottom up, so line numbers stay right. Record it starting from a selected match (F8 to the first one, F3, edit, F4); the result you edited while recording isn't found again if the edit removed the match.
-- Only the last macro is kept, for this session. On a Mac, F3/F4 may need fn (or use ⌥X q q / q r).
+- Only the last macro is kept, for this session. On a Mac, F3/F4 may need fn (or use ⌥X q q / q r). With Emacs keys on, ⌃X ( ⌃X ) ⌃X e do the same (e again plays it once more; ⌃U 0 ⌃X e until it can't go on).
+
+**Emacs keys (Settings → Editor → "Emacs keys in the editor", off until turned on).** In the editor, ⌃ and ⌥ keys (Ctrl and Alt on Windows and Linux) work as in Emacs. ⌘ keys stay the app's on a Mac. ESC then a key is ⌥ and the key (M-), for keyboard layouts where ⌥ types accents; with the setting on, ⌥ and a key bound below no longer types its special character.
+
+| Keys | |
+|---|---|
+| Moving | ⌃F ⌃B ⌃N ⌃P (up and down by lines as they are on the screen, wrapped, keeping the column), ⌃A ⌃E, ⌥F ⌥B words, ⌥< ⌥> the ends (the mark is left where you were), ⌃V ⌥V a screen, ⌥{ ⌥} paragraphs, ⌥M the line's first letter, ⌃L the line to the middle, top, bottom |
+| Mark and region | ⌃Space sets the mark; moving then selects from it (arrows and Home/End too); ⌃G lets go. ⌃X ⌃X swaps the cursor and the mark. ⌃U ⌃Space goes back to the marks before (a search started, ⌥< ⌥>, a jump); ⌃X ⌃Space back across notes. ⌃X h the whole note, ⌥H the paragraph |
+| Kill and yank | ⌃K to the line's end (⌃U 3 ⌃K three lines), ⌃W the region, ⌥W copies it, ⌥D ⌥⌫ words, ⌥Z to a letter, ⌃D a letter. Kills in a row are one. ⌃Y puts back the last; ⌥Y right after swaps in the one before, and the one before that. The kill ring is the copy history (⌘⇧V / ⌥X y), and a kill is copied to the clipboard too |
+| Search and replace | ⌃S ⌃R search forward and back as you type (again: the next one; Enter stays there, the mark where you started; ⌃G goes back). ⌥% query replace, ⌃⌥% with a regular expression: y/Space replace, n/⌫ skip, ! all the rest, . this one and stop, ^ back one, q/Enter stop. ⌥S O occur: the lines that match, in a buffer; ⌥G N / ⌥G P step through them. ⌥G G a line by number |
+| Text | ⌥U ⌥L ⌥C the word (or the selection) in CAPITALS, small letters, Capitalized; ⌃X ⌃U ⌃X ⌃L the region. ⌥Q fills the paragraph at the fill column (70; ⌃X F sets it — Korean counts two columns; list items and quotes keep their marker), ⌃U ⌥Q unfills it into one line. ⌃T ⌥T ⌃X ⌃T swap letters, words, lines. ⌥^ joins the line to the one before. ⌥Space one space, ⌥\ none, ⌃O a line break after the cursor, ⌃X ⌃O blank lines around down to one. ⌥/ completes the word from words in the note (again: the next) |
+| ⌃U, numbers | ⌃U is 4 times (⌃U ⌃U 16), ⌃U 12 or ⌥1 ⌥2 twelve, ⌥- backwards — before a move, a kill, a letter (⌃U 3 x types xxx), most commands |
+| ⌃X | ⌃X ⌃S save · ⌃X ⌃F open a note · ⌃X B switch buffer · ⌃X K close the tab · ⌃X O the other pane · ⌃X 2 / 3 split · ⌃X D the folder as text · ⌃X N N / N W narrow, widen · ⌃X U undo (⌃/ too; ⌃? redo) · ⌃X Z repeat the last command (Z again: once more) |
+| Registers | ⌃X R Space then a letter keeps the place, ⌃X R J goes back to it (in any note); ⌃X R S copies the region into one, ⌃X R I puts it in. For the session; ⌥X x l lists them |
+
+- ⌥X h k describes these too: press ⌥X h k, then ⌃X ⌃S (a prefix waits for the rest).
+- Keys the app also uses are the editor's while it has the cursor: on Windows and Linux Ctrl+S searches, Ctrl+W kills, Ctrl+X starts a ⌃X key, Ctrl+A goes to the line's start, Ctrl+N and Ctrl+P move — use ⌃X ⌃S to save and the menus or ⌥X for the rest. Ctrl+C, Ctrl+V and Ctrl+Z still copy, paste and undo.
+- ⌃Y puts back what was killed or copied in Margin; something copied in another app is pasted with ⌘V (Ctrl+V). Margin doesn't read the clipboard on its own.
+- Query replace, occur and the text commands are also in the leader menu with the setting off (⌥X s q, ⌥X s o, ⌥X e, ⌥X x).
 
 **Without the mouse.** In the sidebar's lists (tree, bookmarks, outline, backlinks, search results): ↑↓ or `j`/`k` move, `g`/`G` (Home/End) jump to the ends, Enter opens (⌘Enter to the side), →/← or `l`/`h` open and close folders (← on a file goes to its folder), F2 renames, ⌘⌫ deletes (with Undo), Esc goes back to the editor. In the search box ↓ or Enter goes to the results. In a focused preview (⌥X w p): `j`/`k` scroll, `d`/`u` half a page, Space a page, `g`/`G` top/bottom, `/` find, `f` link hints (a letter on every link in view; type it to follow, as in Vimium), Esc back to the editor.
 

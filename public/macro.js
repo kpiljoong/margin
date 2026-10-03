@@ -10,37 +10,9 @@
 // Mouse clicks are not recorded.
 
 import { editorWatch } from './editor.js';
+import { moveCaret } from './caret.js';
 
-const WORD = /[\p{L}\p{N}_]/u;
-
-// Where a caret move lands. goal: the column up/down keep to.
-export function moveCaret(value, pos, how, { goal = null, page = 20 } = {}) {
-  const lineStart = (p) => value.lastIndexOf('\n', p - 1) + 1;
-  const lineEnd = (p) => { const n = value.indexOf('\n', p); return n < 0 ? value.length : n; };
-  const vertical = (p, lines) => {
-    const col = goal ?? p - lineStart(p);
-    let s = lineStart(p);
-    for (let i = 0; i < Math.abs(lines); i++) {
-      if (lines < 0) { if (s === 0) return { pos: 0, goal: col }; s = lineStart(s - 1); } else { const e = lineEnd(s); if (e === value.length) return { pos: value.length, goal: col }; s = e + 1; }
-    }
-    return { pos: Math.min(s + col, lineEnd(s)), goal: col };
-  };
-  switch (how) {
-    case 'left': return { pos: Math.max(0, pos - (/[\uDC00-\uDFFF]/.test(value[pos - 1] || '') ? 2 : 1)) };
-    case 'right': return { pos: Math.min(value.length, pos + (/[\uD800-\uDBFF]/.test(value[pos] || '') ? 2 : 1)) };
-    case 'wordLeft': { let p = pos; while (p > 0 && !WORD.test(value[p - 1])) p--; while (p > 0 && WORD.test(value[p - 1])) p--; return { pos: p }; }
-    case 'wordRight': { let p = pos; while (p < value.length && !WORD.test(value[p])) p++; while (p < value.length && WORD.test(value[p])) p++; return { pos: p }; }
-    case 'lineStart': return { pos: lineStart(pos) };
-    case 'lineEnd': return { pos: lineEnd(pos) };
-    case 'docStart': return { pos: 0 };
-    case 'docEnd': return { pos: value.length };
-    case 'up': return vertical(pos, -1);
-    case 'down': return vertical(pos, 1);
-    case 'pageUp': return vertical(pos, -page);
-    case 'pageDown': return vertical(pos, page);
-    default: return { pos };
-  }
-}
+export { moveCaret };
 
 // A key the browser itself moves the caret for → the move (or null).
 export function caretMove(e, mac) {
@@ -153,7 +125,7 @@ export class Macros {
       let i0 = x.matches.findIndex(([a]) => a >= x.from);
       if (i0 < 0) i0 = 0;
       const k = ((j - i0 + x.matches.length) % x.matches.length) + 1;
-      this.push({ t: 'find', spec: { query: x.query, caseSensitive: x.caseSensitive, regex: x.regex }, k });
+      this.push({ t: 'find', spec: { query: x.query, caseSensitive: x.caseSensitive, regex: x.regex }, k, ...(x.collapse ? { collapse: x.collapse } : {}) });
     };
     editorWatch.replaceAll = (ed, spec) => this.push({ t: 'replaceAll', spec });
 
@@ -241,6 +213,8 @@ export class Macros {
       if (step.t !== 'move' || !['up', 'down', 'pageUp', 'pageDown'].includes(step.how)) goal = null;
       if (step.t === 'key') {
         ta.dispatchEvent(new KeyboardEvent('keydown', { key: step.key, code: step.code, shiftKey: step.shiftKey, altKey: step.altKey, metaKey: step.metaKey, ctrlKey: step.ctrlKey, bubbles: true, cancelable: true }));
+        // An Emacs key that couldn't go on (the end of the note) ends the run.
+        if (ed.emacs?.failed) throw new Stop(ed.emacs.failed);
       } else if (step.t === 'edit') {
         const from = Math.max(0, s - step.before);
         const to = Math.min(v.length, e + step.after);
@@ -274,6 +248,8 @@ export class Macros {
         else ta.setSelectionRange(r.pos, r.pos);
       } else if (step.t === 'find') {
         if (!ed.findNth(step.spec, step.k)) throw new Stop(`no more “${step.spec.query}”`);
+        // Emacs's search ends at the match, not on it.
+        if (step.collapse) { const p = step.collapse === 'start' ? ta.selectionStart : ta.selectionEnd; ta.setSelectionRange(p, p); }
       } else if (step.t === 'replaceAll') {
         ed.replaceAllMatches(step.spec);
       } else if (step.t === 'undo' || step.t === 'redo') {
