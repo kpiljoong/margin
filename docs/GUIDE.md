@@ -67,7 +67,7 @@ Both modes use the same server and UI. The desktop app launches `server.js` as a
 1. Open a note and press **⌘K** (or `✦ Ask agent`).
 2. Write a task or pick a recipe (Tidy / Summarize / Extract tasks / Link notes / Proofread / Draw as flow), and set the scope (this note / this folder / everything). **The list of files that will actually be shared, and the files excluded as private,** is shown before running.
    - **Draw as flow**: Proposes a ` ```flow ` block drawing a process, flow, or system right after the text that describes it. If the task contains "flow", a summary of the flow syntax (`lib/flow-notation.md`) is passed to the agent too. The result is reviewed like any other task, and you apply only what you pick. If you select text before running, only that part is drawn.
-3. The agent works on a copy in `.agent-notes/runs/<id>/work/`. Your original notes don't change meanwhile.
+3. The agent works on a copy in `.agent-notes/runs/<id>/work/`. Your original notes don't change meanwhile, so you can keep writing: when the run ends, a message with a **Review** button says so (and a system notification, while Margin is in the background).
 4. In the review tab, check items per file and per hunk, and inspect them as a **Diff** with word-level highlighting or as a rendered **Result** of how it will look after applying.
 5. Apply with **Apply selected**. If you don't like it, give further instructions with **Follow up…** (the agent continues on top of its own proposal), or **Discard**.
 6. Even after applying, **Undo apply** reverts exactly. If you've edited the file again since applying, the undo is refused to protect your edits.

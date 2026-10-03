@@ -4030,8 +4030,24 @@ async function openTaskDialog(presetTask = '') {
 // ------------------------------------------------------------------ agent: review
 
 async function loadRuns() {
+  const was = new Map(S.runs.map((r) => [r.id, r.status]));
   try { S.runs = (await api('GET', '/api/runs')).runs; } catch { S.runs = []; }
   if (S.view === 'agent') renderSidebar(); else renderActivity();
+  for (const r of S.runs) if (was.get(r.id) === 'running' && r.status !== 'running') runFinished(r);
+}
+
+// Delegate and keep writing: a run that ends says so — here, and as a
+// system notification while Margin is in the background.
+function runFinished(r) {
+  if (r.status === 'cancelled') return;
+  const here = activeTab()?.kind === 'review' && activeTab().runId === r.id;
+  const what = r.status === 'review' ? 'is done — ready for review' : r.status === 'failed' ? 'failed' : r.status;
+  const task = r.task.replace(/\s+/g, ' ').slice(0, 70);
+  if (!here) toast(`Agent ${what}: ${task}`, r.status === 'failed' ? 'error' : '', { label: 'Review', run: () => openReview(r.id) });
+  if (!document.hasFocus() && typeof Notification !== 'undefined' && Notification.permission === 'granted') {
+    const n = new Notification('Margin', { body: `Agent ${what}: ${task}` });
+    n.onclick = () => { window.focus(); openReview(r.id); };
+  }
 }
 
 function openReview(id) {

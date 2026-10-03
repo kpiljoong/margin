@@ -899,5 +899,26 @@ await check('the tasks of all notes: overdue first; x checks one off in its note
   if (!ok) failed = true;
 }
 
+await check('a run that ends while another note is open says so; its Review button opens it', `
+  const mac = navigator.platform.startsWith('Mac');
+  const ta = await openNote('expand.md');
+  ta.focus();
+  document.dispatchEvent(new KeyboardEvent('keydown', { key: 'k', code: 'KeyK', metaKey: mac, ctrlKey: !mac, bubbles: true }));
+  const o = await until(() => !$('#overlay').hidden && $('#overlay'));
+  button('Proofread', o).click(); await sleep(200);
+  button('Run on staged copy', o).click();
+  await until(() => $('.tab.active')?.textContent.includes('Review'));
+  await openNote('macro.md');
+  const t = await until(() => !$('#toast').hidden && /Agent is done/.test($('#toast').textContent) && $('#toast'), 20000);
+  if (!t) return { error: 'no toast', toast: $('#toast').textContent };
+  t.querySelector('.toast-action').click();
+  const back = await until(() => $('.tab.active')?.textContent.includes('Review') && document.activeElement === $('.review'));
+  key('d');
+  const ok = await until(() => button('Discard', $('.dialog.confirm')));
+  ok?.click();
+  await until(() => /Discarded/.test($('.review')?.textContent || ''), 5000);
+  return { toast: t.textContent, back: !!back };
+`, (v) => (v?.back && /Review$/.test(v.toast) ? null : 'no word when the run ended'));
+
 console.log(failed ? `\nSmoke test failed (${results.filter((r) => !r.ok).length} of ${results.length + 4}).` : `\nAll ${results.length + 4} checks passed.`);
 done(failed ? 1 : 0);
