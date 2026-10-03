@@ -2,10 +2,10 @@
 
 A lightweight, local-first Markdown notes app where **the text is yours and the margin is the agent's**: an AI agent marks up your notes like an editor, and the text changes only when you accept a mark.
 
-![An agent tidied a meeting note; each change can be picked before it is applied](docs/images/review.png)
+![The red pen: an agent's proofreading marked on the note, its reasons in the margin; each mark is accepted or rejected before anything is applied](docs/images/redpen.png)
 
 - **Plain files.** Your notes are ordinary `.md` files in any folder — no database, no account, no sync.
-- **Delegate, then review.** Ask an agent (Claude Code, Codex, or any CLI) to do something with your notes. It works on a copy; you review the diff and apply only the changes you want.
+- **Delegate, then review.** Ask an agent (Claude Code, Codex, or any CLI) to do something with your notes. It works on a copy; you see its changes marked on the note with a red pen (or as a diff) and apply only the marks you accept.
 - **Private by default.** Nothing leaves your machine unless you run an agent (or turn on update checks), and notes marked `private: true` are never shared.
 - **Fast editor.** Split preview, Mermaid diagrams (in notes or as `.mmd` files, copyable as images), themes, wiki links, backlinks, search, local git.
 - **Diagrams you type.** A plain ```flow notation drawn as you write, on a canvas beside the editor that follows your cursor, links boxes of the same name, walks a flow with the keys and presents it full screen ([notation](docs/FLOW.md)).

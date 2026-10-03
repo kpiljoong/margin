@@ -65,22 +65,48 @@ Both modes use the same server and UI. The desktop app launches `server.js` as a
 ## Core flow: delegate → review → apply
 
 1. Open a note and press **⌘K** (or `✦ Ask agent`).
-2. Write a task or pick a recipe (Tidy / Summarize / Extract tasks / Link notes / Proofread / Draw as flow, and your own from `RECIPES.md`, see below), and set the scope (this note / this folder / everything). **The list of files that will actually be shared, and the files excluded as private,** is shown before running.
+2. Write a task or pick a recipe (Tidy / Summarize / Extract tasks / Link notes / Proofread / Draw as flow / Red pen / Comments only, and your own from `RECIPES.md`, see below), and set the scope (this note / this folder / everything). **The list of files that will actually be shared, and the files excluded as private,** is shown before running.
    - **Draw as flow**: Proposes a ` ```flow ` block drawing a process, flow, or system right after the text that describes it. If the task contains "flow", a summary of the flow syntax (`lib/flow-notation.md`) is passed to the agent too. The result is reviewed like any other task, and you apply only what you pick. If you select text before running, only that part is drawn.
 3. The agent works on a copy in `.agent-notes/runs/<id>/work/`. Your original notes don't change meanwhile, so you can keep writing: when the run ends, a message with a **Review** button says so (and a system notification, while Margin is in the background).
-4. In the review tab, check items per file and per hunk, and inspect them as a **Diff** with word-level highlighting or as a rendered **Result** of how it will look after applying.
-5. Apply with **Apply selected**. If you don't like it, give further instructions with **Follow up…** (the agent continues on top of its own proposal), or **Discard**.
+4. The review tab shows each changed note with the **red pen** (below): the changes marked on the note itself, to accept or reject one by one. **Diff** shows them as a diff with word-level highlighting and checkboxes per hunk, **Result** the note as it will read after applying.
+5. Apply with **Apply N accepted** (or **Apply N selected** in the diff). If you don't like it, give further instructions with **Follow up…** (the agent continues on top of its own proposal), or **Discard**.
 6. Even after applying, **Undo apply** reverts exactly. If you've edited the file again since applying, the undo is refused to protect your edits.
 
 If you edited the same file while the agent was working, a 3-way merge lets you apply only non-overlapping changes; overlapping hunks are locked.
 
 **Reviewing by keyboard (as in magit).** The review tab takes the focus when it opens. `j`/`k` (or `n`/`p`, ↓/↑) step through the changes, `J`/`K` through the files, `<`/`>` first/last. `x` or Space picks or unpicks the change (`X` the whole file), `A`/`U` all/none. `a` applies, `d` discards, `f` follows up, `u` undoes an apply. `=` switches the file between Diff and Result, `o` or Enter opens the note at that change, `l` shows the log, `g` loads it again, `q` closes it. A click works too and the keys go on from there. ⌥X a v opens the run that has waited longest for a look. The review is a buffer like the others (see *Margin's own buffers*).
 
+### Red pen: the proposal on the note
+
+The text is yours, the margin is the agent's. The review draws the agent's proposal on the note as an editor marks a proof: the note rendered as it reads now, what would go **struck through in red**, what would come **written in above a caret ‸** in a handwriting font (a whole new line is written in with ‸ before it), and the agent's reasons in the **margin**, in red, with a line to their place. Nothing on the note changes until you accept.
+
+![The red pen: marks on the note, notes in the margin](images/redpen.png)
+
+| Key | |
+|---|---|
+| `j` / `k` | next / previous mark |
+| `y` | accept the mark (and go to the next) |
+| `n` | reject it (and go to the next) |
+| `x` / Space | accept ↔ reject, staying there |
+| `A` / `U` | accept all / leave all open again |
+| `a` | apply the accepted ones |
+| `v` | red pen ↔ diff, for every review (remembered) |
+| `o` / Enter | open the note at the mark |
+
+Clicking a mark picks its margin note; ✓ and ✗ on each note do what `y` and `n` do. A mark is one change of the run (a hunk) — two edits on one line are one mark with both reasons in its note — so accepting and applying are exactly those of the diff: the same apply, undo and 3-way merge, no other way of writing. Marks still open are not applied. Changes that overlap your own edits are shown but can't be accepted. Code blocks show as code (diagrams aren't drawn here), and a change of only spaces or empty lines is marked with ¶. The red pen shows in dark and light themes alike and uses a handwriting font of the system (Bradley Hand, Segoe Print, Ink Free…); nothing is downloaded.
+
+Two recipes ask the agent to write **in the margin only**, not in the note:
+
+- **Red pen** (⌥X r 7): proofreading — for each thing worth changing, the better text and a few words why.
+- **Comments only** (⌥X r 8): an editor's remarks on clarity, structure, gaps and claims to check, each next to the passage it is about, with no edits at all.
+
+The agent writes these notes to `.agent-notes/comments.json` in its copy (any task that mentions that file, "red pen" or "margin notes" gets the format). Margin keeps them with the run, never in the note: a suggested text becomes a change on the proof, to accept like any other; a remark is a wavy underline with its note, which `y` marks as seen and `n` dismisses. A run with remarks only shows the note with them (and **Discard** closes it). A follow-up round keeps the notes of the rounds before.
+
 ### Recipes: your own tasks as commands
 
 A recipe is a task for the agent written once and run by name — the agent takes the place Emacs gives to elisp, and like everything an agent does, what it changes comes back as a run to review. Recipes are text only: a name, what to ask, which notes to share. No code runs and there are no plugins.
 
-Margin has six (Tidy, Summarize, Extract tasks, Link notes, Proofread, Draw as flow: ⌥X a 1–6 or ⌥X r 1–6). Add your own in **`RECIPES.md`** at the top of the workspace (⌥X r e makes it with two examples, or the ＋ next to the recipes in the task dialog). Each `##` heading is a recipe; the lines right under it may set:
+Margin has eight (Tidy, Summarize, Extract tasks, Link notes, Proofread, Draw as flow, Red pen, Comments only: ⌥X a 1–8 or ⌥X r 1–8). Add your own in **`RECIPES.md`** at the top of the workspace (⌥X r e makes it with two examples, or the ＋ next to the recipes in the task dialog). Each `##` heading is a recipe; the lines right under it may set:
 
 ```markdown
 ## Meeting notes to decisions
@@ -108,7 +134,7 @@ What Margin shows that isn't a file is a buffer like a note, as in Emacs: the re
 | `g` (or `r`) | refresh |
 | `q` | close the buffer |
 
-The rest are each one's own (`x`, `a`… in a review; `x`, `a`, `h` in Tasks; `/` in Search to search again; `t` new task and `v` next review in Agent runs; `R` restore in History, where `j`/`k` step through the versions). The `j k · …` hint in each head lists them, and M-x shows them first while that buffer is in view. ⌥X b also opens them: `m` messages, `r` agent runs, `s` search results, `x` tasks, `c` changed outside. The search buffer is the same search as the sidebar's, so F8 steps through it from the note.
+The rest are each one's own (`y`, `n`, `x`, `a`, `v`… in a review; `x`, `a`, `h` in Tasks; `/` in Search to search again; `t` new task and `v` next review in Agent runs; `R` restore in History, where `j`/`k` step through the versions). The `j k · …` hint in each head lists them, and M-x shows them first while that buffer is in view. ⌥X b also opens them: `m` messages, `r` agent runs, `s` search results, `x` tasks, `c` changed outside. The search buffer is the same search as the sidebar's, so F8 steps through it from the note.
 
 ### Tasks in all notes
 
@@ -116,7 +142,7 @@ The rest are each one's own (`x`, `a`… in a review; `x`, `a`, `h` in Tasks; `/
 
 ### Changes from outside (an agent in a terminal, another editor)
 
-Agents don't have to run inside Margin: Claude Code or Codex can work in the notes folder directly. When another program changes a note while Margin is open, the status bar shows **↯ N changed outside**. Click it (or ⌥X a o) to review those changes like a run — from the text before the first change, change by change, with the same keys. Everything is kept unless you unpick it: **Undo 1, keep 3** (`a`) undoes the unpicked ones (the note must not have unsaved edits here) and marks the rest as seen. Notes it makes or deletes are listed too: undoing a new one moves it to the trash (`.agent-notes/trash`), undoing a deletion brings the note back. A note the other program changes back drops off by itself. The texts it replaced are in each note's local history as well.
+Agents don't have to run inside Margin: Claude Code or Codex can work in the notes folder directly. When another program changes a note while Margin is open, the status bar shows **↯ N changed outside**. Click it (or ⌥X a o) to review those changes like a run — on the note with the red pen (`v` for the diff), from the text before the first change, change by change, with the same keys (`y` keep, `n` undo). Everything is kept unless you unpick it: **Undo 1, keep 3** (`a`) undoes the unpicked ones (the note must not have unsaved edits here) and marks the rest as seen. Notes it makes or deletes are listed too: undoing a new one moves it to the trash (`.agent-notes/trash`), undoing a deletion brings the note back. A note the other program changes back drops off by itself. The texts it replaced are in each note's local history as well.
 
 ## Privacy rules
 

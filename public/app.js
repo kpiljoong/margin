@@ -4200,6 +4200,7 @@ function openOutside() {
 }
 
 async function refreshOutside(tab) {
+  if (penFirst()) await loadPen();
   let list;
   try { list = (await api('GET', '/api/outside')).changes; } catch (e) { toast(e.message, 'error'); return; }
   S.outside = list;
@@ -4231,7 +4232,7 @@ function outsideView(tab) {
   const undo = total - kept;
   wrap.append(h('div', { class: 'review-actions' },
     h('span', { class: 'grow' }, `${changes.length} note${changes.length === 1 ? '' : 's'} · keeping ${kept} of ${total} change${total === 1 ? '' : 's'}`,
-      h('span', { class: 'review-keys', title: keysHint('outside') }, 'j k · x · a done')),
+      h('span', { class: 'review-keys', title: keysHint('outside') }, penFirst() ? 'j k · y keep · n undo · a done · v diff' : 'j k · x · a done · v red pen')),
     h('button', { class: 'btn', onclick: () => refreshOutside(tab) }, 'Refresh'),
     h('button', { class: `btn ${undo ? 'danger' : 'primary'}`, onclick: () => keepOutside(tab) }, undo ? `Undo ${undo}, keep ${kept}` : 'Keep all')));
   for (const c of [...changes].sort((a, b) => b.at - a.at)) {
@@ -4351,6 +4352,8 @@ async function refreshReview(tab) {
   try { tab.run = await api('GET', `/api/runs/${tab.runId}`); }
   catch (e) { toast(e.message, 'error'); return; }
   const run = tab.run;
+  const marked = penFirst() || run.comments?.length;
+  if (marked && run.status !== 'running') await loadPen();
   // Default: everything that can be applied is selected.
   // Applied/undone runs show what was actually applied.
   const appliedBy = new Map((run.applied?.files || []).map((f) => [f.path, f]));
@@ -4363,7 +4366,8 @@ async function refreshReview(tab) {
     }
     if (tab.decisions[c.path]) continue;
     const conflicts = new Set(c.conflicts || []);
-    tab.decisions[c.path] = isBlocked(c)
+    // On the red pen's proof each mark waits for a yes or a no.
+    tab.decisions[c.path] = isBlocked(c) || (penFirst() && penable(c))
       ? { file: false, hunks: new Set() }
       : { file: true, hunks: new Set((c.hunks || []).map((_, i) => i).filter((i) => !conflicts.has(i))) };
   }
@@ -4472,14 +4476,15 @@ function fileCard(c, tab, locked) {
   };
   tab.views ||= {};
   const canPreview = isNote(c.path) && !c.binary && (c.base != null || c.status === 'added');
-  const view = canPreview ? tab.views[c.path] || 'diff' : 'diff';
+  const canPen = penable(c) && !!pen;
+  const view = canPreview ? tab.views[c.path] || (canPen && penFirst() ? 'pen' : 'diff') : 'diff';
   const head = h('div', { class: 'file-card-head' },
     h('input', { type: 'checkbox', checked: selectedAll, indeterminate: !!c.hunks && dec.hunks.size > 0 && !selectedAll, disabled: lock, onchange: toggleFile }),
     h('span', { class: `badge st-${c.status}` }, c.status),
     h('span', { class: 'path' }, c.path),
     c.hunks ? h('span', { class: 'meta' }, `${dec.hunks.size}/${c.hunks.length} changes`) : null,
-    canPreview ? h('div', { class: 'seg' }, ['diff', 'result'].map((v) => h('button', { class: view === v ? 'on' : '',
-      onclick: () => { tab.views[c.path] = v; renderContent(tab.group); } }, v === 'diff' ? 'Diff' : 'Result'))) : null,
+    canPreview ? h('div', { class: 'seg' }, [...(penable(c) ? ['pen'] : []), 'diff', 'result'].map((v) => h('button', { class: view === v ? 'on' : '',
+      onclick: () => { tab.views[c.path] = v; loadPen().then(() => renderContent(tab.group)); } }, { pen: 'Red pen', diff: 'Diff', result: 'Result' }[v]))) : null,
     canOpen(c, tab) ? h('button', { class: 'btn small', onclick: () => openFile(c.path) }, 'Open') : null);
   const body = [];
   if (blocked) {
@@ -4490,7 +4495,8 @@ function fileCard(c, tab, locked) {
     body.push(h('div', { class: 'review-note warn' },
       `You edited this file while the agent worked. ${c.hunks.length - conflicts.size} of ${c.hunks.length} changes merge cleanly with your edits and can be applied; overlapping ones are locked.`));
   }
-  if (view === 'result') {
+  if (view === 'pen' && pen) body.push(penPage(c, tab, lock));
+  else if (view === 'result') {
     // Render the note as it would read with exactly the selected changes.
     const text = c.status === 'added' ? c.lines.join('\n') : applySelected(c.base, c.hunks, dec.hunks);
     const result = h('div', { class: 'preview md result-preview', html: renderMarkdown(text) });
@@ -4504,8 +4510,105 @@ function fileCard(c, tab, locked) {
     body.push(h('div', { class: 'diff' }, c.lines.map((l, i) => diffLine(cls, i + 1, sign, l))));
   }
   // Without hunks in view, the file itself is what the keys pick.
-  const whole = !(c.hunks && view === 'diff' && !c.binary);
+  const whole = !(c.hunks && (view === 'diff' || view === 'pen') && !c.binary);
   return h('div', { class: `file-card${blocked ? ' stale' : ''}${whole ? ' kb-item' : ''}`, 'data-path': c.path }, head, body);
+}
+
+// ------------------------------------------------------------------ red pen
+// The changes drawn on the note as an editor marks a proof (redpen.js):
+// struck through, written in above a caret, the agent's reasons in the
+// margin. Each mark is a change of the run — y takes it, n leaves it — and
+// is applied as from the diff. v switches every review between the two.
+
+let pen = null;
+const loadPen = () => (pen ? Promise.resolve(pen) : import('./redpen.js').then((m) => (pen = m)));
+const penFirst = () => store.getItem('an.reviewView') !== 'diff';
+const penable = (c) => isNote(c.path) && !c.binary && c.status === 'modified' && c.base != null && !!c.hunks?.length;
+const SVG_NS = 'http://www.w3.org/2000/svg';
+
+// y taken, n left, open still to decide. Outside changes are kept until
+// undone: open ones there are kept, but not looked at yet.
+function markState(tab, path, m, lock) {
+  const said = tab.pen?.[path]?.[m.key];
+  if (m.kind === 'note') return said || 'open';
+  const on = !!tab.decisions[path]?.hunks.has(m.i);
+  if (tab.kind === 'outside') return !on ? 'n' : said === 'y' ? 'y' : 'open';
+  return on ? 'y' : lock || said === 'n' ? 'n' : 'open';
+}
+
+function penPage(c, tab, lock) {
+  const notes = (tab.run.comments || []).map((x, n) => ({ ...x, n })).filter((x) => x.file === c.path);
+  const { text, marks, general } = pen.penSource(c.base, c.hunks || [], notes);
+  const doc = pen.decorate(h('div', { class: 'pen-doc md', html: renderMarkdown(text) }));
+  const conflicts = new Set(lock ? [] : c.conflicts || []);
+  const cards = marks.map((m) => {
+    const st = markState(tab, c.path, m, lock);
+    for (const el of doc.querySelectorAll(`[data-mark="${m.key}"]`)) el.classList.add(`pen-${st}`);
+    const stuck = lock || conflicts.has(m.i);
+    const what = m.kind === 'note' ? ['Noted', 'Dismiss'] : tab.kind === 'outside' ? ['Keep', 'Undo'] : ['Accept', 'Reject'];
+    return h('div', { class: `pen-card kb-item pen-${st}${m.notes.length ? ' noted' : ''}`, 'data-path': c.path, 'data-hunk': m.key, 'data-mark': m.key, 'data-line': m.line + 1 },
+      m.notes.map((x) => h('div', { class: 'pen-note' }, x.comment || `→ ${x.suggest}`)),
+      conflicts.has(m.i) ? h('div', { class: 'pen-stuck' }, 'overlaps your edit') : null,
+      stuck ? null : h('div', { class: 'pen-acts' },
+        h('button', { class: 'pen-yes', title: `${what[0]} (y)`, onclick: () => penDecide(tab, c.path, m.key, 'y', false) }, '✓'),
+        h('button', { class: 'pen-no', title: `${what[1]} (n)`, onclick: () => penDecide(tab, c.path, m.key, 'n', false) }, '✗')));
+  });
+  const page = h('div', { class: 'pen-page' },
+    general.length ? h('div', { class: 'pen-general' }, general.map((x) => h('div', { class: 'pen-note' }, x.comment || x.suggest))) : null,
+    h('div', { class: 'pen-body' }, doc, h('div', { class: 'pen-margin' }, cards)));
+  const svg = document.createElementNS(SVG_NS, 'svg');
+  svg.classList.add('pen-lines');
+  page.querySelector('.pen-body').append(svg);
+  // A mark picks its margin note; links here only show where they go.
+  doc.addEventListener('click', (e) => {
+    if (e.target.closest('a')) e.preventDefault();
+    const mark = e.target.closest('[data-mark]');
+    const card = mark && page.querySelector(`.pen-card[data-mark="${mark.dataset.mark}"]`);
+    if (card) setReviewCur(tab, card, false);
+  });
+  pen.watchMargin(page.querySelector('.pen-body'));
+  return page;
+}
+
+// A note the agent only wrote margin notes on (no change to it).
+function remarksCard(path, base, tab) {
+  return h('div', { class: 'file-card', 'data-path': path },
+    h('div', { class: 'file-card-head' },
+      h('span', { class: 'badge st-review' }, 'notes'),
+      h('span', { class: 'path' }, path),
+      h('button', { class: 'btn small', onclick: () => openFile(path) }, 'Open')),
+    pen ? penPage({ path, base, hunks: [] }, tab, false) : null);
+}
+
+// y / n on a mark: a change taken or left (as x in the diff), a margin note
+// seen or dismissed. From the keys it goes on to the next mark.
+function penDecide(tab, path, key, said, next = true) {
+  const finished = tab.kind === 'review' && !['review', 'failed', 'cancelled'].includes(tab.run?.status);
+  if (finished) return;
+  if (key[0] === 'h') {
+    const c = tab.run.changes.find((x) => x.path === path);
+    const i = Number(key.slice(1));
+    if (!c || isBlocked(c) || (c.conflicts || []).includes(i)) { toast('This change overlaps your edit; it cannot be applied.', 'error'); return; }
+    const d = tab.decisions[path];
+    if (said === 'y') d.hunks.add(i); else d.hunks.delete(i);
+  }
+  ((tab.pen ||= {})[path] ||= {})[key] = said;
+  const wrap = bufferEl(tab);
+  if (next && wrap) {
+    const items = reviewItems(wrap);
+    const at = items.findIndex((el) => itemKey(el) === `${path}#${key}`);
+    if (items[at + 1]) tab.cur = itemKey(items[at + 1]);
+  }
+  renderContent(tab.group);
+  const cur = wrap && reviewItems(bufferEl(tab)).find((el) => itemKey(el) === tab.cur);
+  if (cur) setReviewCur(tab, cur);
+}
+
+// The mark of the margin note in view stands out on the page.
+function markCur(el) {
+  const wrap = el.closest('[data-tab]') || el.closest('.review');
+  wrap?.querySelectorAll('.pen-on').forEach((x) => x.classList.remove('pen-on'));
+  if (el.dataset.mark) el.closest('.pen-page')?.querySelectorAll(`.pen-doc [data-mark="${el.dataset.mark}"]`).forEach((x) => x.classList.add('pen-on'));
 }
 
 // A run's new notes aren't in the workspace yet; notes deleted outside are gone.
@@ -4561,8 +4664,8 @@ const SPECIAL = {
 };
 // Each one's own keys, for M-x and the hint in its head.
 const BUFFER_KEYS = {
-  review: [['x', 'Pick / unpick the change'], ['X', 'Pick / unpick the whole note'], ['A', 'Pick all'], ['U', 'Pick none'], ['a', 'Apply the picked changes'], ['d', 'Discard the run'], ['f', 'Follow up…'], ['u', 'Revert the applied run'], ['=', 'Diff / result'], ['l', 'Show / hide the log'], ['J', 'Next note'], ['K', 'Previous note']],
-  outside: [['x', 'Keep / undo the change'], ['X', 'Keep / undo the whole note'], ['A', 'Keep all'], ['U', 'Keep none'], ['a', 'Done: undo the ones not kept'], ['=', 'Diff / result'], ['J', 'Next note'], ['K', 'Previous note']],
+  review: [['y', 'Red pen: accept the change'], ['n', 'Red pen: reject the change'], ['v', 'Red pen / diff'], ['x', 'Pick / unpick the change'], ['X', 'Pick / unpick the whole note'], ['A', 'Pick all'], ['U', 'Pick none'], ['a', 'Apply the picked changes'], ['d', 'Discard the run'], ['f', 'Follow up…'], ['u', 'Revert the applied run'], ['=', 'Diff / result'], ['l', 'Show / hide the log'], ['J', 'Next note'], ['K', 'Previous note']],
+  outside: [['y', 'Red pen: keep the change'], ['n', 'Red pen: undo the change'], ['v', 'Red pen / diff'], ['x', 'Keep / undo the change'], ['X', 'Keep / undo the whole note'], ['A', 'Keep all'], ['U', 'Keep none'], ['a', 'Done: undo the ones not kept'], ['=', 'Diff / result'], ['J', 'Next note'], ['K', 'Previous note']],
   tasks: [['x', 'Check off / again'], ['a', 'Ask the agent to do it'], ['h', 'Show / hide done ones']],
   search: [['/', 'Search for…']],
   runs: [['t', 'New task…'], ['v', 'Review the next run']],
@@ -4591,9 +4694,10 @@ function showSpecial(c, tab) {
   wrap.addEventListener('keydown', (e) => bufferKeys(e, tab));
   wrap.addEventListener('mousedown', (e) => { const it = e.target.closest('.kb-item'); if (it) setReviewCur(tab, it, false); });
   c.replaceChildren(wrap);
+  if (pen) wrap.querySelectorAll('.pen-body').forEach(pen.layoutMargin);
   if (same) wrap.scrollTop = top;
   const cur = reviewItems(wrap).find((el) => itemKey(el) === tab.cur);
-  if (cur) cur.classList.add('kb-cur');
+  if (cur) { cur.classList.add('kb-cur'); markCur(cur); }
   if ((same && had) || tab.wantFocus) { tab.wantFocus = false; wrap.focus({ preventScroll: true }); }
 }
 // Drawn again if in view (a list that changed underneath).
@@ -4615,6 +4719,7 @@ function setReviewCur(tab, el, reveal = true) {
   const wrap = el.closest('[data-tab]') || el.closest('.review');
   wrap.querySelectorAll('.kb-cur').forEach((x) => x.classList.remove('kb-cur'));
   el.classList.add('kb-cur');
+  markCur(el);
   tab.cur = itemKey(el);
   if (!reveal) return;
   // The head of the change in view, below the sticky actions bar.
@@ -4653,7 +4758,17 @@ function reviewOwnKeys(e, tab, { wrap, items, cur }) {
   const outside = tab.kind === 'outside';
   const go = (el) => { if (el) setReviewCur(tab, el); };
   const fileOf = (el) => el?.closest('.file-card');
+  const onPen = cur?.classList.contains('pen-card');
   switch (e.key) {
+    case 'y': case 'n':
+      if (!onPen) return e.key === 'y';
+      penDecide(tab, cur.dataset.path, cur.dataset.mark, e.key);
+      return true;
+    case 'v':
+      store.setItem('an.reviewView', penFirst() ? 'diff' : 'pen');
+      tab.views = {};
+      loadPen().then(() => renderContent(tab.group));
+      return true;
     case 'J': case 'K': {
       const cards = [...wrap.querySelectorAll('.file-card')];
       const at = cards.indexOf(fileOf(cur));
@@ -4663,7 +4778,8 @@ function reviewOwnKeys(e, tab, { wrap, items, cur }) {
     }
     case 'x': case ' ':
       if (!cur) { go(items[0]); return true; }
-      if (cur.classList.contains('hunk')) cur.querySelector('.hunk-head').click();
+      if (onPen) penDecide(tab, cur.dataset.path, cur.dataset.mark, cur.classList.contains('pen-y') ? 'n' : 'y', false);
+      else if (cur.classList.contains('hunk')) cur.querySelector('.hunk-head').click();
       else fileOf(cur)?.querySelector('.file-card-head input[type=checkbox]')?.click();
       return true;
     case 'X': fileOf(cur)?.querySelector('.file-card-head input[type=checkbox]')?.click(); return true;
@@ -4674,6 +4790,10 @@ function reviewOwnKeys(e, tab, { wrap, items, cur }) {
         if (isBlocked(c)) continue;
         if (c.hunks) d.hunks = e.key === 'A' ? new Set(c.hunks.map((_, k) => k).filter((k) => !(c.conflicts || []).includes(k))) : new Set();
         else d.file = e.key === 'A';
+        // On the proof: all taken, or all waiting again.
+        const said = tab.pen?.[c.path];
+        if (said) for (const k of Object.keys(said)) if (k[0] === 'h') delete said[k];
+        if (e.key === 'A' && c.hunks) for (const k of d.hunks) ((tab.pen ||= {})[c.path] ||= {})[`h${k}`] = 'y';
       }
       renderContent(tab.group);
       return true;
@@ -4687,7 +4807,7 @@ function reviewOwnKeys(e, tab, { wrap, items, cur }) {
       const seg = fileOf(cur)?.querySelector('.seg button:not(.on)');
       if (!seg) return true;
       const c = tab.run.changes.find((x) => x.path === cur.dataset.path);
-      tab.cur = `${c.path}#${seg.textContent === 'Diff' && c.hunks?.length ? 0 : ''}`;
+      tab.cur = `${c.path}#${seg.textContent === 'Diff' && c.hunks?.length ? 0 : seg.textContent === 'Red pen' ? 'h0' : ''}`;
       seg.click();
       return true;
     }
@@ -4889,17 +5009,18 @@ function reviewView(tab) {
   wrap.append(log);
 
   if (run.status !== 'running') {
-    if (!run.changes.length) wrap.append(h('div', { class: 'review-note' }, 'The agent made no changes.'));
+    const remarks = Object.entries(run.commentBases || {});
+    if (!run.changes.length) wrap.append(h('div', { class: 'review-note' }, remarks.length ? 'The agent made no changes, only notes in the margin.' : 'The agent made no changes.'));
     if (reviewable && run.changes.length) {
       const n = selectedCount(tab);
       wrap.append(h('div', { class: 'review-actions' },
-        h('span', { class: 'grow' }, `${run.changes.length} file${run.changes.length === 1 ? '' : 's'} changed · ${n} change${n === 1 ? '' : 's'} selected`,
-          h('span', { class: 'review-keys', title: keysHint('review') }, 'j k · x · a apply')),
+        h('span', { class: 'grow' }, `${run.changes.length} file${run.changes.length === 1 ? '' : 's'} changed · ${n} change${n === 1 ? '' : 's'} ${penFirst() ? 'accepted' : 'selected'}`,
+          h('span', { class: 'review-keys', title: keysHint('review') }, penFirst() ? 'j k · y n · A all · a apply · v diff' : 'j k · x · a apply · v red pen')),
         S.git?.repo ? h('label', { class: 'commit-toggle', title: 'Commit the applied files to git, authored by the agent (local only)' },
           h('input', { type: 'checkbox', checked: store.getItem('an.commitOnApply') !== 'false', onchange: (e) => store.setItem('an.commitOnApply', String(e.target.checked)) }), 'Commit to git') : null,
         h('button', { class: 'btn', onclick: () => followUp(tab) }, 'Follow up…'),
         h('button', { class: 'btn danger', onclick: () => discardRun(tab) }, 'Discard'),
-        h('button', { class: 'btn primary', disabled: !n, onclick: () => applyRun(tab) }, `Apply ${n} selected`)));
+        h('button', { class: 'btn primary', disabled: !n, onclick: () => applyRun(tab) }, `Apply ${n} ${penFirst() ? 'accepted' : 'selected'}`)));
     } else if (reviewable) {
       wrap.append(h('div', { class: 'review-actions' }, h('span', { class: 'grow' }),
         h('button', { class: 'btn', onclick: () => followUp(tab) }, 'Follow up…'),
@@ -4907,6 +5028,7 @@ function reviewView(tab) {
     }
     const locked = !reviewable;
     for (const c of run.changes) wrap.append(fileCard(c, tab, locked));
+    for (const [p, base] of remarks) wrap.append(remarksCard(p, base, tab));
   }
   return wrap;
 }

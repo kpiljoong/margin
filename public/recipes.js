@@ -20,6 +20,8 @@ export const BUILTIN_RECIPES = [
   ['Link notes', 'Add [[wikilinks]] between notes where one clearly refers to another. Do not invent notes.'],
   ['Proofread', 'Fix spelling and grammar only. Keep the author’s voice and language.'],
   ['Draw as flow', 'Where the text describes a process, workflow or system, add a ```flow block right after it that draws it. Keep the text unchanged and use its names.'],
+  ['Red pen', 'Proofread like an editor with a red pen. Do not change the note itself: write your marks to .agent-notes/comments.json — for spelling, grammar and wording, the better text as "suggest" and a few words why as "comment". Mark only what is worth changing.'],
+  ['Comments only', 'Review the note like an editor, with comments only: no edits and no "suggest". Remarks on clarity, structure, gaps and claims to check, each next to the passage it is about, in .agent-notes/comments.json.'],
 ].map(([name, prompt], i) => ({ name, prompt, key: String(i + 1), scope: null, ask: true, builtin: true }));
 
 const SCOPES = { note: 'file', file: 'file', folder: 'folder', workspace: 'workspace', all: 'workspace' };

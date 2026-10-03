@@ -1027,8 +1027,17 @@ const flowGuide = (text) => (/\bflow\b/i.test(text)
   ? (flowNotation ??= fs.readFileSync(path.join(APP_DIR, 'lib', 'flow-notation.md'), 'utf8').trim())
   : '');
 
+// Margin notes: how to comment (and suggest) instead of editing, for tasks
+// that ask for it (the red pen recipes).
+const COMMENTS_FILE = '.agent-notes/comments.json';
+const COMMENTS_GUIDE = `To write in the margin instead of in the text, put a JSON array in ${COMMENTS_FILE} (make the folder):
+[{"file": "<path of the note>", "quote": "<exact text from the note: a few words, at most a sentence>", "comment": "<short reason or remark>", "suggest": "<text to replace the quote with; leave it out for a remark only>"}]
+Quote the note exactly as it is, and as little as is needed to find the place. Write comments in the language of the note. Each comment is shown in the margin next to the quote; the user accepts or rejects each suggestion.`;
+const commentsGuide = (text) => (text.includes(COMMENTS_FILE) || /\b(red pen|margin (notes|comments))\b/i.test(text) ? COMMENTS_GUIDE : '');
+
 function buildPrompt(task, focus, followUp = '') {
   const flow = flowGuide(`${task}\n${followUp}`);
+  const margin = commentsGuide(`${task}\n${followUp}`);
   const own = agentInstructions();
   return [
     'You are helping with a folder of plain Markdown notes.',
@@ -1038,6 +1047,7 @@ function buildPrompt(task, focus, followUp = '') {
     'Work without asking questions: nobody can answer them. If the task is unclear, make the most reasonable edit.',
     'Diagrams render from ```mermaid code blocks.',
     flow ? `\n${flow}\n` : '',
+    margin ? `\n${margin}\n` : '',
     own ? `\nInstructions for this notes folder (from ${INSTRUCTIONS}):\n${own}\n` : '',
     focus ? `The note the user is looking at: ${focus}` : '',
     '',
@@ -1102,6 +1112,8 @@ function followUpRun(prevId, { task }) {
   const dir = runDir(id);
   fs.cpSync(path.join(runDir(prevId), 'base'), path.join(dir, 'base'), { recursive: true });
   fs.cpSync(path.join(runDir(prevId), 'work'), path.join(dir, 'work'), { recursive: true });
+  // The margin comments go on with the proposal they belong to.
+  if (fs.existsSync(path.join(runDir(prevId), 'comments.json'))) fs.copyFileSync(path.join(runDir(prevId), 'comments.json'), path.join(dir, 'comments.json'));
   const round = (prev.round || 1) + 1;
   const meta = {
     ...prev, id, task, parent: prevId, round, originalTask: prev.originalTask || prev.task,
@@ -1167,12 +1179,64 @@ function launchAgent(meta, prompt) {
     m.signal = signal;
     m.finishedAt = new Date().toISOString();
     if (m.status === 'running') m.status = code === 0 ? 'review' : 'failed';
+    try { collectComments(m); } catch (e) { fs.appendFileSync(logPath, `\n[agent-notes] margin comments: ${e.message}\n`); }
     const out = parseAgentLog(readLog(id, LOG_PARSE_LIMIT), workDir);
     if (out.usage) m.usage = out.usage;
     if (out.model) m.resolvedModel = out.model;
     writeMeta(m);
   });
   return meta;
+}
+
+// The agent's margin comments (COMMENTS_FILE in its copy): kept with the run,
+// never in a note. A suggestion is made in the staged copy, so it is reviewed
+// and applied as any change is; the comment stays beside it.
+const MAX_COMMENTS = 200;
+function collectComments(meta) {
+  const dir = runDir(meta.id);
+  const file = path.join(dir, 'work', COMMENTS_FILE);
+  if (!fs.existsSync(file)) return;
+  let list;
+  try {
+    if (fs.statSync(file).size > 512 * 1024) throw new Error('comments.json is too large');
+    list = JSON.parse(fs.readFileSync(file, 'utf8'));
+  } finally { fs.rmSync(path.dirname(file), { recursive: true, force: true }); }
+  if (list && !Array.isArray(list)) list = list.comments;
+  if (!Array.isArray(list)) throw new Error('comments.json should hold an array');
+  const str = (v, max) => (typeof v === 'string' ? v.slice(0, max) : null);
+  const kept = readComments(meta.id).filter((c) => c.round !== meta.round);
+  const texts = new Map();
+  for (const raw of list.slice(0, MAX_COMMENTS)) {
+    const c = { file: str(raw?.file, 500)?.replace(/^\.\//, ''), quote: str(raw?.quote, 2000), comment: str(raw?.comment, 1000) || '', suggest: str(raw?.suggest, 5000), round: meta.round || 1 };
+    if (!c.file || !meta.files.includes(c.file) || !c.quote?.trim()) continue;
+    if (c.suggest != null && c.suggest !== c.quote) {
+      const abs = path.join(dir, 'work', c.file);
+      if (!texts.has(c.file)) texts.set(c.file, fs.existsSync(abs) ? fs.readFileSync(abs, 'utf8') : null);
+      const text = texts.get(c.file);
+      const at = text == null ? -1 : text.indexOf(c.quote);
+      if (at >= 0) { texts.set(c.file, text.slice(0, at) + c.suggest + text.slice(at + c.quote.length)); c.made = true; }
+    }
+    if (c.suggest == null && !c.comment.trim()) continue;
+    kept.push(c);
+  }
+  for (const [f, text] of texts) if (text != null) fs.writeFileSync(path.join(dir, 'work', f), text);
+  fs.writeFileSync(path.join(dir, 'comments.json'), JSON.stringify(kept, null, 2));
+}
+// The notes the agent only commented on: their text as it was shared, to
+// show the remarks on.
+function commentBases(id, comments, changes) {
+  const out = {};
+  for (const c of comments) {
+    if (c.file in out || changes.some((x) => x.path === c.file)) continue;
+    try {
+      const abs = path.join(runDir(id), 'base', c.file);
+      if (fs.statSync(abs).size < 512 * 1024) out[c.file] = fs.readFileSync(abs, 'utf8');
+    } catch { /* not shared */ }
+  }
+  return out;
+}
+function readComments(id) {
+  try { return JSON.parse(fs.readFileSync(path.join(runDir(id), 'comments.json'), 'utf8')); } catch { return []; }
 }
 
 function cancelRun(id, reason = 'cancelled') {
@@ -1452,7 +1516,9 @@ async function routeApi(method, url, body) {
   if ((m = p.match(/^\/api\/runs\/([\w-]+)$/)) && method === 'GET') {
     const meta = readMeta(m[1]);
     const reviewable = meta.status !== 'running';
-    return { ...meta, command: undefined, ...runReport(m[1]), changes: reviewable ? computeChanges(m[1]) : [] };
+    const changes = reviewable ? computeChanges(m[1]) : [];
+    const comments = readComments(m[1]);
+    return { ...meta, command: undefined, ...runReport(m[1]), changes, comments, commentBases: commentBases(m[1], comments, changes) };
   }
   if ((m = p.match(/^\/api\/runs\/([\w-]+)\/(apply|discard|cancel|revert|followup)$/)) && method === 'POST') {
     if (m[2] === 'apply') {

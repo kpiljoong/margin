@@ -280,6 +280,51 @@ input[type=checkbox] { accent-color: var(--accent); }
 #toast { position: fixed; bottom: 36px; left: 50%; transform: translateX(-50%); padding: 8px 14px; background: var(--bg-3); border: 1px solid var(--border); border-radius: var(--radius); box-shadow: 0 6px 24px rgba(0, 0, 0, .3); z-index: 20; max-width: 80vw; }
 #toast.error { border-color: var(--bad); }
 .result-preview { max-height: 70vh; padding: 16px 24px !important; }
+
+/* red pen: the changes on the note as proof marks, the reasons in the margin */
+:root { --pen: #ff7b72; --hand: "Bradley Hand", "Segoe Print", "Ink Free", "Noteworthy", "Nanum Pen Script", "Comic Sans MS", cursive; }
+@media (prefers-color-scheme: light) { :root { --pen: #c9252d; } }
+:root[data-kind="light"] { --pen: #c9252d; }
+:root[data-kind="dark"] { --pen: #ff7b72; }
+.pen-page { padding: 14px 18px 18px 24px; }
+.pen-general { margin: 0 0 12px; padding: 6px 12px; border-left: 2px solid var(--pen); }
+.pen-body { position: relative; display: grid; grid-template-columns: minmax(0, 1fr) 210px; column-gap: 34px; }
+.pen-doc { min-width: 0; }
+.pen-doc .mermaid, .pen-doc pre { white-space: pre-wrap; }
+.pen-margin { position: relative; }
+.pen-lines { position: absolute; left: 0; top: 0; pointer-events: none; overflow: visible; }
+.pen-lines path { fill: none; stroke: var(--pen); stroke-width: 1.2; opacity: .6; }
+.pen-lines circle { fill: var(--pen); opacity: .6; }
+.pen-del { text-decoration: line-through; text-decoration-color: var(--pen); text-decoration-thickness: 2px; cursor: pointer; }
+.pen-ins, .pen-insl { color: var(--pen); font-family: var(--hand); cursor: pointer; }
+.pen-ins { position: relative; display: inline-block; font-size: .92em; transform: translateY(-.55em); margin: 0 .1em; line-height: 1; }
+.pen-ins::after { content: "‸"; position: absolute; left: -.15em; bottom: -.95em; font-family: var(--sans); font-size: 1.05em; color: var(--pen); }
+.pen-insl::before { content: "‸ "; font-family: var(--sans); }
+.pen-anchor { text-decoration: underline wavy var(--pen); text-decoration-thickness: 1px; text-underline-offset: 3px; cursor: pointer; }
+.pen-y.pen-del { opacity: .38; }
+.pen-y:is(.pen-ins, .pen-insl) { color: inherit; }
+.pen-y.pen-anchor { text-decoration-color: color-mix(in srgb, var(--pen) 35%, transparent); }
+.pen-n.pen-del { text-decoration: none; }
+.pen-n:is(.pen-ins, .pen-insl) { opacity: .4; text-decoration: line-through; }
+.pen-n.pen-anchor { text-decoration: none; }
+.pen-on { background: color-mix(in srgb, var(--pen) 16%, transparent); border-radius: 3px; }
+.pen-card { position: absolute; left: 0; right: 0; top: 0; padding: 3px 6px 3px 8px; border-left: 2px solid var(--pen); border-radius: 0 var(--radius) var(--radius) 0; display: flex; flex-wrap: wrap; align-items: baseline; gap: 2px 8px; }
+.pen-card:not(.noted) { border-left-style: dotted; padding-top: 0; padding-bottom: 0; }
+.pen-note { flex: 1 1 100%; color: var(--pen); font: 15px/1.3 var(--hand); }
+.pen-card:not(.noted) .pen-acts { margin-left: 0; }
+.pen-acts { margin-left: auto; display: flex; gap: 2px; }
+.pen-acts button { border: 0; background: none; color: var(--fg-faint); cursor: pointer; padding: 0 5px; border-radius: 4px; font-size: 13px; }
+.pen-acts .pen-yes:hover { color: var(--ok); background: var(--bg-hover); }
+.pen-acts .pen-no:hover { color: var(--bad); background: var(--bg-hover); }
+.pen-card.pen-y { border-left-color: var(--ok); }
+.pen-card.pen-y .pen-yes { color: var(--ok); }
+.pen-card.pen-n { opacity: .5; border-left-color: var(--fg-faint); }
+.pen-card.pen-n .pen-no { color: var(--bad); }
+.pen-card.pen-n .pen-note { text-decoration: line-through; }
+.pen-stuck { flex: 1 1 100%; font-size: 11.5px; color: var(--warn); }
+.review .pen-card.kb-cur { box-shadow: none; background: color-mix(in srgb, var(--pen) 10%, var(--bg)); }
+.review:focus .pen-card.kb-cur { outline: 1px solid color-mix(in srgb, var(--pen) 45%, transparent); }
+@media (max-width: 760px) { .pen-body { grid-template-columns: minmax(0, 1fr) 150px; column-gap: 18px; } }
 .file-card-head .seg button { padding: 1px 8px; }
 
 /* desktop (macOS): inset traffic lights over a draggable title strip */

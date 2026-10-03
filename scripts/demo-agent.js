@@ -81,7 +81,27 @@ const TIDY = ['tidy', 'format', 'clean', '\uC815\uB9AC', '\uC11C\uC2DD'];
 const SUMMARY = ['summar', 'tl;dr', 'tldr', '\uC694\uC57D'];
 const TASKS = ['task', 'todo', '\uD560 \uC77C', '\uD560\uC77C', '\uC791\uC5C5'];
 const SHORTER = ['shorter', 'short', '\uC9E7'];
-const understood = wants(...TIDY, ...SUMMARY, ...TASKS) || (round > 1 && wants(...SHORTER));
+// Red pen (빨간펜): marks in the margin instead of edits; "comments only" (코멘트만): remarks without suggestions.
+const RED = ['red pen', 'comments.json', '\uBE68\uAC04\uD39C'];
+const REMARKS_ONLY = ['comments only', 'remarks only', '\uCF54\uBA58\uD2B8\uB9CC'];
+const understood = wants(...TIDY, ...SUMMARY, ...TASKS, ...RED) || (round > 1 && wants(...SHORTER));
+
+// A few mechanical proofreading marks: a repeated word, "very", a long sentence.
+function marks(f, text) {
+  const out = [];
+  for (const rep of text.matchAll(/\b([\p{L}]+) \1\b/giu)) out.push({ file: f, quote: rep[0], comment: 'Repeated word.', suggest: rep[1] });
+  for (const very of text.matchAll(/\bvery ([\p{L}]+)/gu)) out.push({ file: f, quote: very[0], comment: '“very” adds little here.', suggest: very[1] });
+  for (const [long, short] of [['in order to', 'to'], ['utilize', 'use'], ['at this point in time', 'now'], ['a lot of', 'many']]) {
+    if (text.includes(long)) out.push({ file: f, quote: long, comment: 'Shorter says the same.', suggest: short });
+  }
+  const s = firstSentence(text);
+  if (s.length > 100) out.push({ file: f, quote: s.slice(0, 60), comment: 'A long sentence: consider splitting it.' });
+  if (!out.length) {
+    const head = /^#+\s+(.+)$/m.exec(text);
+    if (head) out.push({ file: f, quote: head[1], comment: 'Reads well.' });
+  }
+  return out;
+}
 
 setTimeout(() => {
   if (!understood) {
@@ -102,6 +122,15 @@ setTimeout(() => {
     console.log(`[demo-agent] ${prev === null ? 'created' : 'edited '} ${f}  (${why})`);
   };
 
+  if (wants(...RED)) {
+    const all = targets.flatMap((f) => marks(f, fs.readFileSync(f, 'utf8')));
+    const only = wants(...REMARKS_ONLY);
+    const out = all.map((m) => (only && m.suggest != null ? { file: m.file, quote: m.quote, comment: `${m.comment} Perhaps: “${m.suggest}”.` } : m));
+    fs.mkdirSync('.agent-notes', { recursive: true });
+    fs.writeFileSync(path.join('.agent-notes', 'comments.json'), JSON.stringify(out, null, 2));
+    console.log(`[demo-agent] done: ${out.length} mark(s) in the margin, the notes untouched.`);
+    return;
+  }
   if (wants(...TASKS)) {
     const rows = openTasks(files);
     write('Open tasks.md', `# Open tasks\n\nCollected from ${files.length} note(s).\n\n${rows.join('\n') || '_Nothing open._'}\n`, 'collected open tasks');

@@ -50,6 +50,7 @@ fs.writeFileSync(path.join(ws, 'templates', 'Meeting.md'), '# {{title}}\n\nDate:
 fs.mkdirSync(path.join(ws, 'hits'));
 for (let i = 0; i < 12; i++) fs.writeFileSync(path.join(ws, 'hits', `h${i}.md`), Array.from({ length: 5 }, (_, j) => `needle ${i}.${j}`).join('\n\n') + '\n');
 const filler = (p) => Array.from({ length: 10 }, (_, i) => `${p} ${i}`);
+fs.writeFileSync(path.join(ws, 'sub', 'proof.md'), '# Proof\n\nThis is a very good plan for the the team.\n\nWe ship on Friday.\n');
 fs.writeFileSync(path.join(ws, 'sub', 'messy.md'), ['#Title', 'text', ...filler('a'), '* one', ...filler('b'), '##Sub', 'more', ...filler('c'), '+ two', ''].join('\n'));
 fs.writeFileSync(path.join(userData, 'config.json'), JSON.stringify({
   workspace: ws, recent: [ws], agents: [{ name: 'Demo', command: 'demo' }], agentDefault: 'Demo', autoUpdateCheck: false, quickCapture: false,
@@ -755,6 +756,9 @@ await check('a change from outside shows in the status bar; undo one of its chan
   const item = await until(() => $$('#status .outside-count').find((x) => /changed outside/.test(x.textContent)), 10000);
   if (!item) return { error: 'no status item', status: $('#status').textContent };
   item.click();
+  // Drawn with the red pen first; v shows the diff (and stays so for the next reviews).
+  const pen = await until(() => $('.review .pen-card'));
+  key('v');
   const wrap = await until(() => $('.review .hunk') && $('.review'));
   const focused = document.activeElement === wrap;
   // The newest first (a test before may have changed a note from outside too).
@@ -765,8 +769,8 @@ await check('a change from outside shows in the status bar; undo one of its chan
   key('a');
   const ok = await until(() => /Nothing changed outside/.test($('.review')?.textContent || ''), 5000);
   await sleep(200);
-  return { focused, hunks, made, label, ok: !!ok, gone: !$('#status .outside-count') };
-`, (v) => (v?.focused && v.hunks === 2 && v.made && /^Undo 1, keep \d+$/.test(v.label) && v.ok && v.gone ? null : 'reviewing the outside change did not work'));
+  return { pen: !!pen, focused, hunks, made, label, ok: !!ok, gone: !$('#status .outside-count') };
+`, (v) => (v?.pen && v.focused && v.hunks === 2 && v.made && /^Undo 1, keep \d+$/.test(v.label) && v.ok && v.gone ? null : 'reviewing the outside change did not work'));
 {
   const t = fs.readFileSync(path.join(ws, 'outside.md'), 'utf8').split('\n');
   const good = t[1] === 'line 2' && t[17] === 'LINE 18 by agent' && fs.existsSync(path.join(ws, 'agent-new.md'));
@@ -808,6 +812,37 @@ const applied = fs.readFileSync(path.join(ws, 'sub', 'messy.md'), 'utf8');
 const changed = applied.split('\n').filter((l) => /^(#+ |- )/.test(l)).length;
 console.log(`${changed === 1 ? '✓' : '✗'} exactly the picked change reached the file`);
 if (changed !== 1) failed = true;
+
+await check('red pen: the marks on the note, the reasons in the margin; y takes one, a applies it', `
+  const ta = await openNote('sub/proof.md');
+  ta.focus();
+  document.dispatchEvent(new KeyboardEvent('keydown', { key: 'k', code: 'KeyK', metaKey: navigator.platform.startsWith('Mac'), ctrlKey: !navigator.platform.startsWith('Mac'), bubbles: true }));
+  const o = await until(() => !$('#overlay').hidden && $('#overlay'));
+  button('Red pen', o).click(); await sleep(200);
+  button('Run on staged copy', o).click();
+  await until(() => button('Apply'), 20000);
+  // The reviews before this one switched to the diff: back to the red pen,
+  // where U leaves every mark open again.
+  if (!$('.pen-card')) { key('v'); await until(() => $('.pen-card')); }
+  key('U'); await sleep(150);
+  const card = $('.pen-card');
+  if (!card) return { error: 'no red pen', page: $('.review')?.innerText.slice(0, 400) };
+  const struck = $$('.pen-doc .pen-del').map((x) => x.textContent.trim());
+  const notes = $$('.pen-card .pen-note').map((x) => x.textContent);
+  const none = button('Apply').textContent;
+  key('j'); await sleep(50); key('y'); await sleep(200);
+  const one = button('Apply').textContent;
+  const taken = $('.pen-card').classList.contains('pen-y') && $$('.pen-doc .pen-del.pen-y').length === struck.length;
+  key('a');
+  await until(() => /Applied/.test($('.review')?.textContent || ''), 10000);
+  return { struck, notes, none, one, taken, applied: /Applied/.test($('.review').textContent) };
+`, (v) => (v?.struck?.join() === 'very,the' && v.notes.includes('Repeated word.') && v.none === 'Apply 0 accepted' && v.one === 'Apply 1 accepted' && v.taken && v.applied ? null : 'the red pen did not work'));
+{
+  const t = fs.readFileSync(path.join(ws, 'sub', 'proof.md'), 'utf8');
+  const good = t === '# Proof\n\nThis is a good plan for the team.\n\nWe ship on Friday.\n';
+  console.log(`${good ? '✓' : '✗'} the accepted marks reached the note, nothing else`);
+  if (!good) failed = true;
+}
 
 await check('history shows the version from before the agent changes, and restores it', `
   const mac = navigator.platform.startsWith('Mac');
