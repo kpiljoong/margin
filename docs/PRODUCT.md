@@ -1,5 +1,26 @@
 # Margin — Product direction (v0.1)
 
+## The idea: the text is yours, the margin is the agent's
+
+An agent works on your notes the way an editor works on a manuscript: it writes **in the margin** — marks, suggestions, a reason beside them — and the text itself changes only when you accept a mark. The name says it.
+
+### Principle 1 — Every change is reviewed
+
+Whatever would change your notes comes through the same review, change by change, before it is yours: a run you delegated, an agent working in the folder from a terminal or another editor (*Changed outside*), and later git pull and sync too. Nothing has its own way in.
+
+*Today:* agent runs and changes from outside go through it (hunk by hunk, 3-way merge, undo). git pull and sync are next.
+
+### Principle 2 — Everything is a note
+
+What shapes Margin is plain Markdown in the folder, readable and editable anywhere, kept with git: recipes (your commands, `RECIPES.md`), the instructions for agents (`AGENTS.md`), tasks (`- [ ]` in any note), and the record of what agents did. Extending Margin means writing text and handing it to an agent — the agent takes the place Emacs gives to elisp. No plugins, no code that runs.
+
+*Today:* recipes, `AGENTS.md` and tasks are notes. Settings live in the app's config file and runs in `.agent-notes/runs/` (text and JSON); making them notes is the direction.
+
+### Principle 3 — Agent proposes, you decide
+
+The agent never writes to your notes. It proposes, on a copy; you pick what to take, and can take it back.
+
+
 ## One-line definition
 
 **A lightweight local notes app that treats a plain Markdown folder as a VS Code-style workspace, lets you hand work to AI agents, and lets you pick and accept the results "like reviewing a PR".**

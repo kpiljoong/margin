@@ -1,6 +1,6 @@
 # Margin
 
-A lightweight, local-first Markdown notes app where you and an AI agent work together.
+A lightweight, local-first Markdown notes app where **the text is yours and the margin is the agent's**: an AI agent marks up your notes like an editor, and the text changes only when you accept a mark.
 
 ![An agent tidied a meeting note; each change can be picked before it is applied](docs/images/review.png)
 
