@@ -403,6 +403,30 @@ await check('numbered dots on a picture: N puts the next number; its list item a
   return out;
 `, (v) => (v?.text?.endsWith('```ink\nnum red: 120,90 1\nnum red: 240,180 2\n```\n\n1. First thing\n2. Second thing\n') && v.lit === '2' && v.hot === '1' && v.cold ? null : `got ${JSON.stringify(v)}`));
 
+await check('hiding a part of a picture: H covers it, and the task dialog says the picture goes with it covered', `
+  const ed = () => $$('.editor-wrap textarea').find((t) => t.offsetParent);
+  const img = () => $('.canvas-stage .ink-figure img');
+  if (!(await until(() => img()?.naturalWidth, 15000))) return { none: true };
+  const stage = $('.canvas-stage');
+  const pt = (fx, fy) => { const r = img().getBoundingClientRect(); return { clientX: r.left + r.width * fx, clientY: r.top + r.height * fy }; };
+  const ptr = (type, el, p) => el.dispatchEvent(new PointerEvent(type, { bubbles: true, cancelable: true, button: 0, pointerId: 1, ...p }));
+  img().dispatchEvent(new MouseEvent('click', { bubbles: true })); await sleep(300);
+  stage.focus(); key('h', {}, stage);
+  ptr('pointerdown', img(), pt(0.1, 0.1)); ptr('pointermove', stage, pt(0.2, 0.15)); ptr('pointerup', stage, pt(0.3, 0.2));
+  await until(() => ed().value.includes('hide gray:'), 8000);
+  const out = { line: /hide gray: .*/.exec(ed().value)?.[0] };
+  key('Escape', {}, stage);
+  out.drawn = !!(await until(() => $('.canvas-stage .ink-mark[data-hide]'), 8000));
+  await sleep(1200); // saved, so the dialog's scope reads it
+  document.dispatchEvent(new KeyboardEvent('keydown', { key: 'k', code: 'KeyK', metaKey: navigator.platform.startsWith('Mac'), ctrlKey: !navigator.platform.startsWith('Mac'), bubbles: true }));
+  const o = await until(() => !$('#overlay').hidden && $('#overlay'));
+  const task = $('textarea', o);
+  task.value = 'Mark up the picture'; task.dispatchEvent(new Event('input'));
+  out.list = (await until(() => /picture/.test($('.scope-files', o)?.innerText || '') && $('.scope-files', o).innerText, 5000)) || '';
+  key('Escape', {}, task);
+  return out;
+`, (v) => (v?.line === 'hide gray: 40,30 40x15' && v.drawn && v.list.includes('assets/screen.svg (picture, parts hidden)') ? null : `got ${JSON.stringify(v)}`));
+
 await check('Settings shows Labs', `
   document.dispatchEvent(new KeyboardEvent('keydown', { key: ',', metaKey: navigator.platform.startsWith('Mac'), ctrlKey: !navigator.platform.startsWith('Mac'), bubbles: true }));
   const d = await until(() => $('.dialog.settings'));

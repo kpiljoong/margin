@@ -197,7 +197,7 @@ private/
 *.secret.md
 ```
 
-Pictures are not shared, except for a task about pictures (it mentions a picture, screenshot, image, ink, annotating…): then the local pictures the shared notes show — not ones `.agentnotesignore` excludes, none over 10 MB — are copied in with them, and the task dialog lists them before running.
+Pictures are not shared, except for a task about pictures (it mentions a picture, screenshot, image, ink, annotating…): then the local pictures the shared notes show — not ones `.agentnotesignore` excludes, none over 10 MB — are copied in with them, and the task dialog lists them before running. A picture with parts hidden by a `hide` mark (in any note) goes only as a copy with those parts filled in (`(picture, parts hidden)` in the dialog); one that can't be covered (a GIF) is withheld.
 
 Agent commands run with your user permissions. Staging is isolation for convenience, not a security sandbox, so only configure agents you trust. If an agent uses a cloud model, shared notes are sent to that service.
 
@@ -439,16 +439,18 @@ Login request -> Auth server -> Success?
   text red: 420,230 The button is hidden
   pen blue: 100,100 120,104 140,112
   num red: 300,110 1
+  hide: 40,20 300x30
   ```
 
   1. The button is hidden behind the banner
   ````
 
   - **Paste a picture**: ⌘V on the canvas (a screenshot, say) keeps it in `assets/` and puts it below the cursor's block; the canvas goes to it. In the editor, paste works as always.
-  - **Tools**: click a picture (or look at it) and the tool bar shows at the top right: `D` pen, `A` arrow, `R` box, `T` words (click where they go, type, Enter), `N` a numbered dot (click: the next number), `E` eraser (click a mark), `C` colour (then a number). The same key again, or `Esc`, puts the tool down. With a tool on, a drag on the picture draws; beside it the canvas still pans.
+  - **Tools**: click a picture (or look at it) and the tool bar shows at the top right: `D` pen, `A` arrow, `R` box, `T` words (click where they go, type, Enter), `N` a numbered dot (click: the next number), `H` hide a part (drag over it), `E` eraser (click a mark), `C` colour (then a number). The same key again, or `Esc`, puts the tool down. With a tool on, a drag on the picture draws; beside it the canvas still pans.
   - Each mark is one ⌘Z. Erasing the last mark takes the block out. The colour is optional (red), any of the flow colours (`blue`, `green`, …). Lines that aren't marks are left alone; `#` starts a comment.
   - **Numbered dots** (`num`) go with a numbered list in the text of the picture's section: dot 1 is item 1 (as the list reads, so `1.` `1.` `1.` counts 1, 2, 3). In the preview, pointing at one lights the other, and a click on a dot shows its item; on the canvas, the cursor on an item lights its dot, and a click on a dot puts the cursor on its item. Presenting, each dot (with the marks written before it) is a step, its item the caption.
   - **Copy with the marks**: ⧉ on a picture (or right-click → Copy as image / Save as PNG…) gives the picture with its marks drawn on, at its own size, to paste in a chat or an issue.
+  - **Hide a part** (`hide`, also `blur`, `가리기`; gray unless a colour is given): a name, an address, a token in a screenshot is covered — in the preview and on the canvas, opened large, in a copy, presenting (never a step), and in what an agent is shared: it gets a copy of the picture with the part filled in, never the picture itself. A GIF can't be covered, so it isn't shared. The picture file itself is left as it is: anyone with the file (or another app) still sees everything.
   - The preview draws the marks on the picture too; other apps show the picture and the lines as code.
   - **An agent marks it up too**: a task about pictures ("mark the problems on the screenshot", "스크린샷에 표시해줘" — words like picture, screenshot, image, ink, annotate) gets the ` ```ink ` notation and the sizes of the pictures, and the pictures the shared notes show are shared with it (the task dialog lists them). Its marks come back as red pen on the picture, each block's change to take or leave.
 

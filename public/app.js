@@ -2094,7 +2094,8 @@ function presentSteps(tab, prefer = new Map()) {
     const alone = sec.figures.length === 1;
     const items = numberedItems(v, sec.line, end);
     for (const pre of sec.figures) {
-      const marks = pre.matches('.ink-figure') ? pre.inkMarks || [] : [];
+      // What is hidden stays hidden throughout: not a step.
+      const marks = pre.matches('.ink-figure') ? (pre.inkMarks || []).filter((m) => m.kind !== 'hide') : [];
       if (!pre.flowNodes) {
         if (!alone) steps.push({ pre, id: null, title: sec.title, text: '', note: '', via: '', lines: [] });
         let group = [];
@@ -2890,7 +2891,12 @@ function previewClick(e, tab) {
   // A picture in the note: shown larger (not a diagram or drawing, which have
   // their own view, nor a picture that is a link).
   const pic = e.target.closest('img');
-  if (pic && !pic.closest('a, pre, .drawing-embed, .mmd-embed') && pic.naturalWidth) { viewImage(pic); return; }
+  if (pic && !pic.closest('a, pre, .drawing-embed, .mmd-embed') && pic.naturalWidth) {
+    // A picture with marks: larger with them (and its hidden parts hidden).
+    const fig = pic.parentElement?.matches('.ink-figure') && pic.parentElement;
+    if (fig?.inkMarks?.length) viewPicture(inkPicture(fig, tab.path), pic.alt || 'Picture'); else viewImage(pic);
+    return;
+  }
   const fold = e.target.closest('.fold-toggle');
   if (fold) {
     const id = fold.parentElement.id;
@@ -4117,6 +4123,61 @@ const blobDataUrl = (blob) => new Promise((resolve, reject) => {
   r.readAsDataURL(blob);
 });
 
+// What an agent is shared of pictures with hidden parts (```ink `hide`
+// lines, the scope's `hidden`: path → [[x, y, w, h]]): copies with those
+// parts covered, base64 by path. One that can't be covered (a GIF, a
+// picture that won't load) gets none, and the server withholds it.
+async function maskedPictures(hidden = {}) {
+  const out = {};
+  let total = 0;
+  for (const [p, rects] of Object.entries(hidden)) {
+    let data = null;
+    try { data = await coverPicture(p, rects); } catch { /* withheld */ }
+    if (data && (total += data.length) < 30 * 1024 * 1024) out[p] = data;
+  }
+  return out;
+}
+
+const PICTURE_TYPES = { '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.webp': 'image/webp' };
+const coverable = (p) => /\.svg$/i.test(p) || !!PICTURE_TYPES[(/\.[^./]+$/.exec(p.toLowerCase()) || [''])[0]];
+
+async function coverPicture(p, rects) {
+  const url = `/api/raw?path=${encodeURIComponent(p)}&t=${token}`;
+  const img = new Image();
+  img.src = url;
+  await img.decode();
+  const w = img.naturalWidth;
+  const ht = img.naturalHeight;
+  const fill = COLORS.gray[1];
+  if (/\.svg$/i.test(p)) {
+    // The marks' pixels → the SVG's own units, on top of everything in it.
+    const doc = new DOMParser().parseFromString(await (await fetch(url)).text(), 'image/svg+xml');
+    const svg = doc.documentElement;
+    if (svg.localName !== 'svg' || doc.querySelector('parsererror')) return null;
+    const box = (svg.getAttribute('viewBox') || '').trim().split(/[\s,]+/).map(Number);
+    const [vx, vy, vw, vh] = box.length === 4 && box.every(Number.isFinite) ? box : [0, 0, w, ht];
+    if (Math.abs(vw / vh - w / ht) > 0.01) return null; // scaled unevenly: can't be sure where
+    const ns = 'http://www.w3.org/2000/svg';
+    for (const [x, y, rw, rh] of rects) {
+      const r = doc.createElementNS(ns, 'rect');
+      for (const [k, v] of Object.entries({ x: vx + x * vw / w, y: vy + y * vh / ht, width: rw * vw / w, height: rh * vh / ht, fill })) r.setAttribute(k, v);
+      svg.append(r);
+    }
+    return (await blobDataUrl(new Blob([new XMLSerializer().serializeToString(doc)], { type: 'image/svg+xml' }))).split(',')[1];
+  }
+  const type = PICTURE_TYPES[(/\.[^./]+$/.exec(p.toLowerCase()) || [''])[0]];
+  if (!type) return null;
+  const canvas = document.createElement('canvas');
+  canvas.width = w;
+  canvas.height = ht;
+  const ctx = canvas.getContext('2d');
+  ctx.drawImage(img, 0, 0);
+  ctx.fillStyle = fill;
+  for (const [x, y, rw, rh] of rects) ctx.fillRect(x, y, rw, rh);
+  const blob = await new Promise((resolve) => canvas.toBlob(resolve, type, 0.92));
+  return blob && blob.type === type ? (await blobDataUrl(blob)).split(',')[1] : null;
+}
+
 // An embedded drawing, in its own colours like a copy made in the drawing.
 function drawingFilePicture(path) {
   let url = null;
@@ -4652,16 +4713,19 @@ async function openTaskDialog(presetTask = '', { scope: presetScope = null, reci
     const n = ++asked;
     if (!filesBox.childElementCount) filesBox.replaceChildren('…');
     try {
-      // A task about pictures also shares the pictures the notes show.
-      const r = await api('GET', `/api/scope?scope=${scope}${focus ? `&focus=${encodeURIComponent(focus)}` : ''}&task=${encodeURIComponent(task.value.slice(0, 500))}`);
+      const r = await scopeFor(scope, focus, task.value);
       if (n !== asked) return;
-      const pics = r.pictures || [];
+      const pics = (r.pictures || []).filter((p) => !r.hidden?.[p] || coverable(p));
+      const shut = (r.pictures || []).filter((p) => !pics.includes(p)).map((p) => ({ path: p, reason: 'parts hidden, could not cover them' }));
+      r.excluded = [...r.excluded, ...shut];
       filesBox.replaceChildren(
         r.instructions ? h('div', { class: 'instr', title: 'The folder’s instructions for agents, sent with every task' }, `${r.instructions}  (instructions)`) : '',
         ...r.included.map((p) => h('div', {}, p)),
-        ...pics.map((p) => h('div', { class: 'instr', title: 'A picture the notes show, shared because the task is about pictures' }, `${p}  (picture)`)),
-        ...r.excluded.map((x) => h('div', { class: 'ex', title: `withheld: ${x.reason}` }, `${x.path}  (private)`)));
-      shareLine.textContent = `${r.included.length} note${r.included.length === 1 ? '' : 's'}${pics.length ? ` and ${pics.length} picture${pics.length === 1 ? '' : 's'}` : ''} will be shared${r.excluded.length ? `, ${r.excluded.length} withheld as private` : ''}${r.instructions ? `, with ${r.instructions}` : ''}.`;
+        ...pics.map((p) => (r.hidden?.[p]
+          ? h('div', { class: 'instr', title: 'A picture the notes show, shared with the parts its hide marks cover covered' }, `${p}  (picture, parts hidden)`)
+          : h('div', { class: 'instr', title: 'A picture the notes show, shared because the task is about pictures' }, `${p}  (picture)`))),
+        ...r.excluded.map((x) => h('div', { class: 'ex', title: `withheld: ${x.reason}` }, `${x.path}  (${x.reason.startsWith('parts hidden') ? 'withheld' : 'private'})`)));
+      shareLine.textContent = `${r.included.length} note${r.included.length === 1 ? '' : 's'}${pics.length ? ` and ${pics.length} picture${pics.length === 1 ? '' : 's'}` : ''} will be shared${r.excluded.length ? `, ${r.excluded.length} withheld` : ''}${r.instructions ? `, with ${r.instructions}` : ''}.`;
       runBtn.disabled = !r.included.length;
     } catch (e) { filesBox.replaceChildren(e.message); runBtn.disabled = true; }
   }
@@ -4672,7 +4736,8 @@ async function openTaskDialog(presetTask = '', { scope: presetScope = null, reci
     try {
       store.setItem('an.lastAgent', agentId);
       const r = recipeName && recipes.list.find((x) => x.name === recipeName);
-      const run = await api('POST', '/api/runs', { task: task.value, scope, focus, selection: useSel.checked ? selection : '', agentId, model, recipe: r && r.prompt === task.value ? r.name : '' });
+      const masked = await maskedPictures((await scopeFor(scope, focus, task.value)).hidden);
+      const run = await api('POST', '/api/runs', { task: task.value, scope, focus, selection: useSel.checked ? selection : '', agentId, model, recipe: r && r.prompt === task.value ? r.name : '', masked });
       close();
       await loadRuns();
       openReview(run.id);
@@ -4792,6 +4857,10 @@ async function loadRecipes() {
 
 const recipeLabel = (r) => (runsDirectly(r) ? r.name : `${r.name}…`);
 
+// What a task would share (/api/scope): a task about pictures also shares
+// the pictures the notes show.
+const scopeFor = (scope, focus, task) => api('GET', `/api/scope?scope=${scope}${focus ? `&focus=${encodeURIComponent(focus)}` : ''}&task=${encodeURIComponent(String(task).slice(0, 500))}`);
+
 // Straight to the agent (in the background; a message says when it is
 // ready for review), or the task dialog filled in (recipes.js runsDirectly).
 async function runRecipe(r) {
@@ -4809,7 +4878,8 @@ async function runRecipe(r) {
   const saved = store.getItem(`an.model.${agent?.label || ''}`) || '';
   const model = agent?.models?.some((m) => m.id === saved) ? saved : '';
   try {
-    const run = await api('POST', '/api/runs', { task: r.prompt, scope: r.scope || 'file', focus, selection, agentId: agent?.id, model, recipe: r.name });
+    const masked = await maskedPictures((await scopeFor(r.scope || 'file', focus, r.prompt)).hidden);
+    const run = await api('POST', '/api/runs', { task: r.prompt, scope: r.scope || 'file', focus, selection, agentId: agent?.id, model, recipe: r.name, masked });
     await loadRuns();
     toast(`${r.name}: the agent is on it (a staged copy of ${r.scope === 'file' ? stem(focus) : r.scope === 'folder' ? 'this folder' : 'the workspace'})`, '', { label: 'Watch', run: () => openReview(run.id) });
   } catch (e) { toast(e.message, 'error'); }

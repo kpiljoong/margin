@@ -32,3 +32,10 @@ test('a numbered dot: its centre and a short number or letter', () => {
   assert.deepEqual(bad, [3, 4]);
   assert.equal(inkLine(marks[0]), 'num red: 10,20 1');
 });
+
+test('a hidden part: gray unless a colour is given, also blur and in Korean', () => {
+  const { marks, bad } = parseInk(['hide: 40,20 300x30', 'blur teal: 1,2 3x4', '\uAC00\uB9AC\uAE30: 5,6 7\u00D78', 'hide: 1,2'].join('\n'));
+  assert.deepEqual(marks.map((m) => [m.kind, m.color, m.x, m.y, m.w, m.h]), [['hide', 'gray', 40, 20, 300, 30], ['hide', 'teal', 1, 2, 3, 4], ['hide', 'gray', 5, 6, 7, 8]]);
+  assert.deepEqual(bad, [3]);
+  assert.equal(inkLine(marks[0]), 'hide gray: 40,20 300x30');
+});

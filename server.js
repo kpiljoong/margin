@@ -12,7 +12,7 @@ const { spawn, execFile } = require('child_process');
 const { buildHunks, applyHunks, mergeHunks } = require('./lib/diff');
 const { loadIgnore, isPrivateNote } = require('./lib/privacy');
 const { parseAgentLog } = require('./lib/agentlog');
-const { picturesIn, pictureSize } = require('./lib/pictures');
+const { picturesIn, pictureSize, hiddenIn } = require('./lib/pictures');
 
 const APP_DIR = __dirname;
 const PUBLIC_DIR = path.join(APP_DIR, 'public');
@@ -1157,7 +1157,19 @@ function resolveScope(scope, focus, task = '') {
       }
     }
   }
-  return { scope, focus: focus || null, included, excluded, pictures, instructions: agentInstructions() ? INSTRUCTIONS : null };
+  // The parts of them any note hides (```ink `hide` lines): the app covers
+  // those before it shares the picture (startRun's `masked`).
+  const hidden = {};
+  if (pictures.length) {
+    for (const f of all) {
+      if (!NOTE_EXT.has(extOf(f))) continue;
+      let text = '';
+      try { text = readText(path.join(ROOT, f)) || ''; } catch { continue; }
+      if (!/^\s*(```|~~~)\s*ink\b/im.test(text)) continue;
+      for (const [p, rects] of hiddenIn(text, f, all)) if (pictures.includes(p)) (hidden[p] ||= []).push(...rects);
+    }
+  }
+  return { scope, focus: focus || null, included, excluded, pictures, hidden, instructions: agentInstructions() ? INSTRUCTIONS : null };
 }
 
 // The folder's own instructions for agents: AGENTS.md at its top (the file
@@ -1237,15 +1249,38 @@ function newRunId() {
   return `${stamp}-${crypto.randomBytes(3).toString('hex')}`;
 }
 
-function startRun({ task, scope, focus, selection, agentId, model, recipe }) {
+// A picture with hidden parts is shared only as the copy the app covered
+// them in (`masked`: path → base64, the same kind and size of picture);
+// without one it is withheld.
+function coverPictures(pictures, hidden, masked, excluded) {
+  const covered = new Map();
+  for (const p of [...pictures]) {
+    if (!hidden[p]) continue;
+    const buf = typeof masked?.[p] === 'string' ? Buffer.from(masked[p], 'base64') : null;
+    let size = null;
+    try { size = pictureSize(fs.readFileSync(path.join(ROOT, p))); } catch { /* gone */ }
+    const got = buf && buf.length <= MAX_PICTURE_BYTES * 2 ? pictureSize(buf) : null;
+    const svg = buf && /<svg\b/i.test(buf.toString('utf8', 0, 4096));
+    if (got && size && got[0] === size[0] && got[1] === size[1] && svg === (extOf(p) === '.svg')) {
+      covered.set(p, buf);
+      continue;
+    }
+    pictures.splice(pictures.indexOf(p), 1);
+    excluded.push({ path: p, reason: 'parts hidden, could not cover them' });
+  }
+  return covered;
+}
+
+function startRun({ task, scope, focus, selection, agentId, model, recipe, masked }) {
   if (!AGENT) throw httpError(400, 'No agent configured. Restart with --agent demo or --agent "<command>".');
   const agent = agentById(agentId);
   const command = agentCommand(agent, typeof model === 'string' ? model : '');
   task = String(task || '').trim();
   if (!task) throw httpError(400, 'Describe the task for the agent');
-  const { included, excluded, pictures } = resolveScope(scope, focus, task);
+  const { included, excluded, pictures, hidden } = resolveScope(scope, focus, task);
   if (!included.length) throw httpError(400, 'Nothing to share: every note in scope is excluded by privacy rules');
   if (included.length > 5000) throw httpError(400, 'Scope is too large (over 5000 notes); pick a folder');
+  const covered = coverPictures(pictures, hidden, masked, excluded);
 
   ensureDataDir();
   const id = newRunId();
@@ -1254,7 +1289,8 @@ function startRun({ task, scope, focus, selection, agentId, model, recipe }) {
     for (const sub of ['base', 'work']) {
       const dst = path.join(dir, sub, f);
       fs.mkdirSync(path.dirname(dst), { recursive: true });
-      fs.copyFileSync(path.join(ROOT, f), dst);
+      if (covered.has(f)) fs.writeFileSync(dst, covered.get(f));
+      else fs.copyFileSync(path.join(ROOT, f), dst);
     }
   }
   const focusShared = focus && included.includes(focus) ? focus : null;
@@ -1269,6 +1305,7 @@ function startRun({ task, scope, focus, selection, agentId, model, recipe }) {
     exitCode: null, files: included, pictures, excluded, applied: null, selection: sel ? sel.length : 0,
   };
   let prompt = buildPrompt(task, focusShared, '', pictures);
+  if (covered.size) prompt += `\n\nParts of ${[...covered.keys()].join(', ')} are covered in gray: the user hid them. Leave their \`hide\` lines as they are, and don't guess what is under them.`;
   const mine = focusShared ? commentsForAgent(focusShared) : '';
   if (mine) prompt += `\n\n${mine}`;
   if (sel) prompt += `\n\nThe user selected this passage in ${focusShared}; focus the task on it:\n<<<\n${sel}\n>>>`;
@@ -1812,7 +1849,7 @@ const server = http.createServer(async (req, res) => {
       return send(res, 401, { error: 'Missing session token. Open the URL printed in the terminal.' });
     }
     const body = req.method === 'POST' || req.method === 'PUT'
-      ? await readBody(req, url.pathname === '/api/asset' || (url.pathname === '/api/file' && req.method === 'PUT') ? 40 * 1024 * 1024 : undefined) : null;
+      ? await readBody(req, url.pathname === '/api/asset' || (url.pathname === '/api/file' && req.method === 'PUT') || (url.pathname === '/api/runs' && req.method === 'POST') ? 40 * 1024 * 1024 : undefined) : null;
     send(res, 200, await routeApi(req.method, url, body));
   } catch (e) {
     if (!e.status) console.error(e);

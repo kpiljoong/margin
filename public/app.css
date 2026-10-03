@@ -924,6 +924,7 @@ iframe.mermaid-frame { position: fixed; left: -10000px; top: 0; width: 1600px; h
 /* Presenting: marks still to come. */
 .ink-mark { transition: opacity .25s; }
 .ink-mark.unseen { opacity: 0; }
+.ink-mark[data-hide].unseen { opacity: 1; }
 
 /* Red pen on a picture (public/penpic.js): boxes and arrows coming in ringed,
    ones going crossed out; taken (y) quieter, left (n) faded or plain. */

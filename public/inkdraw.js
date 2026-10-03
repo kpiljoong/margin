@@ -3,7 +3,7 @@
 // (public/ink.js has the lines; the app writes them, one ⌘Z each).
 //
 // The tool bar shows when a picture is the one looked at, or a tool is on.
-// Keys: D pen, A arrow, R box, T text, N numbered dot, E eraser, C colour,
+// Keys: D pen, A arrow, R box, T text, N numbered dot, H hide, E eraser, C colour,
 // Esc: the tool off. With a tool on, a drag on a picture draws (beside it the
 // canvas still pans); a click with T puts words there, with N the next
 // number; with E a click on a mark takes it out.
@@ -18,9 +18,10 @@ export const TOOLS = [
   ['box', '▭', 'Box', 'R'],
   ['text', 'T', 'Words', 'T'],
   ['num', '\u2460', 'Numbered dot: click where it goes; item 1. of a numbered list in the section says what it is', 'N'],
+  ['hide', '\u25A9', 'Hide a part: covered here, in a copy, and for an agent', 'H'],
   ['erase', '⌫', 'Eraser: click a mark', 'E'],
 ];
-const KEYS = { d: 'pen', a: 'arrow', r: 'box', t: 'text', n: 'num', e: 'erase' };
+const KEYS = { d: 'pen', a: 'arrow', r: 'box', t: 'text', n: 'num', h: 'hide', e: 'erase' };
 
 const el = (tag, cls, text) => {
   const e = document.createElement(tag);
@@ -34,7 +35,7 @@ export class InkTools {
   // onInkColor(at, color, pick).
   constructor(canvas) {
     this.c = canvas;
-    this.tool = null; // 'pen' | 'arrow' | 'box' | 'text' | 'num' | 'erase'
+    this.tool = null; // 'pen' | 'arrow' | 'box' | 'text' | 'num' | 'hide' | 'erase'
     this.color = 'red';
     this.draft = null; // the mark being drawn: { fig, kind, pts, el }
     this.bar = el('div', 'ink-bar');
@@ -160,7 +161,7 @@ export class InkTools {
     const color = this.color;
     if (d.kind === 'pen') return { kind: 'pen', color, pts: simplify(d.pts, 1.2 * d.scale).map(([x, y]) => [Math.round(x), Math.round(y)]) };
     if (d.kind === 'arrow') return { kind: 'arrow', color, from: a, to: b };
-    return { kind: 'box', color, x: Math.min(a[0], b[0]), y: Math.min(a[1], b[1]), w: Math.abs(b[0] - a[0]), h: Math.abs(b[1] - a[1]) };
+    return { kind: d.kind === 'hide' ? 'hide' : 'box', color: d.kind === 'hide' ? 'gray' : color, x: Math.min(a[0], b[0]), y: Math.min(a[1], b[1]), w: Math.abs(b[0] - a[0]), h: Math.abs(b[1] - a[1]) };
   }
 
   // The mark so far, drawn over the picture.

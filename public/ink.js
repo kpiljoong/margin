@@ -10,12 +10,15 @@
 //   text red: 420,230 The button is hidden
 //   pen blue: 100,100 120,104 140,112
 //   num red: 300,110 1
+//   hide: 40,20 300x30
 //   ```
 //
 // - pen: a line through the points · arrow: from → to · box: corner and
 //   size · text: where it starts, then the words · num: a numbered dot, its
 //   centre and number — item 1 of the numbered list in the picture's section
-//   says what it is (linkCallouts).
+//   says what it is (linkCallouts) · hide: a part covered, corner and size
+//   (gray unless a colour is given); covered on screen, in a copy, and in the
+//   copy an agent gets (server.js masks the pictures it shares).
 // - The colour is optional (red, the pen's), any of the flow colours.
 // - Other apps show the picture and the lines as code; Margin draws them on
 //   the picture. `#` or `//` starts a comment. Plain logic, tested without a
@@ -23,8 +26,8 @@
 
 import { COLORS, colorKey } from './flow.js';
 
-// Also in Korean: pen, arrow, box, text, number.
-const KINDS = { pen: 'pen', arrow: 'arrow', box: 'box', text: 'text', num: 'num', number: 'num', '\uD39C': 'pen', '\uD654\uC0B4\uD45C': 'arrow', '\uC0C1\uC790': 'box', '\uAE00': 'text', '\uBC88\uD638': 'num' };
+// Also in Korean: pen, arrow, box, text, number, hide.
+const KINDS = { pen: 'pen', arrow: 'arrow', box: 'box', text: 'text', num: 'num', number: 'num', hide: 'hide', blur: 'hide', '\uAC00\uB9AC\uAE30': 'hide', '\uD39C': 'pen', '\uD654\uC0B4\uD45C': 'arrow', '\uC0C1\uC790': 'box', '\uAE00': 'text', '\uBC88\uD638': 'num' };
 const LINE = /^(\S+?)(?:\s+([^\s:]+))?\s*:\s*(.*)$/;
 const NUM = '(-?\\d+(?:\\.\\d+)?)';
 const POINT = new RegExp(`^${NUM},${NUM}$`);
@@ -46,7 +49,7 @@ export function parseInk(src) {
     if (!body || body.startsWith('#') || body.startsWith('//')) return;
     const m = LINE.exec(body);
     const kind = m && KINDS[m[1].toLowerCase()];
-    const color = m && (m[2] ? colorKey(m[2]) : 'red');
+    const color = m && (m[2] ? colorKey(m[2]) : kind === 'hide' ? 'gray' : 'red');
     if (!kind || !color) { bad.push(line); return; }
     const rest = m[3].trim();
     const n = (v) => Number(v);
@@ -57,7 +60,7 @@ export function parseInk(src) {
     } else if (kind === 'arrow') {
       const a = ARROW.exec(rest);
       if (a) mark = { from: [n(a[1]), n(a[2])], to: [n(a[3]), n(a[4])] };
-    } else if (kind === 'box') {
+    } else if (kind === 'box' || kind === 'hide') {
       const b = BOX.exec(rest);
       if (b) mark = { x: n(b[1]), y: n(b[2]), w: n(b[3]), h: n(b[4]) };
     } else if (kind === 'num') {
@@ -81,7 +84,7 @@ export function inkLine(mark) {
   const head = `${mark.kind} ${mark.color || 'red'}: `;
   if (mark.kind === 'pen') return head + mark.pts.map(pt).join(' ');
   if (mark.kind === 'arrow') return `${head}${pt(mark.from)} -> ${pt(mark.to)}`;
-  if (mark.kind === 'box') return `${head}${pt([mark.x, mark.y])} ${r(mark.w)}x${r(mark.h)}`;
+  if (mark.kind === 'box' || mark.kind === 'hide') return `${head}${pt([mark.x, mark.y])} ${r(mark.w)}x${r(mark.h)}`;
   return `${head}${pt([mark.x, mark.y])} ${String(mark.text).replace(/\s+/g, ' ').trim()}`;
 }
 
@@ -132,7 +135,8 @@ export function inkSvg(marks, w, h) {
     for (const [k, v] of Object.entries(attrs)) e.setAttribute(k, String(v));
     return e;
   };
-  for (const m of marks) svg.append(markEl(m, sw, make));
+  // What is hidden first, under the rest.
+  for (const m of [...marks.filter((x) => x.kind === 'hide'), ...marks.filter((x) => x.kind !== 'hide')]) svg.append(markEl(m, sw, make));
   return svg;
 }
 
@@ -142,7 +146,10 @@ export function markEl(m, sw, make) {
   const line = { fill: 'none', stroke: c, 'stroke-width': sw, 'stroke-linecap': 'round', 'stroke-linejoin': 'round' };
   if (m.kind === 'pen') g.append(make('polyline', { ...line, points: m.pts.map(([x, y]) => `${x},${y}`).join(' ') }));
   else if (m.kind === 'box') g.append(make('rect', { ...line, x: m.x, y: m.y, width: Math.max(1, m.w), height: Math.max(1, m.h), rx: sw * 2 }));
-  else if (m.kind === 'num') {
+  else if (m.kind === 'hide') {
+    g.dataset.hide = '';
+    g.append(make('rect', { x: m.x, y: m.y, width: Math.max(1, m.w), height: Math.max(1, m.h), fill: c, stroke: 'none' }));
+  } else if (m.kind === 'num') {
     const rr = sw * 7;
     g.dataset.num = m.text;
     g.append(make('circle', { cx: m.x, cy: m.y, r: rr, fill: c, stroke: '#fff', 'stroke-width': sw }));
@@ -169,7 +176,7 @@ export function markEl(m, sw, make) {
     hit.setAttribute('class', 'ink-hit');
     hit.setAttribute('stroke', 'transparent');
     hit.setAttribute('stroke-width', sw * 6);
-    if (m.kind === 'num') hit.setAttribute('fill', 'transparent');
+    if (m.kind === 'num' || m.kind === 'hide') hit.setAttribute('fill', 'transparent');
     g.append(hit);
   }
   return g;
