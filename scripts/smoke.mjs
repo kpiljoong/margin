@@ -285,6 +285,26 @@ await check('drawing on a flow writes its text: add, connect, colour, delete, un
   return out;
 `, (v) => (v?.add === 'A -> B -> C' && v.connect === 'A -> B -> C -> A' && v.wireGone && v.color === 'A -> B -> C -> A\ncolor blue: B' && v.del === 'A -> C -> A' && v.undo === v.color ? null : `got ${JSON.stringify(v)}`));
 
+await check('an arrow on a flow: click it, make it two-way, take it out', `
+  const stage = $('.canvas-stage');
+  const flow = () => { const v = $$('.editor-wrap textarea').find((t) => t.offsetParent).value; return v.slice(v.indexOf('\`\`\`flow') + 8, v.lastIndexOf('\`\`\`')).trim(); };
+  const id = (name) => $('pre.diagram')?.flowNodes?.find((n) => n.text === name)?.id;
+  const edge = (a, b) => $$('.edge').find((g) => g.dataset.from === id(a) && g.dataset.to === id(b));
+  const out = {};
+  const g = await until(() => edge('C', 'A'), 15000);
+  if (!g) return { none: $$('.edge').length };
+  g.querySelector('.edge-hit').dispatchEvent(new MouseEvent('click', { bubbles: true, detail: 1 }));
+  out.on = !!(await until(() => $('.edge.on'), 4000));
+  stage.focus(); key('b', {}, stage);
+  await until(() => flow().includes('<->'), 8000);
+  out.both = flow();
+  await until(() => edge('C', 'A') !== g && edge('C', 'A')?.classList.contains('on'), 8000);
+  key('Delete', {}, stage);
+  await until(() => !flow().includes('<->'), 8000);
+  out.gone = flow();
+  return out;
+`, (v) => (v?.on && v.both === 'A -> B -> C <-> A\ncolor blue: B' && v.gone === 'A -> B -> C\ncolor blue: B' ? null : `got ${JSON.stringify(v)}`));
+
 await check('Settings shows Labs', `
   document.dispatchEvent(new KeyboardEvent('keydown', { key: ',', metaKey: navigator.platform.startsWith('Mac'), ctrlKey: !navigator.platform.startsWith('Mac'), bubbles: true }));
   const d = await until(() => $('.dialog.settings'));

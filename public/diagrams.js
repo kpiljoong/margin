@@ -90,14 +90,14 @@ function currentTheme() {
 
 async function renderOne(source, config) {
   const r = await renderInFrame(source, config);
-  if (r.svg) return { url: `data:image/svg+xml;charset=utf-8,${encodeURIComponent(r.svg)}`, nodes: Array.isArray(r.nodes) ? r.nodes : [] };
+  if (r.svg) return { url: `data:image/svg+xml;charset=utf-8,${encodeURIComponent(r.svg)}`, nodes: Array.isArray(r.nodes) ? r.nodes : [], edges: Array.isArray(r.edges) ? r.edges : [] };
   return { error: String(r.error || '').split('\n').filter(Boolean).slice(0, 3).join('\n') || 'Invalid diagram' };
 }
 
 // Pictures drawn before are kept on disk (IndexedDB) too, so after a restart a
 // note full of diagrams shows at once instead of being drawn one by one. Only
 // pictures, not errors; the oldest go once there are more than DISK_MAX.
-const DISK_VERSION = 1; // bump when the pictures would come out differently
+const DISK_VERSION = 2; // bump when the pictures would come out differently
 const DISK_MAX = 600;
 let disk = null;
 function openDisk() {
@@ -138,7 +138,7 @@ async function diskPut(key, result) {
   if (!db || !result.url) return;
   try {
     const st = db.transaction('pictures', 'readwrite').objectStore('pictures');
-    st.put({ url: result.url, nodes: result.nodes, t: Date.now() }, key);
+    st.put({ url: result.url, nodes: result.nodes, edges: result.edges, t: Date.now() }, key);
     if (pruned) return;
     pruned = true;
     // Once a session: drop the oldest beyond DISK_MAX.
@@ -185,6 +185,7 @@ function show(pre, result, source) {
   pre.replaceChildren(img, copy);
   // Where its boxes are (fractions of the picture), for the canvas view.
   pre.diagramNodes = result.nodes || [];
+  pre.diagramEdges = result.edges || []; // and its arrows' lines
   pre.dispatchEvent(new CustomEvent('diagram-shown', { bubbles: true }));
 }
 
@@ -236,7 +237,7 @@ export function renderDiagrams(container) {
     ordered.forEach((t, n) => {
       const hit = kept[n];
       if (!hit?.url) { left.push(t); return; }
-      const result = { url: hit.url, nodes: Array.isArray(hit.nodes) ? hit.nodes : [] };
+      const result = { url: hit.url, nodes: Array.isArray(hit.nodes) ? hit.nodes : [], edges: Array.isArray(hit.edges) ? hit.edges : [] };
       remember(key + '\n' + t.source, result);
       show(t.pre, result, t.raw);
       shown[t.i] = result.url;

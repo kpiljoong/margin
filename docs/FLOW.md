@@ -149,6 +149,9 @@ In the Canvas view a flow can be drawn on; each change is written into the block
 | From a question `Ok?` | `Ok? -(yes)-> …`, then `-(no)->` |
 | Double-click empty space, `N` | `New step` on a line of its own |
 | `C` then a number | `color …:` line at the end |
+| Click an arrow, `Delete` | the arrow taken out: `A -> B -> C` without `A -> B` is `A` and `B -> C` (a step written elsewhere isn't repeated) |
+| Click an arrow, `B` / `D` / `R` | `<->` (again: `->`) / `..>` / the other way round (`C -> B` on a line) |
+| Click an arrow, `Enter` | `-(words)->`; out of a question, the answer (`no -> …`) |
 | Delete `B` | `B` taken out of every line; `A -> B -> C` becomes `A -> C`, a line left with nothing goes |
 | Right-click → Runs right | `direction: right` |
 | Move to a note of its own | the block goes to a new note; `![[Name]]` stays here |

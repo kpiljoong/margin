@@ -2,7 +2,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { parseFlow } from '../public/flow.js';
-import { connect, addBox, freshName, nextAnswer, setColor, setDirection, removeBox } from '../public/flowedit.js';
+import { connect, addBox, freshName, nextAnswer, setColor, setDirection, removeBox, removeArrow, setArrowKind, setArrowLabel, reverseArrow } from '../public/flowedit.js';
 
 const arrows = (src) => {
   const f = parseFlow(src);
@@ -89,4 +89,50 @@ test('deleting a box: the steps beside it join up, its lines and colour go', () 
   assert.equal(removeBox('A -> B', 'Z'), 'A -> B');
   // Shapes and marks are the step's: [(DB)] is DB.
   assert.equal(removeBox('API -> [(DB)] ! -> Log', 'DB'), 'API -> Log');
+});
+
+test('arrows: take out, both ways, dotted, words, the other way round', () => {
+  const D = ['주문 -> 결제 요청 -> 승인?', '  yes -> 영수증', '  no -> 재시도', '영수증 -> 배송', '재시도 -> 결제 요청', 'color red: 재시도'].join('\n');
+  const edges = (s) => parseFlow(s).edges.length;
+  const names = (s) => parseFlow(s).nodes.map((n) => n.text).sort();
+  // Out of a line: the steps either side stay, each where it was written.
+  assert.equal(removeArrow('A -> B -> C', 'A', 'B'), 'A\nB -> C');
+  assert.equal(removeArrow('X -> A\nA -> B -> C', 'A', 'B'), 'X -> A\nB -> C');
+  assert.equal(removeArrow('A -> B -> C <-> A\ncolor blue: B', 'C', 'A'), 'A -> B -> C\ncolor blue: B');
+  assert.equal(removeArrow('A -> B -> A', 'A', 'B'), 'B -> A');
+  // An answer's line goes when its step is written elsewhere.
+  assert.equal(removeArrow(D, '승인?', '재시도'), D.replace('\n  no -> 재시도', ''));
+  // The arrow into a question: the question's lines go on from it as before.
+  const cut = removeArrow(D, '결제 요청', '승인?');
+  assert.equal(cut.split('\n').slice(0, 3).join('\n'), '주문 -> 결제 요청\n승인?\n  yes -> 영수증');
+  for (const [a, b] of [['주문', '결제 요청'], ['결제 요청', '승인?'], ['승인?', '영수증'], ['영수증', '배송'], ['재시도', '결제 요청']]) {
+    const s = removeArrow(D, a, b);
+    assert.equal(edges(s), edges(D) - 1, `${a} -> ${b}`);
+    assert.deepEqual(names(s), names(D));
+  }
+  // Under a line, the steps after the arrow go to a line of their own (with
+  // the lines going on from them).
+  assert.equal(removeArrow('S?\n  yes -> A -> B\n    C\n  no -> Z', 'A', 'B'), 'S?\n  yes -> A\n  no -> Z\nB\n  C');
+  assert.equal(removeArrow('Login\n  Check -> Done : ok\n  Retry', 'Login', 'Check'), 'Login\n  Retry\nCheck -> Done : ok');
+  // Kinds, written where the arrow is.
+  assert.match(setArrowKind(D, '영수증', '배송', '<-->'), /^영수증 <-> 배송$/m);
+  assert.match(setArrowKind(D, '승인?', '재시도', '<-->'), /^ {2}no <-> 재시도$/m);
+  assert.match(setArrowKind(D, '결제 요청', '승인?', '-.->'), /결제 요청 \.\.> 승인\?/);
+  assert.equal(setArrowKind('A <-> B', 'A', 'B', '-->'), 'A -> B');
+  assert.equal(setArrowKind('A -(go)-> B', 'A', 'B', '---'), 'A -- B');
+  // An arrow not written (a line going on from the one above) gets a line.
+  assert.equal(setArrowKind('Login\n  Check -> Done : ok\n  Retry', 'Login', 'Retry', '<-->'), 'Login\n  Check -> Done : ok\nLogin <-> Retry');
+  // Words: on the arrow, or the answer out of a question.
+  assert.equal(setArrowLabel('A -> B -> C', 'A', 'B', 'go'), 'A -(go)-> B -> C');
+  assert.equal(setArrowLabel('A -(go)-> B', 'A', 'B', ''), 'A -> B');
+  assert.match(setArrowLabel(D, '승인?', '재시도', '아니오'), /^ {2}아니오 -> 재시도$/m);
+  assert.equal(setArrowLabel('Q?\n  Fix', 'Q?', 'Fix', 'no'), 'Q?\n  no -> Fix');
+  assert.throws(() => setArrowLabel('A <-> B', 'A', 'B', 'x'), /one-way/);
+  // The other way round, its words kept.
+  assert.equal(reverseArrow('A -> B -> C', 'B', 'C'), 'A -> B\nC -> B');
+  assert.match(reverseArrow(D, '승인?', '재시도'), /^재시도 -\(no\)-> 승인\?$/m);
+  assert.equal(reverseArrow('A <-> B', 'A', 'B'), 'A <-> B');
+  // Nothing written: nothing changes.
+  assert.equal(removeArrow('A -> B', 'B', 'A'), 'A -> B');
+  assert.equal(removeArrow('A <-> B', 'B', 'A'), 'A\nB');
 });

@@ -5,7 +5,7 @@
 // already written, before the colour lines at the end. Plain logic, tested
 // without a page (test/flowedit.test.mjs).
 
-import { parseFlow, parseStep, ARROW_RE, COLOR_LINE, DIRECTION_LINE, DIRECTIONS, colorKey, colorNames } from './flow.js';
+import { parseFlow, parseStep, ARROWS, ARROW_RE, COLOR_LINE, DIRECTION_LINE, DIRECTIONS, colorKey, colorNames } from './flow.js';
 
 const linesOf = (src) => String(src).replace(/\r\n?/g, '\n').split('\n');
 const tryParse = (src) => { try { return parseFlow(src); } catch { return null; } };
@@ -51,14 +51,20 @@ export function freshName(src, base = 'New step') {
 // An arrow from one step to another (a step not there yet is made). Nothing
 // changes when that arrow is there already, or both are the same step.
 export function connect(src, from, to, label = '') {
+  const text = clean(label);
+  return addArrow(src, from, to, text ? `-(${text})->` : '->');
+}
+
+const clean = (label) => String(label).replace(/[()]/g, '').trim();
+const BOTH = new Set(['<-->', '---']);
+
+function addArrow(src, from, to, arrow) {
   if (from === to) return src;
   const f = tryParse(src);
   const id = (t) => f?.nodes.find((n) => n.text === t)?.id;
   const a = id(from);
   const b = id(to);
-  if (a && b && f.edges.some((e) => (e.from === a && e.to === b) || ((e.kind === '<-->' || e.kind === '---') && e.from === b && e.to === a))) return src;
-  const text = String(label).replace(/[()]/g, '').trim();
-  const arrow = text ? `-(${text})->` : '->';
+  if (a && b && f.edges.some((e) => (e.from === a && e.to === b) || (BOTH.has(e.kind) && e.from === b && e.to === a))) return src;
   const ls = linesOf(src);
   const last = endOfSteps(ls) - 1;
   if (endsWith(ls, last, from)) {
@@ -211,4 +217,234 @@ export function removeBox(src, name) {
     out.push(`${lead}${answer || ''}${chain}${ownNote}`);
   }
   return out.join('\n');
+}
+
+// ---- arrows
+
+// How an arrow is written, for each kind (parseFlow's Mermaid kinds).
+const WRITTEN = { '-->': '->', '<-->': '<->', '-.->': '..>', '---': '--' };
+// What a written arrow is (null: none written, a line going on from the
+// one above it).
+function arrowOf(token) {
+  if (token == null) return { kind: '-->', label: '' };
+  const m = /^-\(([^()]*)\)->$/.exec(token);
+  return m ? { kind: '-->', label: m[1].trim() } : { kind: ARROWS[token], label: '' };
+}
+const tokenOf = (kind, label = '') => (kind === '-->' && clean(label) ? `-(${clean(label)})->` : WRITTEN[kind]);
+
+const widthOf = (l) => l.replace(/\t/g, '  ').length - l.replace(/\t/g, '  ').trimStart().length;
+
+// The step lines as parseFlow reads them: { lineNo, lead, indent, from (the
+// step the line goes on from), answer, answerArrow, steps (as written),
+// names, arrows (written between steps), note }.
+function stepLines(src) {
+  const f = tryParse(src);
+  const shapes = new Map((f?.nodes || []).map((n) => [n.text, n.shape]));
+  const out = [];
+  const stack = [];
+  for (const [lineNo, raw] of linesOf(src).entries()) {
+    const body = raw.trim();
+    if (!body || body.startsWith('#') || body.startsWith('//')) continue;
+    const indent = widthOf(raw);
+    while (stack.length && stack[stack.length - 1].indent >= indent) stack.pop();
+    const from = stack[stack.length - 1]?.last || null;
+    const dir = DIRECTION_LINE.exec(body);
+    if ((dir && DIRECTIONS[dir[2].toLowerCase()]) || isColorLine(body)) continue;
+    const header = /^([^:]+?)\s*:$/.exec(body);
+    if (header && !ARROW_RE.test(header[1])) { stack.push({ indent, last: null }); continue; }
+    let text = body;
+    let note = '';
+    const nm = /^(.*\S)\s+:\s+(.+)$/.exec(body);
+    if (nm) { text = nm[1]; note = nm[2].trim(); }
+    const pieces = text.split(ARROW_RE);
+    let steps = pieces.filter((_, i) => i % 2 === 0).map((p) => p.trim());
+    let arrows = pieces.filter((_, i) => i % 2 === 1).map((a) => a.trim());
+    let answer = null;
+    let answerArrow = null;
+    if (from && shapes.get(from) === 'decision' && steps.length > 1) {
+      [answer, answerArrow] = [steps[0], arrows[0]];
+      steps = steps.slice(1);
+      arrows = arrows.slice(1);
+    }
+    const names = steps.map((p) => parseStep(p).text);
+    stack.push({ indent, last: [...names].reverse().find(Boolean) || from });
+    out.push({ lineNo, lead: raw.slice(0, raw.length - raw.trimStart().length), indent, from, answer, answerArrow, steps, names, arrows, note });
+  }
+  return out;
+}
+
+// The arrows a line draws: { from, to, at } — `at` the step it goes into
+// (0: from the line above).
+function arrowsOn(L) {
+  const out = [];
+  let prev = L.from;
+  L.names.forEach((n, i) => {
+    if (!n) return;
+    if (prev && prev !== n) out.push({ from: prev, to: n, at: i, token: i === 0 ? L.answerArrow : L.arrows[i - 1] });
+    prev = n;
+  });
+  return out;
+}
+
+const writeLine = (L, { lead = L.lead, answer = L.answer, answerArrow = L.answerArrow, steps = L.steps, arrows = L.arrows, note = L.note } = {}) =>
+  `${lead}${answer != null ? `${answer} ${answerArrow} ` : ''}${steps.map((p, i) => (i ? `${arrows[i - 1]} ${p}` : p)).join(' ')}${note ? ` : ${note}` : ''}`;
+
+// Where the lines going on from line i end.
+function subtreeEnd(ls, i) {
+  let end = i + 1;
+  for (let j = i + 1; j < ls.length; j++) {
+    const b = ls[j].trim();
+    if (!b || b.startsWith('#') || b.startsWith('//')) continue;
+    if (widthOf(ls[j]) <= widthOf(ls[i])) break;
+    end = j + 1;
+  }
+  return end;
+}
+
+function dedent(l, n) {
+  let cols = 0;
+  let i = 0;
+  while (i < l.length && cols < n && (l[i] === ' ' || l[i] === '\t')) { cols += l[i] === '\t' ? 2 : 1; i++; }
+  return l.slice(i);
+}
+
+// Lines [start, end) out of their place, `block` at the end of the steps
+// instead: a line there goes on from nothing.
+function relocate(ls, start, end, block) {
+  const rest = [...ls.slice(0, start), ...ls.slice(end)];
+  rest.splice(endOfSteps(rest), 0, ...block);
+  return rest.join('\n');
+}
+
+const matches = (e, from, to, kind) => (e.from === from && e.to === to) || (BOTH.has(kind) && e.from === to && e.to === from);
+
+// Where an arrow is written: [{ L, e }].
+function whereWritten(src, from, to) {
+  const out = [];
+  for (const L of stepLines(src)) for (const e of arrowsOn(L)) if (matches(e, from, to, arrowOf(e.token).kind)) out.push({ L, e });
+  return out;
+}
+
+// Take out the first place an arrow is written; null when it isn't.
+function removeOnce(src, from, to) {
+  const [hit] = whereWritten(src, from, to);
+  if (!hit) return null;
+  const { L, e } = hit;
+  const f = tryParse(src);
+  const elsewhere = (name) => f.nodes.find((n) => n.text === name)?.lines.some((l) => l !== L.lineNo);
+  // A step alone on a line, written as it is somewhere else: the line said nothing more.
+  const bare = (i) => L.steps[i] === L.names[i] && elsewhere(L.names[i]);
+  const ls = linesOf(src);
+  const end = subtreeEnd(ls, L.lineNo);
+  const children = ls.slice(L.lineNo + 1, end).map((l) => dedent(l, L.indent));
+  if (e.at === 0) {
+    // The arrow from the line above: the line goes on from nothing.
+    if (L.steps.length === 1 && !L.note && !children.length && bare(0)) { ls.splice(L.lineNo, 1); return ls.join('\n'); }
+    return relocate(ls, L.lineNo, end, [writeLine(L, { lead: '', answer: null }), ...children]);
+  }
+  // Within the line: it is two, the steps before the arrow and the ones after
+  // (with its note and the lines going on from it).
+  const i = e.at;
+  const left = writeLine(L, { steps: L.steps.slice(0, i), arrows: L.arrows.slice(0, i - 1), note: '' });
+  const rightOf = (lead) => writeLine(L, { lead, answer: null, steps: L.steps.slice(i), arrows: L.arrows.slice(i) });
+  // (Or written in the other half: "A -> B -> A" without B -> A is "A -> B".)
+  const dropLeft = i === 1 && !L.from && L.answer == null && L.steps[0] === L.names[0] && (bare(0) || L.names.slice(i).includes(L.names[0]));
+  const dropRight = L.steps.length - i === 1 && !L.note && !children.length && L.steps[i] === L.names[i] && (bare(i) || L.names.slice(0, i).includes(L.names[i]));
+  if (!L.from) {
+    // Nothing above it: the two lines stay where it was.
+    ls.splice(L.lineNo, 1, ...(dropLeft ? [] : [left]), ...(dropRight ? [] : [rightOf(L.lead)]));
+    return ls.join('\n');
+  }
+  ls[L.lineNo] = left;
+  if (dropRight) return ls.join('\n');
+  // Under a line, the second would go on from it: to the end, on its own.
+  return relocate(ls, L.lineNo + 1, end, [rightOf(''), ...children]);
+}
+
+// An arrow written again on a line of its own: a line left with only one of
+// its steps (going on from nothing) says nothing more.
+function rewritten(src, from, to, token) {
+  let out = addArrow(removeArrow(src, from, to), from, to, token);
+  for (const name of [from, to]) {
+    const f = tryParse(out);
+    const lines = f?.nodes.find((n) => n.text === name)?.lines || [];
+    const ls = linesOf(out);
+    const lone = stepLines(out).find((L) => !L.from && L.answer == null && L.steps.length === 1 && L.steps[0] === name && !L.note && subtreeEnd(ls, L.lineNo) === L.lineNo + 1);
+    if (lone && lines.some((l) => l !== lone.lineNo)) { ls.splice(lone.lineNo, 1); out = ls.join('\n'); }
+  }
+  return out;
+}
+
+// Take an arrow out, wherever it is written. Its steps stay.
+export function removeArrow(src, from, to) {
+  for (let n = 0; n < 50; n++) {
+    const next = removeOnce(src, from, to);
+    if (next == null) break;
+    src = next;
+  }
+  return src;
+}
+
+// Rewrite the arrow where it is written; an arrow that isn't written (a line
+// going on from the one above it) is taken out and written on a line.
+function rewrite(src, from, to, change) {
+  const found = whereWritten(src, from, to);
+  if (!found.length) return src;
+  const ls = linesOf(src);
+  for (const { L, e } of found) {
+    const now = arrowOf(e.token);
+    if (e.token == null) {
+      const token = change(now, null);
+      if (token == null) continue;
+      return rewritten(src, from, to, token);
+    }
+    const token = change(now, L.answer);
+    if (token == null) continue;
+    const parts = { answerArrow: L.answerArrow, arrows: [...L.arrows] };
+    if (e.at === 0) parts.answerArrow = token; else parts.arrows[e.at - 1] = token;
+    ls[L.lineNo] = writeLine(L, parts);
+  }
+  return ls.join('\n');
+}
+
+// One way (->), both ways (<->), dotted (..>) or a plain line (--): kinds as
+// parseFlow gives them. A label stays on a one-way arrow only.
+export function setArrowKind(src, from, to, kind) {
+  if (!WRITTEN[kind]) throw new Error(`“${kind}” is not an arrow`);
+  return rewrite(src, from, to, (now) => tokenOf(kind, now.label));
+}
+
+// The words on an arrow ('' none). Out of a question it is the answer.
+export function setArrowLabel(src, from, to, label) {
+  const text = clean(label);
+  const found = whereWritten(src, from, to);
+  if (!found.length) return src;
+  const ls = linesOf(src);
+  const f = tryParse(src);
+  const decision = f?.nodes.find((n) => n.text === from)?.shape === 'decision';
+  for (const { L, e } of found) {
+    const now = arrowOf(e.token);
+    if (e.at === 0 && (L.answer != null || decision)) {
+      // An answer: "yes -> …" under the question.
+      if (L.answer != null && !text && L.steps.length > 1) return rewritten(src, from, to, '->');
+      ls[L.lineNo] = text ? writeLine(L, { answer: text, answerArrow: L.answerArrow ?? '->' }) : writeLine(L, { answer: null });
+      continue;
+    }
+    if (text && now.kind !== '-->') throw new Error('Only a one-way arrow has words on it (for now).');
+    if (e.token == null) return rewritten(src, from, to, tokenOf('-->', text));
+    const arrows = [...L.arrows];
+    arrows[e.at - 1] = tokenOf(now.kind, text);
+    ls[L.lineNo] = writeLine(L, { arrows });
+  }
+  return ls.join('\n');
+}
+
+// The other way round (a two-way arrow or a line has no way).
+export function reverseArrow(src, from, to) {
+  const [hit] = whereWritten(src, from, to);
+  if (!hit) return src;
+  const now = arrowOf(hit.e.token);
+  if (BOTH.has(now.kind)) return src;
+  const label = hit.e.at === 0 && hit.L.answer != null ? hit.L.answer : now.label;
+  return rewritten(removeArrow(src, from, to), to, from, tokenOf(now.kind, label));
 }

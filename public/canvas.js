@@ -25,7 +25,9 @@
 // go on nothing, to a new one). A click selects a box (the cursor goes to
 // its text, the keys stay here): Tab adds a box after it, Enter renames,
 // C colours, Delete takes it out; N or a double-click on the picture adds a
-// box on its own, and a right-click lists it all.
+// box on its own, and a right-click lists it all. A click on an arrow
+// selects it: Delete takes it out, B makes it go both ways (or one again),
+// R turns it round, D dots it, Enter puts words on it.
 //
 // Pictures are the preview's own elements, drawn by public/diagrams.js; each
 // diagram reports where its boxes are ('diagram-shown'), and a transparent
@@ -82,7 +84,9 @@ export class FigureCanvas {
   // tour() → the steps to present (see present) ·
   // drawing: canEdit(pre) · onAddAfter(pre, id) · onAddBox(pre) ·
   // onConnect(pre, from, to) · onDelete(pre, id) · onColorMenu(pre, id, at) ·
-  // onBoxMenu(e, pre, id) · onCardMenu(e, pre) · onNewFlow() · onUndo(redo)
+  // onBoxMenu(e, pre, id) · onCardMenu(e, pre) · onNewFlow() · onUndo(redo) ·
+  // onArrow(pre, { from, to }, what, arg): what is delete, both, reverse,
+  // dotted, label (arg: the words) or menu (arg: the event)
   constructor(handlers) {
     this.h = handlers;
     this.k = 1; this.x = 0; this.y = 0;
@@ -98,6 +102,8 @@ export class FigureCanvas {
     this.pin = null; // the box kept still while the pictures redraw (pinBox)
     this.pending = null; // a box to select (and rename) once its picture is drawn again
     this.keep = null; // the box selected before the pictures were made again
+    this.edgeAt = null; // the arrow selected: { pre, from, to } (box ids)
+    this.edgeSoon = null; // an arrow to select once its picture is drawn again
     // Following the flow with the keys: the box walked to, the steps taken
     // (to go back), and the ways offered at a branch.
     this.walkAt = null; // { pre, id }
@@ -170,6 +176,9 @@ export class FigureCanvas {
     // The box selected stays so when its picture comes again.
     const sel = this.walkAt && !this.choice ? this.whereIs(this.walkAt) : null;
     if (sel) this.keep = { ...sel, until: performance.now() + 5000 };
+    const ed = this.edgeAt && this.namesOf(this.edgeAt);
+    if (ed && !this.edgeSoon) this.edgeSoon = { ...ed, until: performance.now() + 5000 };
+    this.edgeAt = null;
     this.endWalk();
     this.endPresent();
     this.whenLoaded(this.world, () => { this.holdPin(); this.drawLinksSoon(); });
@@ -199,8 +208,35 @@ export class FigureCanvas {
     this.pending = { line: String(line), name, rename, until: performance.now() + 5000 };
   }
 
-  // A picture came: the box to select in it, if any.
+  // An arrow by its picture's line and its boxes' names.
+  namesOf(a) {
+    const name = (id) => a.pre.flowNodes?.find((n) => n.id === id)?.text;
+    const from = name(a.from);
+    const to = name(a.to);
+    return from && to ? { line: a.pre.dataset.line, from, to } : null;
+  }
+
+  // Once the picture at `line` is drawn again, select its arrow from → to
+  // (box names).
+  selectEdgeSoon(line, from, to) {
+    this.edgeSoon = { line: String(line), from, to, until: performance.now() + 5000 };
+  }
+
+  // A picture came: the box (or arrow) to select in it, if any.
   takeSelection(pre) {
+    const want = this.edgeSoon;
+    if (want && want.line === pre.dataset.line) {
+      this.edgeSoon = null;
+      const id = (t) => pre.flowNodes?.find((n) => n.text === t)?.id;
+      const [a, b] = [id(want.from), id(want.to)];
+      const e = performance.now() < want.until && a && b && (pre.flowEdges || []).find((x) => (x.from === a && x.to === b) || (x.from === b && x.to === a));
+      if (e) {
+        this.pending = null;
+        this.keep = null;
+        this.selectEdge(pre, e.from, e.to);
+        return;
+      }
+    }
     for (const want of [this.pending, this.keep]) {
       if (!want || want.line !== pre.dataset.line) continue;
       if (performance.now() > want.until) { if (want === this.pending) this.pending = null; else this.keep = null; continue; }
@@ -429,7 +465,29 @@ export class FigureCanvas {
     if (this.walkAt && !(goal?.nodes || []).some((n) => same(n, this.walkAt))) this.endWalk();
     if (this.walkAt) this.hit(this.walkAt.pre, this.walkAt.id)?.classList.add('walk-at');
     else for (const n of goal?.nodes || []) this.hit(n.pre, n.id)?.classList.add('on');
+    this.markEdge();
     this.drawLinksSoon();
+  }
+
+  markEdge() {
+    this.world.querySelectorAll('.edge.on').forEach((g) => g.classList.remove('on'));
+    const a = this.edgeAt;
+    if (!a) return;
+    if (!a.pre.isConnected) { this.edgeAt = null; return; }
+    this.edgeEl(a)?.classList.add('on');
+  }
+
+  edgeEl(a) {
+    return [...a.pre.querySelectorAll(':scope > .node-layer .edge')].find((g) => g.dataset.from === a.from && g.dataset.to === a.to) || null;
+  }
+
+  // Select an arrow: the keys act on it (Delete, B, R, D, Enter).
+  selectEdge(pre, from, to) {
+    this.endWalk();
+    this.pending = null;
+    this.keep = null;
+    this.edgeAt = { pre, from, to };
+    this.mark();
   }
 
   // ---- presenting
@@ -779,6 +837,31 @@ export class FigureCanvas {
     const layer = el('div', 'node-layer');
     const edit = !!pre.flowNodes && !!this.h.canEdit?.(pre);
     const side = { LR: 'right', RL: 'left', BT: 'up' }[pre.flowDirection] || 'down';
+    // The arrows' lines, under the boxes: click one to select it.
+    if (edit && pre.diagramEdges?.length) {
+      const svg = document.createElementNS(SVG, 'svg');
+      svg.setAttribute('class', 'edge-layer');
+      svg.setAttribute('viewBox', '0 0 1 1');
+      svg.setAttribute('preserveAspectRatio', 'none');
+      for (const e of pre.diagramEdges) {
+        const g = document.createElementNS(SVG, 'g');
+        g.setAttribute('class', 'edge');
+        g.dataset.from = e.from;
+        g.dataset.to = e.to;
+        const title = document.createElementNS(SVG, 'title');
+        title.textContent = 'Click: select the arrow · Delete, B both ways, R reverse, D dotted, Enter words · Right-click: more';
+        g.append(title);
+        for (const cls of ['edge-line', 'edge-hit']) {
+          const line = document.createElementNS(SVG, 'polyline');
+          line.setAttribute('class', cls);
+          line.setAttribute('points', e.pts.map(([x, y]) => `${x},${y}`).join(' '));
+          line.setAttribute('vector-effect', 'non-scaling-stroke');
+          g.append(line);
+        }
+        svg.append(g);
+      }
+      layer.append(svg);
+    }
     for (const n of nodes) {
       const b = el('div', 'node-hit');
       b.dataset.id = n.id;
@@ -798,6 +881,7 @@ export class FigureCanvas {
       layer.append(b);
     }
     pre.append(layer);
+    if (this.edgeAt?.pre === pre) this.markEdge();
   }
 
   // ---- camera
@@ -998,7 +1082,11 @@ export class FigureCanvas {
       const fig = this.figureOf(e.target);
       if (!fig) return;
       const b = e.target.closest('.node-hit');
-      if (b && fig.flowNodes) {
+      const edge = e.target.closest('.edge');
+      if (edge && !b) {
+        this.selectEdge(fig, edge.dataset.from, edge.dataset.to);
+        this.h.onArrow?.(fig, this.edgeAt, 'menu', e);
+      } else if (b && fig.flowNodes) {
         this.select(fig, b.dataset.id);
         this.h.onBoxMenu?.(e, fig, b.dataset.id);
       } else this.h.onCardMenu?.(e, fig);
@@ -1090,12 +1178,16 @@ export class FigureCanvas {
       try { this.h.onSection?.(section); } finally { this.picking = false; }
       return;
     }
+    const edge = target.closest('.edge');
+    if (edge && fig) { this.selectEdge(fig, edge.dataset.from, edge.dataset.to); return; }
     const looking = this.view === 'picture' && this.goal?.fig === fig;
     // A box clicked is the one selected (the keys act on it), over one a
     // change was going to select.
     this.endWalk();
     this.pending = null;
     this.keep = null;
+    this.edgeAt = null;
+    this.edgeSoon = null;
     if (b && fig.flowNodes) this.walkAt = { pre: fig, id: b.dataset.id };
     const pick = () => (b ? this.h.onNode?.(fig, b.dataset.id) : this.h.onFigure?.(fig));
     if (looking) {
@@ -1125,6 +1217,7 @@ export class FigureCanvas {
     this.endWalk();
     this.pending = null;
     this.keep = null;
+    this.edgeAt = null;
     this.walkAt = { pre, id };
     this.h.onStep?.(pre, id);
     this.mark();
@@ -1133,6 +1226,13 @@ export class FigureCanvas {
   // Keys for the box selected (Tab, Enter/F2, Delete, C) and for a picture
   // (N). → whether the key was one of them.
   editKey(e) {
+    const ed = this.edgeAt;
+    if (ed && !e.shiftKey) {
+      const what = { Delete: 'delete', Backspace: 'delete', b: 'both', r: 'reverse', d: 'dotted', Enter: 'label', F2: 'label', Escape: 'unselect' }[e.key];
+      if (what === 'unselect') { this.edgeAt = null; this.mark(); return true; }
+      if (what === 'label') { this.labelEdge(ed); return true; }
+      if (what) { this.h.onArrow?.(ed.pre, ed, what); return true; }
+    }
     const at = this.walkAt;
     const fig = at?.pre || this.goal?.fig;
     const need = () => { this.say('Click a box first (or walk to one with the arrow keys).'); };
@@ -1205,19 +1305,44 @@ export class FigureCanvas {
 
   // An input over the box; Enter renames it in the note, Esc or leaving cancels.
   rename(pre, box) {
-    this.editing?.remove();
     const node = pre.flowNodes?.find((n) => n.id === box.dataset.id);
     if (!node) return;
+    this.typeOver(() => (box.isConnected ? box.getBoundingClientRect() : null), node.text, (text) => {
+      if (text && text !== node.text) this.h.onRename?.(pre, node, text);
+    });
+  }
+
+  // The words on an arrow, typed over its middle.
+  labelEdge(a) {
+    const e = (a.pre.flowEdges || []).find((x) => x.from === a.from && x.to === a.to);
+    const line = a.pre.diagramEdges?.find((x) => x.from === a.from && x.to === a.to);
+    if (!e || !line) return;
+    const [x, y] = line.pts[Math.floor(line.pts.length / 2)];
+    const at = () => {
+      const layer = a.pre.querySelector(':scope > .node-layer');
+      if (!layer?.isConnected) return null;
+      const r = layer.getBoundingClientRect();
+      return { left: r.left + x * r.width, top: r.top + y * r.height, width: 0, height: 0 };
+    };
+    this.typeOver(at, e.label, (text) => { if (text !== e.label) this.h.onArrow?.(a.pre, a, 'label', text); }, 'Words on the arrow');
+  }
+
+  // An input over a spot (rect() → where, or null once it is gone); Enter
+  // gives its text to give, Esc or leaving cancels.
+  typeOver(rect, value, give, placeholder = '') {
+    this.editing?.remove();
     const input = el('input', 'canvas-rename');
-    input.value = node.text;
-    // Over the box, wherever the camera goes meanwhile.
+    input.value = value;
+    input.placeholder = placeholder;
+    // Over it, wherever the camera goes meanwhile.
     const place = () => {
-      if (!box.isConnected) return;
+      const r = rect();
+      if (!r) return;
       const s = this.stage.getBoundingClientRect();
-      const r = box.getBoundingClientRect();
-      input.style.left = `${r.left - s.left}px`;
+      const w = Math.max(140, r.width);
+      input.style.left = `${r.left - s.left + r.width / 2 - w / 2}px`;
       input.style.top = `${r.top - s.top + r.height / 2 - 16}px`;
-      input.style.width = `${Math.max(140, r.width)}px`;
+      input.style.width = `${w}px`;
     };
     place();
     let done = false;
@@ -1226,8 +1351,7 @@ export class FigureCanvas {
       done = true;
       input.remove();
       if (this.editing === handle) this.editing = null;
-      const text = input.value.trim();
-      if (commit && text && text !== node.text) this.h.onRename?.(pre, node, text);
+      if (commit) give(input.value.trim());
       if (refocus) this.stage.focus({ preventScroll: true });
     };
     const handle = { remove: () => finish(false, false), place };

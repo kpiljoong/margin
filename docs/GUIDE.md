@@ -414,6 +414,7 @@ Login request -> Auth server -> Success?
   - **An arrow**: drag a box's **+** onto another box of the same picture. Let go on nothing for a new box there. From a question (`…?`), the first arrow drawn gets `yes`, the second `no`.
   - **A box on its own**: double-click empty space in the picture, or `N`.
   - **Colour**: select a box and press `C`, then a number (`1` red … `8` gray, `0` none), or right-click → **Colour…**. It writes a `color …:` line at the end of the block.
+  - **Change an arrow**: click an arrow to select it (it lights up), then `Delete` takes it out (its boxes stay), `B` makes it go both ways (`<->`, again: one way), `R` turns it round, `D` dots it (`..>`), `Enter` puts words on it (`-(words)->`; out of a question, the answer). Right-click an arrow for these and **A plain line** (`--`). Dragging a **+** onto a box it already goes to selects that arrow. Words stay on a one-way arrow only, for now.
   - **Delete**: select a box and press `Delete` (or right-click). The box goes from every line it's on; in a line of steps the ones on either side join up (`A -> B -> C` without B is `A -> C`). The notification has **Undo**.
   - **Rename**: `Enter` on a selected box, or double-click it.
   - **Right-click** a box for all of these; right-click a picture for a new box, the way it runs (down, right, left, up: a `direction:` line) and **Move to a note of its own…**.
@@ -560,7 +561,7 @@ The only data created inside the workspace is `.agent-notes/`, which has its own
 
 ## Known limitations
 
-- Drawing on a flow: boxes can't be dragged to a place of their own (the layout is Mermaid's), arrow labels other than a question's yes/no are written in the text, and shapes other than `?` are set in the text too. A flow shown from another note (`![[…]]`) is drawn on in that note.
+- Drawing on a flow: boxes can't be dragged to a place of their own (the layout is Mermaid's), only a one-way arrow has words, and shapes other than `?` are set in the text. A flow shown from another note (`![[…]]`) is drawn on in that note.
 - The editor is `textarea`-based.
   - Multi-cursor only goes as far as "editing the same text in several places at once" (⌘D/⌘⇧L). Adding cursors by clicking arbitrary positions and column selection are not supported.
   - Folding works only in the preview.

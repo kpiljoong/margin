@@ -9,7 +9,7 @@ import { MarkdownEditor, setEditorKeys } from './editor.js';
 import { hunksOf } from './track.js';
 import { renderDiagrams } from './diagrams.js';
 import { flowToMermaid, flowsAsMermaid, parseFlow, isStepText, flowStepNames, nameKey, flowTour, flowLineAt, COLORS } from './flow.js';
-import { connect, addBox, freshName, nextAnswer, setColor, setDirection, removeBox } from './flowedit.js';
+import { connect, addBox, freshName, nextAnswer, setColor, setDirection, removeBox, removeArrow, setArrowKind, setArrowLabel, reverseArrow } from './flowedit.js';
 import { FigureCanvas } from './canvas.js';
 import { goalAt, boxAt, mentionRanges, definitionLines } from './figure-goal.js';
 import { isDrawing, drawingFormat, DrawingFrame, renderDrawingEmbeds, cachedEmbed, forgetEmbed, drawingImageUrl } from './drawing.js';
@@ -2011,6 +2011,7 @@ function canvasFor(tab) {
     onColorMenu: (pre, id, at) => colorMenu(tab, pre, id, at),
     onBoxMenu: (e, pre, id) => boxMenu(tab, e, pre, id),
     onCardMenu: (e, pre) => cardMenu(tab, e, pre),
+    onArrow: (pre, a, what, arg) => editArrow(tab, pre, a, what, arg),
     onNewFlow: () => newFlowHere(tab),
     onUndo: (redo) => { if (redo) tab.editor.redo(); else tab.editor.undo(); tab.canvas?.stage.focus({ preventScroll: true }); },
     // The box under the pointer: its mentions in the text, marked.
@@ -2281,6 +2282,7 @@ function editFlow(tab, pre, change) {
   tab.editor.replace(start, end, r.text, caret);
   tab.editor.closeStep();
   if (r.select) tab.canvas?.selectSoon(pre.dataset.line, r.select, !!r.rename);
+  if (r.edge) tab.canvas?.selectEdgeSoon(pre.dataset.line, ...r.edge);
   if (tab.canvas?.el.isConnected) tab.canvas.stage.focus({ preventScroll: true });
   renderStatus();
   bigFlowHint(tab, pre.dataset.line, r.text);
@@ -2300,7 +2302,55 @@ function connectBoxes(tab, pre, a, b) {
   const to = nodeText(pre, b);
   if (from == null || to == null) return;
   const done = editFlow(tab, pre, (src) => ({ text: connect(src, from, to, nextAnswer(src, from)), select: to }));
-  if (!done && flowEditable(pre)) toast(`“${from}” goes to “${to}” already.`);
+  if (done || !flowEditable(pre)) return;
+  // There already: that arrow, selected, to change.
+  const e = pre.flowEdges?.find((x) => (x.from === a && x.to === b) || (x.from === b && x.to === a));
+  if (e) tab.canvas?.selectEdge(pre, e.from, e.to);
+  toast(`“${from}” goes to “${to}” already — the arrow is selected: Delete takes it out, B makes it two-way.`);
+}
+
+// An arrow selected on the canvas: { from, to } (box ids).
+const BOTH_WAYS = new Set(['<-->', '---']);
+function editArrow(tab, pre, a, what, arg) {
+  if (what === 'menu') { arrowMenu(tab, arg, pre, a); return; }
+  const from = nodeText(pre, a.from);
+  const to = nodeText(pre, a.to);
+  if (from == null || to == null) return;
+  const edge = pre.flowEdges?.find((x) => x.from === a.from && x.to === a.to);
+  const kind = edge?.kind || '-->';
+  const toggle = (k) => (src) => ({ text: setArrowKind(src, from, to, kind === k ? '-->' : k), edge: [from, to] });
+  // Words go with a one-way arrow only (an answer out of a question stays).
+  const words = edge?.label && pre.flowNodes?.find((n) => n.id === a.from)?.shape !== 'decision' ? edge.label : '';
+  if (what === 'reverse' && BOTH_WAYS.has(kind)) { toast('This arrow goes both ways (or none): nothing to turn round.'); return; }
+  const change = {
+    delete: (src) => ({ text: removeArrow(src, from, to) }),
+    both: toggle('<-->'),
+    dotted: toggle('-.->'),
+    line: toggle('---'),
+    reverse: (src) => ({ text: reverseArrow(src, from, to), edge: [to, from] }),
+    label: (src) => ({ text: setArrowLabel(src, from, to, arg), edge: [from, to] }),
+  }[what];
+  if (!change) return;
+  if (!editFlow(tab, pre, change)) return;
+  const undo = { label: 'Undo', run: () => tab.editor.undo() };
+  if (what === 'delete') toast(`Took out the arrow “${from}” → “${to}”.`, '', undo);
+  else if (words && ['both', 'dotted', 'line'].includes(what) && kind === '-->') toast(`“${words}” is left off: only a one-way arrow has words, for now.`, '', undo);
+}
+
+function arrowMenu(tab, e, pre, a) {
+  if (!flowEditable(pre)) { cantEdit(pre); return; }
+  const edge = pre.flowEdges?.find((x) => x.from === a.from && x.to === a.to);
+  const kind = edge?.kind || '-->';
+  const run = (what) => () => editArrow(tab, pre, a, what);
+  contextMenu(e, [
+    { label: kind === '<-->' ? 'One way' : 'Both ways', key: 'B', hotkey: 'b', run: run('both') },
+    BOTH_WAYS.has(kind) ? null : { label: 'Turn it round', key: 'R', hotkey: 'r', run: run('reverse') },
+    { label: kind === '-.->' ? 'Solid' : 'Dotted', key: 'D', hotkey: 'd', run: run('dotted') },
+    { label: kind === '---' ? 'With an arrowhead' : 'A plain line', run: run('line') },
+    kind === '-->' || edge?.label ? { label: edge?.label ? 'Change the words…' : 'Words on it…', key: 'Enter', run: () => tab.canvas.labelEdge(a) } : null,
+    '-',
+    { label: 'Take the arrow out', key: '⌫', danger: true, run: run('delete') },
+  ]);
 }
 
 function deleteBox(tab, pre, id) {
