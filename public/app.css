@@ -923,6 +923,14 @@ iframe.mermaid-frame { position: fixed; left: -10000px; top: 0; width: 1600px; h
 .canvas-stage.ink-erasing .ink-mark:hover { opacity: .45; }
 /* Presenting: marks still to come. */
 .ink-mark { transition: opacity .25s; }
+/* The picture looked at, no tool on: its marks picked, moved, reshaped. */
+.canvas-pane:not(.presenting) .canvas-stage:not(.inking) .ink-figure.ink-editable .ink-hit { pointer-events: visiblePainted; cursor: move; }
+.canvas-pane:not(.presenting) .canvas-stage:not(.inking) .ink-figure.ink-editable .ink-mark text { pointer-events: bounding-box; cursor: move; }
+.ink-mark.ink-picked { filter: drop-shadow(0 0 2px var(--accent)) drop-shadow(0 0 2px var(--accent)); }
+.ink-mark.ink-moving { opacity: 0; }
+.ink-grip { fill: #fff; stroke: var(--accent); pointer-events: all; cursor: grab; }
+.ink-grip[data-mid] { fill: var(--accent); stroke: #fff; opacity: .8; cursor: copy; }
+.canvas-pane.presenting .ink-grips { display: none; }
 .ink-mark.unseen { opacity: 0; }
 .ink-mark[data-hide].unseen { opacity: 1; }
 

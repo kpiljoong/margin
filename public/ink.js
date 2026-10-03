@@ -128,6 +128,49 @@ export function bentPath(pts, r) {
   return `${d} L${p(pts[pts.length - 1])}`;
 }
 
+// ---- changing a mark (the canvas: inkdraw.js)
+
+// A mark moved by dx, dy.
+export function movedMark(m, dx, dy) {
+  const p = ([x, y]) => [x + dx, y + dy];
+  if (m.kind === 'pen') return { ...m, pts: m.pts.map(p) };
+  if (m.kind === 'arrow') return { ...m, from: p(m.from), to: p(m.to), via: (m.via || []).map(p) };
+  return { ...m, x: m.x + dx, y: m.y + dy };
+}
+
+// The points that reshape a mark: a box's (or hidden part's) corners
+// clockwise from the top left, an arrow's ends and bends; none for the rest.
+export function grips(m) {
+  if (m.kind === 'box' || m.kind === 'hide') return [[m.x, m.y], [m.x + m.w, m.y], [m.x + m.w, m.y + m.h], [m.x, m.y + m.h]];
+  if (m.kind === 'arrow') return [m.from, ...(m.via || []), m.to];
+  return [];
+}
+
+// The mark with grip i dragged to p: a box's opposite corner stays; an
+// arrow's point moves, and a bend dragged (nearly) straight, within
+// `straight`, goes. mid: a new bend in the middle of side i.
+export function reshapedMark(m, i, [x, y], { mid = false, straight = 0 } = {}) {
+  if (m.kind === 'arrow') {
+    const pts = grips(m);
+    if (mid) pts.splice(i + 1, 0, [x, y]); else pts[i] = [x, y];
+    const off = (a, p, b) => { const l = Math.hypot(b[0] - a[0], b[1] - a[1]); return l ? Math.abs((b[0] - a[0]) * (a[1] - p[1]) - (a[0] - p[0]) * (b[1] - a[1])) / l : Math.hypot(p[0] - a[0], p[1] - a[1]); };
+    for (let k = pts.length - 2; k > 0; k--) if (off(pts[k - 1], pts[k], pts[k + 1]) <= straight) pts.splice(k, 1);
+    return { ...m, from: pts[0], to: pts[pts.length - 1], via: pts.slice(1, -1) };
+  }
+  if (m.kind !== 'box' && m.kind !== 'hide') return m;
+  const o = grips(m)[(i + 2) % 4];
+  return { ...m, x: Math.min(o[0], x), y: Math.min(o[1], y), w: Math.abs(x - o[0]), h: Math.abs(y - o[1]) };
+}
+
+// The block with line n made `mark`, its kind and colour words as they were.
+export function setMark(src, n, mark) {
+  const ls = String(src).split('\n');
+  const head = /^\s*[^:]*:/.exec(ls[n] ?? '')?.[0];
+  const line = inkLine(mark);
+  ls[n] = head ? `${head} ${line.slice(line.indexOf(':') + 1).trim()}` : line;
+  return ls.join('\n');
+}
+
 // A line added after the marks; a line taken out.
 export function addMark(src, line) {
   const body = String(src).replace(/\s+$/, '');
@@ -271,6 +314,7 @@ export function drawInk(fig) {
   fig.inkMarks = parseInk(fig.dataset.source).marks;
   fig.append(inkSvg(fig.inkMarks, img.naturalWidth, img.naturalHeight));
   linkCallouts(fig);
+  fig.dispatchEvent(new Event('inkdrawn', { bubbles: true }));
 }
 
 // A figure's numbered dots and the items of the numbered lists in its

@@ -451,6 +451,36 @@ await check('an arrow drawn bending bends there; one drawn straight stays straig
   return { lines: ed().value.split('\\n').filter((l) => l.startsWith('arrow')), bent: !!bent };
 `, (v) => (v?.lines?.join('|') === 'arrow red: 200,150 -> 320,150 -> 320,240|arrow red: 40,270 -> 120,210' && v.bent ? null : `got ${JSON.stringify(v)}`));
 
+await check('changing marks with no tool on: a drag moves one, a corner reshapes it, Delete takes the picked one out', `
+  const ed = () => $$('.editor-wrap textarea').find((t) => t.offsetParent);
+  const img = () => $('.canvas-stage .ink-figure img');
+  if (!(await until(() => img()?.naturalWidth, 15000))) return { none: true };
+  const stage = $('.canvas-stage');
+  const at = (x, y) => { const r = img().getBoundingClientRect(); return { clientX: r.left + r.width * x / 400, clientY: r.top + r.height * y / 300 }; };
+  const ptr = (type, el, p) => el.dispatchEvent(new PointerEvent(type, { bubbles: true, cancelable: true, button: 0, pointerId: 1, ...p }));
+  const under = (x, y) => { const p = at(x, y); return document.elementFromPoint(p.clientX, p.clientY); };
+  const drag = async (x, y, dx, dy, want) => {
+    const el = under(x, y);
+    ptr('pointerdown', el, at(x, y));
+    for (let i = 1; i <= 5; i++) ptr('pointermove', stage, at(x + dx * i / 5, y + dy * i / 5));
+    ptr('pointerup', stage, at(x + dx, y + dy));
+    await until(() => ed().value.includes(want), 8000);
+    await until(() => $('.canvas-stage .ink-mark.ink-picked'), 8000);
+    return el?.getAttribute('class');
+  };
+  img().dispatchEvent(new MouseEvent('click', { bubbles: true })); await sleep(500);
+  const out = {};
+  out.dot = await drag(120, 90, 40, 30, 'num red: 160,120 1');
+  const hide = under(60, 37);
+  ptr('pointerdown', hide, at(60, 37)); ptr('pointerup', hide, at(60, 37)); hide.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+  out.grips = (await until(() => $$('.canvas-stage .ink-grip').length === 4 && 4, 4000)) || $$('.canvas-stage .ink-grip').length;
+  out.corner = await drag(80, 45, 40, 30, 'hide gray: 40,30 80x45');
+  stage.focus(); key('Delete', {}, stage);
+  await until(() => !ed().value.includes('hide gray'), 8000);
+  out.lines = ed().value.split('\\n').filter((l) => /^(num|hide|arrow)/.test(l));
+  return out;
+`, (v) => (v?.dot === 'ink-hit' && v.grips === 4 && v.corner === 'ink-grip' && v.lines.join('|') === 'num red: 160,120 1|num red: 240,180 2|arrow red: 200,150 -> 320,150 -> 320,240|arrow red: 40,270 -> 120,210' ? null : `got ${JSON.stringify(v)}`));
+
 await check('Settings shows Labs', `
   document.dispatchEvent(new KeyboardEvent('keydown', { key: ',', metaKey: navigator.platform.startsWith('Mac'), ctrlKey: !navigator.platform.startsWith('Mac'), bubbles: true }));
   const d = await until(() => $('.dialog.settings'));

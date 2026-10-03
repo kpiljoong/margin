@@ -1,7 +1,7 @@
 // node --test (npm test): marks drawn on a picture, as lines (public/ink.js).
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { parseInk, inkLine, simplify, addMark, removeMark, bentPath } from '../public/ink.js';
+import { parseInk, inkLine, simplify, addMark, removeMark, bentPath, movedMark, grips, reshapedMark, setMark } from '../public/ink.js';
 
 test('ink lines: read, written back the same', () => {
   const src = ['box red: 280,120 200x80', '# a comment', 'arrow: 410,220 -> 300,160', 'text blue: 420,230 The button is hidden', 'pen 초록: 100,100 120,104 140,112', '상자 빨강: 1,2 3×4', 'nonsense', 'pen red: 1,2', 'arrow purple: 1,2 -> x'].join('\n');
@@ -50,4 +50,23 @@ test('an arrow that bends: its bends in order, drawn round at them', () => {
   // Never more than half a side: a short side is rounded all the way.
   assert.equal(bentPath([[0, 0], [10, 0], [10, 100]], 20), 'M0,0 L5,0 Q10,0 10,5 L10,100');
   assert.equal(bentPath([[0, 0], [5, 5]], 20), 'M0,0 L5,5');
+});
+
+test('a mark moved, reshaped by its grips, and written back in its place', () => {
+  const [box, arrow, pen, text] = parseInk(['box blue: 10,10 100x50', 'arrow: 0,0 -> 100,0 -> 100,100', 'pen: 1,1 5,5', 'text: 3,4 Hi'].join('\n')).marks;
+  assert.equal(inkLine(movedMark(box, 5, -5)), 'box blue: 15,5 100x50');
+  assert.equal(inkLine(movedMark(arrow, 1, 2)), 'arrow red: 1,2 -> 101,2 -> 101,102');
+  assert.equal(inkLine(movedMark(pen, 1, 1)), 'pen red: 2,2 6,6');
+  assert.equal(inkLine(movedMark(text, 1, 1)), 'text red: 4,5 Hi');
+  assert.deepEqual(grips(box), [[10, 10], [110, 10], [110, 60], [10, 60]]);
+  assert.deepEqual(grips(pen), []);
+  // A corner dragged: the opposite one stays, even dragged past it.
+  assert.equal(inkLine(reshapedMark(box, 2, [210, 80])), 'box blue: 10,10 200x70');
+  assert.equal(inkLine(reshapedMark(box, 2, [0, 0])), 'box blue: 0,0 10x10');
+  // An arrow: an end moved, a bend added in the middle of a side, a bend dragged straight gone.
+  assert.equal(inkLine(reshapedMark(arrow, 2, [100, 200])), 'arrow red: 0,0 -> 100,0 -> 100,200');
+  assert.equal(inkLine(reshapedMark(arrow, 0, [50, -40], { mid: true })), 'arrow red: 0,0 -> 50,-40 -> 100,0 -> 100,100');
+  assert.equal(inkLine(reshapedMark(arrow, 1, [52, 48], { straight: 3 })), 'arrow red: 0,0 -> 100,100');
+  // Its own words for the kind and colour stay.
+  assert.equal(setMark('# note\n\uC0C1\uC790 \uD30C\uB791: 1,2 3x4\npen: 1,1 2,2', 1, movedMark(parseInk('box: 1,2 3x4').marks[0], 10, 0)), '# note\n\uC0C1\uC790 \uD30C\uB791: 11,2 3x4\npen: 1,1 2,2');
 });

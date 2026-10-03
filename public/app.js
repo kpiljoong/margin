@@ -9,7 +9,7 @@ import { MarkdownEditor, setEditorKeys } from './editor.js';
 import { hunksOf } from './track.js';
 import { renderDiagrams } from './diagrams.js';
 import { flowToMermaid, flowsAsMermaid, parseFlow, isStepText, flowStepNames, nameKey, flowTour, flowLineAt, COLORS } from './flow.js';
-import { pairInk, addMark, removeMark } from './ink.js';
+import { pairInk, addMark, removeMark, setMark } from './ink.js';
 import { pictureHunks, penPlaces, pictureSummary, showPicture, PLACE } from './penpic.js';
 import { connect, addBox, freshName, nextAnswer, setColor, setDirection, removeBox, removeArrow, setArrowKind, setArrowLabel, reverseArrow, setShape, arrowSpot } from './flowedit.js';
 import { FigureCanvas } from './canvas.js';
@@ -2404,7 +2404,7 @@ function inkEdit(tab, fig, change) {
     const start = lineOffset(v, at + 1);
     const close = at + 1 + (src ? src.split('\n').length : 0);
     if (v.slice(start, start + src.length) !== src || !/^\s*(`{3,}|~{3,})\s*$/.test(v.slice(lineOffset(v, close), eol(close)))) { toast('The note changed — try again.', 'error'); return; }
-    const next = change.add ? addMark(src, change.add) : removeMark(src, change.remove);
+    const next = change.add ? addMark(src, change.add) : change.set ? setMark(src, ...change.set) : removeMark(src, change.remove);
     if (next.trim()) { from = start; to = start + src.length; text = next; } else {
       // The last mark gone: the block too, the picture as it was.
       from = eol(pic);

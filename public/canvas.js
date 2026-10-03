@@ -501,6 +501,10 @@ export class FigureCanvas {
     this.world.querySelectorAll('.ink-mark.ink-at').forEach((g) => g.classList.remove('ink-at'));
     for (const l of goal?.marks || []) goal.fig.querySelector(`:scope > .ink-marks > .ink-mark[data-line="${l}"]`)?.classList.add('ink-at');
     this.ink?.show(!!goal?.fig?.matches?.('.ink-figure'));
+    // The marks of the picture looked at can be picked, moved and reshaped.
+    this.world.querySelectorAll('.ink-figure.ink-editable').forEach((f) => f.classList.remove('ink-editable'));
+    if (goal?.fig?.matches?.('.ink-figure') && !this.presenting) goal.fig.classList.add('ink-editable');
+    this.ink?.drawGrips();
     this.drawLinksSoon();
   }
 
