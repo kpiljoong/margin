@@ -4547,11 +4547,11 @@ function penPage(c, tab, lock) {
     const stuck = lock || conflicts.has(m.i);
     const what = m.kind === 'note' ? ['Noted', 'Dismiss'] : tab.kind === 'outside' ? ['Keep', 'Undo'] : ['Accept', 'Reject'];
     return h('div', { class: `pen-card kb-item pen-${st}${m.notes.length ? ' noted' : ''}`, 'data-path': c.path, 'data-hunk': m.key, 'data-mark': m.key, 'data-line': m.line + 1 },
-      m.notes.map((x) => h('div', { class: 'pen-note' }, x.comment || `→ ${x.suggest}`)),
-      conflicts.has(m.i) ? h('div', { class: 'pen-stuck' }, 'overlaps your edit') : null,
       stuck ? null : h('div', { class: 'pen-acts' },
         h('button', { class: 'pen-yes', title: `${what[0]} (y)`, onclick: () => penDecide(tab, c.path, m.key, 'y', false) }, '✓'),
-        h('button', { class: 'pen-no', title: `${what[1]} (n)`, onclick: () => penDecide(tab, c.path, m.key, 'n', false) }, '✗')));
+        h('button', { class: 'pen-no', title: `${what[1]} (n)`, onclick: () => penDecide(tab, c.path, m.key, 'n', false) }, '✗')),
+      m.notes.map((x) => h('div', { class: 'pen-note', title: x.comment || x.suggest }, x.comment || `→ ${x.suggest}`)),
+      conflicts.has(m.i) ? h('div', { class: 'pen-stuck' }, 'overlaps your edit') : null);
   });
   const page = h('div', { class: 'pen-page' },
     general.length ? h('div', { class: 'pen-general' }, general.map((x) => h('div', { class: 'pen-note' }, x.comment || x.suggest))) : null,
@@ -4609,6 +4609,9 @@ function markCur(el) {
   const wrap = el.closest('[data-tab]') || el.closest('.review');
   wrap?.querySelectorAll('.pen-on').forEach((x) => x.classList.remove('pen-on'));
   if (el.dataset.mark) el.closest('.pen-page')?.querySelectorAll(`.pen-doc [data-mark="${el.dataset.mark}"]`).forEach((x) => x.classList.add('pen-on'));
+  // The margin note in view shows all of itself: the ones below make room.
+  const body = el.closest('.pen-body');
+  if (pen && body && wrap) for (const b of wrap.querySelectorAll('.pen-body')) pen.layoutMargin(b);
 }
 
 // A run's new notes aren't in the workspace yet; notes deleted outside are gone.

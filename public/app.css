@@ -282,7 +282,9 @@ input[type=checkbox] { accent-color: var(--accent); }
 .result-preview { max-height: 70vh; padding: 16px 24px !important; }
 
 /* red pen: the changes on the note as proof marks, the reasons in the margin */
-:root { --pen: #ff7b72; --hand: "Bradley Hand", "Segoe Print", "Ink Free", "Noteworthy", "Nanum Pen Script", "Comic Sans MS", cursive; }
+/* Hangul in a pen hand where the system has one (Nanum Pen Script comes with macOS), sized up to match: a local font, nothing is downloaded. */
+@font-face { font-family: "Margin Pen Hangul"; src: local("Nanum Pen Script"), local("NanumPen"); unicode-range: U+1100-11FF, U+3130-318F, U+A960-A97F, U+AC00-D7AF, U+D7B0-D7FF; size-adjust: 132%; }
+:root { --pen: #ff7b72; --hand: "Bradley Hand", "Segoe Print", "Ink Free", "Noteworthy", "Margin Pen Hangul", "Apple SD Gothic Neo", "Malgun Gothic", cursive; }
 @media (prefers-color-scheme: light) { :root { --pen: #c9252d; } }
 :root[data-kind="light"] { --pen: #c9252d; }
 :root[data-kind="dark"] { --pen: #ff7b72; }
@@ -308,12 +310,13 @@ input[type=checkbox] { accent-color: var(--accent); }
 .pen-n:is(.pen-ins, .pen-insl) { opacity: .4; text-decoration: line-through; }
 .pen-n.pen-anchor { text-decoration: none; }
 .pen-on { background: color-mix(in srgb, var(--pen) 16%, transparent); border-radius: 3px; }
-.pen-card { position: absolute; left: 0; right: 0; top: 0; padding: 3px 6px 3px 8px; border-left: 2px solid var(--pen); border-radius: 0 var(--radius) var(--radius) 0; display: flex; flex-wrap: wrap; align-items: baseline; gap: 2px 8px; }
+.pen-card { position: absolute; left: 0; right: 0; top: 0; padding: 3px 4px 3px 8px; border-left: 2px solid var(--pen); border-radius: 0 var(--radius) var(--radius) 0; }
 .pen-card:not(.noted) { border-left-style: dotted; padding-top: 0; padding-bottom: 0; }
-.pen-note { flex: 1 1 100%; color: var(--pen); font: 15px/1.3 var(--hand); }
-.pen-card:not(.noted) .pen-acts { margin-left: 0; }
-.pen-acts { margin-left: auto; display: flex; gap: 2px; }
-.pen-acts button { border: 0; background: none; color: var(--fg-faint); cursor: pointer; padding: 0 5px; border-radius: 4px; font-size: 13px; }
+.pen-note { color: var(--pen); font: 15px/1.3 var(--hand); display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 3; overflow: hidden; overflow-wrap: anywhere; }
+.pen-card.kb-cur .pen-note { display: block; }
+.pen-acts { float: right; display: flex; gap: 0; margin: -1px 0 0 4px; }
+.pen-card:not(.noted) .pen-acts { float: none; }
+.pen-acts button { border: 0; background: none; color: var(--fg-faint); cursor: pointer; padding: 0 4px; border-radius: 4px; font-size: 13px; }
 .pen-acts .pen-yes:hover { color: var(--ok); background: var(--bg-hover); }
 .pen-acts .pen-no:hover { color: var(--bad); background: var(--bg-hover); }
 .pen-card.pen-y { border-left-color: var(--ok); }
@@ -321,7 +324,7 @@ input[type=checkbox] { accent-color: var(--accent); }
 .pen-card.pen-n { opacity: .5; border-left-color: var(--fg-faint); }
 .pen-card.pen-n .pen-no { color: var(--bad); }
 .pen-card.pen-n .pen-note { text-decoration: line-through; }
-.pen-stuck { flex: 1 1 100%; font-size: 11.5px; color: var(--warn); }
+.pen-stuck { font-size: 11.5px; color: var(--warn); }
 .review .pen-card.kb-cur { box-shadow: none; background: color-mix(in srgb, var(--pen) 10%, var(--bg)); }
 .review:focus .pen-card.kb-cur { outline: 1px solid color-mix(in srgb, var(--pen) 45%, transparent); }
 @media (max-width: 760px) { .pen-body { grid-template-columns: minmax(0, 1fr) 150px; column-gap: 18px; } }

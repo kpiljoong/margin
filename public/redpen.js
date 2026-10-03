@@ -96,14 +96,25 @@ export function penSource(base, hunks = [], comments = []) {
     const i = hunkAt(ln);
     if (i >= 0) { if (!byHunk.has(i)) byHunk.set(i, []); byHunk.get(i).push(c); continue; }
     const line = lines[ln];
-    const from = Math.max(pos - starts[ln], split(line)[0].length);
-    const to = Math.min(pos - starts[ln] + c.quote.length, line.length);
+    let from = Math.max(pos - starts[ln], split(line)[0].length);
+    let to = Math.min(pos - starts[ln] + c.quote.length, line.length);
     const list = anchors.get(ln) || [];
-    if (structural(line) || to <= from || list.some((x) => from < x.to && x.from < to)) { general.push(c); continue; }
-    const key = `n${c.n}`;
-    list.push({ from, to, key });
+    if (structural(line) || to <= from) { general.push(c); continue; }
+    // Words another note is on already: this one takes the rest of its
+    // quote, or joins that note when nothing is left.
+    let joined = null;
+    for (const x of list.sort((p, q) => p.from - q.from)) {
+      if (to <= x.from || x.to <= from) continue;
+      if (from >= x.from && to <= x.to) { joined = x; break; }
+      if (from < x.from) to = x.from; else from = x.to;
+      if (to <= from || !/[\p{L}\p{N}]/u.test(line.slice(from, to))) { joined = x; break; }
+    }
+    if (joined) { joined.mark.notes.push(c); continue; }
+    const mark = { key: `n${c.n}`, kind: 'note', line: ln, notes: [c] };
+    mark.at = from;
+    list.push({ from, to, key: mark.key, mark });
     anchors.set(ln, list);
-    notes.push({ key, kind: 'note', line: ln, notes: [c] });
+    notes.push(mark);
   }
 
   const marks = [...notes];
@@ -113,7 +124,7 @@ export function penSource(base, hunks = [], comments = []) {
     const list = anchors.get(ln);
     if (!list) return lines[ln];
     let l = lines[ln];
-    for (const a of list.sort((x, y) => y.from - x.from)) l = l.slice(0, a.from) + ANC + idChar(a.key) + l.slice(a.from, a.to) + END + l.slice(a.to);
+    for (const a of [...list].sort((x, y) => y.from - x.from)) l = l.slice(0, a.from) + ANC + idChar(a.key) + l.slice(a.from, a.to) + END + l.slice(a.to);
     return l;
   };
   hunks.forEach((hk, i) => {
@@ -144,7 +155,7 @@ export function penSource(base, hunks = [], comments = []) {
     marks.push({ key, kind: 'hunk', i, line: hk.baseStart, notes: byHunk.get(i) || [] });
   });
   for (; pos < lines.length; pos++) out.push(plain(pos));
-  marks.sort((a, b) => a.line - b.line || (a.kind === 'hunk' ? -1 : 1));
+  marks.sort((a, b) => a.line - b.line || (a.at ?? -1) - (b.at ?? -1));
   return { text: out.join('\n'), marks, general };
 }
 

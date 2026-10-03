@@ -5,7 +5,7 @@ import { createRequire } from 'node:module';
 import { penSource, wordOps } from '../public/redpen.js';
 import { renderMarkdown } from '../public/markdown.js';
 
-const { buildHunks } = createRequire(import.meta.url)('../lib/diff.js');
+const { buildHunks, applyHunks, mergeHunks } = createRequire(import.meta.url)('../lib/diff.js');
 // The marks written out: [-gone-] [+inline+] [^line^] [@anchor@], with the key.
 const show = (s) => s.replace(/\uE000(.)/gu, (_, c) => `[-${c.charCodeAt(0).toString(16).slice(-1)}:`)
   .replace(/\uE002(.)/gu, (_, c) => `[+${c.charCodeAt(0).toString(16).slice(-1)}:`)
@@ -56,4 +56,29 @@ test('comments: with their change, on the words they quote, or in general', () =
 test('a comment on a heading is anchored after its hashes', () => {
   const r = penSource('# Plan\n\ntext\n', [], [{ n: 3, quote: '# Plan', comment: 'Reads well.' }]);
   assert.equal(show(r.text), '# [@3:Plan]\n\ntext\n');
+});
+
+test('lines changed one for one are a change each: one can be taken alone, also over the user\'s edits', () => {
+  const base = 'intro\n\n- one one\n- two  two\n- three three\n\nend\n';
+  const work = 'intro\n\n- one\n- two two\n- three\n\nend\n';
+  const hunks = buildHunks(base, work);
+  assert.deepEqual(hunks.map((h) => [h.baseStart, h.baseEnd, h.before.length, h.after.length]), [[2, 3, 2, 0], [3, 4, 0, 0], [4, 5, 0, 3]]);
+  assert.equal(applyHunks(base, hunks, new Set([1])), 'intro\n\n- one one\n- two two\n- three three\n\nend\n');
+  assert.equal(applyHunks(base, hunks, new Set([0, 1, 2])), work);
+  const merged = mergeHunks(base, `${base}more\n`, hunks, new Set([0, 2]));
+  assert.deepEqual(merged.conflicts, []);
+  assert.equal(merged.text, 'intro\n\n- one\n- two  two\n- three\n\nend\nmore\n');
+  assert.equal(penSource(base, hunks).marks.length, 3);
+});
+
+test('notes on overlapping words: the second takes the rest, or joins the first', () => {
+  const r = penSource('We ship the docs and the video by the 20th.\n', [], [
+    { n: 0, quote: 'the docs and the video by the 20th', comment: 'Which docs?' },
+    { n: 1, quote: 'by the 20th.', comment: 'Which month?' },
+    { n: 2, quote: 'the video', comment: 'Who films it?' },
+    { n: 3, quote: 'ship the docs', comment: 'Ship how?' },
+  ]);
+  assert.equal(show(r.text), 'We [@3:ship ][@0:the docs and the video by the 20th].\n');
+  assert.deepEqual(r.marks.map((m) => [m.key, m.notes.map((c) => c.comment)]), [['n3', ['Ship how?']], ['n0', ['Which docs?', 'Which month?', 'Who films it?']]]);
+  assert.deepEqual(r.general, []);
 });
