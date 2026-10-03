@@ -2542,6 +2542,7 @@ const COMMANDS = [
   ['Back to the note before', otherBuffer, { key: 'other-note' }],
   ['Messages…', () => setTimeout(showMessages, 0)],
   ['Tasks in all notes (agenda)', () => openTasks()],
+  ['Instructions for agents in this folder (AGENTS.md)', () => editAgentInstructions()],
   ['Paste from the copy history…', () => setTimeout(pasteFromHistory, 0), { key: 'paste-history' }],
   ['Jump to a word in view…', () => setTimeout(jumpInNote, 0), { key: 'jump' }],
   ['Changes from outside (agents, other editors)…', () => openOutside()],
@@ -3978,9 +3979,10 @@ async function openTaskDialog(presetTask = '') {
     try {
       const r = await api('GET', `/api/scope?scope=${scope}${focus ? `&focus=${encodeURIComponent(focus)}` : ''}`);
       filesBox.replaceChildren(
+        r.instructions ? h('div', { class: 'instr', title: 'The folder’s instructions for agents, sent with every task' }, `${r.instructions}  (instructions)`) : '',
         ...r.included.map((p) => h('div', {}, p)),
         ...r.excluded.map((x) => h('div', { class: 'ex', title: `withheld: ${x.reason}` }, `${x.path}  (private)`)));
-      shareLine.textContent = `${r.included.length} note${r.included.length === 1 ? '' : 's'} will be shared${r.excluded.length ? `, ${r.excluded.length} withheld as private` : ''}.`;
+      shareLine.textContent = `${r.included.length} note${r.included.length === 1 ? '' : 's'} will be shared${r.excluded.length ? `, ${r.excluded.length} withheld as private` : ''}${r.instructions ? `, with ${r.instructions}` : ''}.`;
       runBtn.disabled = !r.included.length;
     } catch (e) { filesBox.replaceChildren(e.message); runBtn.disabled = true; }
   }
@@ -4042,6 +4044,19 @@ function openReview(id) {
   tab.wantFocus = true;
   activate(tab.id);
   refreshReview(tab);
+}
+
+// AGENTS.md at the top of the folder goes with every task (server.js): how
+// agents should write here. Opened, or made from a start.
+async function editAgentInstructions() {
+  const p = 'AGENTS.md';
+  if (!S.files.some((f) => f.path === p)) {
+    try {
+      await api('POST', '/api/file', { path: p, content: '# Instructions for agents\n\nMargin sends this note with every task you give an agent here (Claude Code and Codex read it too when they work in this folder).\n\n- Write in the language of the note.\n- Keep my headings and the order of the sections.\n- Tags look like #area/topic; dates like 2026-10-03.\n' });
+      await loadTree();
+    } catch (e) { toast(e.message, 'error'); return; }
+  }
+  openFile(p);
 }
 
 // The run that waits longest for a look (the oldest in review), else the newest.
@@ -4884,6 +4899,7 @@ function leaderTree() {
     { key: 'a', label: 'agent', items: [
       { key: 'a', label: 'Delegate a task…', run: () => openTaskDialog() },
       { key: 'r', label: 'Agent runs', run: () => showView('agent') },
+      { key: 'i', label: 'Instructions for agents (AGENTS.md)', run: editAgentInstructions },
       { key: 'v', label: 'Review the next run', when: () => S.runs.some((r) => r.status === 'review'), run: reviewNext },
       { key: 'o', label: `Changed outside${S.outside?.length ? ` (${S.outside.length})` : ''}`, run: openOutside },
       ...RECIPES.map(([name, text], i) => ({ key: String(i + 1), label: `${name}…`, run: () => openTaskDialog(text) })),

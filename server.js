@@ -976,7 +976,19 @@ function resolveScope(scope, focus) {
     if (reason) excluded.push({ path: f, reason });
     else included.push(f);
   }
-  return { scope, focus: focus || null, included, excluded };
+  return { scope, focus: focus || null, included, excluded, instructions: agentInstructions() ? INSTRUCTIONS : null };
+}
+
+// The folder's own instructions for agents: AGENTS.md at its top (the file
+// coding agents read), sent with every task whatever its scope — unless it is
+// kept private like any note.
+const INSTRUCTIONS = 'AGENTS.md';
+function agentInstructions() {
+  const abs = path.join(ROOT, INSTRUCTIONS);
+  let st;
+  try { st = fs.statSync(abs); } catch { return null; }
+  if (!st.isFile() || st.size > 32 * 1024 || loadIgnore(ROOT)(INSTRUCTIONS) || isPrivateNote(abs)) return null;
+  return readText(abs)?.trim() || null;
 }
 
 // The ```flow notation, for tasks that mention it (lib/flow-notation.md).
@@ -987,6 +999,7 @@ const flowGuide = (text) => (/\bflow\b/i.test(text)
 
 function buildPrompt(task, focus, followUp = '') {
   const flow = flowGuide(`${task}\n${followUp}`);
+  const own = agentInstructions();
   return [
     'You are helping with a folder of plain Markdown notes.',
     'The current directory is a staged copy of the notes you are allowed to see.',
@@ -995,6 +1008,7 @@ function buildPrompt(task, focus, followUp = '') {
     'Work without asking questions: nobody can answer them. If the task is unclear, make the most reasonable edit.',
     'Diagrams render from ```mermaid code blocks.',
     flow ? `\n${flow}\n` : '',
+    own ? `\nInstructions for this notes folder (from ${INSTRUCTIONS}):\n${own}\n` : '',
     focus ? `The note the user is looking at: ${focus}` : '',
     '',
     `Task: ${task}`,

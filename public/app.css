@@ -271,6 +271,7 @@ input[type=checkbox] { accent-color: var(--accent); }
 .scope-row label { display: flex; gap: 5px; align-items: center; cursor: pointer; }
 .scope-files { font: 12px/1.6 var(--mono); color: var(--fg-dim); max-height: 140px; overflow: auto; padding: 6px 10px; background: var(--bg); border: 1px solid var(--border); border-radius: var(--radius); }
 .scope-files .ex { color: var(--fg-faint); text-decoration: line-through; }
+.scope-files .instr { color: var(--accent); }
 .recipes { display: flex; flex-wrap: wrap; gap: 6px; margin: 8px 0 0; }
 .chip { border: 1px solid var(--border); background: var(--bg); border-radius: 12px; padding: 1px 10px; font-size: 12px; color: var(--fg-dim); cursor: pointer; }
 .chip:hover { color: var(--fg); border-color: var(--accent); }

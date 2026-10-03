@@ -160,7 +160,7 @@ The shortcuts above (except typing behaviours like Tab, Enter, and bracket pairi
 | `l` links | `l` follow the link at the cursor · `f` pick a link in the preview · `b` back |
 | `g` git | `g` the Git panel · `d` changes since the last commit · `h` this file's history |
 | top level | `j` jump to a word · `v` / `V` expand / shrink the selection · `y` paste from the copy history · `` ` `` the note before · `.` repeat · Space every command |
-| `a` agent | `a` delegate a task · `1`–`6` a recipe (Tidy, Summarize…) · `v` review the next run · `o` changes from outside · `r` agent runs |
+| `a` agent | `a` delegate a task · `1`–`6` a recipe (Tidy, Summarize…) · `v` review the next run · `o` changes from outside · `i` instructions for agents (AGENTS.md) · `r` agent runs |
 | `t` toggles | `f` tree follows the tab · `s` sidebar · `t` theme · `z` focus mode |
 | `q` macro | `q` start/stop recording · `r` play · `n` play N times · `e` play until it can't go on · `s` play at every search result · `v` show it |
 | `.` | Repeat the last command (it shows which) |
@@ -339,6 +339,8 @@ The configured command runs in a shell with `cwd = the staging copy` and receive
 | stdin, `$AGENT_NOTES_PROMPT` | Role description + focus note + task (includes prior context in follow-up rounds) |
 | `$AGENT_NOTES_TASK` | The task as written by the user |
 | `$AGENT_NOTES_SCOPE`, `$AGENT_NOTES_FOCUS`, `$AGENT_NOTES_ROUND` | Scope, the note being viewed, round number |
+
+**AGENTS.md — the folder's instructions for agents.** A note named `AGENTS.md` at the top of the workspace is added to the prompt of every task, whatever the scope (the dialog lists it with what is shared). Use it for how agents should write here: the language, heading and tag conventions, what not to touch. ⌥X a i (palette: `Instructions for agents…`) opens it, or starts one. Claude Code and Codex read the same file when they work in the folder directly. Marked private (front matter or `.agentnotesignore`), it is not sent.
 
 The agent only needs to edit, create, or delete files in the current directory. stdout/stderr are saved as the run log, and it's terminated after 20 minutes.
 
