@@ -163,6 +163,14 @@ What Margin shows that isn't a file is a buffer like a note, as in Emacs: the re
 
 The rest are each one's own (`y`, `n`, `x`, `a`, `v`… in a review; `x`, `a`, `h` in Tasks; `/` in Search to search again; `t` new task and `v` next review in Agent runs; `R` restore in History, where `j`/`k` step through the versions). The `j k · …` hint in each head lists them, and M-x shows them first while that buffer is in view. ⌥X b also opens them: `m` messages, `r` agent runs, `s` search results, `x` tasks, `c` changed outside. The search buffer is the same search as the sidebar's, so F8 steps through it from the note.
 
+### A folder as text (dired)
+
+⌥X d shows the folder of the note in view as a buffer — a line for each thing in it, folders first and ending in `/` (⌥X f d, M-x "Dired", or right-click a folder in the tree for another folder). `j`/`k` move, Enter opens (a folder goes into it), `^` or `-` goes up, `g` reads it again, `e` edits the folder as text (`R`: the same, with that line's name selected).
+
+Editing is plain text editing: change a name and it is a rename; change it to a path (`../archive/`, `archive/` for a folder here, `/notes/x.md` from the top) and it is a move; delete the line and it goes to the trash; a new line is a new note (`.md` added) or, ending in `/`, a new folder. A line only moved within the list changes nothing; a name without its extension keeps it. ⌘S (or C-c C-c) doesn't do any of it: it shows the plan in the review — the list in red pen with a note in the margin on what each change does ("Rename ideas.md → ideas-2026.md (links follow)", "old_draft.md to the trash", "Move … · it will be withheld from agents there (.agentnotesignore)") — to take with `y`/`n`, `A` all, and `a` to apply; `q` (or `e`) goes back to the text, C-c C-k (or Esc with nothing changed) leaves it. A change that can't be done (outside the workspace, a name kept for Margin or git, a name already taken, two lines to the same place) says why and can't be taken.
+
+Applying does the renames and moves as ⌥X f r does — [[links]] and embeds to the notes follow — puts the gone ones in Margin's trash (`.agent-notes/trash`, with "Undo trash" in the toast) and never deletes anything for good. A line changed in place is read as a rename of that line; when lines are removed and added in one place the similar ones pair up as renames and a line naming a folder that is there (`../archive/`) is where the one beside it went.
+
 ### Tasks in all notes
 
 ⌥X f x (palette: `Tasks in all notes`) lists every `- [ ]` in the workspace in one tab, like org-mode's agenda or Obsidian Tasks: **Overdue**, **Today** and **Upcoming** by their date (`📅 2026-10-05` or `due:2026-10-05` anywhere in the line), then the rest by note. Tasks in code blocks and in `templates/` are left out. `j`/`k` move, `x` or Space checks one off in its note (or on again), `o`/Enter opens the note at it, `a` opens it and asks the agent to do it (the task is prefilled; the agent checks it off in its proposal), `h` shows the done ones too, `g` refreshes, `q` closes. The list follows changes to the notes.
@@ -239,11 +247,12 @@ The shortcuts above (except typing behaviours like Tab, Enter, and bracket pairi
 
 | Keys | |
 |---|---|
-| `f` files | `f` find a file · `n` new note · `t` from a template · `j` today's journal · `r` rename · `b` bookmark · `y` copy [[link]] · `l` show in the tree · `h` history · `e` export HTML |
+| `f` files | `f` find a file · `n` new note · `t` from a template · `j` today's journal · `r` rename · `b` bookmark · `y` copy [[link]] · `l` show in the tree · `h` history · `e` export HTML · `d` a folder as text (dired) |
 | `s` search | `s` the workspace · `b` the results as a buffer · `f` find in note · `r` replace · `h` heading here · `a` heading in any note · `l` go to line · `n`/`p` next/previous search result |
 | `b` buffers | `b` switch buffer (most recent first) · `` ` `` the note before · `m` messages · `r` agent runs · `s` search results · `x` tasks · `c` changed outside · `n`/`p` next/previous · `d` close · `o` close others · `[` `]` back/forward |
 | `w` windows | `h` the sidebar · `l` the editor · `p` the preview · `w` the other pane · `v` split · `s` show/hide the sidebar · `z` focus mode |
 | `m` mode | `e` Edit · `s` Split · `c` Canvas · `p` Preview |
+| `n` narrow | `n` narrow to this section (or the selected lines) · `w` widen: the whole note |
 | `l` links | `l` follow the link at the cursor · `f` pick a link in the preview · `b` back |
 | `g` git | `g` the Git panel · `d` changes since the last commit · `h` this file's history |
 | top level | `j` jump to a word · `v` / `V` expand / shrink the selection · `y` paste from the copy history · `` ` `` the note before · `.` repeat · `:` or Space M-x |
@@ -251,10 +260,28 @@ The shortcuts above (except typing behaviours like Tab, Enter, and bracket pairi
 | `r` recipes | `1`–`6` Margin's recipes · your own by their `key:` · `e` edit `RECIPES.md` |
 | `t` toggles | `f` tree follows the tab · `s` sidebar · `t` theme · `z` focus mode |
 | `q` macro | `q` start/stop recording · `r` play · `n` play N times · `e` play until it can't go on · `s` play at every search result · `v` show it |
+| `d` | This note's folder as text (dired) |
+| `h` help | `k` describe a key · `c` describe a command · `l` edit your leader keys (LEADER.md) · `s` keyboard shortcuts |
 | `.` | Repeat the last command (it shows which) |
 | `,` / `k` | Settings / keyboard shortcuts |
 
 **M-x: every command by name.** ⌘⇧P, ⌥X : (or ⌥X Space, ⌥X ⌥X) lists every command — the palette's, every leader key, the recipes, and the keys of the buffer in view — found by a few letters of its name (fuzzy). Each shows its shortcut and its ⌥X keys, so M-x also teaches them. With nothing typed, the commands of the buffer you are in come first (◆, with their key), then the ones you ran lately, then the rest; when typing, recent and fitting ones are lifted. Commands for the note (Editor:, View:, Find…) count as fitting when a note is in view. Commands that can't run here (no note open…) are left out.
+
+**Describe a key (⌥X h k), describe a command (⌥X h c).** As Emacs's C-h k: press ⌥X h k, then any key — a shortcut (⌘S), the leader and a path (⌥X n n: the menu opens as usual, titled "Describe"), or a buffer's own key (`g` in dired) — and a help buffer says which command it is, what it does in a line, every key it is on (shortcut, leader paths, yours from LEADER.md with the line, the buffer key, M-x), and how to change them, with a line to copy into LEADER.md. A key with nothing on it says so. ⌥X h c finds a command by name from M-x's list, each with its line. In the help buffer `o` runs the command, `k`/`c`/`l` describe another key, command, or open LEADER.md, `q` closes.
+
+**Keys of your own after ⌥X (LEADER.md).** ⌥X h l (M-x "Edit leader keys", or Settings → Keyboard shortcuts → Edit leader keys) opens `LEADER.md` at the top of the workspace, made with a few examples the first time. It is a note: each list item with keys in backticks is a rule —
+
+```
+- `o` +my keys                              a group, with its name
+- `o j` Open today’s journal note           a command by its M-x name
+- `o s` Recipe: Summarize                   a recipe
+- `f d` Narrow to this section or the selected lines   a key of Margin's, changed
+- `k` off                                   a key taken away (Margin's too)
+```
+
+Keys are a letter (`A` is Shift+a), a digit, `SPC`, or one of `` ` / . , ; ' [ ] : ``; after the name, ` — ` and a remark. Saved, the menu (which-key), M-x and describe-key follow it at once; a rule that can't be followed (no such command, not a key, a key under a command) is left out with a warning naming its line — the rest work, and nothing else changes. The file is per workspace, so a shared folder can carry its keys.
+
+**Narrowing to a section (⌥X n n, ⌥X n w).** Shows only the section under the heading at the cursor — up to the next heading of the same or a higher level — or, with lines selected, those lines. Editing, finding (⌘F finds in the part shown), undo, suggesting and comments work in it as in the whole note; saving writes the whole note, the rest as it was. The status line says `⊟ Narrowed · 12–30` (the lines; a click widens), the line numbers stay the note's, and it shows in meeting mode too — narrow to the agenda item being discussed. ⌥X n w (or the chip) shows the whole note again; going to a place outside the part (a link, a search result, go to line) widens first.
 
 **Buffers (as in Emacs and Vim).** A note you close is kept for the session with its cursor, scroll and undo history; opened again (from anywhere) it comes back as it was, as long as the file hasn't changed meanwhile (the 20 most recent are kept). ⌘⇧B / ⌥X b b lists the notes most recently used first — the one before this is at the top, closed ones are marked ○. ⌃6 or ⌥X `` ` `` switches back and forth between two notes. ⌥X b m opens the messages shown at the bottom so far as a buffer (`o` copies one; kept in memory only).
 
@@ -527,6 +554,8 @@ The only data created inside the workspace is `.agent-notes/`, which has its own
   - Folding works only in the preview.
   - Styles that change character width, like heading sizes, are not used in the editor (visible in the preview).
   - Suggesting marks in the editor are color, strike and underline in the editor's own font; the pen's handwriting is in the preview and the review.
+  - Narrowing narrows the editor; the preview (in Split) still shows the whole note.
+- Dired lists one folder at a time (no recursive listing) and only makes notes and folders; other files can be renamed, moved or trashed. On Windows and Linux, C-c C-c in its text also copies (the first C-c is left to the system).
 - Notes over 300,000 characters have syntax coloring turned off in the editor (to keep it fast). Even in a 1.5-million-character note, input latency is about 12ms.
 - Search scans cached contents without an index. With 5,000 notes: tree 3ms, search 6–55ms, tag aggregation 33ms.
 - Automatic link fixing handles `[[name]]`, `[[path/name]]`, and relative `[..](..)` links. If several notes share the same name, `[[name]]` links are left alone (ambiguous).

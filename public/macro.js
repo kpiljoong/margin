@@ -244,20 +244,20 @@ export class Macros {
       } else if (step.t === 'edit') {
         const from = Math.max(0, s - step.before);
         const to = Math.min(v.length, e + step.after);
-        ed.replace(from, to, step.text);
+        ed._edit(from, to, step.text);
       } else if (step.t === 'delete') {
-        if (s !== e) ed.replace(s, e, '');
+        if (s !== e) ed._edit(s, e, '');
         else {
           let to = moveCaret(v, s, step.how).pos;
           if (to === s && step.how === 'lineEnd' && s < v.length) to = s + 1; // at the end: the line break
           if (step.how === 'lineEnd') this.clip = v.slice(s, to); // ⌃K: kept for ⌃Y
-          if (to !== s) ed.replace(Math.min(s, to), Math.max(s, to), '');
+          if (to !== s) ed._edit(Math.min(s, to), Math.max(s, to), '');
         }
       } else if (step.t === 'copy') {
         this.clip = v.slice(s, e);
-        if (step.cut && s !== e) ed.replace(s, e, '');
+        if (step.cut && s !== e) ed._edit(s, e, '');
       } else if (step.t === 'paste') {
-        ed.replace(s, e, this.clip ?? step.text);
+        ed._edit(s, e, this.clip ?? step.text);
       } else if (step.t === 'move' && step.how === 'all') {
         ta.setSelectionRange(0, v.length);
       } else if (step.t === 'move') {

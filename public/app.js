@@ -16,6 +16,10 @@ import { copyPng, copySvg, svgFromDataUrl, imageToPng } from './clip.js';
 import { openViewer } from './viewer.js';
 import { fuzzy, rankCommands, used } from './commands.js';
 import { parseRecipes, mergeRecipes, runsDirectly, RECIPES_FILE, RECIPES_STARTER } from './recipes.js';
+import { parseLeaderKeys, applyLeaderKeys, LEADER_FILE, LEADER_STARTER } from './leaderkeys.js';
+import { sectionRange, linesRange } from './narrow.js';
+import { listing as dirListing, planDired, describeOps, orderOps, plainLine } from './dired.js';
+import { docOf } from './docs.js';
 import SHORTCUTS from './shortcuts.json' with { type: 'json' };
 import { effectiveKeys, eventKeys, normalize, keyLabel, unusable, conflicts, customOnly } from './keys.js';
 import { THEMES, allThemes, applyTheme, resolveTheme, onSystemThemeChange, setCustomThemes, validateTheme, exportTheme } from './themes.js';
@@ -795,6 +799,7 @@ async function saveTab(tab = fileTab(), { force = false } = {}) {
   tab.saving = null;
   renderTabs(); renderStatus(); renderBanner();
   if (tab.path === RECIPES_FILE) loadRecipes();
+  if (tab.path === LEADER_FILE) loadLeaderKeys();
   if (tab.saveAgain) { tab.saveAgain = false; if (tab.content !== tab.saved && !tab.conflict) await saveTab(tab); }
 }
 
@@ -1725,6 +1730,7 @@ function editorFor(tab) {
     complete: completeFor,
     onPasteFiles: (files) => attachFiles(tab, files),
     onTrack: () => proofChanged(tab),
+    onNarrow: () => { if (activeTab() === tab) renderStatus(); },
   });
   ed.value = tab.content;
   ed.setOptions({ highlight: S.settings.highlight, spellcheck: S.settings.spellcheck });
@@ -2509,6 +2515,8 @@ function renderStatus() {
     const waiting = !tab.proof?.on && proofRun(tab);
     if (tab.proof?.on) mine.push(h('span', { class: 'item clickable pen-chip', title: `Your edits are suggestions: the note stays as it is. Click or ${kbd('suggest') || '⌥X p p'} to stop.`, onclick: () => toggleSuggest(tab) }, '✎ Suggesting'));
     else if (waiting) mine.push(h('span', { class: 'item clickable pen-chip', title: 'Your suggestions on this note wait for review', onclick: () => openReview(waiting.id) }, '✎ Suggestions waiting'));
+    const part = tab.editor?.narrowed;
+    if (part) mine.push(h('span', { class: 'item clickable narrow-chip', title: `Only lines ${part.from}–${part.to} are in view; saving keeps the whole note. Click or ${kbd('leader') || '⌥X'} n w to show all of it.`, onclick: () => widenHere(tab) }, `⊟ Narrowed · ${part.from}–${part.to}`));
     const n = openComments(tab).length;
     if (n) mine.push(h('span', { class: 'item clickable pen-chip', title: `Comments beside this note · ${kbd('leader') || '⌥X'} p n: the next one`, onclick: () => stepNote(tab, 1) }, `✍ ${n} comment${n === 1 ? '' : 's'}`));
   }
@@ -2560,6 +2568,13 @@ const COMMANDS = [
   ['Agent runs (as a buffer)', () => openRuns()],
   ['Search results (as a buffer)', () => openSearchBuffer()],
   ['Recipes: edit (RECIPES.md)', () => editRecipes()],
+  ['Edit leader keys', () => editLeaderKeys()],
+  ['Describe a key…', () => describeKey()],
+  ['Describe a command…', () => setTimeout(describeCommand, 0)],
+  ['Dired: edit a folder as text…', () => setTimeout(pickDiredFolder, 0)],
+  ['Dired: the folder of this note', () => diredHere()],
+  ['Narrow to this section or the selected lines', () => narrowHere()],
+  ['Widen: show the whole note', () => widenHere()],
   ['Tasks in all notes (agenda)', () => openTasks()],
   ['Instructions for agents in this folder (AGENTS.md)', () => editAgentInstructions()],
   ['Paste from the copy history…', () => setTimeout(pasteFromHistory, 0), { key: 'paste-history' }],
@@ -2643,10 +2658,13 @@ const COMMANDS = [
 // M-x: every command by name — the palette's, the leader's (with its keys),
 // the recipes, and the keys of the buffer in view — with its shortcut and its
 // ⌥X path. The buffer's own come first, then the ones used lately.
-const NOTE_COMMAND = /^(Editor|Preview|Canvas|View|Insert|Find in note|Replace in note|Go to (heading|line))\b/;
+const NOTE_COMMAND = /^(Editor|Preview|Canvas|View|Insert|Find in note|Replace in note|Go to (heading|line)|Narrow|Widen)\b/;
 let mxRecent = (() => { try { return JSON.parse(store.getItem('an.mx') || '[]').filter((x) => typeof x === 'string'); } catch { return []; } })();
 const norm = (n) => n.toLowerCase().replace(/…$/, '').trim();
 const upper = (w) => w.charAt(0).toUpperCase() + w.slice(1);
+// A leader key's command in M-x: its own name (the same whatever its label
+// says now), or the group's and the label.
+const leafName = (it, group) => it.cmd || (group ? `${upper(group)}: ${it.label}` : it.label);
 
 function allCommands() {
   const tab = activeTab();
@@ -2672,7 +2690,7 @@ function allCommands() {
       if (it.recipe) { const c = out.get(norm(`Recipe: ${it.recipe.name}`)); if (c && !c.leader) c.leader = keys; continue; }
       const same = out.get(norm(it.cmd || '')) || out.get(norm(it.label));
       if (same) { same.leader ||= keys; continue; }
-      add({ name: group ? `${upper(group)}: ${it.label}` : it.label, run: it.run, leader: keys });
+      add({ name: leafName(it, group), run: it.run, leader: keys });
     }
   };
   walk(leaderTree(), [], '');
@@ -3075,6 +3093,9 @@ function openSettings({ keys = false } = {}) {
         toggle('labSteadyDraw', 'Steady live drawing', 'While you type in a ```flow block, keep the picture until the line is whole and you pause, so boxes don’t jump at every key.'),
         toggle('labWheelPans', 'Canvas: the wheel moves', 'Scrolling or two fingers move the canvas; pinch or ⌘/Ctrl + wheel zooms. Off: the wheel zooms.')),
       h('div', { class: 'set-label', id: 'set-keys' }, 'Keyboard shortcuts'),
+      h('p', { class: 'set-detail' }, `The keys after the leader (${kbd('leader') || '⌥X'}) are yours to change too: in ${LEADER_FILE}, a note in this folder. `,
+        h('button', { class: 'btn small', onclick: () => { close(); editLeaderKeys(); } }, 'Edit leader keys'), ' ',
+        h('button', { class: 'btn small', onclick: () => { close(); describeCommand(); } }, 'Describe a command…')),
       shortcutsSection()),
     h('div', { class: 'dialog-foot' }, h('div', { class: 'grow' }, 'Tip: type “theme” in the command palette to switch themes from the keyboard.'), h('button', { class: 'btn primary', onclick: close }, 'Done'))));
   overlay.hidden = false;
@@ -3108,6 +3129,7 @@ function fileMenu(e, f) {
     { label: 'Copy path', run: () => navigator.clipboard.writeText(f.path).then(() => toast('Path copied')) },
     revealItem(f.path),
     { label: isBookmarked(f.path) ? 'Remove bookmark' : 'Bookmark', run: () => toggleBookmark(f.path) },
+    { label: 'Dired: its folder as text…', run: () => openDired(dirname(f.path), f.path) },
     '-',
     { label: 'Rename / move…', key: 'F2', run: () => renameItem(f.path) },
     { label: 'Delete', danger: true, run: () => deleteItem(f.path) },
@@ -3122,6 +3144,7 @@ function folderMenu(e, dir) {
     { label: 'New drawing here…', run: () => newDrawing(dir) },
     { label: 'New Mermaid diagram here…', run: () => newMermaidFile(dir) },
     revealItem(dir),
+    { label: 'Dired: edit as text…', run: () => openDired(dir) },
     '-',
     { label: 'Rename / move…', run: () => renameItem(dir, true) },
     { label: 'Delete folder', danger: true, run: () => deleteItem(dir, true) },
@@ -3136,24 +3159,9 @@ async function renameItem(p, isDir = false) {
     okLabel: 'Rename',
   });
   if (!to || to === p) return;
-  for (const t of S.tabs) if (t.kind === 'file' && (t.path === p || t.path.startsWith(`${p}/`))) await flushAutosave(t);
-  for (const t of S.tabs) if (t.kind === 'drawing' && (t.path === p || t.path.startsWith(`${p}/`))) await saveDrawing(t, { flush: true });
   try {
-    const r = await api('POST', '/api/rename', { from: p, to });
-    for (const t of S.tabs) {
-      const next = r.moved[t.path];
-      if (!isDoc(t) || !next) continue;
-      const grp = S.groups[t.group];
-      const wasActive = grp?.active === t.id;
-      t.path = next;
-      t.id = `${t.kind === 'drawing' ? 'd' : 'f'}:${next}`;
-      if (wasActive) grp.active = t.id;
-    }
-    S.recent = S.recent.map((x) => r.moved[x] || x);
-    if (S.bookmarks.some((x) => r.moved[x])) { S.bookmarks = S.bookmarks.map((x) => r.moved[x] || x); saveBookmarks(); }
+    const r = await movePath(p, to, isDir);
     await loadTree();
-    navRenamed(r.moved);
-    if (isDir) for (const d of [...S.expanded]) if (d === r.from || d.startsWith(`${r.from}/`)) { S.expanded.delete(d); S.expanded.add(r.to + d.slice(r.from.length)); }
     persist();
     await syncOpenTabs();
     render();
@@ -3161,15 +3169,34 @@ async function renameItem(p, isDir = false) {
   } catch (e) { toast(e.message, 'error'); }
 }
 
+// A rename or move (the server updates the links to it), and what goes with
+// it here: open tabs, recent notes, bookmarks, the way back, open folders.
+async function movePath(p, to, isDir) {
+  for (const t of S.tabs) if (t.kind === 'file' && (t.path === p || t.path.startsWith(`${p}/`))) await flushAutosave(t);
+  for (const t of S.tabs) if (t.kind === 'drawing' && (t.path === p || t.path.startsWith(`${p}/`))) await saveDrawing(t, { flush: true });
+  const r = await api('POST', '/api/rename', { from: p, to });
+  for (const t of S.tabs) {
+    const next = r.moved[t.path];
+    if (!isDoc(t) || !next) continue;
+    const grp = S.groups[t.group];
+    const wasActive = grp?.active === t.id;
+    t.path = next;
+    t.id = `${t.kind === 'drawing' ? 'd' : 'f'}:${next}`;
+    if (wasActive) grp.active = t.id;
+  }
+  S.recent = S.recent.map((x) => r.moved[x] || x);
+  if (S.bookmarks.some((x) => r.moved[x])) { S.bookmarks = S.bookmarks.map((x) => r.moved[x] || x); saveBookmarks(); }
+  navRenamed(r.moved);
+  if (isDir) for (const d of [...S.expanded]) if (d === r.from || d.startsWith(`${r.from}/`)) { S.expanded.delete(d); S.expanded.add(r.to + d.slice(r.from.length)); }
+  return r;
+}
+
 async function deleteItem(p, isDir = false) {
   const tab = S.tabs.find((t) => t.kind === 'file' && t.path === p);
   if (tab && tab.content !== tab.saved && !(await askConfirm(`${p} has unsaved changes. Delete anyway?`, { okLabel: 'Delete', danger: true }))) return;
   try {
-    const r = await api('POST', '/api/delete', { path: p });
-    // Bookmarks go with it, and come back with Undo.
-    const marks = S.bookmarks.filter((b) => b === p || b.startsWith(`${p}/`));
-    if (marks.length) { S.bookmarks = S.bookmarks.filter((b) => !marks.includes(b)); saveBookmarks(); }
-    for (const t of [...S.tabs]) if (isDoc(t) && (t.path === p || t.path.startsWith(`${p}/`))) { t.saved = t.kind === 'drawing' ? t.text : t.content; t.discard = true; await closeTab(t.id); }
+    const r = await trashPath(p);
+    const { marks } = r;
     await loadTree();
     navPrune();
     updateNavButtons();
@@ -3182,6 +3209,15 @@ async function deleteItem(p, isDir = false) {
       } catch (e) { toast(e.message, 'error'); }
     } });
   } catch (e) { toast(e.message, 'error'); }
+}
+
+// To the trash (it can come back): its tabs close, its bookmarks go with it.
+async function trashPath(p) {
+  const r = await api('POST', '/api/delete', { path: p });
+  const marks = S.bookmarks.filter((b) => b === p || b.startsWith(`${p}/`));
+  if (marks.length) { S.bookmarks = S.bookmarks.filter((b) => !marks.includes(b)); saveBookmarks(); }
+  for (const t of [...S.tabs]) if (isDoc(t) && (t.path === p || t.path.startsWith(`${p}/`))) { t.saved = t.kind === 'drawing' ? t.text : t.content; t.discard = true; await closeTab(t.id); }
+  return { ...r, marks };
 }
 
 async function newFolder(base = '') {
@@ -4468,21 +4504,22 @@ function diffLine(cls, n, sign, content) {
 function hunkView(c, hunk, i, dec, lockedAll, tab) {
   // Conflicts only matter while a run can still be applied.
   const conflict = !lockedAll && (c.conflicts || []).includes(i);
+  const show = c.plain || ((l) => l);
   const locked = lockedAll || conflict;
   const on = dec.hunks.has(i);
   const rows = [];
   let ln = hunk.baseStart - hunk.before.length + 1;
-  for (const l of hunk.before) rows.push(diffLine('ctx', ln++, ' ', l));
+  for (const l of hunk.before) rows.push(diffLine('ctx', ln++, ' ', show(l)));
   const paired = hunk.removed.length === hunk.added.length && hunk.removed.length <= 20;
   hunk.removed.forEach((l, k) => {
-    const wd = paired ? wordDiff(l, hunk.added[k]) : null;
-    rows.push(diffLine('del', ln++, '−', wd ? wd[0] : l));
+    const wd = paired ? wordDiff(show(l), show(hunk.added[k])) : null;
+    rows.push(diffLine('del', ln++, '−', wd ? wd[0] : show(l)));
   });
   hunk.added.forEach((l, k) => {
-    const wd = paired ? wordDiff(hunk.removed[k], l) : null;
-    rows.push(diffLine('add', '', '+', wd ? wd[1] : l));
+    const wd = paired ? wordDiff(show(hunk.removed[k]), show(l)) : null;
+    rows.push(diffLine('add', '', '+', wd ? wd[1] : show(l)));
   });
-  for (const l of hunk.after) rows.push(diffLine('ctx', ln++, ' ', l));
+  for (const l of hunk.after) rows.push(diffLine('ctx', ln++, ' ', show(l)));
   const toggle = () => {
     if (locked) return;
     on ? dec.hunks.delete(i) : dec.hunks.add(i);
@@ -4493,7 +4530,8 @@ function hunkView(c, hunk, i, dec, lockedAll, tab) {
     h('div', { class: 'hunk-head', onclick: toggle },
       h('input', { type: 'checkbox', checked: on, disabled: locked, onclick: (e) => e.stopPropagation(), onchange: toggle }),
       h('span', {}, `Change ${i + 1} of ${c.hunks.length} · line ${hunk.baseStart + 1} · ${what}`),
-      conflict ? h('span', { class: 'st-failed' }, '· overlaps your edit — cannot apply') : null),
+      conflict ? h('span', { class: 'st-failed' }, `· ${c.problems?.[i] || 'overlaps your edit'} — cannot apply`) : null,
+      c.says?.[i] ? h('span', { class: 'hunk-says' }, `· ${c.says[i]}`) : null),
     h('div', { class: 'diff' }, rows));
 }
 
@@ -4513,12 +4551,12 @@ function fileCard(c, tab, locked) {
     renderContent(tab.group);
   };
   tab.views ||= {};
-  const canPreview = isNote(c.path) && !c.binary && (c.base != null || c.status === 'added');
+  const canPreview = (c.listing || isNote(c.path)) && !c.binary && (c.base != null || c.status === 'added');
   const canPen = penable(c) && !!pen;
   const view = canPreview ? tab.views[c.path] || (canPen && penFirst() ? 'pen' : 'diff') : 'diff';
   const head = h('div', { class: 'file-card-head' },
     h('input', { type: 'checkbox', checked: selectedAll, indeterminate: !!c.hunks && dec.hunks.size > 0 && !selectedAll, disabled: lock, onchange: toggleFile }),
-    h('span', { class: `badge st-${c.status}` }, c.status),
+    h('span', { class: `badge st-${c.status}` }, c.badge || c.status),
     h('span', { class: 'path' }, c.path),
     c.hunks ? h('span', { class: 'meta' }, `${dec.hunks.size}/${c.hunks.length} changes`) : null,
     canPreview ? h('div', { class: 'seg' }, [...(penable(c) ? ['pen'] : []), 'diff', 'result'].map((v) => h('button', { class: view === v ? 'on' : '',
@@ -4561,7 +4599,7 @@ function fileCard(c, tab, locked) {
 let pen = null;
 const loadPen = () => (pen ? Promise.resolve(pen) : import('./redpen.js').then((m) => (pen = m)));
 const penFirst = () => store.getItem('an.reviewView') !== 'diff';
-const penable = (c) => isNote(c.path) && !c.binary && c.status === 'modified' && c.base != null && !!c.hunks?.length;
+const penable = (c) => (c.listing || isNote(c.path)) && !c.binary && c.status === 'modified' && c.base != null && !!c.hunks?.length;
 const SVG_NS = 'http://www.w3.org/2000/svg';
 
 // y taken, n left, open still to decide. Outside changes are kept until
@@ -4591,7 +4629,7 @@ function penPage(c, tab, lock) {
       m.notes.map((x) => h('div', { class: 'pen-note', title: x.comment || x.suggest },
         x.speaker ? h('span', { class: 'pen-who' }, `@${x.speaker}`) : null, x.time ? h('span', { class: 'pen-when' }, hhmm(x.time)) : null,
         x.comment || `→ ${x.suggest}`, x.replies?.length ? h('span', { class: 'pen-when' }, ` +${x.replies.length}`) : null)),
-      conflicts.has(m.i) ? h('div', { class: 'pen-stuck' }, 'overlaps your edit') : null);
+      conflicts.has(m.i) ? h('div', { class: 'pen-stuck' }, c.problems?.[m.i] || 'overlaps your edit') : null);
   });
   const page = h('div', { class: 'pen-page' },
     general.length ? h('div', { class: 'pen-general' }, general.map((x) => h('div', { class: 'pen-note' }, x.comment || x.suggest))) : null,
@@ -4628,7 +4666,7 @@ function penDecide(tab, path, key, said, next = true) {
   if (key[0] === 'h') {
     const c = tab.run.changes.find((x) => x.path === path);
     const i = Number(key.slice(1));
-    if (!c || isBlocked(c) || (c.conflicts || []).includes(i)) { toast('This change overlaps your edit; it cannot be applied.', 'error'); return; }
+    if (!c || isBlocked(c) || (c.conflicts || []).includes(i)) { toast(c?.problems?.[i] ? `This one can’t be done: ${c.problems[i]}.` : 'This change overlaps your edit; it cannot be applied.', 'error'); return; }
     const d = tab.decisions[path];
     if (said === 'y') d.hunks.add(i); else d.hunks.delete(i);
   }
@@ -4655,7 +4693,7 @@ function markCur(el) {
 }
 
 // A run's new notes aren't in the workspace yet; notes deleted outside are gone.
-const canOpen = (c, tab) => (tab.kind === 'outside' ? c.status !== 'deleted' : c.status !== 'added');
+const canOpen = (c, tab) => !c.listing && (tab.kind === 'outside' ? c.status !== 'deleted' : c.status !== 'added');
 
 function applySelected(base, hunks, selected) {
   const a = base.split('\n');
@@ -4686,6 +4724,450 @@ function logContent(run) {
     h('details', { class: 'raw' }, h('summary', {}, 'Raw output'), h('pre', {}, run.log))];
 }
 
+// ------------------------------------------------------------------ dired
+// A folder as text (Emacs's dired and wdired, dired.js): its names one to a
+// line. j/k and Enter as in any buffer (a folder opens in place, ^ goes up);
+// e edits the lines — a name changed renames, a path changed moves, a line
+// deleted goes to the trash, a new line is a new note. ⌘S or C-c C-c shows
+// what that would do as a review (red pen or diff, y/n each, a applies);
+// nothing happens before. Links follow a renamed note, as with F2.
+
+const diredPlace = (tab) => (tab.dir ? `${tab.dir}/` : `${S.info?.name || 'workspace'}/`);
+
+async function openDired(dir = '', at = null) {
+  const open = S.tabs.find((t) => t.kind === 'dired');
+  if (open && open.mode !== 'list' && open.dir !== dir) {
+    openSpecial('dired');
+    toast(`Dired is being edited in ${diredPlace(open)}: ${kbd('save') || '⌘S'} to see the plan, C-c C-k to leave it`, 'error');
+    return;
+  }
+  const tab = openSpecial('dired', { dir, mode: 'list', entries: null });
+  if (tab.dir !== dir) { tab.dir = dir; tab.cur = null; }
+  tab.mode = 'list';
+  await refreshDired(tab, at);
+}
+
+function diredHere() {
+  const doc = fileTab() || drawingTab();
+  openDired(doc ? dirname(doc.path) : '', doc?.path || null);
+}
+
+function pickDiredFolder() {
+  const here = dirname((fileTab() || drawingTab())?.path || '');
+  const dirs = [...new Set(['', ...S.files.flatMap((f) => f.path.split('/').slice(0, -1).map((_, i, a) => a.slice(0, i + 1).join('/'))), ...S.dirs])];
+  dirs.sort((a, b) => (a === here ? -1 : b === here ? 1 : a.localeCompare(b)));
+  picker({
+    placeholder: 'Dired: which folder? (edit it as text)',
+    source: (q) => dirs.map((d) => ({ d, name: d ? `${d}/` : `${S.info?.name || 'workspace'}/ (the top)`, m: fuzzy(q, d || '/') })).filter((x) => x.m)
+      .sort((a, b) => (q ? b.m.score - a.m.score : 0)).slice(0, 200)
+      .map((x) => ({ icon: '▤', label: x.name, hint: x.d === here ? 'this note’s folder' : '', run: () => openDired(x.d) })),
+  });
+}
+
+async function refreshDired(tab, at = null) {
+  if (tab.mode === 'plan') { await planDiredEdits(tab); return; }
+  try { await loadTree(); } catch (e) { toast(e.message, 'error'); }
+  tab.entries = dirListing(S.files.map((f) => f.path), S.dirs || [], tab.dir);
+  try { tab.private = (await api('POST', '/api/private', { paths: tab.entries.map((e) => e.path) })).private; } catch { tab.private = {}; }
+  if (at) tab.cur = `${at}#`;
+  if (tab.mode === 'list' && S.groups[tab.group]?.active === tab.id) renderContent(tab.group);
+}
+
+function diredView(tab) {
+  const wrap = h('div', { class: `review dired dired-${tab.mode}` });
+  const hint = { list: 'j k · ↵ open · ^ up · e edit as text · R rename · g · q', edit: `${kbd('save') || '⌘S'} or C-c C-c: see the plan · C-c C-k: never mind`, plan: 'y n · A all · a apply · v red pen / diff · q back to editing' }[tab.mode];
+  wrap.append(h('div', { class: 'review-head' },
+    h('span', { class: 'badge st-review' }, 'dired'),
+    h('div', { class: 'task' }, diredPlace(tab)),
+    h('div', { class: 'meta' }, h('span', { class: 'review-keys', title: keysHint('dired') }, hint))));
+  if (!tab.entries) { wrap.append(h('div', { class: 'empty' }, 'Loading…')); return wrap; }
+  if (tab.mode === 'edit') {
+    wrap.append(h('div', { class: 'review-note' }, 'Edit the names as text. A name changed renames; a path changed moves (', h('code', {}, '../x.md'), ', ', h('code', {}, '/x.md'), ' from the top, ', h('code', {}, 'archive/'), ' into that folder); a line deleted goes to the trash; a new line is a new note (a folder, ending in /). Nothing happens until you have seen the plan.'),
+      tab.ed.el);
+    requestAnimationFrame(() => { if (tab.ed.el.isConnected && (tab.focusEd || document.activeElement === bufferEl(tab))) { tab.focusEd = false; tab.ed.focus(); } });
+    return wrap;
+  }
+  if (tab.mode === 'plan') {
+    const c = tab.run.changes[0];
+    const dec = tab.decisions[c.path];
+    const can = c.hunks.length - (c.conflicts?.length || 0);
+    wrap.append(h('div', { class: 'review-actions' },
+      h('span', { class: 'grow' }, `${c.hunks.length} change${c.hunks.length === 1 ? '' : 's'} · ${dec.hunks.size} taken${can < c.hunks.length ? ` · ${c.hunks.length - can} can’t be done` : ''}`),
+      h('button', { class: 'btn', onclick: () => backToDiredEdit(tab) }, 'Back to editing'),
+      h('button', { class: 'btn primary', disabled: !dec.hunks.size, onclick: () => applyDired(tab) }, `Apply ${dec.hunks.size}`)));
+    wrap.append(fileCard(c, tab, false));
+    return wrap;
+  }
+  const row = (e, up = false) => h('div', { class: `dired-row kb-item${e.folder ? ' folder' : ''}`, 'data-path': e.path, 'data-hunk': '', 'data-up': up ? '1' : null,
+    ondblclick: () => diredOpen(tab, bufferEl(tab)?.querySelector('.kb-cur')) },
+  h('span', { class: 'dired-icon' }, up ? '↰' : e.folder ? '▸' : isNote(e.path) ? '·' : '◦'),
+  h('span', { class: 'dired-name' }, up ? '../' : e.name),
+  tab.private?.[e.path] ? h('span', { class: 'dired-private', title: `Withheld from agents: ${tab.private[e.path]}` }, 'private') : null);
+  const list = h('div', { class: 'dired-list' });
+  if (tab.dir) list.append(row({ path: dirname(tab.dir), folder: true }, true));
+  for (const e of tab.entries) list.append(row(e));
+  if (!tab.entries.length) list.append(h('div', { class: 'empty' }, 'Nothing here yet. e: write names to make notes.'));
+  wrap.append(list);
+  return wrap;
+}
+
+function diredOpen(tab, el) {
+  if (!el || tab.mode !== 'list') return;
+  const e = el.dataset.up ? { path: el.dataset.path, folder: true } : tab.entries.find((x) => x.path === el.dataset.path);
+  if (!e) return;
+  if (e.folder) { const from = tab.dir; tab.dir = e.path; tab.cur = el.dataset.up ? `${from}#` : null; refreshDired(tab); return; }
+  openFile(e.path);
+}
+
+function diredKeys(e, tab, at) {
+  const k = e.key;
+  const { cur } = at;
+  if (tab.mode === 'plan') {
+    if (k === 'q' || k === 'Escape' || k === 'e') { backToDiredEdit(tab); return true; }
+    return reviewOwnKeys(e, tab, at);
+  }
+  if (tab.mode !== 'list') return false;
+  if (k === '^' || k === '-' || k === 'Backspace') { if (tab.dir) { const from = tab.dir; tab.dir = dirname(tab.dir); tab.cur = `${from}#`; refreshDired(tab); } return true; }
+  if (k === 'e' || k === 'i' || k === 'R') { editDired(tab, k === 'R' ? cur?.dataset.path : null); return true; }
+  return false;
+}
+
+// wdired: the listing as text in an editor of its own.
+function editDired(tab, select = null) {
+  if (!tab.entries) return;
+  tab.base = tab.entries.map((x) => x.name).join('\n');
+  if (!tab.ed) {
+    tab.ed = new MarkdownEditor({});
+    tab.ed.setOptions({ highlight: false, spellcheck: false });
+    tab.ed.el.classList.add('dired-ed');
+    tab.ed.el.addEventListener('keydown', (e) => diredEditKeys(e, tab), true);
+  }
+  tab.ed.value = tab.entries.length ? `${tab.base}\n` : '';
+  tab.mode = 'edit';
+  tab.focusEd = true;
+  renderContent(tab.group);
+  // On the line the cursor was on (R: its name picked, as for F2).
+  const at = tab.entries.findIndex((x) => `${x.path}#` === tab.cur);
+  requestAnimationFrame(() => {
+    if (at < 0) return;
+    const start = tab.entries.slice(0, at).reduce((n, x) => n + x.name.length + 1, 0);
+    const name = tab.entries[at].name;
+    const end = select ? start + (tab.entries[at].folder ? name.length - 1 : name.replace(/\.[^.]+$/, '').length) : start;
+    tab.ed.selectRange(start, end);
+  });
+}
+
+function diredEditKeys(e, tab) {
+  // C-c C-c: the plan; C-c C-k: never mind (as in wdired). The first C-c
+  // is left alone (it copies, off a Mac).
+  const ctrl = e.ctrlKey && !e.metaKey && !e.altKey && !e.shiftKey;
+  if (ctrl && tab.cc && Date.now() - tab.cc < 2000 && (e.code === 'KeyC' || e.code === 'KeyK')) {
+    e.preventDefault();
+    e.stopPropagation();
+    tab.cc = 0;
+    if (e.code === 'KeyC') planDiredEdits(tab); else leaveDiredEdit(tab);
+    return;
+  }
+  tab.cc = ctrl && e.code === 'KeyC' ? Date.now() : 0;
+  if (e.key === 'Escape' && !e.isComposing && !tab.ed.find.open) {
+    e.preventDefault();
+    if (tab.ed.value.trim() === tab.base.trim()) leaveDiredEdit(tab);
+    else toast(`${kbd('save') || '⌘S'} or C-c C-c: see the plan · C-c C-k: never mind the edits`);
+  }
+}
+
+function leaveDiredEdit(tab) {
+  tab.mode = 'list';
+  tab.run = null;
+  tab.wantFocus = true;
+  refreshDired(tab);
+}
+
+function backToDiredEdit(tab) {
+  tab.mode = 'edit';
+  tab.focusEd = true;
+  renderContent(tab.group);
+}
+
+// The edits as a plan, looked at as a run is (fileCard): each change a
+// hunk of the listing, what it does in the margin.
+async function planDiredEdits(tab) {
+  if (!tab.ed) return;
+  try { await loadTree(); } catch { /* the list as it was */ }
+  const all = new Set([...S.files.map((f) => f.path.toLowerCase()), ...(S.dirs || []).map((d) => d.toLowerCase())]);
+  for (const f of S.files) { const parts = f.path.toLowerCase().split('/'); for (let i = 1; i < parts.length; i++) all.add(parts.slice(0, i).join('/')); }
+  const plan = planDired(tab.dir, tab.entries, tab.ed.value, (p) => all.has(p.toLowerCase()));
+  if (!plan.hunks.length) { toast('Nothing to do: the names are as they were'); leaveDiredEdit(tab); return; }
+  // A note leaving a place .agentnotesignore keeps from agents (or coming into one).
+  const moves = plan.hunks.flatMap((hk) => hk.ops).filter((o) => o.from && o.to);
+  let priv = {};
+  if (moves.length) try { priv = (await api('POST', '/api/private', { paths: [...new Set(moves.flatMap((o) => [o.from, o.to]))] })).private; } catch { priv = {}; }
+  const path = diredPlace(tab);
+  const says = {};
+  const problems = {};
+  const comments = [];
+  const baseLines = plan.base.split('\n');
+  plan.hunks.forEach((hk, i) => {
+    let text = describeOps(hk.ops, tab.dir);
+    for (const o of hk.ops) {
+      if (!o.to || !o.from) continue;
+      const was = priv[o.from] === '.agentnotesignore';
+      const will = priv[o.to] === '.agentnotesignore';
+      if (was && !will) text += ` · ⚠ withheld from agents now (.agentnotesignore), it wouldn’t be at ${o.to}`;
+      if (!was && will) text += ' · it will be withheld from agents there (.agentnotesignore)';
+    }
+    if (hk.problem) problems[i] = hk.problem;
+    says[i] = hk.problem ? '' : text;
+    // On its mark in the margin: by the line it changes, when that line is only there.
+    const comment = hk.problem ? `Can’t: ${hk.problem}` : text;
+    const quote = hk.removed[0];
+    if (quote && !baseLines.slice(0, hk.baseStart).some((l) => l.includes(quote))) comments.push({ file: path, quote, comment });
+    else if (!quote && plan.hunks.findIndex((x) => x.added.join('\n').includes(hk.added[0])) === i) comments.push({ file: path, suggest: hk.added[0], comment });
+    else comments.push({ file: path, comment: `Change ${i + 1}: ${comment}` });
+  });
+  const c = { path, status: 'modified', badge: 'plan', listing: true, base: plan.base, hunks: plan.hunks, plain: plainLine,
+    conflicts: Object.keys(problems).map(Number), problems, says };
+  tab.run = { status: 'review', changes: [c], comments };
+  const pick = penFirst() ? [] : plan.hunks.map((_, i) => i).filter((i) => !problems[i]);
+  tab.decisions = { [path]: { file: false, hunks: new Set(pick) } };
+  tab.pen = {};
+  tab.views = {};
+  tab.cur = null;
+  tab.mode = 'plan';
+  tab.wantFocus = true;
+  await loadPen();
+  renderContent(tab.group);
+  const first = reviewItems(bufferEl(tab) || document.createElement('div'))[0];
+  if (first) setReviewCur(tab, first);
+}
+
+async function applyDired(tab) {
+  const c = tab.run?.changes[0];
+  if (!c) return;
+  const picked = [...tab.decisions[c.path].hunks].filter((i) => !c.problems[i]).sort((a, b) => a - b);
+  const ops = orderOps(picked.flatMap((i) => c.hunks[i].ops));
+  if (!ops.length) { toast(penFirst() ? 'Nothing taken yet: y takes a change, A takes all' : 'Nothing picked: x picks a change'); return; }
+  let done = 0;
+  let links = 0;
+  const failed = [];
+  const trashed = [];
+  for (const o of ops) {
+    try {
+      if (o.op === 'trash') {
+        const open = S.tabs.find((t) => t.kind === 'file' && (t.path === o.from || t.path.startsWith(`${o.from}/`)) && t.content !== t.saved);
+        if (open) throw new Error(`${open.path} has edits not saved yet`);
+        trashed.push(await trashPath(o.from));
+      } else if (o.op === 'folder') await api('POST', '/api/folder', { path: o.to });
+      else if (o.op === 'note') await api('POST', '/api/file', { path: o.to });
+      else links += (await movePath(o.from, o.to, o.folder)).updated.length;
+      done++;
+    } catch (e) { failed.push(`${o.from || o.to}: ${e.status === 409 ? 'something there already' : e.message}`); }
+  }
+  await loadTree();
+  navPrune();
+  updateNavButtons();
+  persist();
+  await syncOpenTabs();
+  render();
+  const msg = [`Dired: ${done} of ${ops.length} done`, links && `links updated in ${links} note${links === 1 ? '' : 's'}`, trashed.length && `${trashed.length} in the trash`, failed.length && `not done: ${failed.join('; ')}`].filter(Boolean).join(' · ');
+  toast(msg, failed.length ? 'error' : '', trashed.length ? { label: 'Undo trash', run: () => restoreTrashed(trashed) } : null);
+  tab.mode = 'list';
+  tab.run = null;
+  tab.wantFocus = true;
+  await refreshDired(tab);
+}
+
+async function restoreTrashed(list) {
+  for (const r of list) {
+    try {
+      await api('POST', '/api/restore', { trash: r.trash, path: r.path });
+      if (r.marks.length) { S.bookmarks = [...S.bookmarks, ...r.marks.filter((b) => !S.bookmarks.includes(b))]; saveBookmarks(); }
+    } catch (e) { toast(`${r.path}: ${e.message}`, 'error'); }
+  }
+  await loadTree();
+  const t = S.tabs.find((x) => x.kind === 'dired');
+  if (t?.mode === 'list') refreshDired(t);
+}
+
+// ------------------------------------------------------------------ describe
+// Emacs's C-h k and C-h f: what a key does, or a command — what it is for,
+// its keys (a shortcut, its ⌥X path, a buffer's key) and how to change
+// them. Every command has a line on what it does (docs.js).
+
+// What M-x knows about a command → what the help buffer shows.
+function topicOf(cmd) {
+  const kind = cmd.inBuffer ? cmd.ctx?.[0] : null;
+  return {
+    name: cmd.name,
+    doc: commandDoc(cmd),
+    shortcut: cmd.shortcut || null,
+    prefix: cmd.prefix || null,
+    leaders: leaderPaths(cmd.name, cmd.recipe ? cmd.name.replace(/^Recipe: /, '') : null),
+    inBuffer: kind ? { kind, key: cmd.inBuffer } : null,
+    recipe: !!cmd.recipe,
+    run: cmd.run,
+  };
+}
+
+function commandDoc(cmd) {
+  if (cmd.recipe) {
+    const r = recipes.list.find((x) => `Recipe: ${x.name}` === cmd.name);
+    return r ? `Asks the agent, on a staged copy (${({ file: 'the note in view', folder: 'its folder', workspace: 'the workspace' })[r.scope] || 'you choose what it sees'}): “${r.prompt.length > 300 ? `${r.prompt.slice(0, 300)}…` : r.prompt}” What comes back is reviewed before it is applied.` : '';
+  }
+  if (cmd.inBuffer) {
+    const kind = cmd.ctx?.[0];
+    const own = docOf(cmd.name);
+    return own || `In the ${SPECIAL[kind]?.title || kind} buffer, the key ${cmd.inBuffer}: ${cmd.name.replace(/^[^:]+: /, '').replace(/…$/, '')}.`;
+  }
+  return docOf(cmd.name) || '';
+}
+
+// Where a command is under the leader: every path (yours from LEADER.md too).
+function leaderPaths(name, recipe = null) {
+  const out = [];
+  const n = norm(name);
+  const walk = (items, path, group) => {
+    for (const it of items) {
+      const keys = [...path, it.key];
+      if (it.items) { walk(it.items, keys, it.label); continue; }
+      const names = [it.cmd, it.label, group ? `${upper(group)}: ${it.label}` : null];
+      if (names.some((x) => x && norm(x) === n) || (recipe && it.recipe?.name === recipe)) out.push({ keys, custom: it.custom || null, off: !!(it.when && !it.when()) });
+    }
+  };
+  walk(leaderTree(), [], '');
+  return out;
+}
+
+function openHelp(topic) {
+  const had = S.tabs.find((t) => t.kind === 'help');
+  if (had) had.topic = topic;
+  const tab = openSpecial('help', { topic });
+  renderContent(tab.group);
+}
+
+function runTopic(topic) {
+  if (!topic?.run) { toast('This one is not a command to run from here'); return; }
+  remember(topic.name, topic.run);
+  topic.run();
+}
+
+// The command a shortcut runs, as M-x names it (or the shortcut's own).
+function shortcutTopic(id) {
+  const cmd = allCommands().find((c) => c.shortcut === id);
+  if (cmd) return topicOf(cmd);
+  const d = SHORTCUTS.find((x) => x.id === id);
+  const name = d?.label || id;
+  return {
+    name, doc: docOf(name) || docOf(id) || `${name}.`, shortcut: id, leaders: leaderPaths(name),
+    where: d?.scope === 'editor' ? 'in the editor' : d?.scope === 'find' ? 'while finding in a note' : d?.scope === 'menu' ? 'in the app menu' : null,
+    run: ACTIONS[id] && d?.scope !== 'editor' && d?.scope !== 'find' ? () => runCommand(id) : null,
+  };
+}
+
+// The item a leader path chose → its command.
+function leaderTopic(it, keys) {
+  const names = [it.cmd, it.label].filter(Boolean).map(norm);
+  const cmd = allCommands().find((c) => names.includes(norm(c.name)) || (it.recipe && c.name === `Recipe: ${it.recipe.name}`) || (c.leader && c.leader.join(' ') === keys.join(' ')));
+  if (cmd) return topicOf(cmd);
+  return { name: it.label, doc: docOf(it.label) || docOf(it.cmd || '') || '', leaders: [{ keys, custom: it.custom || null }], run: it.run };
+}
+
+// ⌥X h k: the next key, described. The leader opens its menu, whose keys are
+// then described instead of run.
+function describeKey() {
+  toast(`Describe a key: press it (${kbd('leader') || '⌥X'} for the leader’s keys; Esc: never mind)`);
+  desktop?.recordingKeys?.(true);
+  const onKey = (e) => {
+    if (['Shift', 'Control', 'Alt', 'Meta', 'CapsLock'].includes(e.key) || e.isComposing) return;
+    e.preventDefault();
+    e.stopImmediatePropagation();
+    window.removeEventListener('keydown', onKey, true);
+    desktop?.recordingKeys?.(false);
+    $('#toast').hidden = true;
+    const plain = !e.metaKey && !e.ctrlKey && !e.altKey;
+    if (e.key === 'Escape' && plain && !e.shiftKey) return;
+    const k = eventKeys(e, isMac);
+    if (k && k === KEYS.leader) { describeLeader(); return; }
+    const ids = keyDefs().filter((d) => k && KEYS[d.id] === k).map((d) => d.id);
+    if (ids.length) {
+      // The note's own (find bar) keys only while finding: the other first.
+      openHelp(shortcutTopic(ids.find((id) => SHORTCUTS.find((d) => d.id === id)?.scope !== 'find') || ids[0]));
+      return;
+    }
+    const tab = activeTab();
+    const pair = plain && tab && SPECIAL[tab.kind] && [...BUFFER_KEYS[tab.kind], ...COMMON_KEYS].find(([x]) => x === e.key);
+    if (pair) {
+      const cmd = allCommands().find((c) => c.inBuffer === pair[0]);
+      if (cmd) { openHelp(topicOf(cmd)); return; }
+    }
+    openHelp({ name: keyLabel(k || '', isMac) || e.key, unbound: true, doc: 'Nothing is on this key here.', leaders: [] });
+  };
+  window.addEventListener('keydown', onKey, true);
+}
+
+function describeLeader() {
+  const map = (items, path) => items.map((it) => (it.items ? { ...it, items: map(it.items, [...path, it.key]) }
+    : { ...it, run: () => openHelp(leaderTopic(it, [...path, it.key])) }));
+  openLeader(map(leaderTree(), []), {
+    title: `Describe: ${kbd('leader') || 'Commands'}`,
+    isLeader: (e) => !!KEYS.leader && eventKeys(e, isMac) === KEYS.leader,
+    onLeader: () => openHelp(shortcutTopic('leader')),
+  });
+}
+
+// ⌥X h c: a command by name (M-x's list), described.
+function describeCommand() {
+  const tab = activeTab();
+  const context = tab?.kind === 'file' ? 'file' : tab?.kind || '';
+  picker({
+    placeholder: 'Describe a command…',
+    source: (q) => rankCommands(allCommands(), q, { recent: mxRecent, context }).slice(0, 200).map(({ cmd, m }) => {
+      const doc = commandDoc(cmd);
+      return { icon: cmd.inBuffer ? '◆' : cmd.recipe ? '✦' : '', label: marked(cmd.name, m.idx), hint: doc.length > 70 ? `${doc.slice(0, 68)}…` : doc, run: () => openHelp(topicOf(cmd)) };
+    }),
+  });
+}
+
+function helpView(tab) {
+  const t = tab.topic || { name: 'Help', doc: '', leaders: [] };
+  const L = kbd('leader') || '⌥X';
+  const wrap = h('div', { class: 'review help' });
+  wrap.append(h('div', { class: 'review-head' },
+    h('span', { class: 'badge st-review' }, t.unbound ? 'key' : t.recipe ? 'recipe' : 'command'),
+    h('div', { class: 'task' }, t.name),
+    h('div', { class: 'meta' }, h('span', { class: 'review-keys', title: keysHint('help') }, `${t.run ? 'o run it · ' : ''}k a key · c a command · l leader keys · q`))));
+  wrap.append(h('p', { class: 'help-doc' }, t.doc || 'No description yet.'));
+  const keys = [];
+  if (t.shortcut && kbd(t.shortcut)) keys.push(h('li', {}, h('kbd', {}, kbd(t.shortcut)), t.where ? ` ${t.where}` : '', ' — a shortcut: change it in Settings › Keyboard shortcuts.'));
+  if (t.prefix) keys.push(h('li', {}, 'Quick open with ', h('kbd', {}, t.prefix), ' first.'));
+  for (const p of t.leaders || []) {
+    keys.push(h('li', {}, h('kbd', {}, `${L} ${p.keys.join(' ')}`),
+      p.custom ? ` — yours, from ${LEADER_FILE} line ${p.custom}.` : ` — under the leader${p.off ? ' (not here: it needs a note, or a selection, in view)' : ''}.`));
+  }
+  if (t.inBuffer) keys.push(h('li', {}, h('kbd', {}, t.inBuffer.key), ` — in the ${SPECIAL[t.inBuffer.kind]?.title || t.inBuffer.kind} buffer.`));
+  if (!t.unbound) keys.push(h('li', {}, h('kbd', {}, `${L} :`), ' — by name, as every command (M-x).'));
+  wrap.append(h('h3', {}, 'Keys'), keys.length ? h('ul', { class: 'help-keys' }, keys) : h('p', {}, 'None.'));
+  const example = `- \`o x\` ${t.name}`;
+  wrap.append(h('h3', {}, 'To change them'),
+    h('p', {}, t.unbound ? `Put a command on it: a shortcut in Settings › Keyboard shortcuts, or a key after ${L} in ${LEADER_FILE}.`
+      : `A key after ${L} of your own (or one taken away, or moved) is a line in ${LEADER_FILE}, a note in this folder:`),
+    ...(t.unbound ? [] : [h('pre', { class: 'help-example' }, example)]),
+    h('div', { class: 'help-actions' },
+      t.run ? h('button', { class: 'btn primary', onclick: () => runTopic(t) }, 'Run it') : null,
+      h('button', { class: 'btn', onclick: editLeaderKeys }, `Edit leader keys (${LEADER_FILE})`),
+      h('button', { class: 'btn', onclick: () => openSettings({ keys: true }) }, 'Keyboard shortcuts…'),
+      h('button', { class: 'btn', onclick: describeKey }, 'Describe a key…'),
+      h('button', { class: 'btn', onclick: describeCommand }, 'Describe a command…')));
+  return wrap;
+}
+
+function helpOwnKeys(e) {
+  if (e.key === 'k') { describeKey(); return true; }
+  if (e.key === 'c') { describeCommand(); return true; }
+  if (e.key === 'l') { editLeaderKeys(); return true; }
+  return false;
+}
+
 // ------------------------------------------------------------------ special buffers
 // What Margin shows that isn't a file — a run to review, changes from
 // outside, tasks, search results, agent runs, messages, a note's history —
@@ -4704,6 +5186,8 @@ const SPECIAL = {
   messages: { name: () => '✉ Messages', title: 'Messages', view: messagesView, refresh: (t) => renderContent(t.group), open: copyMessageAt, make: openMessages },
   history: { name: (t) => `History: ${stem(t.path)}`, title: 'History', view: historyView, refresh: (t) => openHistory(t.path), keys: historyOwnKeys, open: (t) => openFile(t.path) },
   gitdiff: { name: (t) => `Δ ${basename(t.path)}`, title: 'Changes since commit', view: gitDiffView, refresh: (t) => openGitDiff(t.path), open: (t) => t.data?.status !== 'deleted' && openFile(t.path) },
+  dired: { name: (t) => `▤ ${t.dir ? `${t.dir}/` : 'Dired'}`, title: 'Dired', view: diredView, refresh: (t) => refreshDired(t), keys: diredKeys, open: diredOpen, make: () => diredHere() },
+  help: { name: (t) => `? ${t.topic?.name || 'Help'}`, title: 'Help', view: helpView, refresh: (t) => renderContent(t.group), keys: helpOwnKeys, open: (t) => runTopic(t.topic) },
 };
 // Each one's own keys, for M-x and the hint in its head.
 const BUFFER_KEYS = {
@@ -4715,6 +5199,8 @@ const BUFFER_KEYS = {
   messages: [],
   history: [['R', 'Restore this version…']],
   gitdiff: [],
+  dired: [['^', 'Up a folder'], ['e', 'Edit the names as text (wdired)'], ['R', 'Rename this one (edit, its name picked)'], ['y', 'Plan: take the change'], ['n', 'Plan: leave the change'], ['A', 'Plan: take all'], ['a', 'Plan: apply what is taken']],
+  help: [['k', 'Describe a key…'], ['c', 'Describe a command…'], ['l', 'Edit leader keys']],
 };
 const COMMON_KEYS = [['o', 'Open'], ['g', 'Refresh'], ['q', 'Close']];
 
@@ -4799,6 +5285,7 @@ function bufferKeys(e, tab) {
 function reviewOwnKeys(e, tab, { wrap, items, cur }) {
   const reviewable = ['review', 'failed', 'cancelled'].includes(tab.run?.status);
   const outside = tab.kind === 'outside';
+  const own = tab.kind !== 'review'; // changes from outside, a dired plan: not a run
   const go = (el) => { if (el) setReviewCur(tab, el); };
   const fileOf = (el) => el?.closest('.file-card');
   const onPen = cur?.classList.contains('pen-card');
@@ -4841,9 +5328,9 @@ function reviewOwnKeys(e, tab, { wrap, items, cur }) {
       renderContent(tab.group);
       return true;
     }
-    case 'a': if (outside) keepOutside(tab); else if (reviewable && tab.run.changes.length && selectedCount(tab)) applyRun(tab); return true;
-    case 'd': if (reviewable && !outside) discardRun(tab); return true;
-    case 'f': if (reviewable && !outside) followUp(tab); return true;
+    case 'a': if (outside) keepOutside(tab); else if (tab.kind === 'dired') applyDired(tab); else if (reviewable && tab.run.changes.length && selectedCount(tab)) applyRun(tab); return true;
+    case 'd': if (reviewable && !own) discardRun(tab); return true;
+    case 'f': if (reviewable && !own) followUp(tab); return true;
     case 'u': if (tab.run?.status === 'applied') revertRun(tab); return true;
     case 'l': { const log = wrap.querySelector('details.log'); if (log) log.open = !log.open; return true; }
     case '=': {
@@ -5196,6 +5683,7 @@ function connectEvents() {
     if (structural) await loadTree();
     const changed = new Set(paths);
     if (structural || changed.has(RECIPES_FILE)) loadRecipes();
+    if (structural || changed.has(LEADER_FILE)) loadLeaderKeys();
     const affected = S.tabs.filter((t) => isDoc(t) && (!paths.length || changed.has(t.path)));
     if (affected.length) await syncTabs(affected);
     for (const p of paths) if (isDrawing(p) || isMermaidFile(p) || isNote(p)) refreshEmbeds(p);
@@ -5505,12 +5993,37 @@ function toggleMeeting() {
   toast(S.meeting ? `Meeting mode · ${kbd('meeting') || '⌥X p m'} to leave` : 'Meeting mode off');
 }
 
+// ---------------- narrowing (editor.js narrow, narrow.js): only the section
+// the cursor is in — or the selected lines — in the editor, as Emacs's
+// narrow-to-region. Editing, finding, undo and suggesting stay in it; the
+// note is saved whole; a search result elsewhere shows all of it again.
+
+function narrowHere(tab = fileTab()) {
+  if (!tab || !isNote(tab.path)) { toast('Narrowing is for notes: open one first.'); return; }
+  const ed = editorFor(tab);
+  const text = ed.value;
+  const [a, b] = [ed.selectionStart, ed.selectionEnd];
+  const r = a !== b ? linesRange(text, a, b) : sectionRange(text, a);
+  if (!r) { toast('No heading above the cursor: select the lines to narrow to'); return; }
+  if (isAttached(tab) && !editorShown(tab)) setMode('edit');
+  if (!ed.narrow(...r)) { toast('That is the whole note'); return; }
+  if (isAttached(tab)) ed.focus();
+  const part = ed.narrowed;
+  toast(`Narrowed to lines ${part.from}–${part.to} · ${kbd('leader') || '⌥X'} n w shows the whole note`);
+}
+
+function widenHere(tab = fileTab()) {
+  if (!tab?.editor?.widen()) { toast('The whole note is in view'); return; }
+  if (isAttached(tab) && editorShown(tab)) tab.editor.focus();
+}
+
 const ACTIONS = {
   'new-note': () => newNote(),
   'quick-open': () => openPalette(),
   palette: () => openPalette('>'),
   search: () => { S.view = 'search'; $('#app').classList.remove('no-sidebar'); renderSidebar(); $('#search-input')?.focus(); $('#search-input')?.select(); },
-  save: () => (drawingTab() ? saveDrawing(drawingTab(), { flush: true, force: false }) : saveTab()),
+  save: () => (activeTab()?.kind === 'dired' ? activeTab().mode === 'edit' && planDiredEdits(activeTab())
+    : drawingTab() ? saveDrawing(drawingTab(), { flush: true, force: false }) : saveTab()),
   'close-tab': () => (activeTab() ? closeTab(activeTab().id) : desktop?.closeWindow()),
   'flow-next': () => walkFlow(false),
   'flow-back': () => walkFlow(true),
@@ -5562,7 +6075,7 @@ const isFileTab = (t) => t?.kind === 'file';
 const editorShown = (t) => isFileTab(t) && (!hasPreview(t.path) || groupMode(t) !== 'preview');
 const previewShown = (t) => isFileTab(t) && hasPreview(t.path) && ['split', 'preview'].includes(groupMode(t));
 
-function leaderTree() {
+function defaultLeaderTree() {
   const tab = fileTab();
   const doc = tab || drawingTab();
   const note = !!tab && isNote(tab.path);
@@ -5582,7 +6095,9 @@ function leaderTree() {
       { key: 'l', label: 'Show in the tree', when: () => !!doc, run: () => { showInTree(doc.path); focusSidebar(); } },
       { key: 'h', label: 'History…', cmd: 'History of current note (kept versions and git)', when: () => !!doc, run: () => openHistory(doc.path) },
       { key: 'e', label: 'Export as HTML…', cmd: 'Export note as HTML…', when: () => note, run: () => exportHtml(tab) },
+      { key: 'd', label: 'Dired: a folder as text…', cmd: 'Dired: edit a folder as text…', run: pickDiredFolder },
     ] },
+    { key: 'd', label: 'Dired: this folder as text', cmd: 'Dired: the folder of this note', run: () => diredHere() },
     { key: 's', label: 'search', items: [
       { key: 's', label: 'Search the workspace', cmd: 'Search in workspace', run: () => ACTIONS.search() },
       { key: 'b', label: 'Search results as a buffer', cmd: 'Search results (as a buffer)', run: openSearchBuffer },
@@ -5624,6 +6139,10 @@ function leaderTree() {
       { key: 'c', label: 'Canvas', cmd: 'View: editor and canvas (pictures follow the cursor)', when: () => note, run: () => setMode('canvas') },
       { key: 'p', label: 'Preview', cmd: 'View: preview only', run: () => setMode('preview') },
     ] },
+    { key: 'n', label: 'narrow', when: () => note, items: [
+      { key: 'n', label: tab && tab.editor && tab.editor.selectionStart !== tab.editor.selectionEnd ? 'Narrow to the selected lines' : 'Narrow to this section', cmd: 'Narrow to this section or the selected lines', run: () => narrowHere(tab) },
+      { key: 'w', label: 'Widen: the whole note', cmd: 'Widen: show the whole note', when: () => !!tab.editor?.narrowed, run: () => widenHere(tab) },
+    ] },
     { key: 'l', label: 'links', items: [
       { key: 'l', label: 'Follow the link at the cursor', when: () => editorShown(tab), run: () => { if (!followLinkAt(tab.editor, tab)) toast('No link at the cursor'); } },
       { key: 'f', label: 'Pick a link in the preview…', when: () => previewShown(tab), run: () => linkHints(tab.previewEl) },
@@ -5659,15 +6178,15 @@ function leaderTree() {
       { key: 'd', label: 'Strike the line / selection', cmd: 'Suggest: strike the selection or the line', when: () => !!tab?.proof?.on, run: () => tab.editor.strikeSelection() },
       { key: 'r', label: 'Replace the selection', cmd: 'Suggest: replace the selection', when: () => !!tab?.proof?.on, run: () => replaceSel(tab) },
       { key: 'c', label: 'Comment…', cmd: 'Comment on the selection or the line', when: () => note, run: () => commentHere(tab) },
-      { key: 'n', label: 'Next comment', when: () => note && openComments(tab).length > 0, run: () => stepNote(tab, 1) },
-      { key: 'N', label: 'Previous comment', when: () => note && openComments(tab).length > 0, run: () => stepNote(tab, -1) },
-      { key: 'x', label: 'Resolve the comment here', when: () => note && openComments(tab).length > 0, run: () => { const c = commentAt(tab); if (c) resolveNote(tab, c); else toast('No comment here'); } },
-      { key: 'h', label: tab?.showResolved ? 'Hide resolved comments' : 'Show resolved comments', when: () => note && !!tab.comments?.some((c) => c.resolved), run: () => { tab.showResolved = !tab.showResolved; drawNotes(tab); } },
+      { key: 'n', label: 'Next comment', cmd: 'Pen: next comment', when: () => note && openComments(tab).length > 0, run: () => stepNote(tab, 1) },
+      { key: 'N', label: 'Previous comment', cmd: 'Pen: previous comment', when: () => note && openComments(tab).length > 0, run: () => stepNote(tab, -1) },
+      { key: 'x', label: 'Resolve the comment here', cmd: 'Pen: resolve the comment here', when: () => note && openComments(tab).length > 0, run: () => { const c = commentAt(tab); if (c) resolveNote(tab, c); else toast('No comment here'); } },
+      { key: 'h', label: tab?.showResolved ? 'Hide resolved comments' : 'Show resolved comments', cmd: 'Pen: show / hide resolved comments', when: () => note && !!tab.comments?.some((c) => c.resolved), run: () => { tab.showResolved = !tab.showResolved; drawNotes(tab); } },
       { key: 'v', label: 'Review my suggestions (y n A a)', cmd: 'Review your suggestions on this note', when: () => note && !!(tab.proof || proofRun(tab)), run: () => reviewSuggestions(tab) },
       { key: 'm', label: S.meeting ? 'Leave meeting mode' : 'Meeting mode', cmd: 'Meeting mode (large text, for sharing the screen)', run: toggleMeeting },
     ] },
     { key: 'q', label: 'macro', items: [
-      { key: 'q', label: macros.recording ? 'Stop recording' : 'Start recording', run: toggleRecording },
+      { key: 'q', label: macros.recording ? 'Stop recording' : 'Start recording', cmd: 'Macro: start / stop recording', run: toggleRecording },
       { key: 'r', label: 'Play', when: () => !!macros.last, run: () => playMacro(1) },
       { key: 'n', label: 'Play N times…', when: () => !!macros.last, run: playMacroTimes },
       { key: 'e', label: 'Play until it can’t go on', when: () => !!macros.last, run: () => playMacro(Infinity) },
@@ -5679,9 +6198,70 @@ function leaderTree() {
     { key: 'V', label: 'Shrink the selection', when: () => editorShown(tab), run: () => tab.editor.shrinkSelection() },
     { key: 'y', label: 'Paste from the copy history…', when: () => copied.length > 0, run: pasteFromHistory },
     { key: '.', label: lastRun ? `Repeat: ${lastRun.label}` : 'Repeat the last command', run: repeatLast, mx: false },
+    { key: 'h', label: 'help', items: [
+      { key: 'k', label: 'Describe a key…', cmd: 'Describe a key…', run: describeKey },
+      { key: 'c', label: 'Describe a command…', cmd: 'Describe a command…', run: describeCommand },
+      { key: 'l', label: `Edit leader keys (${LEADER_FILE})`, cmd: 'Edit leader keys', run: editLeaderKeys },
+      { key: 's', label: 'Keyboard shortcuts…', cmd: 'Keyboard shortcuts…', run: () => openSettings({ keys: true }) },
+    ] },
     { key: ',', label: 'Settings', run: () => openSettings() },
     { key: 'k', label: 'Keyboard shortcuts…', run: () => openSettings({ keys: true }) },
   ];
+}
+
+// The menu with your own keys (LEADER.md, leaderkeys.js) over Margin's.
+const leaderKeys = { rules: [], errors: [], text: null };
+function leaderTree() {
+  const tree = defaultLeaderTree();
+  return leaderKeys.rules.length ? applyLeaderKeys(tree, leaderKeys.rules, (name) => resolveCommand(name, tree)).tree : tree;
+}
+
+// A command by its M-x name, for a key of your own: one of the palette's, a
+// recipe, or one of the leader's own.
+function resolveCommand(name, tree = defaultLeaderTree()) {
+  const n = norm(name);
+  const c = COMMANDS.find(([x]) => norm(x) === n);
+  if (c) return { cmd: c[0], run: c[1] };
+  const r = recipes.list.find((x) => norm(`Recipe: ${x.name}`) === n || norm(x.name) === n);
+  if (r) return { cmd: `Recipe: ${r.name}`, label: recipeLabel(r), recipe: r, run: () => runRecipe(r) };
+  let hit = null;
+  const walk = (items, group) => {
+    for (const it of items) {
+      if (hit) return;
+      if (it.items) { walk(it.items, it.label); continue; }
+      const full = group ? `${upper(group)}: ${it.label}` : it.label;
+      if ([it.cmd, it.label, full].some((x) => x && norm(x) === n)) hit = { cmd: leafName(it, group), label: it.label, run: it.run, when: it.when };
+    }
+  };
+  walk(tree, '');
+  return hit;
+}
+
+async function loadLeaderKeys() {
+  let text = '';
+  if (S.files.some((f) => f.path === LEADER_FILE)) {
+    try { text = (await api('GET', `/api/file?path=${encodeURIComponent(LEADER_FILE)}`)).content; } catch { text = ''; }
+  }
+  if (text === leaderKeys.text) return;
+  const first = leaderKeys.text == null;
+  leaderKeys.text = text;
+  const parsed = parseLeaderKeys(text);
+  leaderKeys.rules = parsed.rules;
+  // What can't be followed (a command not there) is found now, once.
+  const { errors } = applyLeaderKeys(defaultLeaderTree(), parsed.rules, (name) => resolveCommand(name));
+  leaderKeys.errors = [...parsed.errors, ...errors].sort((a, b) => a.line - b.line);
+  if (first && !leaderKeys.errors.length) return;
+  const e = leaderKeys.errors[0];
+  const more = leaderKeys.errors.length > 1 ? ` (and ${leaderKeys.errors.length - 1} more)` : '';
+  if (e) toast(`${LEADER_FILE} line ${e.line}: ${e.msg}${more} — left out`, 'error', { label: 'Open', run: () => openFile(LEADER_FILE, { line: e.line }) });
+  else toast(`${parsed.rules.length} leader key${parsed.rules.length === 1 ? '' : 's'} from ${LEADER_FILE} — ${kbd('leader') || '⌥X'} shows them`);
+}
+
+async function editLeaderKeys() {
+  if (!S.files.some((f) => f.path === LEADER_FILE)) {
+    try { await api('POST', '/api/file', { path: LEADER_FILE, content: LEADER_STARTER }); await loadTree(); } catch (e) { toast(e.message, 'error'); return; }
+  }
+  openFile(LEADER_FILE);
 }
 
 function openLeaderMenu() {
@@ -6008,7 +6588,7 @@ async function boot() {
   S.recent = JSON.parse(store.getItem(`an.recent.${S.info.root}`) || '[]');
   try { S.bookmarks = JSON.parse(store.getItem(`an.bookmarks.${S.info.root}`) || '[]').filter((p) => typeof p === 'string'); } catch { S.bookmarks = []; }
   await Promise.all([loadTree(), loadRuns(), loadTags(), loadGit(), loadOutside()]);
-  loadRecipes();
+  loadRecipes().then(loadLeaderKeys);
   const saved = JSON.parse(store.getItem(`an.tabs.${S.info.root}`) || 'null');
   // v0.2 format was { open, active }; v0.3 stores one entry per pane.
   const groups = saved?.groups || (saved ? [{ open: saved.open, active: saved.active }] : []);

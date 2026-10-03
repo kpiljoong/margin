@@ -8,13 +8,13 @@ An agent works on your notes the way an editor works on a manuscript: it writes 
 
 Whatever would change your notes comes through the same review, change by change, before it is yours: a run you delegated, an agent working in the folder from a terminal or another editor (*Changed outside*), and later git pull and sync too. Nothing has its own way in.
 
-*Today:* agent runs, changes from outside and your own suggestions (tracked changes, for a meeting) go through it (hunk by hunk, 3-way merge, undo), drawn on the note with the red pen — yours in blue: struck through, written in above a caret, the reasons in the margin. git pull and sync are next.
+*Today:* agent runs, changes from outside, your own suggestions (tracked changes, for a meeting) and renaming, moving and trashing files by editing a folder as text (dired) go through it (hunk by hunk, 3-way merge, undo), drawn on the note with the red pen — yours in blue: struck through, written in above a caret, the reasons in the margin. git pull and sync are next.
 
 ### Principle 2 — Everything is a note
 
 What shapes Margin is plain Markdown in the folder, readable and editable anywhere, kept with git: recipes (your commands, `RECIPES.md`), the instructions for agents (`AGENTS.md`), tasks (`- [ ]` in any note), and the record of what agents did. Extending Margin means writing text and handing it to an agent — the agent takes the place Emacs gives to elisp. No plugins, no code that runs.
 
-*Today:* recipes, `AGENTS.md` and tasks are notes. Settings live in the app's config file and runs in `.agent-notes/runs/` (text and JSON); making them notes is the direction.
+*Today:* recipes, `AGENTS.md`, your own leader keys (`LEADER.md`) and tasks are notes. Settings live in the app's config file and runs in `.agent-notes/runs/` (text and JSON); making them notes is the direction.
 
 ### Principle 3 — Agent proposes, you decide
 

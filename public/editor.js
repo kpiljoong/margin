@@ -120,10 +120,21 @@ export function findPattern({ query, caseSensitive, regex }) {
   } catch { return null; }
 }
 
+// The place in a tracked text (marks, track.js) where `count` characters of
+// the text without `skip` ones have gone by: the first such place, or the last.
+function placeIn(marks, count, skip, last = false) {
+  let n = 0;
+  let i = 0;
+  for (; i < marks.length && n < count; i++) if (marks[i] !== skip) n++;
+  if (last) while (i < marks.length && marks[i] === skip) i++;
+  return i;
+}
+
 export class MarkdownEditor {
-  constructor({ onChange, onScroll, onCursor, complete, onPasteFiles, onTrack } = {}) {
+  constructor({ onChange, onScroll, onCursor, complete, onPasteFiles, onTrack, onNarrow } = {}) {
     this.onChange = onChange || (() => {});
     this.onTrack = onTrack || (() => {});
+    this.onNarrow = onNarrow || (() => {});
     this.onScroll = onScroll || (() => {});
     this.onCursor = onCursor || (() => {});
     this.complete = complete || (() => []);
@@ -135,6 +146,7 @@ export class MarkdownEditor {
     this.history = new UndoHistory('');
     this.track = null; // suggesting: { text, marks, undo, redo } (track.js)
     this.notes = []; // margin notes: { from, to, el, cur }
+    this.nar = null; // narrowed: { head, tail, lines } (the note's text before and after the part in view)
 
     this.findLayer = h('div', 'ed-layer ed-find-layer');
     this.hlLayer = h('div', 'ed-layer ed-hl-layer');
@@ -177,16 +189,21 @@ export class MarkdownEditor {
   }
 
   // ---------------- public API
-  get value() { return this.ta.value; }
-  set value(v) { this.ta.value = v; this.extra = []; this.hints = []; this.history.reset(v); this._render(); }
+  // Places in the API are in the whole note, also while it is narrowed (see
+  // narrow()); the text box itself holds only the part in view.
+  get value() { return this.nar ? this.nar.head + this.ta.value + this.nar.tail : this.ta.value; }
+  set value(v) { this.nar = null; this.ta.value = v; this.extra = []; this.hints = []; this.history.reset(v); this._render(); this.onNarrow(); }
 
   // New text from outside (the file changed on disk: another program, an
-  // agent): shown, and one ⌘Z takes it back.
+  // agent): shown, and one ⌘Z takes it back. Narrowed, it stays so while
+  // the rest of the note is as it was.
   loadText(v) {
-    if (v === this.ta.value || this.track) return;
-    const sel = [this.ta.selectionStart, this.ta.selectionEnd];
+    if (v === this.value || this.track) return;
+    const sel = [this.selectionStart, this.selectionEnd];
     this.history.close();
-    this.ta.value = v;
+    const n = this.nar;
+    if (n && v.length >= n.head.length + n.tail.length && v.startsWith(n.head) && v.endsWith(n.tail)) this.ta.value = v.slice(n.head.length, v.length - n.tail.length);
+    else { this.nar = null; this.ta.value = v; this.onNarrow(); }
     this.extra = [];
     this.hints = [];
     this.history.record(v, [0, 0], sel);
@@ -200,16 +217,20 @@ export class MarkdownEditor {
   _applyHistory(c) {
     if (!c) return;
     this._clearMulti();
-    this.ta.setRangeText(c.insert, c.at, c.at + c.remove);
-    this.ta.setSelectionRange(c.sel[0], c.sel[1]);
+    // A step outside the part in view shows the whole note again.
+    this._reach(c.at, c.at + c.remove);
+    const o = this._off;
+    this.ta.setRangeText(c.insert, c.at - o, c.at - o + c.remove);
+    this.ta.setSelectionRange(this._view(c.sel[0]), this._view(c.sel[1]));
     this._changed();
-    const y = this._caretCoords(c.sel[0]).top - this.ta.scrollTop;
-    if (y < 0 || y > this.ta.clientHeight - this.lineHeight()) this.scrollToOffset(c.sel[0]);
+    const y = this._caretCoords(this.ta.selectionStart).top - this.ta.scrollTop;
+    if (y < 0 || y > this.ta.clientHeight - this.lineHeight()) this._scrollTo(this.ta.selectionStart);
   }
   focus() { this.ta.focus({ preventScroll: true }); }
-  get selectionStart() { return this.ta.selectionStart; }
-  get selectionEnd() { return this.ta.selectionEnd; }
-  setSelection(a, b = a) { this.ta.setSelectionRange(a, b); }
+  get selectionStart() { return this.ta.selectionStart + this._off; }
+  get selectionEnd() { return this.ta.selectionEnd + this._off; }
+  // Narrowed, the caret stays in the part in view.
+  setSelection(a, b = a) { this.ta.setSelectionRange(this._view(a), this._view(b)); }
   get scrollTop() { return this.ta.scrollTop; }
   set scrollTop(v) { this.ta.scrollTop = v; this._syncScroll(); }
   get scrollHeight() { return this.ta.scrollHeight; }
@@ -223,7 +244,7 @@ export class MarkdownEditor {
 
   lineHeight() { return parseFloat(getComputedStyle(this.ta).lineHeight) || 22; }
 
-  cursorLine() { return this.ta.value.slice(0, this.ta.selectionStart).split('\n').length; }
+  cursorLine() { return this._headLines() + this.ta.value.slice(0, this.ta.selectionStart).split('\n').length; }
 
   // Top visible source line (1-based), measured through the mirror layout.
   topLine() {
@@ -231,48 +252,66 @@ export class MarkdownEditor {
     // documents a proportional estimate is plenty for scroll sync.
     if (this.ta.value.length > 150_000) {
       const total = this.ta.value.split('\n').length;
-      return Math.max(1, Math.round((this.ta.scrollTop / Math.max(1, this.ta.scrollHeight - this.ta.clientHeight)) * (total - 1)) + 1);
+      return this._headLines() + Math.max(1, Math.round((this.ta.scrollTop / Math.max(1, this.ta.scrollHeight - this.ta.clientHeight)) * (total - 1)) + 1);
     }
     const spans = this._lineOffsets();
     const y = this.ta.scrollTop;
     let lo = 0; let hi = spans.length - 1;
     while (lo < hi) { const mid = (lo + hi + 1) >> 1; if (spans[mid] <= y) lo = mid; else hi = mid - 1; }
-    return lo + 1;
+    return this._headLines() + lo + 1;
   }
 
   gotoLine(line, { select = true } = {}) {
-    const lines = this.ta.value.split('\n');
+    const lines = this.value.split('\n');
     const idx = Math.max(0, Math.min(lines.length, line) - 1);
     const start = lines.slice(0, idx).reduce((n, l) => n + l.length + 1, 0);
+    this._reach(start, start + lines[idx].length);
+    const o = this._off;
     this.focus();
-    this.ta.setSelectionRange(start, select ? start + lines[idx].length : start);
-    this.scrollToOffset(start);
+    this.ta.setSelectionRange(start - o, select ? start - o + lines[idx].length : start - o);
+    this._scrollTo(start - o);
   }
 
   // Select start…end (or put the cursor there), scrolled into view if needed.
   selectRange(start, end = start, focus = true) {
+    this._reach(start, end);
+    this._select(start - this._off, end - this._off, focus);
+  }
+
+  _select(start, end = start, focus = true) {
     if (focus) this.focus();
     this.ta.setSelectionRange(start, end);
     const y = this._caretCoords(start).top - this.ta.scrollTop;
-    if (y < 0 || y > this.ta.clientHeight - this.lineHeight()) this.scrollToOffset(start);
+    if (y < 0 || y > this.ta.clientHeight - this.lineHeight()) this._scrollTo(start);
   }
 
-  scrollToOffset(offset, ratio = 1 / 3) {
+  scrollToOffset(offset, ratio = 1 / 3) { this._scrollTo(this._view(offset), ratio); }
+
+  _scrollTo(offset, ratio = 1 / 3) {
     const y = this._caretCoords(offset).top;
     this.ta.scrollTop = Math.max(0, y - this.ta.clientHeight * ratio);
     this._syncScroll();
   }
 
   scrollToLine(line) {
-    if (this.ta.value.length > 150_000) { this.scrollToOffset(this.ta.value.split('\n').slice(0, line - 1).join('\n').length, 0); return; }
+    line = Math.max(1, line - this._headLines());
+    if (this.ta.value.length > 150_000) { this._scrollTo(this.ta.value.split('\n').slice(0, line - 1).join('\n').length, 0); return; }
     const spans = this._lineOffsets();
     this.ta.scrollTop = spans[Math.max(0, Math.min(spans.length - 1, line - 1))] || 0;
     this._syncScroll();
   }
 
-  // Replace a range (one step in the undo history, undo.js). execCommand
-  // keeps the browser's own behaviour around typing (autocorrect, IME).
+  // Replace a range (one step in the undo history, undo.js). Outside the
+  // part in view, the whole note is shown again first.
   replace(start, end, text, selStart = start + text.length, selEnd = selStart) {
+    this._reach(start, end);
+    const o = this._off;
+    this._edit(start - o, end - o, text, selStart - o, selEnd - o);
+  }
+
+  // The same in the text box's places. execCommand keeps the browser's own
+  // behaviour around typing (autocorrect, IME).
+  _edit(start, end, text, selStart = start + text.length, selEnd = selStart) {
     const ta = this.ta;
     this._selBefore = [ta.selectionStart, ta.selectionEnd];
     if (!this.handlingKey && !this.quietEdit) editorWatch.edit?.(this, { start, end, text, selStart: ta.selectionStart, selEnd: ta.selectionEnd });
@@ -292,7 +331,61 @@ export class MarkdownEditor {
     ta.setSelectionRange(selStart, selEnd);
   }
 
-  insert(text) { this.replace(this.ta.selectionStart, this.ta.selectionEnd, text); }
+  insert(text) { this._edit(this.ta.selectionStart, this.ta.selectionEnd, text); }
+
+  // ---------------- narrowing (Emacs's narrow-to-region): only a part of
+  // the note in the text box — a section, the selected lines. The rest is
+  // kept aside as it is; editing, finding, undo and suggesting work in the
+  // part, the note is saved whole. Places outside it (a search result, an
+  // undo step there) show the whole note again.
+  get narrowed() {
+    if (!this.nar) return null;
+    const from = this._headLines() + 1;
+    return { from, to: from + this.ta.value.split('\n').length - 1 };
+  }
+  get _off() { return this.nar ? this.nar.head.length : 0; }
+  _headLines() { return this.nar ? this.nar.lines : 0; }
+  // A place in the note → in the text box, kept inside the part in view.
+  _view(x) { return Math.max(0, Math.min(this.ta.value.length, x - this._off)); }
+  _reach(a, b = a) {
+    if (this.nar && (a < this._off || b > this._off + this.ta.value.length)) this.widen();
+  }
+
+  // Show only a..b of the note (places in the whole note).
+  narrow(a, b) {
+    const full = this.value;
+    a = Math.max(0, Math.min(full.length, a));
+    b = Math.max(a, Math.min(full.length, b));
+    if (a === 0 && b === full.length) { this.widen(); return false; }
+    const sel = [this.selectionStart, this.selectionEnd];
+    const head = full.slice(0, a);
+    this.nar = { head, tail: full.slice(b), lines: (head.match(/\n/g) || []).length };
+    this._showPart(full.slice(a, b), sel);
+    this.ta.scrollTop = 0;
+    this._syncScroll();
+    return true;
+  }
+
+  widen() {
+    if (!this.nar) return false;
+    const full = this.value;
+    const sel = [this.selectionStart, this.selectionEnd];
+    this.nar = null;
+    this._showPart(full, sel);
+    this._scrollTo(this.ta.selectionStart);
+    return true;
+  }
+
+  _showPart(text, sel) {
+    this.ta.value = text;
+    this.extra = [];
+    this._expanded = null;
+    this.ta.setSelectionRange(this._view(sel[0]), this._view(sel[1]));
+    this._render();
+    if (this.find.open) this._runFind(false);
+    this._placeNotes();
+    this.onNarrow();
+  }
 
   // query: what to find (else the selection, else the last one).
   openFind({ replace = false, query = null } = {}) {
@@ -325,13 +418,15 @@ export class MarkdownEditor {
   _changed(e) {
     if (this.track) { this._trackChanged(e); return; }
     if (!e?.isComposing) {
-      this.history.record(this.ta.value, this._selBefore, [this.ta.selectionStart, this.ta.selectionEnd]);
+      const o = this._off;
+      const before = this._selBefore && [this._selBefore[0] + o, this._selBefore[1] + o];
+      this.history.record(this.value, before, [this.ta.selectionStart + o, this.ta.selectionEnd + o]);
       this._selBefore = null;
     }
     this.hints = [];
     this._render();
     if (this.find.open) this._runFind(false);
-    this.onChange(this.ta.value);
+    this.onChange(this.value);
     this._maybeComplete();
   }
 
@@ -341,7 +436,7 @@ export class MarkdownEditor {
     this.el.classList.toggle('plain', !on);
     if (on) {
       let html = this.highlightOn ? highlightMarkdown(text) : esc(text);
-      if (this.track) html = overlay(html, this.track.pending || this.track.marks);
+      if (this.track) html = overlay(html, this._partMarks(this.track.pending || this.track.marks));
       this.hlLayer.innerHTML = `${html}\n `;
     } else this.hlLayer.textContent = '';
     this._lineOffsetCache = null;
@@ -362,8 +457,12 @@ export class MarkdownEditor {
     const marks = [];
     if (this.find.open) this.find.matches.forEach(([a, b], i) => marks.push([a, b, i === index ? 'cur' : '']));
     for (const [a, b] of this.extra) marks.push([a, b, a === b ? 'mcaret' : 'msel']);
-    for (const [a, b] of this.hints) marks.push([a, b, 'hint']);
-    for (const n of this.notes) if (n.to > n.from) marks.push([n.from, n.to, n.cur ? 'note cur' : 'note']);
+    // Hints and notes are in the note's places; narrowed, only those in view.
+    const o = this._off;
+    const len = this.ta.value.length;
+    const part = (a, b, cls) => { if (a - o >= 0 && b - o <= len) marks.push([a - o, b - o, cls]); };
+    for (const [a, b] of this.hints) part(a, b, 'hint');
+    for (const n of this.notes) if (n.to > n.from) part(n.from, n.to, n.cur ? 'note cur' : 'note');
     if (!marks.length) { this.findLayer.textContent = ''; return; }
     marks.sort((x, y) => x[0] - y[0]);
     const text = this.ta.value;
@@ -386,25 +485,45 @@ export class MarkdownEditor {
   }
 
   // ---------------- suggesting (track.js)
+  // The tracked text and its marks are the whole note's, narrowed or not.
   get tracking() { return !!this.track; }
 
   // Show base with work's changes marked, and go on suggesting from there.
+  // Narrowed, the same part stays in view.
   startTrack(base, work) {
+    const n = this.nar;
     const c = combine(base, work);
     this.track = { text: c.text, marks: c.marks, undo: [], redo: [], open: false, last: 0, pending: null };
+    this.nar = null;
     this.extra = [];
     this.hints = [];
     this.ta.value = c.text;
     this.history.reset(c.text);
     this.el.classList.add('tracking');
     this._render();
+    const fits = n && base.length >= n.head.length + n.tail.length && base.startsWith(n.head) && base.endsWith(n.tail);
+    if (fits) this.narrow(placeIn(c.marks, n.head.length, 'i'), placeIn(c.marks, base.length - n.tail.length, 'i', true));
+    else if (n) this.onNarrow();
   }
 
-  // Back to plain editing, with this text.
+  // Back to plain editing, with this text (the note as it was, or as the
+  // suggestions made it): narrowed, the same part stays in view.
   stopTrack(text) {
+    const t = this.track;
+    let part = null;
+    if (t && this.nar) {
+      const o = this._off;
+      const e = t.text.length - this.nar.tail.length;
+      for (const keep of [original, proposed]) {
+        const head = keep(t.text.slice(0, o), t.marks.slice(0, o));
+        const tail = keep(t.text.slice(e), t.marks.slice(e));
+        if (text.length >= head.length + tail.length && text.startsWith(head) && text.endsWith(tail)) { part = [head.length, text.length - tail.length]; break; }
+      }
+    }
     this.track = null;
     this.el.classList.remove('tracking');
     this.value = text;
+    if (part) this.narrow(...part);
   }
 
   // The note as it is, and as the suggestions would make it.
@@ -428,19 +547,23 @@ export class MarkdownEditor {
     return n;
   }
 
+  // The marks of the part in view.
+  _partMarks(marks) { return this.nar ? marks.slice(this._off, this._off + this.ta.value.length) : marks; }
+
   _trackChanged(e) {
     const t = this.track;
-    const next = this.ta.value;
+    const o = this._off;
+    const next = this.value;
     if (e?.isComposing) { t.pending = provisional(t, next); this._render(); return; }
-    const before = this._selBefore;
+    const before = this._selBefore && [this._selBefore[0] + o, this._selBefore[1] + o];
     this._selBefore = null;
     t.pending = null;
     if (next === t.text) { this._render(); return; }
-    const r = reconcile(t, next, before, this.ta.selectionStart);
+    const r = reconcile(t, next, before, this.ta.selectionStart + o);
     this._trackKeep(before);
     if (r.restored) {
-      this.ta.setRangeText(r.back, r.at, r.at);
-      this.ta.setSelectionRange(r.caret, r.caret);
+      this.ta.setRangeText(r.back, r.at - o, r.at - o);
+      this.ta.setSelectionRange(r.caret - o, r.caret - o);
     }
     t.text = r.text;
     t.marks = r.marks;
@@ -456,7 +579,7 @@ export class MarkdownEditor {
     const t = this.track;
     const now = Date.now();
     if (force || !t.open || now - t.last > 1500) {
-      t.undo.push({ text: t.text, marks: t.marks, sel: sel || [this.ta.selectionStart, this.ta.selectionEnd] });
+      t.undo.push({ text: t.text, marks: t.marks, sel: sel || [this.selectionStart, this.selectionEnd] });
       if (t.undo.length > 500) t.undo.shift();
     }
     t.open = !force;
@@ -468,24 +591,36 @@ export class MarkdownEditor {
     const t = this.track;
     const s = (dir < 0 ? t.undo : t.redo).pop();
     if (!s) return;
-    (dir < 0 ? t.redo : t.undo).push({ text: t.text, marks: t.marks, sel: [this.ta.selectionStart, this.ta.selectionEnd] });
+    (dir < 0 ? t.redo : t.undo).push({ text: t.text, marks: t.marks, sel: [this.selectionStart, this.selectionEnd] });
     t.open = false;
     this._trackSet(s.text, s.marks, s.sel);
-    const y = this._caretCoords(s.sel[0]).top - this.ta.scrollTop;
-    if (y < 0 || y > this.ta.clientHeight - this.lineHeight()) this.scrollToOffset(s.sel[0]);
+    const y = this._caretCoords(this.ta.selectionStart).top - this.ta.scrollTop;
+    if (y < 0 || y > this.ta.clientHeight - this.lineHeight()) this._scrollTo(this.ta.selectionStart);
   }
 
+  // The tracked text is now this (the note's places): narrowed, a change
+  // outside the part in view shows the whole note.
   _trackSet(text, marks, sel) {
     const t = this.track;
+    const n = this.nar;
+    if (n) {
+      const o = this._off;
+      const e = text.length - n.tail.length;
+      const same = e >= o && text.slice(0, o) === n.head && text.slice(e) === n.tail
+        && marks.slice(0, o) === t.marks.slice(0, o) && marks.slice(e) === t.marks.slice(t.marks.length - n.tail.length);
+      if (!same) this.widen();
+    }
+    const o = this._off;
+    const part = this.nar ? text.slice(o, text.length - this.nar.tail.length) : text;
     const old = this.ta.value;
     let p = 0;
-    while (p < old.length && p < text.length && old[p] === text[p]) p++;
+    while (p < old.length && p < part.length && old[p] === part[p]) p++;
     let q = 0;
-    while (q < old.length - p && q < text.length - p && old[old.length - 1 - q] === text[text.length - 1 - q]) q++;
-    this.ta.setRangeText(text.slice(p, text.length - q), p, old.length - q);
+    while (q < old.length - p && q < part.length - p && old[old.length - 1 - q] === part[part.length - 1 - q]) q++;
+    this.ta.setRangeText(part.slice(p, part.length - q), p, old.length - q);
     t.text = text;
     t.marks = marks;
-    this.ta.setSelectionRange(sel[0], sel[1]);
+    this.ta.setSelectionRange(this._view(sel[0]), this._view(sel[1]));
     this._render();
     this.onTrack();
   }
@@ -495,6 +630,7 @@ export class MarkdownEditor {
   strikeSelection() {
     const t = this.track;
     if (!t) return false;
+    const o = this._off;
     const v = this.ta.value;
     let a = this.ta.selectionStart;
     let b = this.ta.selectionEnd;
@@ -505,10 +641,10 @@ export class MarkdownEditor {
       b = nl === -1 ? v.length : nl + 1;
       if (a === b) return true;
     }
-    const r = strike(t, a, b);
+    const r = strike(t, a + o, b + o);
     this._trackKeep(null, true);
     let caret = r.end;
-    if (line) { const nl = r.text.indexOf('\n', a); caret = nl === -1 ? r.text.length : nl + 1; }
+    if (line) { const nl = r.text.indexOf('\n', a + o); caret = nl === -1 ? r.text.length : nl + 1; }
     this._trackSet(r.text, r.marks, [caret, caret]);
     this._placeCurLine();
     return true;
@@ -522,7 +658,7 @@ export class MarkdownEditor {
     let b = this.ta.selectionEnd;
     if (a === b) [a, b] = this._wordAt(a);
     if (a === b) return false;
-    const r = strike(t, a, b);
+    const r = strike(t, a + this._off, b + this._off);
     if (!r.struck) return false;
     this._trackKeep(null, true);
     this._trackSet(r.text, r.marks, [r.end, r.end]);
@@ -561,8 +697,12 @@ export class MarkdownEditor {
   _placeNotes() {
     if (!this.notes.length || !this.el.isConnected) return;
     let y = 0;
+    const o = this._off;
     for (const n of [...this.notes].sort((x, z) => x.from - z.from)) {
-      const want = this._caretCoords(n.from).top;
+      const out = n.from < o || n.from - o > this.ta.value.length;
+      n.el.style.display = out ? 'none' : '';
+      if (out) continue;
+      const want = this._caretCoords(n.from - o).top;
       const top = Math.max(want, y);
       n.el.style.top = `${top}px`;
       y = top + n.el.offsetHeight + 8;
@@ -648,7 +788,7 @@ export class MarkdownEditor {
         return;
       }
       e.preventDefault();
-      if (!m[5].trim() && s === lineEnd) { this.replace(lineStart, lineEnd, ''); return; } // empty item ends the list
+      if (!m[5].trim() && s === lineEnd) { this._edit(lineStart, lineEnd, ''); return; } // empty item ends the list
       let marker = m[2];
       const num = marker.match(/^(\d+)([.)])$/);
       if (num) marker = `${Number(num[1]) + 1}${num[2]}`;
@@ -675,14 +815,14 @@ export class MarkdownEditor {
       const quoteLike = e.key === '"' || e.key === '`';
       if ((!next || /[\s)\]}.,;:!?]/.test(next)) && !(quoteLike && /[\p{L}\p{N}]/u.test(prev))) {
         e.preventDefault();
-        this.replace(s, s, e.key + close, s + 1);
+        this._edit(s, s, e.key + close, s + 1);
       }
       return;
     }
     if (!mod && [')', ']', '}'].includes(e.key) && s === end && value[s] === e.key) { e.preventDefault(); ta.setSelectionRange(s + 1, s + 1); return; }
     if (e.key === 'Backspace' && s === end && s > 0 && PAIRS[value[s - 1]] === value[s] && value[s]) {
       e.preventDefault();
-      this.replace(s - 1, s + 1, '');
+      this._edit(s - 1, s + 1, '');
     }
   }
 
@@ -752,7 +892,7 @@ export class MarkdownEditor {
     probe.textContent = '';
     const caret = ta.selectionStart;
     out.sort((x, y) => Math.abs(x.offset - caret) - Math.abs(y.offset - caret));
-    return out.slice(0, max);
+    return out.slice(0, max).map((x) => ({ ...x, offset: x.offset + this._off }));
   }
 
   // Larger and smaller pieces of the note (expand.js). Shrinking goes back
@@ -764,7 +904,7 @@ export class MarkdownEditor {
     const r = expandRange(this.ta.value, a, b);
     if (!r) return;
     this._expanded.push({ from: [a, b], to: r });
-    this.selectRange(r[0], r[1]);
+    this._select(r[0], r[1]);
   }
 
   shrinkSelection() {
@@ -772,18 +912,18 @@ export class MarkdownEditor {
     const top = this._expanded?.at(-1);
     if (!top || top.to[0] !== a || top.to[1] !== b) { this._expanded = []; return; }
     this._expanded.pop();
-    this.selectRange(top.from[0], top.from[1]);
+    this._select(top.from[0], top.from[1]);
   }
 
   _wrap(open, close = open) {
     const { selectionStart: s, selectionEnd: e, value } = this.ta;
     const sel = value.slice(s, e);
     if (sel.startsWith(open) && sel.endsWith(close) && sel.length >= open.length + close.length) {
-      this.replace(s, e, sel.slice(open.length, sel.length - close.length), s, e - open.length - close.length);
+      this._edit(s, e, sel.slice(open.length, sel.length - close.length), s, e - open.length - close.length);
     } else if (value.slice(s - open.length, s) === open && value.slice(e, e + close.length) === close) {
-      this.replace(s - open.length, e + close.length, sel, s - open.length, e - open.length);
+      this._edit(s - open.length, e + close.length, sel, s - open.length, e - open.length);
     } else {
-      this.replace(s, e, open + sel + close, s + open.length, e + open.length);
+      this._edit(s, e, open + sel + close, s + open.length, e + open.length);
     }
   }
 
@@ -808,7 +948,7 @@ export class MarkdownEditor {
       total -= n;
       return l.slice(n);
     });
-    this.replace(a, b, out.join('\n'), Math.max(a, s + delta0), Math.max(a, e + total));
+    this._edit(a, b, out.join('\n'), Math.max(a, s + delta0), Math.max(a, e + total));
   }
 
   _toggleTask() {
@@ -821,14 +961,14 @@ export class MarkdownEditor {
       return l.replace(/^(\s*)/, '$1- [ ] ');
     });
     const text = lines.join('\n');
-    this.replace(a, b, text, Math.min(a + text.length, s + (text.length - (b - a))));
+    this._edit(a, b, text, Math.min(a + text.length, s + (text.length - (b - a))));
   }
 
   _duplicateLine() {
     const [a, b] = this._lineRange();
     const { selectionStart: s, selectionEnd: e, value } = this.ta;
     const block = value.slice(a, b);
-    this.replace(b, b, `\n${block}`, s + block.length + 1, e + block.length + 1);
+    this._edit(b, b, `\n${block}`, s + block.length + 1, e + block.length + 1);
   }
 
   _moveLines(dir) {
@@ -839,13 +979,13 @@ export class MarkdownEditor {
       if (a === 0) return;
       const pa = value.lastIndexOf('\n', a - 2) + 1;
       const prev = value.slice(pa, a - 1);
-      this.replace(pa, b, `${block}\n${prev}`, s - prev.length - 1, e - prev.length - 1);
+      this._edit(pa, b, `${block}\n${prev}`, s - prev.length - 1, e - prev.length - 1);
     } else {
       if (b >= value.length) return;
       const nb = value.indexOf('\n', b + 1);
       const nextEnd = nb === -1 ? value.length : nb;
       const next = value.slice(b + 1, nextEnd);
-      this.replace(a, nextEnd, `${next}\n${block}`, s + next.length + 1, e + next.length + 1);
+      this._edit(a, nextEnd, `${next}\n${block}`, s + next.length + 1, e + next.length + 1);
     }
   }
 
@@ -884,7 +1024,7 @@ export class MarkdownEditor {
     if (i === -1) return;
     this.extra.push([s, e]);
     this.ta.setSelectionRange(i, i + needle.length);
-    this.scrollToOffset(i, 0.4);
+    this._scrollTo(i, 0.4);
     this._renderFind();
   }
 
@@ -946,7 +1086,7 @@ export class MarkdownEditor {
     }
     const primaryIdx = merged.findIndex(([a, b]) => a <= primary[0] && primary[0] <= Math.max(b, a));
     const main = newCarets[primaryIdx === -1 ? newCarets.length - 1 : primaryIdx];
-    this.replace(from, to, out, main, main);
+    this._edit(from, to, out, main, main);
     this.extra = newCarets.filter((c) => c !== main).map((c) => [c, c]);
     this._renderFind();
   }
@@ -1004,7 +1144,7 @@ export class MarkdownEditor {
     const cellText = cells[tRow][tCol].trim();
     const lead = cells[tRow][tCol].length - cells[tRow][tCol].trimStart().length;
     const cellEnd = cellStart + lead + (tRow === sepIdx ? 0 : cellText.length);
-    this.replace(blockStart, blockEnd, text, move ? cellStart + lead : this.ta.selectionStart, move ? cellEnd : this.ta.selectionStart);
+    this._edit(blockStart, blockEnd, text, move ? cellStart + lead : this.ta.selectionStart, move ? cellEnd : this.ta.selectionStart);
     return true;
   }
 
@@ -1017,7 +1157,7 @@ export class MarkdownEditor {
     // Paste a URL over selected text → Markdown link.
     if (s !== end && /^https?:\/\/\S+$/.test(text.trim()) && !value.slice(s, end).includes('\n')) {
       e.preventDefault();
-      this.replace(s, end, `[${value.slice(s, end)}](${text.trim()})`);
+      this._edit(s, end, `[${value.slice(s, end)}](${text.trim()})`);
     }
   }
 
@@ -1103,9 +1243,9 @@ export class MarkdownEditor {
     let text = it.insert;
     const link = kind === 'link' || kind === 'heading';
     if (link && after !== ']]') text += ']]';
-    else if (link) { this._closePopup(); this.replace(from, s + 2, `${text}]]`); return; }
+    else if (link) { this._closePopup(); this._edit(from, s + 2, `${text}]]`); return; }
     this._closePopup();
-    this.replace(from, s, text + (kind === 'tag' ? ' ' : ''));
+    this._edit(from, s, text + (kind === 'tag' ? ' ' : ''));
   }
 
   _closePopup() { this.popup.hidden = true; this._ac = null; }
@@ -1164,7 +1304,7 @@ export class MarkdownEditor {
     let m;
     for (let n = 0; (m = re.exec(this.ta.value));) {
       if (m[0] === '') { re.lastIndex++; continue; }
-      if (++n === k) { this.selectRange(m.index, m.index + m[0].length); return true; }
+      if (++n === k) { this._select(m.index, m.index + m[0].length); return true; }
     }
     return false;
   }
@@ -1178,7 +1318,7 @@ export class MarkdownEditor {
     const next = this.ta.value.replace(re, (m) => { count++; return spec.regex ? m.replace(one, spec.replace) : spec.replace; });
     if (!count) return 0;
     this.quietEdit = true;
-    try { this.replace(0, this.ta.value.length, next, 0); } finally { this.quietEdit = false; }
+    try { this._edit(0, this.ta.value.length, next, 0); } finally { this.quietEdit = false; }
     return count;
   }
 
@@ -1236,7 +1376,7 @@ export class MarkdownEditor {
     if (index < 0 || !matches[index]) return;
     const [a, b] = matches[index];
     const rep = this._replacement(this.ta.value.slice(a, b));
-    this.replace(a, b, rep, a + rep.length);
+    this._edit(a, b, rep, a + rep.length);
     this._runFind(false);
     if (this.find.matches.length) { this.find.index = Math.min(index, this.find.matches.length - 1); this._reveal(this.find.index, false); this._renderFind(); }
   }

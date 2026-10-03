@@ -939,6 +939,22 @@ function restorePath({ trash, path: relPath }) {
   return { path: relOf(dst) };
 }
 
+// Which of these paths the privacy rules withhold from agents, and why: a
+// moved note may leave (or come under) .agentnotesignore. Paths not there
+// yet are only matched against it.
+function privateOf({ paths }) {
+  if (!Array.isArray(paths) || paths.length > 5000) throw httpError(400, 'paths: a list');
+  const ignored = loadIgnore(ROOT);
+  const out = {};
+  for (const rel of paths) {
+    const abs = workspacePath(rel);
+    const reason = ignored(relOf(abs)) ? '.agentnotesignore'
+      : NOTE_EXT.has(extOf(abs)) && isPrivateNote(abs) ? 'front matter (private)' : null;
+    if (reason) out[relOf(abs)] = reason;
+  }
+  return { private: out };
+}
+
 function createFolder({ path: relPath }) {
   const abs = workspacePath(relPath);
   if (fs.existsSync(abs)) throw httpError(409, 'Already exists');
@@ -1620,6 +1636,7 @@ async function routeApi(method, url, body) {
   if (method === 'POST' && p === '/api/delete') return deletePath(body || {});
   if (method === 'POST' && p === '/api/restore') return restorePath(body || {});
   if (method === 'POST' && p === '/api/folder') return createFolder(body || {});
+  if (method === 'POST' && p === '/api/private') return privateOf(body || {});
   if (method === 'GET' && p === '/api/git/status') return gitStatus();
   if (method === 'POST' && p === '/api/git/init') return gitInit();
   if (method === 'GET' && p === '/api/git/diff') return gitDiff(q('path'));

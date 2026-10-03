@@ -40,6 +40,12 @@ fs.writeFileSync(path.join(ws, 'expand.md'), '# Expand\n\nFirst one. A **bold** 
 fs.writeFileSync(path.join(ws, 'tasks.md'), '# Tasks\n\n- [ ] late one 📅 2020-01-01\n- [ ] someday\n- [x] finished\n');
 fs.writeFileSync(path.join(ws, 'RECIPES.md'), '# Recipes\n\n## Shout\nkey: s\nscope: note\n\nMake the title louder.\n');
 fs.writeFileSync(path.join(ws, 'buf.md'), '# Buffer\n\nfirst line\nsecond line\n');
+fs.writeFileSync(path.join(ws, 'narrow.md'), '# Narrow\n\nintro\n\n## A\n\nalpha\n\n## B\n\nbeta\n');
+fs.mkdirSync(path.join(ws, 'dired'));
+fs.writeFileSync(path.join(ws, 'dired', 'alpha.md'), '# Alpha\n');
+fs.writeFileSync(path.join(ws, 'dired', 'keep.md'), '# Keep\n');
+fs.writeFileSync(path.join(ws, 'dired', 'zz-old.md'), '# Old\n');
+fs.writeFileSync(path.join(ws, 'cite.md'), 'See [[alpha]].\n');
 fs.mkdirSync(path.join(ws, 'todo'));
 fs.writeFileSync(path.join(ws, 'todo', 'a.md'), 'TODO one\n\nTODO two\n');
 fs.writeFileSync(path.join(ws, 'todo', 'b.md'), 'TODO three\n');
@@ -476,7 +482,7 @@ await check('the leader key (⌥X): f f finds a file, Space all commands; w h go
   key('Escape');
   const back = await until(() => !document.activeElement?.closest('#sidebar'));
   return { focused, groups, files, quick: !!quick, quickValue, typedInEditor, paletteValue, from, moved, opened, back: !!back };
-`, (v) => (v?.focused && v.groups === 'fsbwmlgartpq' && v.files && v.quick && v.quickValue === '' && !v.typedInEditor && v.paletteValue === '>' && v.from === 'flow.md' && v.moved && v.opened && v.back ? null : 'the leader key did not work'));
+`, (v) => (v?.focused && v.groups === 'fsbwmnlgartpqh' && v.files && v.quick && v.quickValue === '' && !v.typedInEditor && v.paletteValue === '>' && v.from === 'flow.md' && v.moved && v.opened && v.back ? null : 'the leader key did not work'));
 
 await check('link hints in a focused preview: f, then a letter, follows that link', `
   await openNote('sub/links.md');
@@ -1061,6 +1067,108 @@ await check('M-x (⌥X :) runs a recipe from RECIPES.md by name; the runs, the r
   results.push({ name, ok: !problem });
   console.log(`${problem ? '✗' : '✓'} ${name}${problem ? `\n    ${problem}\n    got: ${JSON.stringify(got)}` : ''}`);
   if (problem) failed = true;
+}
+
+// Emacs, the second part: narrowing to a section, a folder edited as text
+// (the plan reviewed first), describe-key, every command described, and
+// keys of your own in LEADER.md.
+await check('narrow to a section: only it is edited and found; saved whole; widen', `
+  const ta = await openNote('narrow.md');
+  const press = (code, key, opts = {}) => document.activeElement.dispatchEvent(new KeyboardEvent('keydown', { code, key, bubbles: true, cancelable: true, ...opts }));
+  ta.focus();
+  const at = ta.value.indexOf('alpha');
+  ta.setSelectionRange(at, at);
+  press('KeyX', '≈', { altKey: true }); await until(() => $('.leader'));
+  press('KeyN', 'n'); press('KeyN', 'n');
+  const part = await until(() => (ta.value.startsWith('## A') ? ta.value : null));
+  const chip = $('#status')?.textContent.includes('Narrowed');
+  ta.setSelectionRange(ta.value.length, ta.value.length);
+  document.execCommand('insertText', false, 'more\\n');
+  const mac = navigator.platform.startsWith('Mac');
+  press('KeyS', 's', mac ? { metaKey: true } : { ctrlKey: true });
+  await sleep(600);
+  ta.focus();
+  press('KeyX', '≈', { altKey: true }); await until(() => $('.leader'));
+  press('KeyN', 'n'); press('KeyW', 'w');
+  const whole = await until(() => (ta.value.startsWith('# Narrow') ? ta.value : null));
+  return { part, chip, whole, after: !$('#status')?.textContent.includes('Narrowed') };
+`, (v) => (v?.part === '## A\n\nalpha\n' && v.chip && v.after && v.whole === '# Narrow\n\nintro\n\n## A\n\nalpha\nmore\n\n## B\n\nbeta\n'
+  && fs.readFileSync(path.join(ws, 'narrow.md'), 'utf8') === v.whole ? null : 'narrowing did not work'));
+
+await check('dired: a folder edited as text is a plan to review; applied, links follow, a gone line is in the trash', `
+  await openNote('dired/keep.md');
+  const press = (code, key, opts = {}) => document.activeElement.dispatchEvent(new KeyboardEvent('keydown', { code, key, bubbles: true, cancelable: true, ...opts }));
+  press('KeyX', '≈', { altKey: true }); await until(() => $('.leader'));
+  press('KeyD', 'd');
+  const rows = await until(() => ($$('.dired-row').length >= 3 ? $$('.dired-row').map((r) => r.textContent.trim()) : null));
+  press('KeyE', 'e');
+  const ta = await until(() => document.activeElement?.closest?.('.dired-ed') && document.activeElement);
+  const text = ta.value;
+  ta.select();
+  document.execCommand('insertText', false, 'fresh\\nalpha-2.md\\nkeep.md\\n');
+  press('KeyC', 'c', { ctrlKey: true }); press('KeyC', 'c', { ctrlKey: true });
+  const plan = await until(() => $('.review.dired .file-card'));
+  const says = $$('.hunk-says, .pen-card').map((x) => x.textContent).join(' | ');
+  key('A'); await sleep(200); key('a');
+  const back = await until(() => ($$('.dired-row').some((r) => r.textContent.includes('alpha-2.md')) ? $$('.dired-row').map((r) => r.textContent.trim()) : null), 8000);
+  return { rows, text, plan: !!plan, says, back };
+`, (v) => {
+  if (!v?.plan || v.text !== 'alpha.md\nkeep.md\nzz-old.md\n') return 'the folder did not open as text';
+  if (!/Rename alpha\.md → alpha-2\.md/.test(v.says) || !/zz-old\.md to the trash/.test(v.says) || !/New note/.test(v.says)) return 'the plan did not say what it does';
+  if (!v.back || !fs.existsSync(path.join(ws, 'dired', 'alpha-2.md')) || !fs.existsSync(path.join(ws, 'dired', 'fresh.md')) || fs.existsSync(path.join(ws, 'dired', 'zz-old.md'))) return 'the plan was not applied';
+  if (fs.readFileSync(path.join(ws, 'cite.md'), 'utf8') !== 'See [[alpha-2]].\n') return 'the link did not follow the rename';
+  const trash = path.join(ws, '.agent-notes', 'trash');
+  if (!fs.readdirSync(trash).some((d) => fs.existsSync(path.join(trash, d, 'dired', 'zz-old.md')))) return 'the gone note is not in the trash';
+  return null;
+});
+
+await check('describe a key (⌥X h k): a shortcut and a leader path; every command has a line on what it does', `
+  const ta = await openNote('buf.md');
+  const press = (code, key, opts = {}) => document.activeElement.dispatchEvent(new KeyboardEvent('keydown', { code, key, bubbles: true, cancelable: true, ...opts }));
+  const mac = navigator.platform.startsWith('Mac');
+  ta.focus();
+  press('KeyX', '≈', { altKey: true }); await until(() => $('.leader'));
+  press('KeyH', 'h'); press('KeyK', 'k');
+  await sleep(100);
+  press('KeyS', 's', mac ? { metaKey: true } : { ctrlKey: true });
+  const save = await until(() => $('.help') && $('.review-head .task', $('.help'))?.textContent === 'Save' && $('.help').textContent);
+  (await openNote('buf.md')).focus();
+  await sleep(200); // the same command again within 150 ms is taken as one
+  press('KeyX', '≈', { altKey: true }); await until(() => $('.leader'));
+  press('KeyH', 'h'); press('KeyK', 'k');
+  await sleep(150);
+  press('KeyX', '≈', { altKey: true });
+  const head = await until(() => /Describe/.test($('.leader-head')?.textContent || '') && $('.leader-head').textContent);
+  press('KeyN', 'n'); press('KeyN', 'n');
+  const narrow = await until(() => /Narrow to this section/.test($('.help .review-head .task')?.textContent || '') && $('.help').textContent);
+  (await openNote('buf.md')).focus();
+  await sleep(200);
+  press('KeyX', '≈', { altKey: true }); await until(() => $('.leader'));
+  press('KeyH', 'h'); press('KeyC', 'c');
+  await until(() => $$('#overlay .palette-item').length);
+  const bare = $$('#overlay .palette-item').filter((x) => !$('.hint', x)).map((x) => x.textContent);
+  key('Escape', {}, $('#overlay input'));
+  return { save: (save || '').slice(0, 300), head, narrow: (narrow || '').slice(0, 800) || $('.help .review-head .task')?.textContent, bare };
+`, (v) => (/Writes the note to disk/.test(v?.save) && /(⌘S|Ctrl\+S)/.test(v.save) && /(⌥X|Alt\+X) n n/.test(v.narrow) && /Shows only the section/.test(v.narrow)
+  ? (v.bare.length ? `commands without a line on what they do: ${v.bare.join(', ')}` : null) : 'describe-key did not work'));
+
+{
+  // LEADER.md: a group of yours, a key moved, one taken away; a line that
+  // can't be followed is left out with a warning.
+  fs.writeFileSync(path.join(ws, 'LEADER.md'), '# Leader keys\n\n- `o` +mine\n- `o w` Widen: show the whole note\n- `z` No such command\n- `k` off\n');
+  await check('keys of your own (LEADER.md): in the menu and in describe-key; a bad line is left out with a warning', `
+    await openNote('buf.md');
+    const warned = await until(() => !$('#toast').hidden && /LEADER\\.md line 5/.test($('#toast').textContent) && $('#toast').textContent, 8000);
+    const press = (code, key, opts = {}) => document.activeElement.dispatchEvent(new KeyboardEvent('keydown', { code, key, bubbles: true, cancelable: true, ...opts }));
+    press('KeyX', '≈', { altKey: true });
+    const menu = await until(() => $('.leader'));
+    const top = $$('.leader-item', menu).map((b) => b.dataset.key);
+    press('KeyO', 'o');
+    await sleep(50);
+    const mine = $$('.leader-item', menu).map((b) => b.textContent).join(' | ');
+    press('Escape', 'Escape');
+    return { warned, hasO: top.includes('o'), hasK: top.includes('k'), hasZ: top.includes('z'), mine };
+  `, (v) => (v?.warned && v.hasO && !v.hasK && !v.hasZ && /w.*Widen/.test(v.mine) ? null : 'the leader keys of LEADER.md were not followed'));
 }
 
 console.log(failed ? `\nSmoke test failed (${results.filter((r) => !r.ok).length} of ${results.length + 4}).` : `\nAll ${results.length + 4} checks passed.`);
