@@ -746,6 +746,8 @@ await check('the search results keep their scroll position when one is opened', 
 `, (v) => (v?.before > 0 && Math.abs(v.after - v.before) < 2 ? null : 'the results list jumped'));
 
 // Another program (an agent in a terminal) changes a note: two changes.
+fs.writeFileSync(path.join(ws, 'agent-new.md'), '# Made by an agent\n');
+await sleep(300);
 fs.writeFileSync(path.join(ws, 'outside.md'), Array.from({ length: 20 }, (_, i) => (i === 1 ? 'LINE 2 by agent' : i === 17 ? 'LINE 18 by agent' : `line ${i + 1}`)).join('\n') + '\n');
 await check('a change from outside shows in the status bar; undo one of its changes by keys, keep the other', `
   const item = await until(() => $$('#status .outside-count').find((x) => /changed outside/.test(x.textContent)), 10000);
@@ -755,16 +757,17 @@ await check('a change from outside shows in the status bar; undo one of its chan
   const focused = document.activeElement === wrap;
   // The newest first (a test before may have changed a note from outside too).
   const hunks = $$('.review .file-card')[0]?.dataset.path === 'outside.md' && $$('.review .file-card')[0].querySelectorAll('.hunk').length;
+  const made = $$('.review .file-card').some((c) => c.dataset.path === 'agent-new.md' && /added/.test(c.querySelector('.badge').textContent));
   key('j'); key('x'); await sleep(150);
   const label = button('Undo')?.textContent;
   key('a');
   const ok = await until(() => /Nothing changed outside/.test($('.review')?.textContent || ''), 5000);
   await sleep(200);
-  return { focused, hunks, label, ok: !!ok, gone: !$('#status .outside-count') };
-`, (v) => (v?.focused && v.hunks === 2 && /^Undo 1, keep \d+$/.test(v.label) && v.ok && v.gone ? null : 'reviewing the outside change did not work'));
+  return { focused, hunks, made, label, ok: !!ok, gone: !$('#status .outside-count') };
+`, (v) => (v?.focused && v.hunks === 2 && v.made && /^Undo 1, keep \d+$/.test(v.label) && v.ok && v.gone ? null : 'reviewing the outside change did not work'));
 {
   const t = fs.readFileSync(path.join(ws, 'outside.md'), 'utf8').split('\n');
-  const good = t[1] === 'line 2' && t[17] === 'LINE 18 by agent';
+  const good = t[1] === 'line 2' && t[17] === 'LINE 18 by agent' && fs.existsSync(path.join(ws, 'agent-new.md'));
   console.log(`${good ? '✓' : '✗'} the undone change is gone from the file, the kept one stays`);
   if (!good) failed = true;
 }

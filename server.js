@@ -358,10 +358,17 @@ function startWatcher() {
       // Changed by another program: keep the text it replaced.
       const was = textCache.get(p);
       textCache.delete(p);
-      if (!was || !NOTE_EXT.has(extOf(p))) continue;
+      if (!NOTE_EXT.has(extOf(p)) || isOurs(p)) continue;
+      const abs = path.join(ROOT, p);
       let now = null;
-      try { now = readText(path.join(ROOT, p)); } catch { continue; } // moved or deleted: not a change of text
-      if (now != null && now !== was.text) { keepVersion(p, was.text, 'outside'); changedOutside(p, was.text, now); }
+      let st = null;
+      try { st = fs.statSync(abs); if (st.isFile()) now = readText(abs); } catch { /* gone */ }
+      if (!was) {
+        // A note that was not there: made just now (not merely unread).
+        if (now != null && st.birthtimeMs && Date.now() - st.birthtimeMs < 30_000 && !isTemplatePath(p)) changedOutside(p, null, now);
+      } else if (now == null) {
+        if (!st) changedOutside(p, was.text, null); // deleted (or moved away)
+      } else if (now !== was.text) { keepVersion(p, was.text, 'outside'); changedOutside(p, was.text, now); }
       cachedText(p); // so the next change is seen too
     }
     broadcast('fs', { paths: [...pending], structural });
@@ -556,6 +563,7 @@ function getVersion(rel, id) {
 // Notes another program changed (an agent working in the folder, another
 // editor): the text from before the first such change, until they are looked
 // at — so they can be reviewed like an agent run, change by change.
+// before: null for a note it made; the text now is null for one it deleted.
 const outside = new Map(); // rel → { before, since, at }
 const OUTSIDE_MAX = 200;
 
@@ -566,32 +574,51 @@ function changedOutside(rel, was, now) {
     else seen.at = Date.now();
     return;
   }
-  if (Buffer.byteLength(was) > HISTORY_MAX_BYTES) return;
+  if (was != null && Buffer.byteLength(was) > HISTORY_MAX_BYTES) return;
   if (outside.size >= OUTSIDE_MAX) outside.delete(outside.keys().next().value);
   outside.set(rel, { before: was, since: Date.now(), at: Date.now() });
 }
 
-function outsideNow(rel) {
+// → { status, now } while the note still differs from before; else forgets it.
+function outsideState(rel) {
   const seen = outside.get(rel);
   if (!seen) return null;
-  const now = cachedText(rel)?.text;
-  if (now == null || now === seen.before) { outside.delete(rel); return null; }
-  return now;
+  const now = fs.existsSync(path.join(ROOT, rel)) ? cachedText(rel)?.text ?? null : null;
+  if (now === seen.before) { outside.delete(rel); return null; }
+  return { status: seen.before == null ? 'added' : now == null ? 'deleted' : 'modified', now };
 }
 
 function listOutside() {
   const changes = [];
-  for (const [rel, seen] of outside) if (outsideNow(rel) != null) changes.push({ path: rel, since: seen.since, at: seen.at });
+  for (const [rel, seen] of outside) {
+    const st = outsideState(rel);
+    if (st) changes.push({ path: rel, status: st.status, since: seen.since, at: seen.at });
+  }
   return { changes: changes.sort((a, b) => b.at - a.at) };
 }
 
 function outsideDiff(rel) {
-  const abs = workspacePath(rel);
-  const key = relOf(abs);
-  const now = outsideNow(key);
-  if (now == null) throw httpError(404, 'No change from outside in that note');
-  return { path: key, status: 'modified', base: outside.get(key).before, hunks: buildHunks(outside.get(key).before, now), hash: hashOf(Buffer.from(now, 'utf8')) };
+  const key = relOf(workspacePath(rel));
+  const st = outsideState(key);
+  if (!st) throw httpError(404, 'No change from outside in that note');
+  const { before } = outside.get(key);
+  const hash = st.now == null ? null : hashOf(Buffer.from(st.now, 'utf8'));
+  if (st.status === 'added') return { path: key, status: 'added', lines: st.now.split('\n'), hunks: null, hash };
+  if (st.status === 'deleted') return { path: key, status: 'deleted', before, lines: before.split('\n'), hunks: null, hash };
+  return { path: key, status: 'modified', base: before, hunks: buildHunks(before, st.now), hash };
 }
+
+// Our own moves and deletes are not changes from outside.
+const ownPaths = new Map(); // rel → when
+function ours(...rels) {
+  const t = Date.now();
+  for (const rel of rels) {
+    ownPaths.set(rel, t);
+    for (const k of textCache.keys()) if (k.startsWith(`${rel}/`)) ownPaths.set(k, t);
+  }
+  if (ownPaths.size > 5000) for (const [k, v] of ownPaths) if (t - v > 5000) ownPaths.delete(k);
+}
+const isOurs = (rel) => Date.now() - (ownPaths.get(rel) || 0) < 5000;
 
 function outsideSeen({ paths }) {
   for (const p of Array.isArray(paths) ? paths : []) outside.delete(relOf(workspacePath(p)));
@@ -747,6 +774,7 @@ function renamePath({ from, to }) {
   }
 
   fs.mkdirSync(path.dirname(dst), { recursive: true });
+  ours(fromRel, toRel, ...moved.keys(), ...moved.values());
   fs.renameSync(src, dst);
   treeCache = null;
   for (const [a, b] of moved) moveHistory(a, b);
@@ -773,6 +801,7 @@ function deletePath({ path: relPath }) {
   const trash = path.join(DATA_DIR, 'trash', trashRel);
   ensureDataDir();
   fs.mkdirSync(path.dirname(trash), { recursive: true });
+  ours(relOf(abs));
   fs.renameSync(abs, trash);
   treeCache = null;
   return { path: relOf(abs), trash: trashRel };
@@ -785,6 +814,7 @@ function restorePath({ trash, path: relPath }) {
   if (!fs.existsSync(src)) throw httpError(404, 'Trash entry not found');
   if (fs.existsSync(dst)) throw httpError(409, 'Something already exists at that path');
   fs.mkdirSync(path.dirname(dst), { recursive: true });
+  ours(relOf(dst));
   fs.renameSync(src, dst);
   treeCache = null;
   return { path: relOf(dst) };
@@ -1258,6 +1288,7 @@ function applyRun(id, decisions) {
       // Never hard-delete: move into the run's trash so it can be restored.
       const trash = path.join(DATA_DIR, 'trash', id, c.path);
       fs.mkdirSync(path.dirname(trash), { recursive: true });
+      ours(c.path);
       fs.renameSync(target, trash);
       applied.push({ path: c.path, status: c.status, trash: relOf(trash) });
     }
@@ -1300,9 +1331,11 @@ function revertRun(id) {
     else if (f.status === 'added') {
       const trash = path.join(DATA_DIR, 'trash', `${id}-undo`, f.path);
       fs.mkdirSync(path.dirname(trash), { recursive: true });
+      ours(f.path);
       fs.renameSync(target, trash);
     } else if (f.status === 'deleted') {
       fs.mkdirSync(path.dirname(target), { recursive: true });
+      ours(f.path);
       fs.renameSync(path.join(ROOT, f.trash), target);
     }
     reverted.push(f.path);

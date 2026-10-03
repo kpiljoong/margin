@@ -82,7 +82,7 @@ If you edited the same file while the agent was working, a 3-way merge lets you 
 
 ### Changes from outside (an agent in a terminal, another editor)
 
-Agents don't have to run inside Margin: Claude Code or Codex can work in the notes folder directly. When another program changes a note while Margin is open, the status bar shows **↯ N changed outside**. Click it (or ⌥X a o) to review those changes like a run — from the text before the first change, change by change, with the same keys. Everything is kept unless you unpick it: **Undo 1, keep 3** (`a`) undoes the unpicked ones (the note must not have unsaved edits here) and marks the rest as seen. A note the other program changes back drops off by itself. The texts it replaced are in each note's local history as well. Notes it creates or deletes are not listed (the tree shows them).
+Agents don't have to run inside Margin: Claude Code or Codex can work in the notes folder directly. When another program changes a note while Margin is open, the status bar shows **↯ N changed outside**. Click it (or ⌥X a o) to review those changes like a run — from the text before the first change, change by change, with the same keys. Everything is kept unless you unpick it: **Undo 1, keep 3** (`a`) undoes the unpicked ones (the note must not have unsaved edits here) and marks the rest as seen. Notes it makes or deletes are listed too: undoing a new one moves it to the trash (`.agent-notes/trash`), undoing a deletion brings the note back. A note the other program changes back drops off by itself. The texts it replaced are in each note's local history as well.
 
 ## Privacy rules
 

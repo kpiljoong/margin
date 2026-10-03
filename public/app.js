@@ -4116,7 +4116,10 @@ async function refreshOutside(tab) {
   const changes = (await Promise.all(list.map((x) => api('GET', `/api/outside/diff?path=${encodeURIComponent(x.path)}`).then((c) => ({ ...c, at: x.at }), () => null)))).filter(Boolean);
   const decisions = {};
   // A note that changed again starts over: all of it kept.
-  for (const c of changes) decisions[c.path] = old.get(c.path)?.hash === c.hash ? tab.decisions[c.path] : { file: true, hunks: new Set(c.hunks.map((_, i) => i)) };
+  for (const c of changes) {
+    decisions[c.path] = old.get(c.path)?.hash === c.hash && old.get(c.path)?.status === c.status ? tab.decisions[c.path]
+      : { file: true, hunks: new Set((c.hunks || []).map((_, i) => i)) };
+  }
   tab.run = { status: 'review', changes };
   tab.decisions = decisions;
   renderStatus();
@@ -4133,8 +4136,8 @@ function outsideView(tab) {
   const changes = tab.run?.changes;
   if (!changes) { wrap.append(h('div', { class: 'empty' }, 'Loading…')); return wrap; }
   if (!changes.length) { wrap.append(h('div', { class: 'review-note ok' }, 'Nothing changed outside since you last looked.')); return wrap; }
-  const total = changes.reduce((n, c) => n + c.hunks.length, 0);
-  const kept = changes.reduce((n, c) => n + tab.decisions[c.path].hunks.size, 0);
+  const total = changes.reduce((n, c) => n + (c.hunks ? c.hunks.length : 1), 0);
+  const kept = changes.reduce((n, c) => n + (c.hunks ? tab.decisions[c.path].hunks.size : tab.decisions[c.path].file ? 1 : 0), 0);
   const undo = total - kept;
   wrap.append(h('div', { class: 'review-actions' },
     h('span', { class: 'grow' }, `${changes.length} note${changes.length === 1 ? '' : 's'} · keeping ${kept} of ${total} change${total === 1 ? '' : 's'}`,
@@ -4142,7 +4145,7 @@ function outsideView(tab) {
     h('button', { class: 'btn', onclick: () => refreshOutside(tab) }, 'Refresh'),
     h('button', { class: `btn ${undo ? 'danger' : 'primary'}`, onclick: () => keepOutside(tab) }, undo ? `Undo ${undo}, keep ${kept}` : 'Keep all')));
   for (const c of [...changes].sort((a, b) => b.at - a.at)) {
-    wrap.append(h('div', { class: 'outside-when' }, `changed ${timeAgo(c.at)}`));
+    wrap.append(h('div', { class: 'outside-when' }, `${{ added: 'made', deleted: 'deleted' }[c.status] || 'changed'} ${timeAgo(c.at)}`));
     wrap.append(fileCard(c, tab, false));
   }
   return wrap;
@@ -4246,19 +4249,23 @@ async function keepOutside(tab) {
   let undone = 0;
   for (const c of changes) {
     const d = tab.decisions[c.path];
-    if (d.hunks.size < c.hunks.length) {
+    const undo = c.hunks ? c.hunks.length - d.hunks.size : d.file ? 0 : 1;
+    if (undo) {
       const open = S.tabs.find((t) => t.kind === 'file' && t.path === c.path && t.content !== t.saved);
       if (open) { toast(`${c.path} has unsaved edits here; save or revert them first.`, 'error'); continue; }
       try {
-        await api('PUT', '/api/file', { path: c.path, content: applySelected(c.base, c.hunks, d.hunks), baseHash: c.hash, reason: 'restore' });
-        undone += c.hunks.length - d.hunks.size;
+        // A note it made goes to the trash; one it deleted comes back.
+        if (c.status === 'added') await api('POST', '/api/delete', { path: c.path });
+        else if (c.status === 'deleted') await api('PUT', '/api/file', { path: c.path, content: c.before, reason: 'restore' });
+        else await api('PUT', '/api/file', { path: c.path, content: applySelected(c.base, c.hunks, d.hunks), baseHash: c.hash, reason: 'restore' });
+        undone += undo;
       } catch (e) { toast(`${c.path}: ${e.status === 409 ? 'it changed again — look at it once more' : e.message}`, 'error'); continue; }
     }
     seen.push(c.path);
   }
   try { await api('POST', '/api/outside/seen', { paths: seen }); } catch (e) { toast(e.message, 'error'); }
   if (seen.length) toast(undone ? `Undid ${undone} change${undone === 1 ? '' : 's'} from outside.` : `Kept the changes in ${seen.length} note${seen.length === 1 ? '' : 's'}.`);
-  await syncOpenTabs();
+  await Promise.all([loadTree(), syncOpenTabs()]);
   await refreshOutside(tab);
 }
 
@@ -4396,7 +4403,7 @@ function fileCard(c, tab, locked) {
     c.hunks ? h('span', { class: 'meta' }, `${dec.hunks.size}/${c.hunks.length} changes`) : null,
     canPreview ? h('div', { class: 'seg' }, ['diff', 'result'].map((v) => h('button', { class: view === v ? 'on' : '',
       onclick: () => { tab.views[c.path] = v; renderContent(tab.group); } }, v === 'diff' ? 'Diff' : 'Result'))) : null,
-    c.status !== 'added' ? h('button', { class: 'btn small', onclick: () => openFile(c.path) }, 'Open') : null);
+    canOpen(c, tab) ? h('button', { class: 'btn small', onclick: () => openFile(c.path) }, 'Open') : null);
   const body = [];
   if (blocked) {
     body.push(h('div', { class: 'review-note warn' }, c.reserved ? 'The agent wrote to a reserved path; this change cannot be applied.'
@@ -4423,6 +4430,9 @@ function fileCard(c, tab, locked) {
   const whole = !(c.hunks && view === 'diff' && !c.binary);
   return h('div', { class: `file-card${blocked ? ' stale' : ''}${whole ? ' kb-item' : ''}`, 'data-path': c.path }, head, body);
 }
+
+// A run's new notes aren't in the workspace yet; notes deleted outside are gone.
+const canOpen = (c, tab) => (tab.kind === 'outside' ? c.status !== 'deleted' : c.status !== 'added');
 
 function applySelected(base, hunks, selected) {
   const a = base.split('\n');
@@ -4556,7 +4566,7 @@ function reviewKeys(e, tab) {
       done();
       if (!cur) return;
       const c = tab.run.changes.find((x) => x.path === cur.dataset.path);
-      if (c && c.status !== 'added') openFile(c.path, { line: Number(cur.dataset.line) || undefined });
+      if (c && canOpen(c, tab)) openFile(c.path, { line: Number(cur.dataset.line) || undefined });
       return;
     }
     default:

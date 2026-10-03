@@ -68,7 +68,8 @@ test('changes from outside wait for a look: listed, diffed from the first text, 
   fs.writeFileSync(path.join(s.ws, 'b.md'), lines((i) => `line ${i}`));
   await sleep(400);
   await api('GET', '/api/tags');
-  assert.deepEqual((await api('GET', '/api/outside')).changes, [], 'a new note is not a change');
+  assert.deepEqual((await api('GET', '/api/outside')).changes.map((c) => [c.path, c.status]), [['b.md', 'added']], 'a new note from outside');
+  await api('POST', '/api/outside/seen', { paths: ['b.md'] });
   fs.writeFileSync(path.join(s.ws, 'b.md'), lines((i) => (i === 1 ? 'one' : `line ${i}`)));
   let list;
   for (let i = 0; i < 80 && !(list = (await api('GET', '/api/outside')).changes).length; i++) await sleep(100);
@@ -88,6 +89,37 @@ test('changes from outside wait for a look: listed, diffed from the first text, 
   fs.writeFileSync(path.join(s.ws, 'a.md'), 'one\n');
   for (let i = 0; i < 80 && (list = (await api('GET', '/api/outside')).changes).length; i++) await sleep(100);
   assert.deepEqual(list, []);
+});
+
+test('notes made or deleted by another program wait for a look too; our own moves and deletes do not', async (t) => {
+  const s = await startServer();
+  t.after(s.stop);
+  const { api } = s;
+  fs.writeFileSync(path.join(s.ws, 'mine.md'), 'mine\n');
+  fs.writeFileSync(path.join(s.ws, 'gone.md'), 'gone\n');
+  await sleep(400);
+  await api('POST', '/api/outside/seen', { paths: (await api('GET', '/api/outside')).changes.map((c) => c.path) });
+  await api('GET', '/api/tags'); // read them all
+  const list = async (n) => { let l; for (let i = 0; i < 80 && (l = (await api('GET', '/api/outside')).changes).length < n; i++) await sleep(100); return l; };
+
+  await api('POST', '/api/rename', { from: 'mine.md', to: 'moved.md' });
+  await api('POST', '/api/delete', { path: 'moved.md' });
+  await api('POST', '/api/file', { path: 'made-here.md', content: 'here\n' });
+  fs.writeFileSync(path.join(s.ws, 'new.md'), 'from an agent\n');
+  fs.rmSync(path.join(s.ws, 'gone.md'));
+  const l = await list(2);
+  await sleep(500);
+  assert.deepEqual((await api('GET', '/api/outside')).changes.map((c) => [c.path, c.status]).sort(), [['gone.md', 'deleted'], ['new.md', 'added']]);
+  assert.equal(l.length, 2);
+  const d = await api('GET', '/api/outside/diff?path=gone.md');
+  assert.equal(d.before, 'gone\n');
+  const n = await api('GET', '/api/outside/diff?path=new.md');
+  assert.deepEqual(n.lines, ['from an agent', '']);
+  // Put back by the other program: nothing to look at.
+  fs.writeFileSync(path.join(s.ws, 'gone.md'), 'gone\n');
+  let left;
+  for (let i = 0; i < 80 && (left = (await api('GET', '/api/outside')).changes).length > 1; i++) await sleep(100);
+  assert.deepEqual(left.map((c) => c.path), ['new.md']);
 });
 
 test('history moves with a renamed note, and stays inside its folder', async (t) => {
