@@ -9,7 +9,7 @@ import { MarkdownEditor, setEditorKeys } from './editor.js';
 import { hunksOf } from './track.js';
 import { renderDiagrams } from './diagrams.js';
 import { flowToMermaid, flowsAsMermaid, parseFlow, isStepText, flowStepNames, nameKey, flowTour, flowLineAt, COLORS } from './flow.js';
-import { connect, addBox, freshName, nextAnswer, setColor, setDirection, removeBox, removeArrow, setArrowKind, setArrowLabel, reverseArrow } from './flowedit.js';
+import { connect, addBox, freshName, nextAnswer, setColor, setDirection, removeBox, removeArrow, setArrowKind, setArrowLabel, reverseArrow, setShape, arrowSpot } from './flowedit.js';
 import { FigureCanvas } from './canvas.js';
 import { goalAt, boxAt, mentionRanges, definitionLines } from './figure-goal.js';
 import { isDrawing, drawingFormat, DrawingFrame, renderDrawingEmbeds, cachedEmbed, forgetEmbed, drawingImageUrl } from './drawing.js';
@@ -2013,7 +2013,9 @@ function canvasFor(tab) {
     onCardMenu: (e, pre) => cardMenu(tab, e, pre),
     onArrow: (pre, a, what, arg) => editArrow(tab, pre, a, what, arg),
     onNewFlow: () => newFlowHere(tab),
-    onUndo: (redo) => { if (redo) tab.editor.redo(); else tab.editor.undo(); tab.canvas?.stage.focus({ preventScroll: true }); },
+    onUndo: (redo) => drawUndo(tab, redo),
+    onArrowStep: (pre, from, to) => gotoArrow(tab, pre, from, to),
+    onShapeMenu: (pre, id, at) => shapeMenu(tab, pre, id, at),
     // The box under the pointer: its mentions in the text, marked.
     onHover: (pre, id) => {
       const node = pre?.flowNodes?.find((n) => n.id === id);
@@ -2232,9 +2234,11 @@ function renameBox(tab, pre, node, text) {
   }
   const first = node.spots.reduce((a, b) => (a.line < b.line || (a.line === b.line && a.start < b.start) ? a : b));
   const caret = lineOffset(v, base + first.line) + first.start + text.length;
+  const before = tab.canvas?.selectionNames();
   tab.editor.closeStep();
   tab.editor.replace(start, end, out.join('\n'), caret);
   tab.editor.closeStep();
+  drawn(tab, pre.dataset.line, before);
   // The box stays selected on the canvas, under its new name.
   if (tab.canvas?.el.isConnected) { tab.canvas.selectSoon(pre.dataset.line, text); tab.canvas.stage.focus({ preventScroll: true }); }
   renderStatus();
@@ -2278,9 +2282,11 @@ function editFlow(tab, pre, change) {
   else if (caret > start + r.text.length) caret = start + r.text.length;
   const spot = r.select && parseFlow(r.text).nodes.find((n) => n.text === r.select)?.spots.at(-1);
   if (spot) caret = start + lineOffset(r.text, spot.line) + spot.start;
+  const before = tab.canvas?.selectionNames();
   tab.editor.closeStep();
   tab.editor.replace(start, end, r.text, caret);
   tab.editor.closeStep();
+  drawn(tab, pre.dataset.line, before);
   if (r.select) tab.canvas?.selectSoon(pre.dataset.line, r.select, !!r.rename);
   if (r.edge) tab.canvas?.selectEdgeSoon(pre.dataset.line, ...r.edge);
   if (tab.canvas?.el.isConnected) tab.canvas.stage.focus({ preventScroll: true });
@@ -2290,6 +2296,52 @@ function editFlow(tab, pre, change) {
 }
 
 const nodeText = (pre, id) => pre.flowNodes?.find((n) => n.id === id)?.text;
+
+// A drawing change was written: the canvas waits for its picture, and ⌘Z
+// gives back what was selected before it (by the text the change left).
+function drawn(tab, line, before) {
+  tab.canvas?.changed(line);
+  tab.drawUndo = [...(tab.drawUndo || []).slice(-19), { after: tab.editor.value, before }];
+}
+
+function drawUndo(tab, redo = false) {
+  const was = !redo && (tab.drawUndo || []).findLast((r) => r.after === tab.editor.value);
+  if (redo) tab.editor.redo(); else tab.editor.undo();
+  // The notification offering to undo it has done its part.
+  if ($('#toast .toast-action')?.textContent === 'Undo') $('#toast').hidden = true;
+  const c = tab.canvas;
+  if (!c) return;
+  const sel = was?.before;
+  if (sel) {
+    c.changed(sel.line);
+    if (sel.edge) c.selectEdgeSoon(sel.line, ...sel.edge); else c.selectSoon(sel.line, sel.name);
+  }
+  if (c.el.isConnected) c.stage.focus({ preventScroll: true });
+}
+
+// An arrow clicked: the cursor on where it is written (the keys stay on the canvas).
+function gotoArrow(tab, pre, a, b) {
+  if (!flowEditable(pre)) return;
+  const spot = arrowSpot(pre.dataset.source.replace(/\n$/, ''), nodeText(pre, a), nodeText(pre, b));
+  if (!spot) return;
+  const o = lineOffset(tab.editor.value, Number(pre.dataset.line) + 1 + spot.line);
+  gotoOffset(tab, o + spot.start, o + spot.end, false);
+}
+
+const SHAPE_ITEMS = [['box', 'Box'], ['round', 'Rounded'], ['circle', 'Circle'], ['db', 'Database'], ['decision', 'Question (diamond)']];
+function shapeMenu(tab, pre, id, at) {
+  const node = pre.flowNodes?.find((n) => n.id === id);
+  if (!node) return;
+  if (!flowEditable(pre)) { cantEdit(pre); return; }
+  const r = tab.canvas?.stage.getBoundingClientRect();
+  const pos = at || { x: r ? r.left + r.width / 2 : 200, y: r ? r.top + 60 : 200 };
+  const now = node.shape || 'box';
+  const items = SHAPE_ITEMS.filter(([k]) => k !== 'decision' || node.text.endsWith('?'));
+  contextMenu({ preventDefault() {}, stopPropagation() {}, clientX: pos.x, clientY: pos.y }, items.map(([k, label], i) => ({
+    label: `${label}${k === now ? ' ✓' : ''}`, key: String(i + 1), hotkey: String(i + 1),
+    run: () => editFlow(tab, pre, (src) => ({ text: setShape(src, node.text, k), select: node.text })),
+  })));
+}
 
 function addBoxAfter(tab, pre, id) {
   const from = nodeText(pre, id);
@@ -2332,7 +2384,7 @@ function editArrow(tab, pre, a, what, arg) {
   }[what];
   if (!change) return;
   if (!editFlow(tab, pre, change)) return;
-  const undo = { label: 'Undo', run: () => tab.editor.undo() };
+  const undo = { label: 'Undo', run: () => drawUndo(tab) };
   if (what === 'delete') toast(`Took out the arrow “${from}” → “${to}”.`, '', undo);
   else if (words && ['both', 'dotted', 'line'].includes(what) && kind === '-->') toast(`“${words}” is left off: only a one-way arrow has words, for now.`, '', undo);
 }
@@ -2356,7 +2408,7 @@ function arrowMenu(tab, e, pre, a) {
 function deleteBox(tab, pre, id) {
   const name = nodeText(pre, id);
   if (name == null) return;
-  if (editFlow(tab, pre, (src) => ({ text: removeBox(src, name) }))) toast(`Deleted “${name}”.`, '', { label: 'Undo', run: () => tab.editor.undo() });
+  if (editFlow(tab, pre, (src) => ({ text: removeBox(src, name) }))) toast(`Deleted “${name}”.`, '', { label: 'Undo', run: () => drawUndo(tab) });
 }
 
 const COLOR_ITEMS = Object.keys(COLORS);
@@ -2386,6 +2438,7 @@ function boxMenu(tab, e, pre, id) {
     { label: 'Rename', key: 'Enter', run: () => tab.canvas.renameBox({ pre, id }) },
     { label: 'Add a box after it', key: 'Tab', run: () => addBoxAfter(tab, pre, id) },
     { label: 'Colour…', key: 'C', run: () => colorMenu(tab, pre, id, { x: e.clientX, y: e.clientY }) },
+    { label: 'Shape…', key: 'S', run: () => shapeMenu(tab, pre, id, { x: e.clientX, y: e.clientY }) },
     { label: 'Select its text in the note', run: () => gotoBox(tab, pre, id) },
     '-',
     { label: `Delete “${name}”`, key: '⌫', danger: true, run: () => deleteBox(tab, pre, id) },

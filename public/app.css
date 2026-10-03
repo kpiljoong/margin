@@ -734,10 +734,11 @@ iframe.mermaid-frame { position: fixed; left: -10000px; top: 0; width: 1600px; h
    when it is pointed at or selected. */
 .edge-layer { position: absolute; inset: 0; width: 100%; height: 100%; overflow: visible; pointer-events: none; }
 .edge-layer polyline { fill: none; stroke-linecap: round; stroke-linejoin: round; }
-.edge-hit { stroke: transparent; stroke-width: 14px; pointer-events: stroke; cursor: pointer; }
-.edge-line { stroke: transparent; stroke-width: 3px; }
+/* Widths kept on screen, as the + handles are (--inv: 1 / zoom). */
+.edge-hit { stroke: transparent; stroke-width: calc(14px * var(--inv, 1)); pointer-events: stroke; cursor: pointer; }
+.edge-line { stroke: transparent; stroke-width: calc(3px * var(--inv, 1)); }
 .edge:hover .edge-line { stroke: color-mix(in srgb, var(--accent) 45%, transparent); }
-.edge.on .edge-line { stroke: var(--accent); stroke-width: 4px; }
+.edge.on .edge-line { stroke: var(--accent); stroke-width: calc(4px * var(--inv, 1)); }
 .node-hit:hover { box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 45%, transparent); }
 .node-hit.on { box-shadow: 0 0 0 3px var(--accent); background: color-mix(in srgb, var(--accent) 12%, transparent); }
 /* Drawing on a flow: the + beside a box (its size kept on screen), the

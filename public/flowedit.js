@@ -448,3 +448,54 @@ export function reverseArrow(src, from, to) {
   const label = hit.e.at === 0 && hit.L.answer != null ? hit.L.answer : now.label;
   return rewritten(removeArrow(src, from, to), to, from, tokenOf(now.kind, label));
 }
+
+// ---- shapes
+
+export const SHAPES = ['box', 'round', 'circle', 'db', 'decision'];
+const WRAPS = { round: ['(', ')'], circle: ['((', '))'], db: ['[(', ')]'] };
+
+// A step's shape: the marks on the first place it is written, none on the
+// others (a plain name doesn't change a shape). A question is a name ending
+// in "?": a box of one is written [name?].
+export function setShape(src, name, shape) {
+  if (!SHAPES.includes(shape)) throw new Error(`“${shape}” is not a shape`);
+  if (shape === 'decision' && !name.endsWith('?')) throw new Error('A question is a name ending in “?”.');
+  const lines = stepLines(src);
+  if (shape !== 'decision' && lines.some((L) => L.from === name && L.answer != null)) throw new Error(`“${name}” has answers under it (yes -> …): it stays a question.`);
+  const ls = linesOf(src);
+  let first = true;
+  let changed = false;
+  for (const L of lines) {
+    let touched = false;
+    const steps = L.steps.map((piece, i) => {
+      if (L.names[i] !== name) return piece;
+      const flag = parseStep(piece).flag ? ' !' : '';
+      const lead = i === 0 && L.answer == null;
+      let out;
+      if (first && WRAPS[shape]) out = `${WRAPS[shape][0]}${name}${WRAPS[shape][1]}`;
+      else if (first && shape === 'box' && name.endsWith('?')) out = `[${name}]`;
+      else out = lead ? written(name) : name;
+      first = false;
+      if (`${out}${flag}` === piece) return piece;
+      touched = true;
+      return `${out}${flag}`;
+    });
+    if (touched) { ls[L.lineNo] = writeLine(L, { steps }); changed = true; }
+  }
+  return changed ? ls.join('\n') : src;
+}
+
+// Where an arrow is written: { line, start, end } in the block (the arrow's
+// marks; where its step starts when none are written), or null.
+export function arrowSpot(src, from, to) {
+  const [hit] = whereWritten(src, from, to);
+  if (!hit) return null;
+  const { L, e } = hit;
+  const raw = linesOf(src)[L.lineNo];
+  const f = tryParse(src);
+  const spot = f?.nodes.find((n) => n.text === e.to)?.spots.find((s) => s.line === L.lineNo);
+  const at = spot ? spot.start : L.lead.length;
+  if (e.token == null) return { line: L.lineNo, start: at, end: at };
+  const start = raw.lastIndexOf(e.token, at);
+  return start >= 0 ? { line: L.lineNo, start, end: start + e.token.length } : { line: L.lineNo, start: at, end: at };
+}

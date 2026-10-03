@@ -409,12 +409,13 @@ Login request -> Auth server -> Success?
   - Boxes not yet visited are dimmed, the current box is highlighted. The figure is fitted large and centered in the screen area above the caption, and moves only when the figure changes. Figures too large to read follow the boxes.
   - Caption: the section title and step number, where you came from (`Success? — Yes →`), the box name, the ` : ` description, and list items of the form `- Box name: description` in that section (and the intro text above it), including indented lines below them. Sentences that merely contain the name are not included. Detailed rules in [FLOW.md](FLOW.md).
   - While presenting, link lines and dots and similar-name markers are hidden. The editor cursor follows too, so when you exit it's on the last box.
-- **Drawing on a flow**: a ` ```flow ` picture of the note can be drawn on, and every change is written into its text, the smallest change that does it, so the text stays the source and reads as you'd have written it (`Idea -> Ready? -(yes)-> Ship`). Each change is one ⌘Z.
+- **Drawing on a flow**: a ` ```flow ` picture of the note can be drawn on, and every change is written into its text, the smallest change that does it, so the text stays the source and reads as you'd have written it (`Idea -> Ready? -(yes)-> Ship`). Each change is one ⌘Z, and ⌘Z gives back what was selected before it. Keys pressed while the picture is being drawn again wait for it and then act.
   - **A box after another**: hover a box and click the **+** on the side the picture runs to (or select it and press `Tab`). The new box is named at once: type and Enter. Typing the name of a box that's already there joins the two (the same text is the same box).
   - **An arrow**: drag a box's **+** onto another box of the same picture. Let go on nothing for a new box there. From a question (`…?`), the first arrow drawn gets `yes`, the second `no`.
   - **A box on its own**: double-click empty space in the picture, or `N`.
+  - **Shape**: select a box and press `S`, then a number (`1` box, `2` rounded, `3` circle, `4` database; `5` a question's diamond, for a name ending in `?`), or right-click → **Shape…**. The marks go on the first place the step is written (`(Name)`, `((Name))`, `[(Name)]`). A question with answers under it (`yes -> …`) stays a question.
   - **Colour**: select a box and press `C`, then a number (`1` red … `8` gray, `0` none), or right-click → **Colour…**. It writes a `color …:` line at the end of the block.
-  - **Change an arrow**: click an arrow to select it (it lights up), then `Delete` takes it out (its boxes stay), `B` makes it go both ways (`<->`, again: one way), `R` turns it round, `D` dots it (`..>`), `Enter` puts words on it (`-(words)->`; out of a question, the answer). Right-click an arrow for these and **A plain line** (`--`). Dragging a **+** onto a box it already goes to selects that arrow. Words stay on a one-way arrow only, for now.
+  - **Change an arrow**: click an arrow to select it (it lights up, and the cursor goes to where it's written), then `Delete` takes it out (its boxes stay), `B` makes it go both ways (`<->`, again: one way), `R` turns it round, `D` dots it (`..>`), `Enter` puts words on it (`-(words)->`; out of a question, the answer). Right-click an arrow for these and **A plain line** (`--`). Dragging a **+** onto a box it already goes to selects that arrow. Words stay on a one-way arrow only, for now.
   - **Delete**: select a box and press `Delete` (or right-click). The box goes from every line it's on; in a line of steps the ones on either side join up (`A -> B -> C` without B is `A -> C`). The notification has **Undo**.
   - **Rename**: `Enter` on a selected box, or double-click it.
   - **Right-click** a box for all of these; right-click a picture for a new box, the way it runs (down, right, left, up: a `direction:` line) and **Move to a note of its own…**.
@@ -561,7 +562,7 @@ The only data created inside the workspace is `.agent-notes/`, which has its own
 
 ## Known limitations
 
-- Drawing on a flow: boxes can't be dragged to a place of their own (the layout is Mermaid's), only a one-way arrow has words, and shapes other than `?` are set in the text. A flow shown from another note (`![[…]]`) is drawn on in that note.
+- Drawing on a flow: boxes can't be dragged to a place of their own (the layout is Mermaid's), only a one-way arrow has words. A flow shown from another note (`![[…]]`) is drawn on in that note.
 - The editor is `textarea`-based.
   - Multi-cursor only goes as far as "editing the same text in several places at once" (⌘D/⌘⇧L). Adding cursors by clicking arbitrary positions and column selection are not supported.
   - Folding works only in the preview.

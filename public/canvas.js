@@ -24,7 +24,7 @@
 // click adds a box after it, a drag draws an arrow to another box (or, let
 // go on nothing, to a new one). A click selects a box (the cursor goes to
 // its text, the keys stay here): Tab adds a box after it, Enter renames,
-// C colours, Delete takes it out; N or a double-click on the picture adds a
+// C colours, S shapes, Delete takes it out; N or a double-click on the picture adds a
 // box on its own, and a right-click lists it all. A click on an arrow
 // selects it: Delete takes it out, B makes it go both ways (or one again),
 // R turns it round, D dots it, Enter puts words on it.
@@ -74,6 +74,8 @@ function linkPath(a, b, outer = null) {
 }
 const PAD = 40;
 const SETTLE = 800; // ms after the pictures last changed before the camera catches up
+// The keys that change the selection's picture (see editKey).
+const EDIT_KEYS = new Set(['Tab', 'Enter', 'F2', 'Delete', 'Backspace', 'c', 'n', 's', 'b', 'r', 'd']);
 const RENAME_TIP = 'Click: select it in the note · Double-click: rename';
 
 export class FigureCanvas {
@@ -86,7 +88,8 @@ export class FigureCanvas {
   // onConnect(pre, from, to) · onDelete(pre, id) · onColorMenu(pre, id, at) ·
   // onBoxMenu(e, pre, id) · onCardMenu(e, pre) · onNewFlow() · onUndo(redo) ·
   // onArrow(pre, { from, to }, what, arg): what is delete, both, reverse,
-  // dotted, label (arg: the words) or menu (arg: the event)
+  // dotted, label (arg: the words) or menu (arg: the event) ·
+  // onArrowStep(pre, from, to): put the cursor on an arrow · onShapeMenu(pre, id, at)
   constructor(handlers) {
     this.h = handlers;
     this.k = 1; this.x = 0; this.y = 0;
@@ -104,6 +107,10 @@ export class FigureCanvas {
     this.keep = null; // the box selected before the pictures were made again
     this.edgeAt = null; // the arrow selected: { pre, from, to } (box ids)
     this.edgeSoon = null; // an arrow to select once its picture is drawn again
+    // A change written, its picture not drawn again yet: keys for the
+    // selection wait for it ({ line, until }, the keys).
+    this.busy = null;
+    this.queued = [];
     // Following the flow with the keys: the box walked to, the steps taken
     // (to go back), and the ways offered at a branch.
     this.walkAt = null; // { pre, id }
@@ -216,6 +223,19 @@ export class FigureCanvas {
     return from && to ? { line: a.pre.dataset.line, from, to } : null;
   }
 
+  // A change to the picture at `line` was written: until it is drawn again,
+  // the keys for the selection wait (they would act on the old one).
+  changed(line) {
+    this.busy = { line: String(line), until: performance.now() + 3000 };
+  }
+
+  // What is selected, by names: { line, name } or { line, edge: [from, to] }.
+  selectionNames() {
+    if (this.edgeAt) { const n = this.namesOf(this.edgeAt); return n && { line: n.line, edge: [n.from, n.to] }; }
+    const w = this.walkAt && this.whereIs(this.walkAt);
+    return w ? { line: w.line, name: w.name } : null;
+  }
+
   // Once the picture at `line` is drawn again, select its arrow from → to
   // (box names).
   selectEdgeSoon(line, from, to) {
@@ -242,10 +262,14 @@ export class FigureCanvas {
       if (performance.now() > want.until) { if (want === this.pending) this.pending = null; else this.keep = null; continue; }
       const n = pre.flowNodes?.find((x) => x.text === want.name);
       if (!n) continue;
-      if (want === this.pending) this.pending = null;
+      const asked = want === this.pending;
+      if (asked) this.pending = null;
       this.keep = null;
       this.walkAt = { pre, id: n.id };
       this.trail = [];
+      // Asked for (after a change, an undo): the cursor goes to it too, so
+      // it stays the one selected. Kept while typing: the cursor stays.
+      if (asked) this.h.onStep?.(pre, n.id);
       this.mark();
       if (want.rename) {
         this.whenLoaded(pre, () => setTimeout(() => {
@@ -980,6 +1004,17 @@ export class FigureCanvas {
       this.links = null;
       this.mark();
       this.takeSelection(e.target);
+      if (this.busy?.line === e.target.dataset.line) {
+        this.busy = null;
+        const k = this.queued.shift();
+        if (k) {
+          const rest = this.queued;
+          this.queued = [];
+          this.editKey(k);
+          // The rest wait for the next drawing (or go, if nothing changed).
+          if (this.busy) this.queued = rest; else for (const r of rest) this.editKey(r);
+        }
+      }
       // A picture being looked at changed size: keep its target in view.
       if (this.view === 'picture' && this.goal?.fig === e.target && !this.fresh) {
         if (this.typing()) this.settleSoon();
@@ -1136,6 +1171,14 @@ export class FigureCanvas {
         ArrowRight: () => this.step(), ArrowDown: () => this.step(), ArrowLeft: () => this.step(true), ArrowUp: () => this.step(true), g: () => this.jump(),
       }[e.key];
       if (walk) { e.preventDefault(); e.stopPropagation(); walk(); return; }
+      if (this.busy && performance.now() > this.busy.until) { this.busy = null; this.queued = []; }
+      if (this.busy && (EDIT_KEYS.has(e.key) || (this.pending?.rename && e.key.length === 1))) {
+        e.preventDefault();
+        e.stopPropagation();
+        // A box about to be named: the letters were for its name, not keys.
+        if (!this.pending?.rename) this.queued.push({ key: e.key, shiftKey: e.shiftKey });
+        return;
+      }
       if (this.editKey(e)) { e.preventDefault(); e.stopPropagation(); return; }
       const act = {
         Escape: () => this.h.onEscape?.(), '+': () => this.zoomBy(1.25), '=': () => this.zoomBy(1.25), '-': () => this.zoomBy(1 / 1.25),
@@ -1179,7 +1222,11 @@ export class FigureCanvas {
       return;
     }
     const edge = target.closest('.edge');
-    if (edge && fig) { this.selectEdge(fig, edge.dataset.from, edge.dataset.to); return; }
+    if (edge && fig) {
+      this.selectEdge(fig, edge.dataset.from, edge.dataset.to);
+      this.h.onArrowStep?.(fig, edge.dataset.from, edge.dataset.to);
+      return;
+    }
     const looking = this.view === 'picture' && this.goal?.fig === fig;
     // A box clicked is the one selected (the keys act on it), over one a
     // change was going to select.
@@ -1223,7 +1270,7 @@ export class FigureCanvas {
     this.mark();
   }
 
-  // Keys for the box selected (Tab, Enter/F2, Delete, C) and for a picture
+  // Keys for the box selected (Tab, Enter/F2, Delete, C, S) and for a picture
   // (N). → whether the key was one of them.
   editKey(e) {
     const ed = this.edgeAt;
@@ -1246,6 +1293,11 @@ export class FigureCanvas {
         if (!at) { need(); return; }
         const r = this.hit(at.pre, at.id)?.getBoundingClientRect();
         this.h.onColorMenu?.(at.pre, at.id, r ? { x: r.left, y: r.bottom + 6 } : null);
+      },
+      s: () => {
+        if (!at) { need(); return; }
+        const r = this.hit(at.pre, at.id)?.getBoundingClientRect();
+        this.h.onShapeMenu?.(at.pre, at.id, r ? { x: r.left, y: r.bottom + 6 } : null);
       },
       n: () => (fig?.flowNodes ? this.h.onAddBox?.(fig) : this.say('Look at a ```flow picture first.')),
     }[e.key];

@@ -2,7 +2,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { parseFlow } from '../public/flow.js';
-import { connect, addBox, freshName, nextAnswer, setColor, setDirection, removeBox, removeArrow, setArrowKind, setArrowLabel, reverseArrow } from '../public/flowedit.js';
+import { connect, addBox, freshName, nextAnswer, setColor, setDirection, removeBox, removeArrow, setArrowKind, setArrowLabel, reverseArrow, setShape, arrowSpot } from '../public/flowedit.js';
 
 const arrows = (src) => {
   const f = parseFlow(src);
@@ -135,4 +135,24 @@ test('arrows: take out, both ways, dotted, words, the other way round', () => {
   // Nothing written: nothing changes.
   assert.equal(removeArrow('A -> B', 'B', 'A'), 'A -> B');
   assert.equal(removeArrow('A <-> B', 'B', 'A'), 'A\nB');
+});
+
+test('shapes: marks on the first place a step is written; a question with answers stays one', () => {
+  const D = '주문 -> 결제 요청 -> 승인?\n  yes -> 영수증\n  no -> 재시도\n재시도 -> 결제 요청 !';
+  const shape = (s, n) => parseFlow(s).nodes.find((x) => x.text === n).shape;
+  assert.equal(setShape(D, '결제 요청', 'round').split('\n')[0], '주문 -> (결제 요청) -> 승인?');
+  assert.equal(shape(setShape(D, '결제 요청', 'db'), '결제 요청'), 'db');
+  assert.equal(shape(setShape(D, '재시도', 'circle'), '재시도'), 'circle');
+  assert.match(setShape(D, '재시도', 'circle'), /^ {2}no -> \(\(재시도\)\)$/m);
+  // Back to a box: the marks go, the problem mark stays.
+  assert.equal(setShape(setShape(D, '결제 요청', 'round'), '결제 요청', 'box'), D);
+  assert.equal(setShape('(A) -> B\nA -> C', 'A', 'circle'), '((A)) -> B\nA -> C');
+  assert.throws(() => setShape(D, '승인?', 'box'), /stays a question/);
+  assert.equal(setShape('Ok? -> Go', 'Ok?', 'box'), '[Ok?] -> Go');
+  assert.equal(setShape('[Ok?] -> Go', 'Ok?', 'decision'), 'Ok? -> Go');
+  assert.throws(() => setShape('A', 'A', 'decision'), /ending in/);
+  // Where an arrow is written, for the cursor.
+  assert.deepEqual(arrowSpot(D, '결제 요청', '승인?'), { line: 0, start: 12, end: 14 });
+  assert.deepEqual(arrowSpot(D, '승인?', '재시도'), { line: 2, start: 5, end: 7 });
+  assert.deepEqual(arrowSpot('A\n  B', 'A', 'B'), { line: 1, start: 2, end: 2 });
 });

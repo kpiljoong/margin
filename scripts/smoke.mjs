@@ -285,7 +285,7 @@ await check('drawing on a flow writes its text: add, connect, colour, delete, un
   return out;
 `, (v) => (v?.add === 'A -> B -> C' && v.connect === 'A -> B -> C -> A' && v.wireGone && v.color === 'A -> B -> C -> A\ncolor blue: B' && v.del === 'A -> C -> A' && v.undo === v.color ? null : `got ${JSON.stringify(v)}`));
 
-await check('an arrow on a flow: click it, make it two-way, take it out', `
+await check('an arrow on a flow: click it, make it two-way, take it out; a box’s shape', `
   const stage = $('.canvas-stage');
   const flow = () => { const v = $$('.editor-wrap textarea').find((t) => t.offsetParent).value; return v.slice(v.indexOf('\`\`\`flow') + 8, v.lastIndexOf('\`\`\`')).trim(); };
   const id = (name) => $('pre.diagram')?.flowNodes?.find((n) => n.text === name)?.id;
@@ -302,8 +302,16 @@ await check('an arrow on a flow: click it, make it two-way, take it out', `
   key('Delete', {}, stage);
   await until(() => !flow().includes('<->'), 8000);
   out.gone = flow();
+  // A box's shape: S, then a number.
+  await sleep(400);
+  const c = $$('.node-hit').find((x) => x.dataset.id === id('C'));
+  c.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, button: 0 })); c.dispatchEvent(new PointerEvent('pointerup', { bubbles: true, button: 0 })); c.click(); await sleep(200);
+  stage.focus(); key('s', {}, stage); await sleep(200);
+  document.dispatchEvent(new KeyboardEvent('keydown', { key: '2', bubbles: true, cancelable: true }));
+  await until(() => flow().includes('(C)'), 8000);
+  out.shape = flow();
   return out;
-`, (v) => (v?.on && v.both === 'A -> B -> C <-> A\ncolor blue: B' && v.gone === 'A -> B -> C\ncolor blue: B' ? null : `got ${JSON.stringify(v)}`));
+`, (v) => (v?.on && v.both === 'A -> B -> C <-> A\ncolor blue: B' && v.gone === 'A -> B -> C\ncolor blue: B' && v.shape === 'A -> B -> (C)\ncolor blue: B' ? null : `got ${JSON.stringify(v)}`));
 
 await check('Settings shows Labs', `
   document.dispatchEvent(new KeyboardEvent('keydown', { key: ',', metaKey: navigator.platform.startsWith('Mac'), ctrlKey: !navigator.platform.startsWith('Mac'), bubbles: true }));
