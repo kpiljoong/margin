@@ -7,11 +7,12 @@
 // the editor (nor starts an IME composition); keys are matched by their place
 // on the keyboard, so they work in any input source.
 
-// event → the key as the menu writes it: a, A (shift), 1, SPC, /, ., ,
+// event → the key as the menu writes it: a, A (shift), 1, SPC, /, ., ,, :
 export function menuKey(e) {
   const c = e.code || '';
   if (/^Key[A-Z]$/.test(c)) return e.shiftKey ? c.slice(3) : c.slice(3).toLowerCase();
   if (/^Digit\d$/.test(c)) return c.slice(5);
+  if (c === 'Semicolon' && e.shiftKey) return ':';
   return { Space: 'SPC', Backquote: '`', Slash: '/', Period: '.', Comma: ',', Semicolon: ';', Quote: "'", BracketLeft: '[', BracketRight: ']' }[c] || null;
 }
 

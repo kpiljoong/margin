@@ -1050,7 +1050,7 @@ function newRunId() {
   return `${stamp}-${crypto.randomBytes(3).toString('hex')}`;
 }
 
-function startRun({ task, scope, focus, selection, agentId, model }) {
+function startRun({ task, scope, focus, selection, agentId, model, recipe }) {
   if (!AGENT) throw httpError(400, 'No agent configured. Restart with --agent demo or --agent "<command>".');
   const agent = agentById(agentId);
   const command = agentCommand(agent, typeof model === 'string' ? model : '');
@@ -1076,6 +1076,7 @@ function startRun({ task, scope, focus, selection, agentId, model }) {
   const sel = focusShared && typeof selection === 'string' ? selection.slice(0, 20000) : '';
   const meta = {
     id, task, scope, focus: focusShared, parent: null, round: 1,
+    recipe: typeof recipe === 'string' ? recipe.replace(/\s+/g, ' ').trim().slice(0, 80) : '',
     agent: agent.label, agentId: agent.id, command, model: (command === agent.command ? agent.model : model) || '',
     status: 'running', startedAt: new Date().toISOString(), finishedAt: null,
     exitCode: null, files: included, excluded, applied: null, selection: sel ? sel.length : 0,
@@ -1380,7 +1381,7 @@ function listRuns() {
   let ids = [];
   try { ids = fs.readdirSync(RUNS_DIR).filter((n) => /^[\w-]+$/.test(n)); } catch { /* none yet */ }
   return ids.sort().reverse().slice(0, 100).map((id) => {
-    try { const m = readMeta(id); return { id, task: m.task, status: m.status, startedAt: m.startedAt, scope: m.scope, focus: m.focus, agent: m.agent, usage: m.usage || null }; }
+    try { const m = readMeta(id); return { id, task: m.task, recipe: m.recipe || '', status: m.status, startedAt: m.startedAt, scope: m.scope, focus: m.focus, agent: m.agent, usage: m.usage || null }; }
     catch { return null; }
   }).filter(Boolean);
 }

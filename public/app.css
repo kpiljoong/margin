@@ -727,3 +727,20 @@ iframe.mermaid-frame { position: fixed; left: -10000px; top: 0; width: 1600px; h
 .task-note { font-size: 12px; color: var(--fg-dim); text-decoration: none; }
 .task-note:hover { color: var(--accent); text-decoration: underline; }
 .review:focus .task-row.kb-cur { background: color-mix(in srgb, var(--accent) 14%, var(--bg-2)); }
+
+/* Margin's own buffers as lists: search results, agent runs, messages. */
+.buffer-list .search-buffer-list, .buffer-list > .run-row, .buffer-list > .message-row { max-width: 1000px; margin-left: auto; margin-right: auto; }
+.buffer-list .run-row { border-radius: var(--radius); border-left: 0; }
+.buffer-list .run-row .task { white-space: normal; }
+.review:focus .kb-cur:is(.run-row, .message-row, .search-hit) { background: color-mix(in srgb, var(--accent) 14%, var(--bg-2)); color: var(--fg); }
+.search-buffer .search-box { padding: 4px 0 8px; }
+.search-buffer .search-hit { padding-left: 22px; border-radius: var(--radius); }
+.search-buffer .search-file { cursor: default; padding-left: 0; }
+.search-buffer .search-file:hover { background: none; }
+.message-row { display: flex; gap: 12px; padding: 4px 10px; border-radius: var(--radius); font-size: 13px; }
+.message-row.error .message-text { color: var(--bad); }
+.message-row.copied { background: color-mix(in srgb, var(--ok) 18%, transparent); }
+.message-time { flex: none; color: var(--fg-faint); font: 12px/1.6 var(--mono); }
+.message-text { min-width: 0; white-space: pre-wrap; overflow-wrap: anywhere; }
+.history:focus { outline: none; }
+.chip.add { padding: 1px 8px; }

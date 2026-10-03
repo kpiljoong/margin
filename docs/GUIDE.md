@@ -65,7 +65,7 @@ Both modes use the same server and UI. The desktop app launches `server.js` as a
 ## Core flow: delegate → review → apply
 
 1. Open a note and press **⌘K** (or `✦ Ask agent`).
-2. Write a task or pick a recipe (Tidy / Summarize / Extract tasks / Link notes / Proofread / Draw as flow), and set the scope (this note / this folder / everything). **The list of files that will actually be shared, and the files excluded as private,** is shown before running.
+2. Write a task or pick a recipe (Tidy / Summarize / Extract tasks / Link notes / Proofread / Draw as flow, and your own from `RECIPES.md`, see below), and set the scope (this note / this folder / everything). **The list of files that will actually be shared, and the files excluded as private,** is shown before running.
    - **Draw as flow**: Proposes a ` ```flow ` block drawing a process, flow, or system right after the text that describes it. If the task contains "flow", a summary of the flow syntax (`lib/flow-notation.md`) is passed to the agent too. The result is reviewed like any other task, and you apply only what you pick. If you select text before running, only that part is drawn.
 3. The agent works on a copy in `.agent-notes/runs/<id>/work/`. Your original notes don't change meanwhile, so you can keep writing: when the run ends, a message with a **Review** button says so (and a system notification, while Margin is in the background).
 4. In the review tab, check items per file and per hunk, and inspect them as a **Diff** with word-level highlighting or as a rendered **Result** of how it will look after applying.
@@ -74,11 +74,45 @@ Both modes use the same server and UI. The desktop app launches `server.js` as a
 
 If you edited the same file while the agent was working, a 3-way merge lets you apply only non-overlapping changes; overlapping hunks are locked.
 
-**Reviewing by keyboard (as in magit).** The review tab takes the focus when it opens. `j`/`k` (or `n`/`p`, ↓/↑) step through the changes, `J`/`K` through the files, `g`/`G` first/last. `x` or Space picks or unpicks the change (`X` the whole file), `A`/`U` all/none. `a` applies, `d` discards, `f` follows up, `u` undoes an apply. `=` switches the file between Diff and Result, `o` or Enter opens the note at that change, `l` shows the log. A click works too and the keys go on from there. ⌥X a v opens the run that has waited longest for a look.
+**Reviewing by keyboard (as in magit).** The review tab takes the focus when it opens. `j`/`k` (or `n`/`p`, ↓/↑) step through the changes, `J`/`K` through the files, `<`/`>` first/last. `x` or Space picks or unpicks the change (`X` the whole file), `A`/`U` all/none. `a` applies, `d` discards, `f` follows up, `u` undoes an apply. `=` switches the file between Diff and Result, `o` or Enter opens the note at that change, `l` shows the log, `g` loads it again, `q` closes it. A click works too and the keys go on from there. ⌥X a v opens the run that has waited longest for a look. The review is a buffer like the others (see *Margin's own buffers*).
+
+### Recipes: your own tasks as commands
+
+A recipe is a task for the agent written once and run by name — the agent takes the place Emacs gives to elisp, and like everything an agent does, what it changes comes back as a run to review. Recipes are text only: a name, what to ask, which notes to share. No code runs and there are no plugins.
+
+Margin has six (Tidy, Summarize, Extract tasks, Link notes, Proofread, Draw as flow: ⌥X a 1–6 or ⌥X r 1–6). Add your own in **`RECIPES.md`** at the top of the workspace (⌥X r e makes it with two examples, or the ＋ next to the recipes in the task dialog). Each `##` heading is a recipe; the lines right under it may set:
+
+```markdown
+## Meeting notes to decisions
+key: m
+scope: note
+
+Turn these meeting notes into a decision log: …
+```
+
+- `key:` one letter or digit for ⌥X r (`e` is taken: edit the recipes)
+- `scope:` `note` (the note in view), `folder` (its folder) or `workspace`
+- `ask:` `yes` shows the task dialog first, `no` goes straight to the agent
+
+Each recipe is a command: ⌥X r and its key, or by name in M-x (`Recipe: …`), and a chip in the task dialog that fills in its task and scope. A recipe for the note in view goes straight to the agent, in the background (the selection, if any, is its focus); a message says when the run is ready for review. One for a folder or the workspace shows the task dialog first — with the notes it would share — unless it says `ask: no`. Private notes are never shared either way. A recipe with the name of a built-in replaces it. Mistakes in the file (an unknown scope, a key of two letters) are shown with their line when it is saved, and the other recipes still load. Runs from a recipe show its name in the runs list and the review tab.
+
+### Margin's own buffers
+
+What Margin shows that isn't a file is a buffer like a note, as in Emacs: the review of a run, **Changed outside**, **Tasks**, **Search** results, **Agent runs**, **Messages**, a note's **History** and its changes since the last commit. Each is a tab, is in the buffer list (⌘⇧B / ⌥X b b — where the ones not open yet are listed too, ◇, to open from there) and in ⌥X `` ` ``. They all take the same keys:
+
+| Key | |
+|---|---|
+| `j` / `k` (`n` / `p`, ↓ / ↑) | next / previous item |
+| `<` / `>` (Home / End, `G`) | first / last |
+| Enter / `o` | open it (the note at the change, the result, the run…) |
+| `g` (or `r`) | refresh |
+| `q` | close the buffer |
+
+The rest are each one's own (`x`, `a`… in a review; `x`, `a`, `h` in Tasks; `/` in Search to search again; `t` new task and `v` next review in Agent runs; `R` restore in History, where `j`/`k` step through the versions). The `j k · …` hint in each head lists them, and M-x shows them first while that buffer is in view. ⌥X b also opens them: `m` messages, `r` agent runs, `s` search results, `x` tasks, `c` changed outside. The search buffer is the same search as the sidebar's, so F8 steps through it from the note.
 
 ### Tasks in all notes
 
-⌥X f x (palette: `Tasks in all notes`) lists every `- [ ]` in the workspace in one tab, like org-mode's agenda or Obsidian Tasks: **Overdue**, **Today** and **Upcoming** by their date (`📅 2026-10-05` or `due:2026-10-05` anywhere in the line), then the rest by note. Tasks in code blocks and in `templates/` are left out. `j`/`k` move, `x` or Space checks one off in its note (or on again), `o`/Enter opens the note at it, `a` opens it and asks the agent to do it (the task is prefilled; the agent checks it off in its proposal), `h` shows the done ones too. The list follows changes to the notes.
+⌥X f x (palette: `Tasks in all notes`) lists every `- [ ]` in the workspace in one tab, like org-mode's agenda or Obsidian Tasks: **Overdue**, **Today** and **Upcoming** by their date (`📅 2026-10-05` or `due:2026-10-05` anywhere in the line), then the rest by note. Tasks in code blocks and in `templates/` are left out. `j`/`k` move, `x` or Space checks one off in its note (or on again), `o`/Enter opens the note at it, `a` opens it and asks the agent to do it (the task is prefilled; the agent checks it off in its proposal), `h` shows the done ones too, `g` refreshes, `q` closes. The list follows changes to the notes.
 
 ### Changes from outside (an agent in a terminal, another editor)
 
@@ -109,7 +143,7 @@ Built without external libraries to stay lightweight. The editor is a native `te
 | Shortcut | Action |
 |---|---|
 | ⌘P | Quick open: recent notes first, fuzzy search, create if missing. `>` commands · `#` jump to a heading in the current note · `@` a heading in any note · `:` line number |
-| ⌘⇧P | Command palette |
+| ⌘⇧P | M-x: every command by name (also ⌥X :, ⌥X Space, ⌥X ⌥X) — see below |
 | ⌥X | Leader key: a menu of commands by letter (see below) |
 | ⌘⇧B | Switch note: the buffer list, most recent first (open notes, and notes closed this session) |
 | ⌃6 | Back to the note before (Vim's alternate buffer; also ⌥X `` ` ``) |
@@ -148,25 +182,28 @@ The shortcuts above (except typing behaviours like Tab, Enter, and bracket pairi
 - Next/previous in the find bar (⌘G/⌘⇧G) only work while finding, so when the find bar is closed ⌘⇧G opens the Git panel.
 - Inside an Excalidraw drawing, only the few keys the drawing frame passes through (default combinations like ⌘S, ⌘P) and shortcuts in the menu work.
 
-**Leader key (⌥X, like Emacs M-x).** One key that works the same everywhere — editor, preview, tree, search results. It opens a small menu at the bottom listing the keys that can follow (as in which-key / LazyVim), so nothing needs to be memorized up front. The menu takes the focus, so the next key never types into the note, and keys go by their place on the keyboard (Korean input works). Esc or ⌃G closes, ⌫ goes up a level, Space (or ⌥X again) opens every command in the palette. Change the key in Settings → Keyboard shortcuts.
+**Leader key (⌥X, like Emacs M-x).** One key that works the same everywhere — editor, preview, tree, search results. It opens a small menu at the bottom listing the keys that can follow (as in which-key / LazyVim), so nothing needs to be memorized up front. The menu takes the focus, so the next key never types into the note, and keys go by their place on the keyboard (Korean input works). Esc or ⌃G closes, ⌫ goes up a level, `:` or Space (or ⌥X again) opens M-x. Change the key in Settings → Keyboard shortcuts.
 
 | Keys | |
 |---|---|
 | `f` files | `f` find a file · `n` new note · `t` from a template · `j` today's journal · `r` rename · `b` bookmark · `y` copy [[link]] · `l` show in the tree · `h` history · `e` export HTML |
-| `s` search | `s` the workspace · `f` find in note · `r` replace · `h` heading here · `a` heading in any note · `l` go to line · `n`/`p` next/previous search result |
-| `b` buffers | `b` switch note (most recent first) · `` ` `` the note before · `m` messages · `n`/`p` next/previous · `d` close · `o` close others · `[` `]` back/forward |
+| `s` search | `s` the workspace · `b` the results as a buffer · `f` find in note · `r` replace · `h` heading here · `a` heading in any note · `l` go to line · `n`/`p` next/previous search result |
+| `b` buffers | `b` switch buffer (most recent first) · `` ` `` the note before · `m` messages · `r` agent runs · `s` search results · `x` tasks · `c` changed outside · `n`/`p` next/previous · `d` close · `o` close others · `[` `]` back/forward |
 | `w` windows | `h` the sidebar · `l` the editor · `p` the preview · `w` the other pane · `v` split · `s` show/hide the sidebar · `z` focus mode |
 | `m` mode | `e` Edit · `s` Split · `c` Canvas · `p` Preview |
 | `l` links | `l` follow the link at the cursor · `f` pick a link in the preview · `b` back |
 | `g` git | `g` the Git panel · `d` changes since the last commit · `h` this file's history |
-| top level | `j` jump to a word · `v` / `V` expand / shrink the selection · `y` paste from the copy history · `` ` `` the note before · `.` repeat · Space every command |
+| top level | `j` jump to a word · `v` / `V` expand / shrink the selection · `y` paste from the copy history · `` ` `` the note before · `.` repeat · `:` or Space M-x |
 | `a` agent | `a` delegate a task · `1`–`6` a recipe (Tidy, Summarize…) · `v` review the next run · `o` changes from outside · `i` instructions for agents (AGENTS.md) · `r` agent runs |
+| `r` recipes | `1`–`6` Margin's recipes · your own by their `key:` · `e` edit `RECIPES.md` |
 | `t` toggles | `f` tree follows the tab · `s` sidebar · `t` theme · `z` focus mode |
 | `q` macro | `q` start/stop recording · `r` play · `n` play N times · `e` play until it can't go on · `s` play at every search result · `v` show it |
 | `.` | Repeat the last command (it shows which) |
 | `,` / `k` | Settings / keyboard shortcuts |
 
-**Buffers (as in Emacs and Vim).** A note you close is kept for the session with its cursor, scroll and undo history; opened again (from anywhere) it comes back as it was, as long as the file hasn't changed meanwhile (the 20 most recent are kept). ⌘⇧B / ⌥X b b lists the notes most recently used first — the one before this is at the top, closed ones are marked ○. ⌃6 or ⌥X `` ` `` switches back and forth between two notes. ⌥X b m shows the messages shown at the bottom so far (Enter copies one).
+**M-x: every command by name.** ⌘⇧P, ⌥X : (or ⌥X Space, ⌥X ⌥X) lists every command — the palette's, every leader key, the recipes, and the keys of the buffer in view — found by a few letters of its name (fuzzy). Each shows its shortcut and its ⌥X keys, so M-x also teaches them. With nothing typed, the commands of the buffer you are in come first (◆, with their key), then the ones you ran lately, then the rest; when typing, recent and fitting ones are lifted. Commands for the note (Editor:, View:, Find…) count as fitting when a note is in view. Commands that can't run here (no note open…) are left out.
+
+**Buffers (as in Emacs and Vim).** A note you close is kept for the session with its cursor, scroll and undo history; opened again (from anywhere) it comes back as it was, as long as the file hasn't changed meanwhile (the 20 most recent are kept). ⌘⇧B / ⌥X b b lists the notes most recently used first — the one before this is at the top, closed ones are marked ○. ⌃6 or ⌥X `` ` `` switches back and forth between two notes. ⌥X b m opens the messages shown at the bottom so far as a buffer (`o` copies one; kept in memory only).
 
 **Undo is the editor's own.** It survives switching tabs, Edit/Split/Preview and closing the note; a run of typing is one step (a pause, a new line or a new word after a space starts the next). A change from outside — another program or an agent editing the open note's file — is one step too: ⌘Z takes it back.
 

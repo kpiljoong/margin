@@ -38,6 +38,7 @@ fs.writeFileSync(path.join(ws, 'ime.md'), 'a\nb\n');
 fs.writeFileSync(path.join(ws, 'outside.md'), Array.from({ length: 20 }, (_, i) => `line ${i + 1}`).join('\n') + '\n');
 fs.writeFileSync(path.join(ws, 'expand.md'), '# Expand\n\nFirst one. A **bold** word here.\n\n## Part\n\nalpha beta gamma\n');
 fs.writeFileSync(path.join(ws, 'tasks.md'), '# Tasks\n\n- [ ] late one 📅 2020-01-01\n- [ ] someday\n- [x] finished\n');
+fs.writeFileSync(path.join(ws, 'RECIPES.md'), '# Recipes\n\n## Shout\nkey: s\nscope: note\n\nMake the title louder.\n');
 fs.writeFileSync(path.join(ws, 'buf.md'), '# Buffer\n\nfirst line\nsecond line\n');
 fs.mkdirSync(path.join(ws, 'todo'));
 fs.writeFileSync(path.join(ws, 'todo', 'a.md'), 'TODO one\n\nTODO two\n');
@@ -473,7 +474,7 @@ await check('the leader key (⌥X): f f finds a file, Space all commands; w h go
   key('Escape');
   const back = await until(() => !document.activeElement?.closest('#sidebar'));
   return { focused, groups, files, quick: !!quick, quickValue, typedInEditor, paletteValue, from, moved, opened, back: !!back };
-`, (v) => (v?.focused && v.groups === 'fsbwmlgatq' && v.files && v.quick && v.quickValue === '' && !v.typedInEditor && v.paletteValue === '>' && v.from === 'flow.md' && v.moved && v.opened && v.back ? null : 'the leader key did not work'));
+`, (v) => (v?.focused && v.groups === 'fsbwmlgartq' && v.files && v.quick && v.quickValue === '' && !v.typedInEditor && v.paletteValue === '>' && v.from === 'flow.md' && v.moved && v.opened && v.back ? null : 'the leader key did not work'));
 
 await check('link hints in a focused preview: f, then a letter, follows that link', `
   await openNote('sub/links.md');
@@ -708,8 +709,9 @@ await check('buffers: a closed note comes back with its cursor and undo; ⌥X ` 
   await until(() => $('.leader'));
   press('KeyB', 'b');
   press('KeyM', 'm');
-  const msgs = await until(() => !$('#overlay').hidden && $$('#overlay .palette-item').map((x) => x.textContent));
-  key('Escape', {}, $('#overlay input'));
+  const msgs = await until(() => document.activeElement?.dataset.tab === 'messages' && $$('.message-row').map((x) => x.textContent));
+  key('q');
+  await until(() => !$('.messages-buffer'));
   return { caret, undone, other: !!other, back: !!back, first, saved: msgs?.some((m) => m.includes('Link copied') || m.length > 0) };
 `, (v) => (v?.caret === 12 && v.undone === '# Buffer\n\nfirst line\nsecond line\n' && v.other && v.back && /^●?flow\.md/.test(v.first || '') && v.saved ? null : 'buffers did not work'));
 
@@ -922,6 +924,44 @@ await check('a run that ends while another note is open says so; its Review butt
   await until(() => /Discarded/.test($('.review')?.textContent || ''), 5000);
   return { toast: t.textContent, back: !!back };
 `, (v) => (v?.back && /Review$/.test(v.toast) ? null : 'no word when the run ended'));
+
+await check('M-x (⌥X :) runs a recipe from RECIPES.md by name; the runs, the review and the messages are buffers with the same keys', `
+  const press = (code, key, opts = {}) => document.activeElement.dispatchEvent(new KeyboardEvent('keydown', { code, key, bubbles: true, cancelable: true, ...opts }));
+  const ta = await openNote('buf.md');
+  ta.focus();
+  press('KeyX', '≈', { altKey: true });
+  await until(() => $('.leader'));
+  press('Semicolon', ':', { shiftKey: true });
+  const input = await until(() => !$('#overlay').hidden && $('#overlay input'));
+  input.value = '>shout';
+  input.dispatchEvent(new Event('input'));
+  const item = await until(() => $('#overlay .palette-item'));
+  const label = item.textContent;
+  item.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }));
+  const done = await until(() => !$('#toast').hidden && /done.*Shout/.test($('#toast').textContent), 20000);
+  await sleep(200);
+  press('KeyX', '≈', { altKey: true });
+  await until(() => $('.leader'));
+  press('KeyB', 'b');
+  press('KeyR', 'r');
+  const row = await until(() => document.activeElement?.dataset.tab === 'runs' && $('.runs-buffer .run-row'));
+  const runText = row?.textContent;
+  key('j'); key('o');
+  const review = await until(() => document.activeElement?.classList.contains('review') && /Review: Shout/.test($('.tab.active')?.textContent || ''));
+  // In M-x now: the review's own keys first (the same command twice within 150ms runs once).
+  await sleep(200);
+  press('KeyX', '≈', { altKey: true });
+  await until(() => $('.leader'));
+  press('Space', ' ');
+  const first = await until(() => !$('#overlay').hidden && $('#overlay .palette-item')?.textContent);
+  key('Escape', {}, $('#overlay input'));
+  await sleep(100);
+  $('.review').focus();
+  key('q');
+  const closed = await until(() => !$$('.tab').some((t) => /Review: Shout/.test(t.textContent)));
+  const runsTabs = $$('.tab').filter((t) => /Agent runs/.test(t.textContent)).length;
+  return { label, done: !!done, runText, review: !!review, first, closed: !!closed, runsTabs };
+`, (v) => (v && /^✦Recipe: Shout.*⌥X r s/.test(v.label) && v.done && /^Shout · /.test(v.runText || '') && v.review && /^◆Review: /.test(v.first || '') && v.closed && v.runsTabs === 1 ? null : 'M-x, recipes or buffers did not work'));
 
 console.log(failed ? `\nSmoke test failed (${results.filter((r) => !r.ok).length} of ${results.length + 4}).` : `\nAll ${results.length + 4} checks passed.`);
 done(failed ? 1 : 0);

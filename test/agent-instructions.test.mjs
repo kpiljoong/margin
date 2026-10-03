@@ -37,7 +37,9 @@ test('AGENTS.md is sent with a task on one note, and listed with what is shared;
   const scope = await api('GET', '/api/scope?scope=file&focus=a.md');
   assert.equal(scope.instructions, 'AGENTS.md');
   assert.deepEqual(scope.included, ['a.md']);
-  let run = await api('POST', '/api/runs', { task: 'Tidy', scope: 'file', focus: 'a.md' });
+  let run = await api('POST', '/api/runs', { task: 'Tidy', scope: 'file', focus: 'a.md', recipe: '  My \n recipe ' });
+  // A run from a recipe keeps its name, for the list of runs.
+  assert.equal((await api('GET', '/api/runs')).runs.find((r) => r.id === run.id).recipe, 'My recipe');
   for (let i = 0; i < 100 && run.status === 'running'; i++) { await sleep(100); run = await api('GET', `/api/runs/${run.id}`); }
   const prompt = run.changes.find((c) => c.path === 'prompt.txt')?.lines.join('\n') || '';
   assert.match(prompt, /Instructions for this notes folder \(from AGENTS\.md\):\n# Rules\n\nAlways write in Korean\./);

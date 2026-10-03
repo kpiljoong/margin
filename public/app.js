@@ -13,6 +13,8 @@ import { goalAt, boxAt, mentionRanges, definitionLines } from './figure-goal.js'
 import { isDrawing, drawingFormat, DrawingFrame, renderDrawingEmbeds, cachedEmbed, forgetEmbed, drawingImageUrl } from './drawing.js';
 import { copyPng, copySvg, svgFromDataUrl, imageToPng } from './clip.js';
 import { openViewer } from './viewer.js';
+import { fuzzy, rankCommands, used } from './commands.js';
+import { parseRecipes, mergeRecipes, runsDirectly, RECIPES_FILE, RECIPES_STARTER } from './recipes.js';
 import SHORTCUTS from './shortcuts.json' with { type: 'json' };
 import { effectiveKeys, eventKeys, normalize, keyLabel, unusable, conflicts, customOnly } from './keys.js';
 import { THEMES, allThemes, applyTheme, resolveTheme, onSystemThemeChange, setCustomThemes, validateTheme, exportTheme } from './themes.js';
@@ -159,8 +161,10 @@ function askConfirm(message, { okLabel = 'OK', danger = false } = {}) {
 let toastTimer;
 // Every message shown, for a look back (as Emacs's *Messages*): ⌥X b m.
 const messages = [];
+let messageSeq = 0;
 function toast(msg, kind = '', action = null) {
-  messages.push({ at: new Date(), msg: String(msg), kind });
+  messages.push({ at: new Date(), msg: String(msg), kind, seq: ++messageSeq });
+  if (S.tabs.some((t) => t.kind === 'messages')) requestAnimationFrame(() => redrawSpecial('messages'));
   if (messages.length > 200) messages.shift();
   const el = $('#toast');
   el.replaceChildren(msg, action ? h('button', { class: 'toast-action', onclick: () => { el.hidden = true; action.run(); } }, action.label) : '');
@@ -786,6 +790,7 @@ async function saveTab(tab = fileTab(), { force = false } = {}) {
   await run;
   tab.saving = null;
   renderTabs(); renderStatus(); renderBanner();
+  if (tab.path === RECIPES_FILE) loadRecipes();
   if (tab.saveAgain) { tab.saveAgain = false; if (tab.content !== tab.saved && !tab.conflict) await saveTab(tab); }
 }
 
@@ -1237,10 +1242,10 @@ function filesPanel() {
 
 const runSearch = debounce(async () => {
   const q = S.searchQuery;
-  if (!q.trim()) { S.searchResults = null; renderSearchResults(); return; }
+  if (!q.trim()) { S.searchResults = null; renderSearchResults(); searchChanged(); return; }
   try {
     const r = await api('GET', `/api/search?q=${encodeURIComponent(q)}`);
-    if (q === S.searchQuery) { S.searchResults = r; S.searchAt = null; renderSearchResults(); }
+    if (q === S.searchQuery) { S.searchResults = r; S.searchAt = null; renderSearchResults(); searchChanged(); }
   } catch (e) { toast(e.message, 'error'); }
 }, 180);
 
@@ -1382,7 +1387,7 @@ function agentPanel() {
   const active = activeTab();
   for (const r of S.runs) {
     body.append(h('div', { class: `run-row${active?.runId === r.id ? ' active' : ''}`, onclick: () => openReview(r.id) },
-      h('div', { class: 'task', title: r.task }, r.task),
+      h('div', { class: 'task', title: r.task }, r.recipe ? h('b', {}, `${r.recipe} · `) : null, r.task),
       h('div', { class: 'meta' }, h('span', { class: `badge st-${r.status}` }, r.status), h('span', {}, r.focus ? stem(r.focus) : r.scope), h('span', {}, timeAgo(r.startedAt)),
         r.usage ? h('span', { class: 'usage', title: usageTitle(r.usage) }, usageText(r.usage, true)) : null)));
   }
@@ -1491,7 +1496,7 @@ function renderTabs() {
   const bar = paneEl(g).querySelector('.tabs');
   bar.replaceChildren(...S.tabs.filter((t) => t.group === g).map((t) => {
     const dirty = (t.kind === 'file' && t.content !== t.saved) || (t.kind === 'drawing' && t.text !== t.saved);
-    const label = t.kind === 'review' ? `Review: ${t.title}` : t.kind === 'outside' ? '↯ Changed outside' : t.kind === 'tasks' ? '☐ Tasks' : t.kind === 'gitdiff' ? `Δ ${basename(t.path)}` : t.kind === 'history' ? `History: ${stem(t.path)}` : basename(t.path);
+    const label = SPECIAL[t.kind] ? SPECIAL[t.kind].name(t) : basename(t.path);
     return h('div', { class: `tab${t.id === grp.active ? ' active' : ''}${dirty ? ' dirty' : ''}`, title: t.path || t.title, draggable: 'true',
       'data-id': t.id,
       ondragstart: (e) => { e.dataTransfer.setData('text/x-agent-notes-tab', t.id); e.dataTransfer.effectAllowed = 'move'; document.body.classList.add('tab-dragging'); },
@@ -1638,9 +1643,7 @@ function renderContent(g = S.focus) {
   const tab = activeIn(g);
   if (attachedByGroup[g] && attachedByGroup[g] !== tab) attachedByGroup[g] = null;
   if (!tab) { c.replaceChildren(g === 0 ? welcome() : h('div', { class: 'empty pane-empty' }, 'Open a note here with ', h('kbd', {}, kbd('quick-open') || 'the palette'), '.')); return; }
-  if (tab.kind === 'review' || tab.kind === 'outside' || tab.kind === 'tasks') { showReview(c, tab); return; }
-  if (tab.kind === 'gitdiff') { c.replaceChildren(gitDiffView(tab)); return; }
-  if (tab.kind === 'history') { c.replaceChildren(historyView(tab)); return; }
+  if (SPECIAL[tab.kind]) { showSpecial(c, tab); return; }
   if (tab.kind === 'drawing') { drawingView(tab, c); return; }
   if (tab.kind === 'image') {
     c.replaceChildren(h('div', { class: 'toolbar' }, ...navButtons(), h('span', { class: 'crumbs' }, tab.path.split('/').join('  ›  '))),
@@ -2513,25 +2516,6 @@ function showView(v) {
 
 // ------------------------------------------------------------------ palette
 
-function fuzzy(qRaw, text) {
-  const q = qRaw.replace(/\s+/g, ''); // spaces are separators, not characters to match
-  if (!q) return { score: 0, idx: [] };
-  const t = text.toLowerCase();
-  const ql = q.toLowerCase();
-  const idx = [];
-  let score = 0;
-  let last = -1;
-  for (const ch of ql) {
-    const i = t.indexOf(ch, last + 1);
-    if (i === -1) return null;
-    score += i === last + 1 ? 3 : 1;
-    if (i === 0 || '/-_ .'.includes(t[i - 1])) score += 2;
-    idx.push(i);
-    last = i;
-  }
-  return { score: score - text.length * 0.01, idx };
-}
-
 function marked(text, idx) {
   const set = new Set(idx);
   return [...text].map((c, i) => (set.has(i) ? h('b', {}, c) : c));
@@ -2540,7 +2524,10 @@ function marked(text, idx) {
 const COMMANDS = [
   ['Switch note (buffers)…', () => setTimeout(pickTab, 0), { key: 'buffers' }],
   ['Back to the note before', otherBuffer, { key: 'other-note' }],
-  ['Messages…', () => setTimeout(showMessages, 0)],
+  ['Messages', () => openMessages()],
+  ['Agent runs (as a buffer)', () => openRuns()],
+  ['Search results (as a buffer)', () => openSearchBuffer()],
+  ['Recipes: edit (RECIPES.md)', () => editRecipes()],
   ['Tasks in all notes (agenda)', () => openTasks()],
   ['Instructions for agents in this folder (AGENTS.md)', () => editAgentInstructions()],
   ['Paste from the copy history…', () => setTimeout(pasteFromHistory, 0), { key: 'paste-history' }],
@@ -2621,6 +2608,62 @@ const COMMANDS = [
   ['Close all tabs', () => closeTabs(S.tabs)],
 ];
 
+// M-x: every command by name — the palette's, the leader's (with its keys),
+// the recipes, and the keys of the buffer in view — with its shortcut and its
+// ⌥X path. The buffer's own come first, then the ones used lately.
+const NOTE_COMMAND = /^(Editor|Preview|Canvas|View|Insert|Find in note|Replace in note|Go to (heading|line))\b/;
+let mxRecent = (() => { try { return JSON.parse(store.getItem('an.mx') || '[]').filter((x) => typeof x === 'string'); } catch { return []; } })();
+const norm = (n) => n.toLowerCase().replace(/…$/, '').trim();
+const upper = (w) => w.charAt(0).toUpperCase() + w.slice(1);
+
+function allCommands() {
+  const tab = activeTab();
+  const out = new Map();
+  const add = (c) => {
+    const had = out.get(norm(c.name));
+    if (!had) { out.set(norm(c.name), c); return; }
+    had.leader ||= c.leader;
+  };
+  if (tab && SPECIAL[tab.kind]) {
+    const title = SPECIAL[tab.kind].title;
+    for (const [key, label] of [...BUFFER_KEYS[tab.kind], ...COMMON_KEYS]) add({ name: `${title}: ${label}`, ctx: [tab.kind], inBuffer: key, run: () => pressBufferKey(tab, key) });
+  }
+  for (const [name, run, opt] of COMMANDS) add({ name, run, shortcut: opt?.key || null, prefix: typeof opt === 'string' ? opt : null, ctx: NOTE_COMMAND.test(name) ? ['file'] : null });
+  for (const r of recipes.list) add({ name: `Recipe: ${r.name}`, run: () => runRecipe(r), leader: r.key ? ['r', r.key] : null, ctx: r.scope === 'file' ? ['file'] : null, recipe: true });
+  // The leader's keys: on the command they run, or a command of their own.
+  const walk = (items, path, group) => {
+    for (const it of items) {
+      if (it.when && !it.when()) continue;
+      const keys = [...path, it.key];
+      if (it.items) { walk(it.items, keys, it.label); continue; }
+      if (it.mx === false) continue;
+      if (it.recipe) { const c = out.get(norm(`Recipe: ${it.recipe.name}`)); if (c && !c.leader) c.leader = keys; continue; }
+      const same = out.get(norm(it.cmd || '')) || out.get(norm(it.label));
+      if (same) { same.leader ||= keys; continue; }
+      add({ name: group ? `${upper(group)}: ${it.label}` : it.label, run: it.run, leader: keys });
+    }
+  };
+  walk(leaderTree(), [], '');
+  return [...out.values()];
+}
+
+function mxItems(q) {
+  const tab = activeTab();
+  const context = tab?.kind === 'file' ? 'file' : tab?.kind || '';
+  const leaderKey = kbd('leader') || '⌥X';
+  return rankCommands(allCommands(), q, { recent: mxRecent, context }).slice(0, 200).map(({ cmd, m }) => ({
+    icon: cmd.inBuffer ? '◆' : cmd.recipe ? '✦' : '',
+    label: marked(cmd.name, m.idx),
+    hint: [cmd.inBuffer ? `key ${cmd.inBuffer}` : '', cmd.shortcut ? kbd(cmd.shortcut) : cmd.prefix || '', cmd.leader ? `${leaderKey} ${cmd.leader.join(' ')}` : ''].filter(Boolean).join('  ·  '),
+    run: () => {
+      mxRecent = used(mxRecent, cmd.name);
+      store.setItem('an.mx', JSON.stringify(mxRecent));
+      remember(cmd.name, cmd.run);
+      macros.command(cmd.name, cmd.run);
+    },
+  }));
+}
+
 // Generic keyboard-first picker used by quick open, commands and themes.
 function picker({ placeholder, initial = '', source, onMove, onCancel }) {
   const overlay = $('#overlay');
@@ -2681,12 +2724,7 @@ function openPalette(initial = '') {
     placeholder: `Go to note (${MOD}↵ opens to the side)   > commands   # headings   @ all headings   : line`,
     initial,
     source: (q) => {
-      if (q.startsWith('>')) {
-        const cq = q.slice(1).trim();
-        return COMMANDS.map(([name, run, key]) => ({ name, run, key, m: fuzzy(cq, name) })).filter((x) => x.m)
-          .sort((a, b) => b.m.score - a.m.score)
-          .map((x) => ({ label: marked(x.name, x.m.idx), hint: x.key?.key ? kbd(x.key.key) : x.key, run: () => { remember(x.name, x.run); macros.command(x.name, x.run); } }));
-      }
+      if (q.startsWith('>')) return mxItems(q.slice(1).trim());
       if (q.startsWith('#')) {
         const tab = fileTab();
         if (!tab) return [];
@@ -3917,28 +3955,25 @@ async function printNote(tab = fileTab()) {
 
 // ------------------------------------------------------------------ agent: delegate
 
-const RECIPES = [
-  ['Tidy', 'Tidy the formatting: consistent headings, lists and spacing. Do not change the meaning.'],
-  ['Summarize', 'Add a short TL;DR at the top of the note summarizing it in 2–3 sentences.'],
-  ['Extract tasks', 'Collect every open task (- [ ]) into an "Open tasks" section with a link back to its source note.'],
-  ['Link notes', 'Add [[wikilinks]] between notes where one clearly refers to another. Do not invent notes.'],
-  ['Proofread', 'Fix spelling and grammar only. Keep the author’s voice and language.'],
-  ['Draw as flow', 'Where the text describes a process, workflow or system, add a ```flow block right after it that draws it. Keep the text unchanged and use its names.'],
-];
+// Unsaved edits are written first: the agent works on the files on disk.
+async function savedForAgent(tab) {
+  if (!tab || (tab.content === tab.saved && !tab.saving)) return true;
+  if (!S.settings.autosave && !(await askConfirm('Save your unsaved changes first? The agent works on the saved files.', { okLabel: 'Save' }))) return false;
+  if (tab.saving) await tab.saving;
+  if (tab.content !== tab.saved) await saveTab(tab);
+  if (tab.content !== tab.saved) { toast('Could not save the note; resolve the conflict first.', 'error'); return false; }
+  return true;
+}
 
-async function openTaskDialog(presetTask = '') {
+// presetTask: the task to start from; scope and recipe: a recipe's.
+async function openTaskDialog(presetTask = '', { scope: presetScope = null, recipe = null } = {}) {
   if (!S.info?.agent?.configured) { showView('agent'); toast('No agent configured — see the Agent panel.', 'error'); return; }
   const focus = fileTab() && isNote(fileTab().path) ? fileTab().path : null;
   const tab = fileTab();
-  if (tab && (tab.content !== tab.saved || tab.saving)) {
-    // The agent works on files on disk, so unsaved edits must be written first.
-    if (!S.settings.autosave && !(await askConfirm('Save your unsaved changes first? The agent works on the saved files.', { okLabel: 'Save' }))) return;
-    if (tab.saving) await tab.saving;
-    if (tab.content !== tab.saved) await saveTab(tab);
-    if (tab.content !== tab.saved) { toast('Could not save the note; resolve the conflict first.', 'error'); return; }
-  }
+  if (!(await savedForAgent(tab))) return;
   const overlay = $('#overlay');
-  let scope = focus ? 'file' : 'workspace';
+  let scope = presetScope && (presetScope !== 'file' || focus) ? presetScope : focus ? 'file' : 'workspace';
+  let recipeName = recipe;
   const ed = tab?.editor;
   const selection = ed && isNote(tab.path) ? ed.value.slice(ed.selectionStart, ed.selectionEnd) : '';
   const useSel = h('input', { type: 'checkbox', checked: !!selection.trim() });
@@ -3992,7 +4027,8 @@ async function openTaskDialog(presetTask = '') {
     runBtn.disabled = true;
     try {
       store.setItem('an.lastAgent', agentId);
-      const run = await api('POST', '/api/runs', { task: task.value, scope, focus, selection: useSel.checked ? selection : '', agentId, model });
+      const r = recipeName && recipes.list.find((x) => x.name === recipeName);
+      const run = await api('POST', '/api/runs', { task: task.value, scope, focus, selection: useSel.checked ? selection : '', agentId, model, recipe: r && r.prompt === task.value ? r.name : '' });
       close();
       await loadRuns();
       openReview(run.id);
@@ -4015,7 +4051,13 @@ async function openTaskDialog(presetTask = '') {
       task,
       selection.trim() ? h('label', { class: 'sel-context' }, useSel,
         h('span', {}, `Focus on the selected text (${selection.length} chars) — `, h('i', {}, `“${selection.trim().slice(0, 60)}${selection.trim().length > 60 ? '…' : ''}”`))) : null,
-      h('div', { class: 'recipes' }, RECIPES.map(([name, text]) => h('button', { class: 'chip', onclick: () => { task.value = text; task.focus(); } }, name))),
+      h('div', { class: 'recipes' }, recipes.list.map((r) => h('button', { class: 'chip', title: r.prompt, onclick: () => {
+        task.value = r.prompt;
+        recipeName = r.name;
+        if (r.scope && (r.scope !== 'file' || focus)) { scope = r.scope; overlay.querySelectorAll('input[name=scope]').forEach((x) => { x.checked = x.value === scope; }); refreshScope(); }
+        task.focus();
+      } }, r.name)),
+      h('button', { class: 'chip add', title: `Your own recipes, as commands: ${RECIPES_FILE}`, onclick: () => { close(); editRecipes(); } }, '＋')),
       h('div', { class: 'scope-row' },
         scopeOpt('file', focus ? `This note (${basename(focus)})` : 'This note', !focus),
         scopeOpt('folder', focus && dirname(focus) ? `This folder (${dirname(focus)}/)` : 'Top folder', false),
@@ -4033,6 +4075,7 @@ async function loadRuns() {
   const was = new Map(S.runs.map((r) => [r.id, r.status]));
   try { S.runs = (await api('GET', '/api/runs')).runs; } catch { S.runs = []; }
   if (S.view === 'agent') renderSidebar(); else renderActivity();
+  redrawSpecial('runs');
   for (const r of S.runs) if (was.get(r.id) === 'running' && r.status !== 'running') runFinished(r);
 }
 
@@ -4042,7 +4085,7 @@ function runFinished(r) {
   if (r.status === 'cancelled') return;
   const here = activeTab()?.kind === 'review' && activeTab().runId === r.id;
   const what = r.status === 'review' ? 'is done — ready for review' : r.status === 'failed' ? 'failed' : r.status;
-  const task = r.task.replace(/\s+/g, ' ').slice(0, 70);
+  const task = r.recipe || r.task.replace(/\s+/g, ' ').slice(0, 70);
   if (!here) toast(`Agent ${what}: ${task}`, r.status === 'failed' ? 'error' : '', { label: 'Review', run: () => openReview(r.id) });
   if (!document.hasFocus() && typeof Notification !== 'undefined' && Notification.permission === 'granted') {
     const n = new Notification('Margin', { body: `Agent ${what}: ${task}` });
@@ -4054,7 +4097,7 @@ function openReview(id) {
   let tab = S.tabs.find((t) => t.kind === 'review' && t.runId === id);
   if (!tab) {
     const r = S.runs.find((x) => x.id === id);
-    tab = { id: `r:${id}`, kind: 'review', runId: id, title: (r?.task || id).slice(0, 28), run: null, decisions: {}, group: S.focus };
+    tab = { id: `r:${id}`, kind: 'review', runId: id, title: (r?.recipe || r?.task || id).slice(0, 28), run: null, decisions: {}, group: S.focus };
     S.tabs.push(tab);
   }
   tab.wantFocus = true;
@@ -4073,6 +4116,61 @@ async function editAgentInstructions() {
     } catch (e) { toast(e.message, 'error'); return; }
   }
   openFile(p);
+}
+
+// ------------------------------------------------------------------ recipes
+// Tasks for the agent run by name (recipes.js): Margin's own, and the user's
+// from RECIPES.md, each a command (M-x, ⌥X r). Whatever they do comes back as
+// a run to review.
+
+const recipes = { list: mergeRecipes(), errors: [], text: null };
+async function loadRecipes() {
+  let text = '';
+  if (S.files.some((f) => f.path === RECIPES_FILE)) {
+    try { text = (await api('GET', `/api/file?path=${encodeURIComponent(RECIPES_FILE)}`)).content; } catch { text = ''; }
+  }
+  if (text === recipes.text) return;
+  const first = recipes.text == null;
+  recipes.text = text;
+  const parsed = parseRecipes(text);
+  recipes.list = mergeRecipes(parsed.recipes);
+  recipes.errors = parsed.errors;
+  if (first && !parsed.errors.length) return;
+  const e = parsed.errors[0];
+  if (e) toast(`${RECIPES_FILE} line ${e.line}: ${e.msg}${parsed.errors.length > 1 ? ` (and ${parsed.errors.length - 1} more)` : ''}`, 'error');
+  else toast(`${parsed.recipes.length} recipe${parsed.recipes.length === 1 ? '' : 's'} from ${RECIPES_FILE} — ⌥X r, or by name with M-x`);
+}
+
+const recipeLabel = (r) => (runsDirectly(r) ? r.name : `${r.name}…`);
+
+// Straight to the agent (in the background; a message says when it is
+// ready for review), or the task dialog filled in (recipes.js runsDirectly).
+async function runRecipe(r) {
+  if (!runsDirectly(r)) { openTaskDialog(r.prompt, { scope: r.scope, recipe: r.name }); return; }
+  if (!S.info?.agent?.configured) { showView('agent'); toast('No agent configured — see the Agent panel.', 'error'); return; }
+  const tab = fileTab();
+  const focus = tab && isNote(tab.path) ? tab.path : null;
+  if (r.scope === 'file' && !focus) { toast(`“${r.name}” works on the note in view: open a note first.`, 'error'); return; }
+  if (!(await savedForAgent(tab))) return;
+  const ed = focus && tab.editor;
+  const selection = ed ? ed.value.slice(ed.selectionStart, ed.selectionEnd) : '';
+  const agents = S.info.agents || [];
+  const last = store.getItem('an.lastAgent');
+  const agent = agents.find((a) => a.id === last) || agents.find((a) => a.id === S.info.agent.id);
+  const saved = store.getItem(`an.model.${agent?.label || ''}`) || '';
+  const model = agent?.models?.some((m) => m.id === saved) ? saved : '';
+  try {
+    const run = await api('POST', '/api/runs', { task: r.prompt, scope: r.scope || 'file', focus, selection, agentId: agent?.id, model, recipe: r.name });
+    await loadRuns();
+    toast(`${r.name}: the agent is on it (a staged copy of ${r.scope === 'file' ? stem(focus) : r.scope === 'folder' ? 'this folder' : 'the workspace'})`, '', { label: 'Watch', run: () => openReview(run.id) });
+  } catch (e) { toast(e.message, 'error'); }
+}
+
+async function editRecipes() {
+  if (!S.files.some((f) => f.path === RECIPES_FILE)) {
+    try { await api('POST', '/api/file', { path: RECIPES_FILE, content: RECIPES_STARTER }); await loadTree(); } catch (e) { toast(e.message, 'error'); return; }
+  }
+  openFile(RECIPES_FILE);
 }
 
 // The run that waits longest for a look (the oldest in review), else the newest.
@@ -4098,14 +4196,7 @@ async function loadOutside() {
 }
 
 function openOutside() {
-  let tab = S.tabs.find((t) => t.kind === 'outside');
-  if (!tab) {
-    tab = { id: 'outside', kind: 'outside', title: 'Changed outside', run: null, decisions: {}, group: S.focus };
-    S.tabs.push(tab);
-  }
-  tab.wantFocus = true;
-  activate(tab.id);
-  refreshOutside(tab);
+  refreshOutside(openSpecial('outside', { title: 'Changed outside', run: null, decisions: {} }));
 }
 
 async function refreshOutside(tab) {
@@ -4127,8 +4218,7 @@ async function refreshOutside(tab) {
 }
 
 function outsideView(tab) {
-  const wrap = h('div', { class: 'review', tabindex: 0, 'data-tab': tab.id, onkeydown: (e) => reviewKeys(e, tab),
-    onmousedown: (e) => { const it = e.target.closest('.kb-item'); if (it) setReviewCur(tab, it, false); } });
+  const wrap = h('div', { class: 'review' });
   wrap.append(h('div', { class: 'review-head' },
     h('span', { class: 'badge st-review' }, 'outside'),
     h('div', { class: 'task' }, 'Changed outside Margin'),
@@ -4141,7 +4231,7 @@ function outsideView(tab) {
   const undo = total - kept;
   wrap.append(h('div', { class: 'review-actions' },
     h('span', { class: 'grow' }, `${changes.length} note${changes.length === 1 ? '' : 's'} · keeping ${kept} of ${total} change${total === 1 ? '' : 's'}`,
-      h('span', { class: 'review-keys', title: 'j / k  next / previous change\nJ / K  next / previous note\nx or space  keep or undo the change · X  the whole note\nA / U  keep all / none\na  done (undo the ones not kept) · r  refresh\n=  diff / result · o or Enter  open at the change' }, 'j k · x · a done')),
+      h('span', { class: 'review-keys', title: keysHint('outside') }, 'j k · x · a done')),
     h('button', { class: 'btn', onclick: () => refreshOutside(tab) }, 'Refresh'),
     h('button', { class: `btn ${undo ? 'danger' : 'primary'}`, onclick: () => keepOutside(tab) }, undo ? `Undo ${undo}, keep ${kept}` : 'Keep all')));
   for (const c of [...changes].sort((a, b) => b.at - a.at)) {
@@ -4158,14 +4248,7 @@ function outsideView(tab) {
 // off, o opens it, a hands it to the agent.
 
 function openTasks() {
-  let tab = S.tabs.find((t) => t.kind === 'tasks');
-  if (!tab) {
-    tab = { id: 'tasks', kind: 'tasks', title: 'Tasks', tasks: null, showDone: false, group: S.focus };
-    S.tabs.push(tab);
-  }
-  tab.wantFocus = true;
-  activate(tab.id);
-  refreshTasks(tab);
+  refreshTasks(openSpecial('tasks', { title: 'Tasks', tasks: null, showDone: false }));
 }
 
 async function refreshTasks(tab) {
@@ -4177,8 +4260,7 @@ const refreshTasksSoon = debounce(() => { const t = S.tabs.find((x) => x.kind ==
 const today = () => { const d = new Date(); return new Date(d - d.getTimezoneOffset() * 60000).toISOString().slice(0, 10); };
 
 function tasksView(tab) {
-  const wrap = h('div', { class: 'review tasks', tabindex: 0, 'data-tab': tab.id, onkeydown: (e) => tasksKeys(e, tab),
-    onmousedown: (e) => { const it = e.target.closest('.kb-item'); if (it) setReviewCur(tab, it, false); } });
+  const wrap = h('div', { class: 'review tasks' });
   const all = tab.tasks;
   if (!all) { wrap.append(h('div', { class: 'empty' }, 'Loading…')); return wrap; }
   const open = all.filter((t) => !t.done);
@@ -4188,7 +4270,7 @@ function tasksView(tab) {
     h('div', { class: 'task' }, 'Tasks'),
     h('div', { class: 'meta' },
       h('span', {}, `${open.length} open in ${notes} note${notes === 1 ? '' : 's'}${all.length > open.length ? ` · ${all.length - open.length} done` : ''}`),
-      h('span', { class: 'review-keys', title: 'j / k  next / previous\nx or space  check off / again\no or Enter  open it in its note\na  ask the agent to do it\nh  show / hide done ones\nr  refresh' }, 'j k · x done · o open · a agent · h done'))));
+      h('span', { class: 'review-keys', title: keysHint('tasks') }, 'j k · x done · o open · a agent · h done'))));
   if (!list.length) { wrap.append(h('div', { class: 'review-note ok' }, all.length ? 'Nothing left to do.' : 'No tasks yet: a line like “- [ ] call Alex 📅 2026-10-05” in any note shows here.')); return wrap; }
   const now = today();
   const groups = [['Overdue', (t) => t.due && t.due < now && !t.done], ['Today', (t) => t.due === now], ['Upcoming', (t) => t.due && t.due > now]];
@@ -4217,28 +4299,23 @@ async function toggleTaskAt(tab, t) {
   await refreshTasks(tab);
 }
 
-function tasksKeys(e, tab) {
-  const wrap = e.currentTarget;
-  if (e.metaKey || e.ctrlKey || e.altKey || e.isComposing || e.target !== wrap) return;
-  const items = reviewItems(wrap);
-  const i = items.findIndex((el) => itemKey(el) === tab.cur);
-  const cur = items[i];
-  const t = cur && tab.tasks.find((x) => x.path === cur.dataset.path && x.line === Number(cur.dataset.line));
-  const go = (el) => { if (el) setReviewCur(tab, el); };
+const taskOf = (tab, el) => el && tab.tasks?.find((x) => x.path === el.dataset.path && x.line === Number(el.dataset.line));
+function openTaskAt(tab, el) {
+  const t = taskOf(tab, el);
+  if (t) openFile(t.path, { line: t.line });
+}
+
+function tasksOwnKeys(e, tab, { wrap, i, cur }) {
+  const t = taskOf(tab, cur);
   const k = e.key;
-  if (['j', 'n', 'ArrowDown', 'k', 'p', 'ArrowUp', 'g', 'G', 'x', ' ', 'o', 'Enter', 'a', 'h', 'r'].includes(k)) e.preventDefault();
-  if (k === 'j' || k === 'n' || k === 'ArrowDown') go(items[Math.min(i + 1, items.length - 1)]);
-  else if (k === 'k' || k === 'p' || k === 'ArrowUp') go(items[Math.max(i - 1, 0)]);
-  else if (k === 'g') go(items[0]);
-  else if (k === 'G') go(items.at(-1));
-  else if ((k === 'x' || k === ' ') && t) {
+  if ((k === 'x' || k === ' ') && t) {
     // Stay on the same place in the list: the next one moves up into it.
-    toggleTaskAt(tab, t).then(() => { const next = reviewItems(paneEl(tab.group).querySelector('.review') || wrap); go(next[Math.min(i, next.length - 1)]); });
-  } else if ((k === 'o' || k === 'Enter') && t) openFile(t.path, { line: t.line });
-  else if (k === 'a' && t) {
+    toggleTaskAt(tab, t).then(() => { const next = reviewItems(bufferEl(tab) || wrap); if (next.length) setReviewCur(tab, next[Math.min(i, next.length - 1)]); });
+  } else if (k === 'a' && t) {
     openFile(t.path, { line: t.line }).then(() => openTaskDialog(`Do this task from the note (line ${t.line}): “${t.text}”. When it is done, check it off (- [x]).`));
   } else if (k === 'h') { tab.showDone = !tab.showDone; renderContent(tab.group); }
-  else if (k === 'r') refreshTasks(tab);
+  else return k === 'x' || k === ' ' || k === 'a';
+  return true;
 }
 
 // Undo the changes that are not kept; all of them are looked at, then.
@@ -4463,26 +4540,79 @@ function logContent(run) {
     h('details', { class: 'raw' }, h('summary', {}, 'Raw output'), h('pre', {}, run.log))];
 }
 
-// Reviewing by keyboard (as in magit): j/k step through the changes, x picks
-// one, a applies. A redraw keeps the place, the scroll and the focus.
-function showReview(c, tab) {
-  const old = c.querySelector('.review');
+// ------------------------------------------------------------------ special buffers
+// What Margin shows that isn't a file — a run to review, changes from
+// outside, tasks, search results, agent runs, messages, a note's history —
+// is a buffer as a note is (Emacs's *special* buffers): a tab, in the buffer
+// list (⌥X b b, which opens the ones not open yet too) and in ⌥X `. They
+// take the same keys: j/k (n/p, ↑↓) move, < > (Home, End, G) go to the first
+// and the last, Enter or o opens, g refreshes, q closes. Their own keys are
+// in M-x while one is in view. A redraw keeps the place, the scroll and the
+// focus.
+const SPECIAL = {
+  review: { name: (t) => `Review: ${t.title}`, title: 'Review', view: reviewView, refresh: refreshReview, keys: reviewOwnKeys, open: openChangeAt },
+  outside: { name: () => '↯ Changed outside', title: 'Changed outside', view: outsideView, refresh: refreshOutside, keys: reviewOwnKeys, open: openChangeAt, make: openOutside },
+  tasks: { name: () => '☐ Tasks', title: 'Tasks', view: tasksView, refresh: refreshTasks, keys: tasksOwnKeys, open: openTaskAt, make: openTasks },
+  search: { name: () => `⌕ ${S.searchQuery.trim() ? `Search: ${S.searchQuery.trim()}` : 'Search'}`, title: 'Search', view: searchView, refresh: () => runSearch(), keys: searchOwnKeys, open: (t, el) => el && openSearchHit(Number(el.dataset.hunk)), make: openSearchBuffer },
+  runs: { name: () => '✦ Agent runs', title: 'Agent runs', view: runsView, refresh: () => loadRuns(), keys: runsOwnKeys, open: (t, el) => el && openReview(el.dataset.path), make: openRuns },
+  messages: { name: () => '✉ Messages', title: 'Messages', view: messagesView, refresh: (t) => renderContent(t.group), open: copyMessageAt, make: openMessages },
+  history: { name: (t) => `History: ${stem(t.path)}`, title: 'History', view: historyView, refresh: (t) => openHistory(t.path), keys: historyOwnKeys, open: (t) => openFile(t.path) },
+  gitdiff: { name: (t) => `Δ ${basename(t.path)}`, title: 'Changes since commit', view: gitDiffView, refresh: (t) => openGitDiff(t.path), open: (t) => t.data?.status !== 'deleted' && openFile(t.path) },
+};
+// Each one's own keys, for M-x and the hint in its head.
+const BUFFER_KEYS = {
+  review: [['x', 'Pick / unpick the change'], ['X', 'Pick / unpick the whole note'], ['A', 'Pick all'], ['U', 'Pick none'], ['a', 'Apply the picked changes'], ['d', 'Discard the run'], ['f', 'Follow up…'], ['u', 'Revert the applied run'], ['=', 'Diff / result'], ['l', 'Show / hide the log'], ['J', 'Next note'], ['K', 'Previous note']],
+  outside: [['x', 'Keep / undo the change'], ['X', 'Keep / undo the whole note'], ['A', 'Keep all'], ['U', 'Keep none'], ['a', 'Done: undo the ones not kept'], ['=', 'Diff / result'], ['J', 'Next note'], ['K', 'Previous note']],
+  tasks: [['x', 'Check off / again'], ['a', 'Ask the agent to do it'], ['h', 'Show / hide done ones']],
+  search: [['/', 'Search for…']],
+  runs: [['t', 'New task…'], ['v', 'Review the next run']],
+  messages: [],
+  history: [['R', 'Restore this version…']],
+  gitdiff: [],
+};
+const COMMON_KEYS = [['o', 'Open'], ['g', 'Refresh'], ['q', 'Close']];
+
+function openSpecial(kind, init = {}) {
+  let tab = S.tabs.find((t) => t.kind === kind);
+  if (!tab) { tab = { id: kind, kind, group: S.focus, ...init }; S.tabs.push(tab); }
+  tab.wantFocus = true;
+  activate(tab.id);
+  return tab;
+}
+
+function showSpecial(c, tab) {
+  const old = c.firstElementChild;
   const same = old?.dataset.tab === tab.id;
   const had = old?.contains(document.activeElement);
   const top = old?.scrollTop;
-  const wrap = ({ outside: outsideView, tasks: tasksView }[tab.kind] || reviewView)(tab);
+  const wrap = SPECIAL[tab.kind].view(tab);
+  wrap.dataset.tab = tab.id;
+  wrap.tabIndex = 0;
+  wrap.addEventListener('keydown', (e) => bufferKeys(e, tab));
+  wrap.addEventListener('mousedown', (e) => { const it = e.target.closest('.kb-item'); if (it) setReviewCur(tab, it, false); });
   c.replaceChildren(wrap);
   if (same) wrap.scrollTop = top;
   const cur = reviewItems(wrap).find((el) => itemKey(el) === tab.cur);
   if (cur) cur.classList.add('kb-cur');
   if ((same && had) || tab.wantFocus) { tab.wantFocus = false; wrap.focus({ preventScroll: true }); }
 }
+// Drawn again if in view (a list that changed underneath).
+function redrawSpecial(kind) {
+  for (const t of S.tabs) if (t.kind === kind && S.groups[t.group]?.active === t.id) renderContent(t.group);
+}
+const bufferEl = (tab) => paneEl(tab.group)?.querySelector(`[data-tab="${CSS.escape(tab.id)}"]`);
+// A buffer's key, from M-x: as if pressed in it.
+function pressBufferKey(tab, key) {
+  const el = bufferEl(tab);
+  el?.dispatchEvent(new KeyboardEvent('keydown', { key, bubbles: true, cancelable: true }));
+}
+const keysHint = (kind) => ['j / k  next / previous', '< / >  first / last', ...[...COMMON_KEYS, ...BUFFER_KEYS[kind]].map(([k, l]) => `${k}  ${l}`)].join('\n');
 
 const reviewItems = (wrap) => [...wrap.querySelectorAll('.kb-item')];
 const itemKey = (el) => `${el.dataset.path}#${el.dataset.hunk ?? ''}`;
 
 function setReviewCur(tab, el, reveal = true) {
-  const wrap = el.closest('.review');
+  const wrap = el.closest('[data-tab]') || el.closest('.review');
   wrap.querySelectorAll('.kb-cur').forEach((x) => x.classList.remove('kb-cur'));
   el.classList.add('kb-cur');
   tab.cur = itemKey(el);
@@ -4495,49 +4625,50 @@ function setReviewCur(tab, el, reveal = true) {
   else if (r.top > view.bottom - 80) wrap.scrollTop += r.top - bar - 8;
 }
 
-function reviewKeys(e, tab) {
+function bufferKeys(e, tab) {
   const wrap = e.currentTarget;
   if (e.metaKey || e.ctrlKey || e.altKey || e.isComposing) return;
   if (e.target !== wrap && (/INPUT|TEXTAREA|SELECT/.test(e.target.tagName) || ((e.key === 'Enter' || e.key === ' ') && /BUTTON|SUMMARY|A/.test(e.target.tagName)))) return;
+  const spec = SPECIAL[tab.kind];
   const items = reviewItems(wrap);
   const i = items.findIndex((el) => itemKey(el) === tab.cur);
-  const cur = items[i];
+  const at = { wrap, items, i, cur: items[i] };
+  if (spec.keys?.(e, tab, at)) { e.preventDefault(); return; }
+  const go = (el) => { if (el) setReviewCur(tab, el); };
+  const k = e.key;
+  if (k === 'j' || k === 'n' || k === 'ArrowDown') { if (items.length) go(items[Math.min(i + 1, items.length - 1)]); else wrap.scrollBy({ top: 60 }); }
+  else if (k === 'k' || k === 'p' || k === 'ArrowUp') { if (items.length) go(items[Math.max(i - 1, 0)]); else wrap.scrollBy({ top: -60 }); }
+  else if (k === '<' || k === 'Home') { if (items.length) go(items[0]); else wrap.scrollTop = 0; }
+  else if (k === '>' || k === 'End' || k === 'G') { if (items.length) go(items.at(-1)); else wrap.scrollTop = wrap.scrollHeight; }
+  else if (k === 'Enter' || k === 'o') spec.open?.(tab, at.cur);
+  else if (k === 'g' || k === 'r') spec.refresh?.(tab);
+  else if (k === 'q') closeTab(tab.id).then(focusEditor);
+  else return;
+  e.preventDefault();
+}
+
+// Reviewing by keyboard (as in magit): x picks a change, a applies.
+function reviewOwnKeys(e, tab, { wrap, items, cur }) {
   const reviewable = ['review', 'failed', 'cancelled'].includes(tab.run?.status);
   const outside = tab.kind === 'outside';
   const go = (el) => { if (el) setReviewCur(tab, el); };
   const fileOf = (el) => el?.closest('.file-card');
-  const done = () => e.preventDefault();
   switch (e.key) {
-    case 'j': case 'n': case 'ArrowDown':
-      done();
-      if (!items.length) wrap.scrollBy({ top: 60 });
-      else go(items[Math.min(i + 1, items.length - 1)]);
-      return;
-    case 'k': case 'p': case 'ArrowUp':
-      done();
-      if (!items.length) wrap.scrollBy({ top: -60 });
-      else go(items[Math.max(i - 1, 0)]);
-      return;
     case 'J': case 'K': {
-      done();
       const cards = [...wrap.querySelectorAll('.file-card')];
       const at = cards.indexOf(fileOf(cur));
       const card = cards[e.key === 'J' ? Math.min(at + 1, cards.length - 1) : Math.max(at - 1, 0)];
       go(card && (card.classList.contains('kb-item') ? card : card.querySelector('.kb-item')));
-      return;
+      return true;
     }
-    case 'g': done(); go(items[0]); if (!items.length) wrap.scrollTop = 0; return;
-    case 'G': done(); go(items.at(-1)); if (!items.length) wrap.scrollTop = wrap.scrollHeight; return;
     case 'x': case ' ':
-      done();
-      if (!cur) { go(items[0]); return; }
+      if (!cur) { go(items[0]); return true; }
       if (cur.classList.contains('hunk')) cur.querySelector('.hunk-head').click();
       else fileOf(cur)?.querySelector('.file-card-head input[type=checkbox]')?.click();
-      return;
-    case 'X': done(); fileOf(cur)?.querySelector('.file-card-head input[type=checkbox]')?.click(); return;
+      return true;
+    case 'X': fileOf(cur)?.querySelector('.file-card-head input[type=checkbox]')?.click(); return true;
     case 'A': case 'U': {
-      done();
-      if (!reviewable) return;
+      if (!reviewable) return true;
       for (const c of tab.run.changes) {
         const d = tab.decisions[c.path];
         if (isBlocked(c)) continue;
@@ -4545,38 +4676,153 @@ function reviewKeys(e, tab) {
         else d.file = e.key === 'A';
       }
       renderContent(tab.group);
-      return;
+      return true;
     }
-    case 'a': done(); if (outside) keepOutside(tab); else if (reviewable && tab.run.changes.length && selectedCount(tab)) applyRun(tab); return;
-    case 'd': done(); if (reviewable && !outside) discardRun(tab); return;
-    case 'f': done(); if (reviewable && !outside) followUp(tab); return;
-    case 'u': done(); if (tab.run?.status === 'applied') revertRun(tab); return;
-    case 'r': done(); if (outside) refreshOutside(tab); return;
-    case 'l': { done(); const log = wrap.querySelector('details.log'); if (log) log.open = !log.open; return; }
+    case 'a': if (outside) keepOutside(tab); else if (reviewable && tab.run.changes.length && selectedCount(tab)) applyRun(tab); return true;
+    case 'd': if (reviewable && !outside) discardRun(tab); return true;
+    case 'f': if (reviewable && !outside) followUp(tab); return true;
+    case 'u': if (tab.run?.status === 'applied') revertRun(tab); return true;
+    case 'l': { const log = wrap.querySelector('details.log'); if (log) log.open = !log.open; return true; }
     case '=': {
-      done();
       const seg = fileOf(cur)?.querySelector('.seg button:not(.on)');
-      if (!seg) return;
+      if (!seg) return true;
       const c = tab.run.changes.find((x) => x.path === cur.dataset.path);
       tab.cur = `${c.path}#${seg.textContent === 'Diff' && c.hunks?.length ? 0 : ''}`;
       seg.click();
-      return;
+      return true;
     }
-    case 'o': case 'Enter': {
-      done();
-      if (!cur) return;
-      const c = tab.run.changes.find((x) => x.path === cur.dataset.path);
-      if (c && canOpen(c, tab)) openFile(c.path, { line: Number(cur.dataset.line) || undefined });
-      return;
-    }
-    default:
+    default: return false;
   }
+}
+
+function historyOwnKeys(e, tab) {
+  const n = tab.commits?.length || 0;
+  const to = { j: 1, n: 1, ArrowDown: 1, k: -1, p: -1, ArrowUp: -1 }[e.key];
+  const at = to ? tab.sel + to : ['<', 'Home'].includes(e.key) ? 0 : ['>', 'End', 'G'].includes(e.key) ? n - 1 : null;
+  if (at != null) {
+    if (n) selectVersion(tab, Math.max(0, Math.min(n - 1, at))).then(() => bufferEl(tab)?.querySelector('.history-row.sel')?.scrollIntoView({ block: 'nearest' }));
+    return true;
+  }
+  const v = tab.version;
+  if (e.key === 'R') { if (v?.hunks?.length) restoreVersion(tab.path, v.commit.hash || '', v.content, v.commit.local ? timeAgo(v.commit.date) : null); return true; }
+  return false;
+}
+
+// The workspace search as a buffer: the same search as the sidebar's (F8
+// steps through it), with room for the results.
+function openSearchBuffer() {
+  const tab = openSpecial('search');
+  if (!S.searchQuery.trim()) requestAnimationFrame(() => bufferEl(tab)?.querySelector('input')?.focus());
+}
+function searchView(tab) {
+  const wrap = h('div', { class: 'review buffer-list search-buffer' });
+  const input = h('input', { class: 'input', placeholder: 'Search the workspace', value: S.searchQuery, spellcheck: false,
+    oninput: (e) => { S.searchQuery = e.target.value; runSearch(); },
+    onkeydown: (e) => {
+      if (e.isComposing) return;
+      if (e.key === 'Enter' || e.key === 'ArrowDown' || e.key === 'Escape') {
+        e.preventDefault();
+        e.stopPropagation();
+        wrap.focus({ preventScroll: true });
+        const first = reviewItems(wrap)[0];
+        if (first && e.key !== 'Escape') setReviewCur(tab, first);
+      }
+    } });
+  wrap.append(h('div', { class: 'review-head' },
+    h('div', { class: 'task' }, 'Search'),
+    h('div', { class: 'search-box' }, input),
+    h('div', { class: 'meta' }, h('span', { class: 'search-count' }), h('span', { class: 'review-keys', title: keysHint('search') }, 'j k · o open · / search · g again · q close'))),
+  h('div', { class: 'search-buffer-list' }));
+  fillSearchList(tab, wrap);
+  return wrap;
+}
+function fillSearchList(tab, wrap) {
+  const list = wrap.querySelector('.search-buffer-list');
+  const r = S.searchResults;
+  const rows = [];
+  let n = 0;
+  for (const f of r?.results || []) {
+    rows.push(h('div', { class: 'search-file', title: f.path }, h('span', {}, f.path), h('span', { class: 'count' }, f.matches.length || '')));
+    for (const m of f.matches) {
+      const i = n++;
+      rows.push(h('div', { class: 'search-hit kb-item', 'data-path': f.path, 'data-hunk': i, 'data-line': m.line, onclick: () => openSearchHit(i) },
+        h('span', { class: 'ln' }, m.line), highlight(m.text.trim(), S.searchQuery)));
+    }
+  }
+  if (!rows.length) rows.push(h('div', { class: 'empty' }, !r ? 'Type to search file names and contents.' : 'No matches.'));
+  if (r?.truncated) rows.push(h('div', { class: 'empty' }, 'Results truncated — refine your query.'));
+  list.replaceChildren(...rows);
+  wrap.querySelector('.search-count').textContent = r ? `${n} result${n === 1 ? '' : 's'} in ${r.results.length} file${r.results.length === 1 ? '' : 's'}` : '';
+  const cur = reviewItems(wrap).find((el) => itemKey(el) === tab.cur);
+  if (cur) cur.classList.add('kb-cur');
+}
+// New results: in the search buffer too, without drawing its box again.
+function searchChanged() {
+  const tab = S.tabs.find((t) => t.kind === 'search');
+  if (!tab) return;
+  renderTabs();
+  const el = bufferEl(tab);
+  if (el) fillSearchList(tab, el);
+}
+function searchOwnKeys(e, tab) {
+  if (e.key !== '/') return false;
+  const input = bufferEl(tab)?.querySelector('input');
+  input?.focus();
+  input?.select();
+  return true;
+}
+
+// The agent's runs, newest first; o opens one for review.
+function openRuns() { openSpecial('runs'); loadRuns(); }
+function runsView() {
+  const wrap = h('div', { class: 'review buffer-list runs-buffer' });
+  const waiting = S.runs.filter((r) => r.status === 'review').length;
+  wrap.append(h('div', { class: 'review-head' },
+    h('div', { class: 'task' }, 'Agent runs'),
+    h('div', { class: 'meta' }, h('span', {}, `${S.runs.length} run${S.runs.length === 1 ? '' : 's'}${waiting ? ` · ${waiting} waiting for review` : ''}`),
+      h('span', { class: 'review-keys', title: keysHint('runs') }, 'j k · o review · t new task · v next · q close'))));
+  if (!S.runs.length) wrap.append(h('div', { class: 'review-note' }, `No runs yet. ${kbd('delegate') || '⌥X a a'} gives the agent a task; recipes are in ⌥X r.`));
+  for (const r of S.runs) {
+    wrap.append(h('div', { class: 'run-row kb-item', 'data-path': r.id, onclick: () => openReview(r.id) },
+      h('div', { class: 'task', title: r.task }, r.recipe ? h('b', {}, `${r.recipe} · `) : null, r.task.replace(/\s+/g, ' ').slice(0, 200)),
+      h('div', { class: 'meta' }, h('span', { class: `badge st-${r.status}` }, r.status), h('span', {}, r.focus ? stem(r.focus) : r.scope), h('span', {}, r.agent || ''), h('span', {}, timeAgo(r.startedAt)))));
+  }
+  return wrap;
+}
+function runsOwnKeys(e) {
+  if (e.key === 't') { openTaskDialog(); return true; }
+  if (e.key === 'v') { reviewNext(); return true; }
+  return false;
+}
+
+// Every message shown (Emacs's *Messages*), newest first; o copies one.
+function openMessages() { openSpecial('messages'); }
+function messagesView() {
+  const wrap = h('div', { class: 'review buffer-list messages-buffer' });
+  wrap.append(h('div', { class: 'review-head' },
+    h('div', { class: 'task' }, 'Messages'),
+    h('div', { class: 'meta' }, h('span', {}, `${messages.length} this session (kept in memory only)`),
+      h('span', { class: 'review-keys', title: keysHint('messages') }, 'j k · o copy · q close'))));
+  if (!messages.length) wrap.append(h('div', { class: 'review-note' }, 'No messages yet.'));
+  for (const m of messages.slice().reverse()) {
+    wrap.append(h('div', { class: `message-row kb-item${m.kind === 'error' ? ' error' : ''}`, 'data-path': String(m.seq) },
+      h('span', { class: 'message-time' }, m.at.toTimeString().slice(0, 8)), h('span', { class: 'message-text' }, m.msg)));
+  }
+  return wrap;
+}
+function copyMessageAt(tab, el) {
+  const m = el && messages.find((x) => String(x.seq) === el.dataset.path);
+  if (m) navigator.clipboard.writeText(m.msg).then(() => { el.classList.add('copied'); setTimeout(() => el.classList.remove('copied'), 600); });
+}
+
+function openChangeAt(tab, cur) {
+  const c = cur && tab.run?.changes.find((x) => x.path === cur.dataset.path);
+  if (c && canOpen(c, tab)) openFile(c.path, { line: Number(cur.dataset.line) || undefined });
 }
 
 function reviewView(tab) {
   const run = tab.run;
-  const wrap = h('div', { class: 'review', tabindex: 0, 'data-tab': tab.id, onkeydown: (e) => reviewKeys(e, tab),
-    onmousedown: (e) => { const it = e.target.closest('.kb-item'); if (it) setReviewCur(tab, it, false); } });
+  const wrap = h('div', { class: 'review' });
   if (!run) { wrap.append(h('div', { class: 'empty' }, 'Loading…')); return wrap; }
   const reviewable = ['review', 'failed', 'cancelled'].includes(run.status);
   const took = run.finishedAt ? `${Math.max(1, Math.round((new Date(run.finishedAt) - new Date(run.startedAt)) / 1000))}s` : null;
@@ -4648,7 +4894,7 @@ function reviewView(tab) {
       const n = selectedCount(tab);
       wrap.append(h('div', { class: 'review-actions' },
         h('span', { class: 'grow' }, `${run.changes.length} file${run.changes.length === 1 ? '' : 's'} changed · ${n} change${n === 1 ? '' : 's'} selected`,
-          h('span', { class: 'review-keys', title: 'j / k  next / previous change\nJ / K  next / previous file\nx or space  pick the change · X  the whole file\nA / U  pick all / none\na  apply · d  discard · f  follow up\n=  diff / result · o or Enter  open at the change' }, 'j k · x · a apply')),
+          h('span', { class: 'review-keys', title: keysHint('review') }, 'j k · x · a apply')),
         S.git?.repo ? h('label', { class: 'commit-toggle', title: 'Commit the applied files to git, authored by the agent (local only)' },
           h('input', { type: 'checkbox', checked: store.getItem('an.commitOnApply') !== 'false', onchange: (e) => store.setItem('an.commitOnApply', String(e.target.checked)) }), 'Commit to git') : null,
         h('button', { class: 'btn', onclick: () => followUp(tab) }, 'Follow up…'),
@@ -4783,6 +5029,7 @@ function connectEvents() {
     const { paths = [], structural } = JSON.parse(ev.data || '{}');
     if (structural) await loadTree();
     const changed = new Set(paths);
+    if (structural || changed.has(RECIPES_FILE)) loadRecipes();
     const affected = S.tabs.filter((t) => isDoc(t) && (!paths.length || changed.has(t.path)));
     if (affected.length) await syncTabs(affected);
     for (const p of paths) if (isDrawing(p) || isMermaidFile(p) || isNote(p)) refreshEmbeds(p);
@@ -4861,56 +5108,62 @@ function leaderTree() {
   const doc = tab || drawingTab();
   const note = !!tab && isNote(tab.path);
   return [
-    { key: 'SPC', label: 'All commands…', run: () => openPalette('>') },
-    { key: '`', label: 'The note before', run: otherBuffer },
+    { key: 'SPC', label: 'All commands…', run: () => openPalette('>'), mx: false },
+    { key: ':', label: 'Run a command by name (M-x)…', run: () => openPalette('>'), mx: false },
+    { key: '`', label: 'The note before', cmd: 'Back to the note before', run: otherBuffer },
     { key: 'f', label: 'files', items: [
       { key: 'f', label: 'Find a file…', run: () => openPalette() },
-      { key: 'n', label: 'New note…', run: () => newNote() },
+      { key: 'n', label: 'New note…', cmd: 'New note', run: () => newNote() },
       { key: 't', label: 'New note from template…', run: () => pickTemplate((t) => newNote(undefined, t)) },
-      { key: 'j', label: 'Today’s journal', run: openDaily },
-      { key: 'x', label: 'Tasks in all notes', run: openTasks },
-      { key: 'r', label: 'Rename / move…', when: () => !!doc, run: () => renameItem(doc.path) },
-      { key: 'b', label: doc && isBookmarked(doc.path) ? 'Remove bookmark' : 'Bookmark', when: () => !!doc, run: () => toggleBookmark(doc.path) },
-      { key: 'y', label: 'Copy [[link]]', when: () => note, run: () => navigator.clipboard.writeText(`[[${stem(tab.path)}]]`).then(() => toast('Link copied')) },
+      { key: 'j', label: 'Today’s journal', cmd: 'Open today’s journal note', run: openDaily },
+      { key: 'x', label: 'Tasks in all notes', cmd: 'Tasks in all notes (agenda)', run: openTasks },
+      { key: 'r', label: 'Rename / move…', cmd: 'Rename / move current note…', when: () => !!doc, run: () => renameItem(doc.path) },
+      { key: 'b', label: doc && isBookmarked(doc.path) ? 'Remove bookmark' : 'Bookmark', cmd: 'Bookmark / remove bookmark for this file', when: () => !!doc, run: () => toggleBookmark(doc.path) },
+      { key: 'y', label: 'Copy [[link]]', cmd: 'Copy [[link]] to current note', when: () => note, run: () => navigator.clipboard.writeText(`[[${stem(tab.path)}]]`).then(() => toast('Link copied')) },
       { key: 'l', label: 'Show in the tree', when: () => !!doc, run: () => { showInTree(doc.path); focusSidebar(); } },
-      { key: 'h', label: 'History…', when: () => !!doc, run: () => openHistory(doc.path) },
-      { key: 'e', label: 'Export as HTML…', when: () => note, run: () => exportHtml(tab) },
+      { key: 'h', label: 'History…', cmd: 'History of current note (kept versions and git)', when: () => !!doc, run: () => openHistory(doc.path) },
+      { key: 'e', label: 'Export as HTML…', cmd: 'Export note as HTML…', when: () => note, run: () => exportHtml(tab) },
     ] },
     { key: 's', label: 'search', items: [
-      { key: 's', label: 'Search the workspace', run: () => ACTIONS.search() },
+      { key: 's', label: 'Search the workspace', cmd: 'Search in workspace', run: () => ACTIONS.search() },
+      { key: 'b', label: 'Search results as a buffer', cmd: 'Search results (as a buffer)', run: openSearchBuffer },
       { key: 'f', label: 'Find in note', when: () => !!tab, run: () => findInNote(tab) },
       { key: 'r', label: 'Replace in note', when: () => !!tab, run: () => findInNote(tab, { replace: true }) },
-      { key: 'h', label: 'Heading in this note…', when: () => note, run: () => openPalette('#') },
-      { key: 'a', label: 'Heading in any note…', run: () => openPalette('@') },
+      { key: 'h', label: 'Heading in this note…', cmd: 'Go to heading…', when: () => note, run: () => openPalette('#') },
+      { key: 'a', label: 'Heading in any note…', cmd: 'Go to heading in any note…', run: () => openPalette('@') },
       { key: 'l', label: 'Go to line…', when: () => !!tab, run: () => openPalette(':') },
       { key: 'n', label: 'Next search result', run: () => stepSearch(1) },
       { key: 'p', label: 'Previous search result', run: () => stepSearch(-1) },
     ] },
-    { key: 'b', label: 'tabs', items: [
+    { key: 'b', label: 'buffers', items: [
       { key: 'b', label: 'Switch note (buffers)…', run: pickTab },
-      { key: '`', label: 'The note before', run: otherBuffer },
-      { key: 'm', label: 'Messages…', run: showMessages },
+      { key: '`', label: 'The note before', cmd: 'Back to the note before', run: otherBuffer },
+      { key: 'm', label: 'Messages', run: openMessages },
+      { key: 'r', label: 'Agent runs', cmd: 'Agent runs (as a buffer)', run: openRuns },
+      { key: 's', label: 'Search results', cmd: 'Search results (as a buffer)', run: openSearchBuffer },
+      { key: 'x', label: 'Tasks', cmd: 'Tasks in all notes (agenda)', run: openTasks },
+      { key: 'c', label: 'Changed outside', cmd: 'Changes from outside (agents, other editors)…', run: openOutside },
       { key: 'n', label: 'Next tab', run: () => cycleTab(1) },
       { key: 'p', label: 'Previous tab', run: () => cycleTab(-1) },
       { key: 'd', label: 'Close tab', when: () => !!activeTab(), run: () => closeTab(activeTab().id) },
       { key: 'o', label: 'Close other tabs', when: () => !!activeTab(), run: () => closeTabs(S.tabs.filter((x) => x.group === S.focus && x !== activeTab())) },
-      { key: '[', label: 'Back', run: () => navGo(-1) },
-      { key: ']', label: 'Forward', run: () => navGo(1) },
+      { key: '[', label: 'Back', cmd: 'Go back', run: () => navGo(-1) },
+      { key: ']', label: 'Forward', cmd: 'Go forward', run: () => navGo(1) },
     ] },
     { key: 'w', label: 'windows', items: [
       { key: 'h', label: 'Go to the sidebar', run: focusSidebar },
       { key: 'l', label: 'Go to the editor', run: focusEditor },
       { key: 'p', label: 'Go to the preview', when: () => previewShown(tab), run: () => focusPreview(tab) },
       { key: 'w', label: 'Go to the other pane', when: () => S.groups.length > 1, run: () => { splitRight(); focusEditor(); } },
-      { key: 'v', label: 'Split to the side', when: () => S.groups.length < 2, run: splitRight },
-      { key: 's', label: 'Show / hide the sidebar', run: toggleSidebar },
+      { key: 'v', label: 'Split to the side', cmd: 'Split: open to the side', when: () => S.groups.length < 2, run: splitRight },
+      { key: 's', label: 'Show / hide the sidebar', cmd: 'Toggle sidebar', run: toggleSidebar },
       { key: 'z', label: 'Focus mode', run: toggleFocusMode },
     ] },
     { key: 'm', label: 'mode', when: () => isFileTab(tab) && hasPreview(tab.path), items: [
-      { key: 'e', label: 'Edit', run: () => setMode('edit') },
-      { key: 's', label: 'Split', run: () => setMode('split') },
-      { key: 'c', label: 'Canvas', when: () => note, run: () => setMode('canvas') },
-      { key: 'p', label: 'Preview', run: () => setMode('preview') },
+      { key: 'e', label: 'Edit', cmd: 'View: edit only', run: () => setMode('edit') },
+      { key: 's', label: 'Split', cmd: 'View: split editor and preview', run: () => setMode('split') },
+      { key: 'c', label: 'Canvas', cmd: 'View: editor and canvas (pictures follow the cursor)', when: () => note, run: () => setMode('canvas') },
+      { key: 'p', label: 'Preview', cmd: 'View: preview only', run: () => setMode('preview') },
     ] },
     { key: 'l', label: 'links', items: [
       { key: 'l', label: 'Follow the link at the cursor', when: () => editorShown(tab), run: () => { if (!followLinkAt(tab.editor, tab)) toast('No link at the cursor'); } },
@@ -4918,22 +5171,26 @@ function leaderTree() {
       { key: 'b', label: 'Back', run: () => navGo(-1) },
     ] },
     { key: 'g', label: 'git', items: [
-      { key: 'g', label: 'Git panel', run: () => showView('git') },
+      { key: 'g', label: 'Git panel', cmd: 'Git: show changes', run: () => showView('git') },
       { key: 'd', label: 'Changes since last commit', when: () => !!doc && S.gitMap.has(doc.path), run: () => openGitDiff(doc.path) },
-      { key: 'h', label: 'History of this file…', when: () => !!doc, run: () => openHistory(doc.path) },
+      { key: 'h', label: 'History of this file…', cmd: 'History of current note (kept versions and git)', when: () => !!doc, run: () => openHistory(doc.path) },
     ] },
     { key: 'a', label: 'agent', items: [
-      { key: 'a', label: 'Delegate a task…', run: () => openTaskDialog() },
-      { key: 'r', label: 'Agent runs', run: () => showView('agent') },
-      { key: 'i', label: 'Instructions for agents (AGENTS.md)', run: editAgentInstructions },
-      { key: 'v', label: 'Review the next run', when: () => S.runs.some((r) => r.status === 'review'), run: reviewNext },
-      { key: 'o', label: `Changed outside${S.outside?.length ? ` (${S.outside.length})` : ''}`, run: openOutside },
-      ...RECIPES.map(([name, text], i) => ({ key: String(i + 1), label: `${name}…`, run: () => openTaskDialog(text) })),
+      { key: 'a', label: 'Delegate a task…', cmd: 'Delegate a task to the agent…', run: () => openTaskDialog() },
+      { key: 'r', label: 'Agent runs', cmd: 'Show agent runs', run: () => showView('agent') },
+      { key: 'i', label: 'Instructions for agents (AGENTS.md)', cmd: 'Instructions for agents in this folder (AGENTS.md)', run: editAgentInstructions },
+      { key: 'v', label: 'Review the next run', cmd: 'Review the next agent run', when: () => S.runs.some((r) => r.status === 'review'), run: reviewNext },
+      { key: 'o', label: `Changed outside${S.outside?.length ? ` (${S.outside.length})` : ''}`, cmd: 'Changes from outside (agents, other editors)…', run: openOutside },
+      ...recipes.list.filter((r) => /^\d$/.test(r.key || '')).map((r) => ({ key: r.key, label: recipeLabel(r), recipe: r, run: () => runRecipe(r) })),
+    ] },
+    { key: 'r', label: 'recipes', items: [
+      ...recipes.list.filter((r) => r.key).map((r) => ({ key: r.key, label: recipeLabel(r), recipe: r, run: () => runRecipe(r) })),
+      { key: 'e', label: `Edit recipes (${RECIPES_FILE})`, cmd: 'Recipes: edit (RECIPES.md)', run: editRecipes },
     ] },
     { key: 't', label: 'toggles', items: [
-      { key: 'f', label: `Tree follows the tab: ${S.settings.followTab ? 'on' : 'off'}`, run: toggleFollowTab },
-      { key: 's', label: 'Sidebar', run: toggleSidebar },
-      { key: 't', label: 'Theme…', run: pickTheme },
+      { key: 'f', label: `Tree follows the tab: ${S.settings.followTab ? 'on' : 'off'}`, cmd: 'Toggle: tree follows the active tab', run: toggleFollowTab },
+      { key: 's', label: 'Sidebar', cmd: 'Toggle sidebar', run: toggleSidebar },
+      { key: 't', label: 'Theme…', cmd: 'Theme: choose…', run: pickTheme },
       { key: 'z', label: 'Focus mode', run: toggleFocusMode },
     ] },
     { key: 'q', label: 'macro', items: [
@@ -4948,7 +5205,7 @@ function leaderTree() {
     { key: 'v', label: 'Expand the selection', when: () => editorShown(tab), run: () => tab.editor.expandSelection() },
     { key: 'V', label: 'Shrink the selection', when: () => editorShown(tab), run: () => tab.editor.shrinkSelection() },
     { key: 'y', label: 'Paste from the copy history…', when: () => copied.length > 0, run: pasteFromHistory },
-    { key: '.', label: lastRun ? `Repeat: ${lastRun.label}` : 'Repeat the last command', run: repeatLast },
+    { key: '.', label: lastRun ? `Repeat: ${lastRun.label}` : 'Repeat the last command', run: repeatLast, mx: false },
     { key: ',', label: 'Settings', run: () => openSettings() },
     { key: 'k', label: 'Keyboard shortcuts…', run: () => openSettings({ keys: true }) },
   ];
@@ -4960,7 +5217,7 @@ function openLeaderMenu() {
     title: kbd('leader') || 'Commands',
     // Again with ⌥X .: the same keys, looked up again (for the tab you're on then).
     onRun: (keys, it) => {
-      if (['.', 'SPC', 'q'].includes(keys[0])) return;
+      if (['.', 'SPC', ':', 'q'].includes(keys[0])) return;
       const run = () => runLeaderKeys(keys);
       remember(it.label, run);
       macros.note(it.label, run);
@@ -5038,31 +5295,26 @@ function runLeaderKeys(keys) {
 }
 
 // The buffer list (Emacs C-x b): open notes and those closed but kept, the
-// most recent first — the one before this is at the top.
+// most recent first — the one before this is at the top — and Margin's own
+// buffers (tasks, search, runs, messages…), open or not.
+const bufferName = (t) => (SPECIAL[t.kind] ? SPECIAL[t.kind].name(t) : t.path ? basename(t.path) : t.title || t.kind);
 function pickTab() {
   const cur = activeTab();
   const list = buffers().filter((b) => b.tab !== cur).concat(cur ? [{ tab: cur, closed: false }] : []);
+  const more = Object.entries(SPECIAL).filter(([kind, sp]) => sp.make && !S.tabs.some((t) => t.kind === kind)).map(([kind, sp]) => ({ kind, make: sp.make }));
   picker({
-    placeholder: 'Switch to a note…  (closed ones keep their place)',
-    source: (q) => list.map((b) => ({ b, name: b.tab.path ? basename(b.tab.path) : b.tab.title || b.tab.kind })).map((x) => ({ ...x, m: fuzzy(q, x.name) })).filter((x) => x.m)
+    placeholder: 'Switch to a buffer…  (closed notes keep their place)',
+    source: (q) => [
+      ...list.map((b) => ({ name: bufferName(b.tab), icon: b.closed ? '○' : SPECIAL[b.tab.kind] ? '◆' : b.tab.group === 1 ? '◫' : '●',
+        hint: [b.tab.path && !SPECIAL[b.tab.kind] ? dirname(b.tab.path) : '', b.closed ? 'closed' : b.tab === cur ? 'here' : ''].filter(Boolean).join(' · '),
+        run: () => showBuffer(b) })),
+      ...more.map((x) => ({ name: SPECIAL[x.kind].name({ kind: x.kind }), icon: '◇', hint: 'not open', run: () => x.make() })),
+    ].map((x) => ({ ...x, m: fuzzy(q, x.name) })).filter((x) => x.m)
       .sort((a, b) => (q ? b.m.score - a.m.score : 0))
-      .map(({ b, name, m }) => ({
-        icon: b.closed ? '○' : b.tab.group === 1 ? '◫' : '●',
-        label: marked(name, m.idx),
-        hint: [b.tab.path ? dirname(b.tab.path) : '', b.closed ? 'closed' : b.tab === cur ? 'here' : ''].filter(Boolean).join(' · '),
-        run: () => showBuffer(b),
-      })),
+      .map((x) => ({ icon: x.icon, label: marked(x.name, x.m.idx), hint: x.hint, run: x.run })),
   });
 }
 
-function showMessages() {
-  const time = (d) => d.toTimeString().slice(0, 8);
-  picker({
-    placeholder: `Messages (${messages.length}) — Enter copies one`,
-    source: (q) => messages.slice().reverse().map((x) => ({ x, m: fuzzy(q, x.msg) })).filter((y) => y.m)
-      .map(({ x, m }) => ({ icon: x.kind === 'error' ? '!' : '', label: marked(x.msg, m.idx), hint: time(x.at), run: () => navigator.clipboard.writeText(x.msg) })),
-  });
-}
 function cycleTab(by) {
   const list = S.tabs.filter((t) => t.group === S.focus);
   const i = list.indexOf(activeTab());
@@ -5075,6 +5327,7 @@ function cycleTab(by) {
 function focusEditor() {
   const t = activeIn(S.focus);
   if (!t) return;
+  if (SPECIAL[t.kind]) { requestAnimationFrame(() => bufferEl(t)?.focus({ preventScroll: true })); return; }
   if (isFileTab(t) && !editorShown(t)) { focusPreview(t); return; }
   requestAnimationFrame(() => t.editor?.focus());
 }
@@ -5282,6 +5535,7 @@ async function boot() {
   S.recent = JSON.parse(store.getItem(`an.recent.${S.info.root}`) || '[]');
   try { S.bookmarks = JSON.parse(store.getItem(`an.bookmarks.${S.info.root}`) || '[]').filter((p) => typeof p === 'string'); } catch { S.bookmarks = []; }
   await Promise.all([loadTree(), loadRuns(), loadTags(), loadGit(), loadOutside()]);
+  loadRecipes();
   const saved = JSON.parse(store.getItem(`an.tabs.${S.info.root}`) || 'null');
   // v0.2 format was { open, active }; v0.3 stores one entry per pane.
   const groups = saved?.groups || (saved ? [{ open: saved.open, active: saved.active }] : []);
