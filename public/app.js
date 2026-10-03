@@ -1638,7 +1638,7 @@ function renderContent(g = S.focus) {
   const tab = activeIn(g);
   if (attachedByGroup[g] && attachedByGroup[g] !== tab) attachedByGroup[g] = null;
   if (!tab) { c.replaceChildren(g === 0 ? welcome() : h('div', { class: 'empty pane-empty' }, 'Open a note here with ', h('kbd', {}, kbd('quick-open') || 'the palette'), '.')); return; }
-  if (tab.kind === 'review') { c.replaceChildren(reviewView(tab)); return; }
+  if (tab.kind === 'review') { showReview(c, tab); return; }
   if (tab.kind === 'gitdiff') { c.replaceChildren(gitDiffView(tab)); return; }
   if (tab.kind === 'history') { c.replaceChildren(historyView(tab)); return; }
   if (tab.kind === 'drawing') { drawingView(tab, c); return; }
@@ -4030,6 +4030,7 @@ function openReview(id) {
     tab = { id: `r:${id}`, kind: 'review', runId: id, title: (r?.task || id).slice(0, 28), run: null, decisions: {}, group: S.focus };
     S.tabs.push(tab);
   }
+  tab.wantFocus = true;
   activate(tab.id);
   refreshReview(tab);
 }
@@ -4135,7 +4136,7 @@ function hunkView(c, hunk, i, dec, lockedAll, tab) {
     renderContent(tab.group);
   };
   const what = [hunk.removed.length && `−${hunk.removed.length}`, hunk.added.length && `+${hunk.added.length}`].filter(Boolean).join(' ');
-  return h('div', { class: `hunk${on ? '' : ' off'}` },
+  return h('div', { class: `hunk kb-item${on ? '' : ' off'}`, 'data-path': c.path, 'data-hunk': i, 'data-line': hunk.baseStart + 1 },
     h('div', { class: 'hunk-head', onclick: toggle },
       h('input', { type: 'checkbox', checked: on, disabled: locked, onclick: (e) => e.stopPropagation(), onchange: toggle }),
       h('span', {}, `Change ${i + 1} of ${c.hunks.length} · line ${hunk.baseStart + 1} · ${what}`),
@@ -4191,7 +4192,9 @@ function fileCard(c, tab, locked) {
     const cls = c.status === 'added' ? 'add' : 'del';
     body.push(h('div', { class: 'diff' }, c.lines.map((l, i) => diffLine(cls, i + 1, sign, l))));
   }
-  return h('div', { class: `file-card${blocked ? ' stale' : ''}` }, head, body);
+  // Without hunks in view, the file itself is what the keys pick.
+  const whole = !(c.hunks && view === 'diff' && !c.binary);
+  return h('div', { class: `file-card${blocked ? ' stale' : ''}${whole ? ' kb-item' : ''}`, 'data-path': c.path }, head, body);
 }
 
 function applySelected(base, hunks, selected) {
@@ -4223,9 +4226,118 @@ function logContent(run) {
     h('details', { class: 'raw' }, h('summary', {}, 'Raw output'), h('pre', {}, run.log))];
 }
 
+// Reviewing by keyboard (as in magit): j/k step through the changes, x picks
+// one, a applies. A redraw keeps the place, the scroll and the focus.
+function showReview(c, tab) {
+  const old = c.querySelector('.review');
+  const same = old?.dataset.tab === tab.id;
+  const had = old?.contains(document.activeElement);
+  const top = old?.scrollTop;
+  const wrap = reviewView(tab);
+  c.replaceChildren(wrap);
+  if (same) wrap.scrollTop = top;
+  const cur = reviewItems(wrap).find((el) => itemKey(el) === tab.cur);
+  if (cur) cur.classList.add('kb-cur');
+  if ((same && had) || tab.wantFocus) { tab.wantFocus = false; wrap.focus({ preventScroll: true }); }
+}
+
+const reviewItems = (wrap) => [...wrap.querySelectorAll('.kb-item')];
+const itemKey = (el) => `${el.dataset.path}#${el.dataset.hunk ?? ''}`;
+
+function setReviewCur(tab, el, reveal = true) {
+  const wrap = el.closest('.review');
+  wrap.querySelectorAll('.kb-cur').forEach((x) => x.classList.remove('kb-cur'));
+  el.classList.add('kb-cur');
+  tab.cur = itemKey(el);
+  if (!reveal) return;
+  // The head of the change in view, below the sticky actions bar.
+  const bar = wrap.querySelector('.review-actions')?.getBoundingClientRect().bottom ?? wrap.getBoundingClientRect().top;
+  const r = el.getBoundingClientRect();
+  const view = wrap.getBoundingClientRect();
+  if (r.top < bar + 4) wrap.scrollTop -= bar + 8 - r.top;
+  else if (r.top > view.bottom - 80) wrap.scrollTop += r.top - bar - 8;
+}
+
+function reviewKeys(e, tab) {
+  const wrap = e.currentTarget;
+  if (e.metaKey || e.ctrlKey || e.altKey || e.isComposing) return;
+  if (e.target !== wrap && (/INPUT|TEXTAREA|SELECT/.test(e.target.tagName) || ((e.key === 'Enter' || e.key === ' ') && /BUTTON|SUMMARY|A/.test(e.target.tagName)))) return;
+  const items = reviewItems(wrap);
+  const i = items.findIndex((el) => itemKey(el) === tab.cur);
+  const cur = items[i];
+  const reviewable = ['review', 'failed', 'cancelled'].includes(tab.run?.status);
+  const go = (el) => { if (el) setReviewCur(tab, el); };
+  const fileOf = (el) => el?.closest('.file-card');
+  const done = () => e.preventDefault();
+  switch (e.key) {
+    case 'j': case 'n': case 'ArrowDown':
+      done();
+      if (!items.length) wrap.scrollBy({ top: 60 });
+      else go(items[Math.min(i + 1, items.length - 1)]);
+      return;
+    case 'k': case 'p': case 'ArrowUp':
+      done();
+      if (!items.length) wrap.scrollBy({ top: -60 });
+      else go(items[Math.max(i - 1, 0)]);
+      return;
+    case 'J': case 'K': {
+      done();
+      const cards = [...wrap.querySelectorAll('.file-card')];
+      const at = cards.indexOf(fileOf(cur));
+      const card = cards[e.key === 'J' ? Math.min(at + 1, cards.length - 1) : Math.max(at - 1, 0)];
+      go(card && (card.classList.contains('kb-item') ? card : card.querySelector('.kb-item')));
+      return;
+    }
+    case 'g': done(); go(items[0]); if (!items.length) wrap.scrollTop = 0; return;
+    case 'G': done(); go(items.at(-1)); if (!items.length) wrap.scrollTop = wrap.scrollHeight; return;
+    case 'x': case ' ':
+      done();
+      if (!cur) { go(items[0]); return; }
+      if (cur.classList.contains('hunk')) cur.querySelector('.hunk-head').click();
+      else fileOf(cur)?.querySelector('.file-card-head input[type=checkbox]')?.click();
+      return;
+    case 'X': done(); fileOf(cur)?.querySelector('.file-card-head input[type=checkbox]')?.click(); return;
+    case 'A': case 'U': {
+      done();
+      if (!reviewable) return;
+      for (const c of tab.run.changes) {
+        const d = tab.decisions[c.path];
+        if (isBlocked(c)) continue;
+        if (c.hunks) d.hunks = e.key === 'A' ? new Set(c.hunks.map((_, k) => k).filter((k) => !(c.conflicts || []).includes(k))) : new Set();
+        else d.file = e.key === 'A';
+      }
+      renderContent(tab.group);
+      return;
+    }
+    case 'a': done(); if (reviewable && tab.run.changes.length && selectedCount(tab)) applyRun(tab); return;
+    case 'd': done(); if (reviewable) discardRun(tab); return;
+    case 'f': done(); if (reviewable) followUp(tab); return;
+    case 'u': done(); if (tab.run?.status === 'applied') revertRun(tab); return;
+    case 'l': { done(); const log = wrap.querySelector('details.log'); if (log) log.open = !log.open; return; }
+    case '=': {
+      done();
+      const seg = fileOf(cur)?.querySelector('.seg button:not(.on)');
+      if (!seg) return;
+      const c = tab.run.changes.find((x) => x.path === cur.dataset.path);
+      tab.cur = `${c.path}#${seg.textContent === 'Diff' && c.hunks?.length ? 0 : ''}`;
+      seg.click();
+      return;
+    }
+    case 'o': case 'Enter': {
+      done();
+      if (!cur) return;
+      const c = tab.run.changes.find((x) => x.path === cur.dataset.path);
+      if (c && c.status !== 'added') openFile(c.path, { line: Number(cur.dataset.line) || undefined });
+      return;
+    }
+    default:
+  }
+}
+
 function reviewView(tab) {
   const run = tab.run;
-  const wrap = h('div', { class: 'review' });
+  const wrap = h('div', { class: 'review', tabindex: 0, 'data-tab': tab.id, onkeydown: (e) => reviewKeys(e, tab),
+    onmousedown: (e) => { const it = e.target.closest('.kb-item'); if (it) setReviewCur(tab, it, false); } });
   if (!run) { wrap.append(h('div', { class: 'empty' }, 'Loading…')); return wrap; }
   const reviewable = ['review', 'failed', 'cancelled'].includes(run.status);
   const took = run.finishedAt ? `${Math.max(1, Math.round((new Date(run.finishedAt) - new Date(run.startedAt)) / 1000))}s` : null;
@@ -4296,7 +4408,8 @@ function reviewView(tab) {
     if (reviewable && run.changes.length) {
       const n = selectedCount(tab);
       wrap.append(h('div', { class: 'review-actions' },
-        h('span', { class: 'grow' }, `${run.changes.length} file${run.changes.length === 1 ? '' : 's'} changed · ${n} change${n === 1 ? '' : 's'} selected`),
+        h('span', { class: 'grow' }, `${run.changes.length} file${run.changes.length === 1 ? '' : 's'} changed · ${n} change${n === 1 ? '' : 's'} selected`,
+          h('span', { class: 'review-keys', title: 'j / k  next / previous change\nJ / K  next / previous file\nx or space  pick the change · X  the whole file\nA / U  pick all / none\na  apply · d  discard · f  follow up\n=  diff / result · o or Enter  open at the change' }, 'j k · x · a apply')),
         S.git?.repo ? h('label', { class: 'commit-toggle', title: 'Commit the applied files to git, authored by the agent (local only)' },
           h('input', { type: 'checkbox', checked: store.getItem('an.commitOnApply') !== 'false', onchange: (e) => store.setItem('an.commitOnApply', String(e.target.checked)) }), 'Commit to git') : null,
         h('button', { class: 'btn', onclick: () => followUp(tab) }, 'Follow up…'),

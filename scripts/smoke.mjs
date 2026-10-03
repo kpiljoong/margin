@@ -741,7 +741,7 @@ await check('the search results keep their scroll position when one is opened', 
   return { before, after };
 `, (v) => (v?.before > 0 && Math.abs(v.after - v.before) < 2 ? null : 'the results list jumped'));
 
-await check('a review: pick one change, the count follows, apply writes it', `
+await check('a review by keys: U none, j/k to a change, x picks it, a click too, a applies', `
   const ta = await openNote('sub/messy.md');
   ta.focus();
   document.dispatchEvent(new KeyboardEvent('keydown', { key: 'k', code: 'KeyK', metaKey: navigator.platform.startsWith('Mac'), ctrlKey: !navigator.platform.startsWith('Mac'), bubbles: true }));
@@ -750,15 +750,26 @@ await check('a review: pick one change, the count follows, apply writes it', `
   button('Run on staged copy', o).click();
   const apply = await until(() => button('Apply'), 20000);
   if (!apply) return { error: 'no review', page: ($('.review') || $('#overlay'))?.innerText.slice(0, 400) };
-  const heads = $$('.hunk-head input');
+  const focused = document.activeElement === $('.review');
+  const hunks = $$('.hunk-head input').length;
   const all = button('Apply').textContent;
-  // Each tick redraws the review, so find the boxes again every time.
-  for (let i = 1; i < heads.length; i++) { $$('.hunk-head input')[i].click(); await sleep(150); }
+  key('U'); await sleep(100);
+  const none = button('Apply').textContent;
+  key('j'); key('j'); key('k'); await sleep(50);
+  const cur = $('.kb-cur')?.dataset.hunk;
+  key('x'); await sleep(150);
   const one = button('Apply').textContent;
-  button('Apply').click();
+  const kept = document.activeElement === $('.review') && $('.kb-cur')?.dataset.hunk === '0';
+  // A click picks too (the box is redrawn), and the keys go on working after it.
+  $$('.hunk-head input')[1].click(); await sleep(150);
+  const two = button('Apply').textContent;
+  key('j'); key('x'); await sleep(150);
+  const back = button('Apply').textContent;
+  key('a');
   await until(() => /Applied/.test($('.review')?.textContent || ''), 10000);
-  return { hunks: heads.length, all, one, applied: /Applied/.test($('.review').textContent) };
-`, (v) => (v?.hunks > 1 && v.one === 'Apply 1 selected' && v.all !== v.one && v.applied ? null : 'picking or applying did not work'));
+  return { focused, hunks, all, none, cur, one, kept, two, back, applied: /Applied/.test($('.review').textContent) };
+`, (v) => (v?.focused && v.hunks > 1 && v.none === 'Apply 0 selected' && v.cur === '0' && v.one === 'Apply 1 selected' && v.kept
+  && v.two === 'Apply 2 selected' && v.back === 'Apply 1 selected' && v.all !== v.one && v.applied ? null : 'picking or applying did not work'));
 
 const applied = fs.readFileSync(path.join(ws, 'sub', 'messy.md'), 'utf8');
 const changed = applied.split('\n').filter((l) => /^(#+ |- )/.test(l)).length;

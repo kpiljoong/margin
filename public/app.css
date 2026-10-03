@@ -707,3 +707,8 @@ iframe.mermaid-frame { position: fixed; left: -10000px; top: 0; width: 1600px; h
 #sidebar :is(.tree-row, .outline-row, .search-file, .search-hit):focus { outline: 1px solid var(--accent); outline-offset: -1px; }
 .preview:focus { outline: none; box-shadow: inset 2px 0 0 var(--accent); }
 #status .rec { color: var(--bad); font-weight: 600; }
+.review:focus { outline: none; }
+.review .kb-cur { box-shadow: inset 3px 0 0 var(--accent); }
+.review:focus .kb-cur.hunk > .hunk-head, .review:focus .kb-cur > .file-card-head { background: color-mix(in srgb, var(--accent) 14%, var(--bg-2)); }
+.review-keys { margin-left: 10px; font: 11px var(--mono); opacity: .7; cursor: help; }
+.review:not(:focus-within) .review-keys { display: none; }
