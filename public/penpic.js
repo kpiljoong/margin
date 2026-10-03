@@ -175,7 +175,7 @@ export function pictureSummary(pic, hunk) {
     return parts.join(' · ') || 'the picture’s text';
   }
   const marks = parseInk(pic.union.map((l) => l.text).join('\n')).marks;
-  const word = (m) => (m.kind === 'text' ? `“${m.text.length > 24 ? `${m.text.slice(0, 23)}…` : m.text}”` : m.kind);
+  const word = (m) => (m.kind === 'num' ? `#${m.text}` : m.kind === 'text' ? `“${m.text.length > 24 ? `${m.text.slice(0, 23)}…` : m.text}”` : m.kind);
   for (const change of ['add', 'del']) {
     const xs = marks.filter((m) => pic.union[m.line].hunk === hunk && pic.union[m.line].change === change);
     if (xs.length) parts.push(`${change === 'add' ? '+' : '−'} ${list(xs.map(word))}`);

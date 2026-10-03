@@ -648,7 +648,9 @@ input[type=checkbox] { accent-color: var(--accent); }
 .md pre.diagram-pending img { opacity: .55; transition: opacity .2s; }
 .md pre.diagram { position: relative; }
 .diagram-copy { position: absolute; top: 6px; right: 6px; width: 26px; height: 26px; border: 1px solid var(--border); border-radius: 6px; background: var(--bg-2); color: var(--fg-dim); font-size: 14px; line-height: 1; padding: 0; cursor: pointer; opacity: 0; transition: opacity .15s; }
-.md pre.diagram:hover .diagram-copy, .diagram-copy:focus-visible { opacity: 1; }
+.md pre.diagram:hover .diagram-copy, .ink-figure:hover > .diagram-copy, .diagram-copy:focus-visible { opacity: 1; }
+.ink-figure > .diagram-copy { z-index: 2; }
+.canvas-stage.inking .ink-figure > .diagram-copy, .canvas-pane.presenting .ink-figure > .diagram-copy, .pen-doc .ink-figure > .diagram-copy { display: none; }
 .diagram-copy:hover { color: var(--fg); background: var(--bg-hover); }
 .printing .diagram-copy { display: none; }
 .md .mmd-embed { cursor: pointer; }
@@ -956,3 +958,10 @@ iframe.mermaid-frame { position: fixed; left: -10000px; top: 0; width: 1600px; h
 .ink-mark.pen-on { filter: drop-shadow(0 0 5px var(--pen)); }
 .pen-doc .ink-figure .ink-mark { pointer-events: auto; cursor: pointer; }
 .pen-pic-what { color: var(--fg-dim); }
+
+/* Numbered dots on a picture (ink `num`) and their list items. */
+.ink-mark[data-num] { pointer-events: auto; cursor: pointer; }
+.ink-mark[data-num].ink-hot, .ink-mark[data-num].ink-at { filter: drop-shadow(0 0 3px var(--accent)) drop-shadow(0 0 8px var(--accent)); }
+li[data-callout]::marker { font-weight: 700; color: var(--accent); }
+li[data-callout] { border-radius: 4px; transition: background .15s; }
+li.callout-hot { background: color-mix(in srgb, var(--accent) 16%, transparent); }

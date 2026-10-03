@@ -6,7 +6,8 @@
 // top of the note) and `figures` its pictures in order. info(figure) tells
 // about a picture: { line, source, flowNodes, diagramNodes } — the line of
 // its opening fence (or of the embed), the block's text (null for an embed),
-// and its boxes: from parseFlow for ```flow, { id } for other diagrams.
+// and its boxes: from parseFlow for ```flow, { id } for other diagrams;
+// inkMarks: a picture's ```ink marks (parseInk), when it has them.
 
 // Does a line of text name this box? As a whole word — though a Korean word
 // may go on with a particle (as in "screen-to"), so only a name ending in a Latin
@@ -44,6 +45,8 @@ const lineAt = (v, at) => v.slice(0, at).split('\n').length - 1;
 // { section, fig, nodes: [{ pre: fig, id }] }, or null.
 // - In a diagram block: that picture, and the boxes its line writes.
 // - On its fences: that picture.
+// - On a numbered list item: the picture with that number's dot (an ink
+//   `num` mark), and in `marks` the dot's line in its block.
 // - On a line of text: the picture holding the ```flow boxes it names,
 //   otherwise the section's next picture (or its last one).
 // - A section without pictures (an intro above its subsections) looks at
@@ -72,6 +75,13 @@ export function goalAt(sections, v, at, info) {
       for (const n of f.diagramNodes || []) if (words.has(n.id)) nodes.push({ pre: fig, id: n.id });
     }
     return { section, fig, nodes };
+  }
+  if (/^\s*\d{1,9}[.)]\s/.test(text)) {
+    const item = numberedItems(v, sections[here].line, sections[here + 1]?.line ?? Infinity).find((x) => x.line === cur);
+    for (const fig of item ? section.figures : []) {
+      const m = (info(fig).inkMarks || []).find((k) => k.kind === 'num' && k.text === item.n);
+      if (m) return { section, fig, nodes: [], marks: [m.line] };
+    }
   }
   for (const fig of section.figures) for (const n of info(fig).flowNodes || []) if (mentions(text, n.text)) nodes.push({ pre: fig, id: n.id });
   const fig = nodes[0]?.pre || section.figures.find((f) => info(f).line > cur) || section.figures[section.figures.length - 1];
@@ -143,6 +153,37 @@ export function leadLines(v, from, to, max = 4) {
     if (i < from || !t || /^(#{1,6}\s|\||!\[|<)/.test(t)) continue;
     const text = plain(t.replace(/^>\s*(\[![^\]]*\]\s*)?/, '').replace(/^([-*+]|\d+[.)])\s+(\[[ xX]\]\s+)?/, '· ').replace(/[*_]{1,2}(\S[^*_]*?)[*_]{1,2}/g, '$1'));
     if (text.trim()) out.push(text.length > 160 ? `${text.slice(0, 159)}…` : text);
+  }
+  return out;
+}
+
+// The items of numbered lists between lines `from` and `to` (`to`
+// excluded), numbered as they read — from the first item's number on, as
+// Markdown does — for the numbered dots on pictures (an ink `num` mark is
+// item n): [{ n: '2', line, text }], markup taken out.
+export function numberedItems(v, from, to) {
+  const lines = v.split('\n');
+  const out = [];
+  const next = new Map(); // a list's indent → its next number
+  let fence = null;
+  let front = v.startsWith('---\n');
+  for (let i = 0; i < lines.length && i < to; i++) {
+    const line = lines[i];
+    const t = line.trim();
+    const f = /^(`{3,}|~{3,})/.exec(t);
+    if (front) { if (i > 0 && t === '---') front = false; continue; }
+    if (fence) { if (f && t.startsWith(fence)) fence = null; continue; }
+    if (f) { fence = f[1]; continue; }
+    if (!t) continue;
+    const indent = line.match(/^\s*/)[0].length;
+    const m = /^(\d{1,9})[.)]\s+(.*)$/.exec(t);
+    // A line less indented than a list's items ends it, and other text as
+    // indented too.
+    for (const k of [...next.keys()]) if (k > indent || (k === indent && !m)) next.delete(k);
+    if (!m) continue;
+    const n = next.get(indent) ?? Number(m[1]);
+    next.set(indent, n + 1);
+    if (i >= from) out.push({ n: String(n), line: i, text: plain(m[2]).trim() });
   }
   return out;
 }

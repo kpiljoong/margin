@@ -34,6 +34,7 @@ fs.writeFileSync(path.join(ws, 'assets', 'big.svg'), '<svg xmlns="http://www.w3.
 fs.writeFileSync(path.join(ws, 'pics.md'), '# Pics\n\n![Big picture](assets/big.svg)\n');
 // A picture to draw on.
 fs.writeFileSync(path.join(ws, 'assets', 'screen.svg'), '<svg xmlns="http://www.w3.org/2000/svg" width="400" height="300"><rect width="400" height="300" fill="#ddd"/></svg>');
+fs.writeFileSync(path.join(ws, 'dots.md'), '# Dots\n\n![Screen](assets/screen.svg)\n\n1. First thing\n2. Second thing\n');
 fs.writeFileSync(path.join(ws, 'shot.md'), '# Shot\n\n![Screen](assets/screen.svg)\n\nAfter.\n');
 // Lines for a keyboard macro, and notes to run one at every search result.
 fs.writeFileSync(path.join(ws, 'macro.md'), 'apple\nbanana\ncherry');
@@ -365,6 +366,42 @@ await check('presenting a picture: its frame first, the marks still to come hidd
   out.after = $$('.ink-mark.unseen').length + ($('.canvas-pane').classList.contains('presenting') ? 1 : 0);
   return out;
 `, (v) => (v?.frame && v.head.startsWith('Shot') && /1 \/ 2$/.test(v.head) && v.hidden === 1 && v.bar === 'none' && /2 \/ 2$/.test(v.next) && v.shown === 1 && /1 \/ 2$/.test(v.back) && v.after === 0 ? null : `got ${JSON.stringify(v)}`));
+
+await check('numbered dots on a picture: N puts the next number; its list item at the cursor lights it; in the preview the item and the dot light each other', `
+  await openNote('dots.md');
+  if (!$('.canvas-pane')?.offsetParent) button('Canvas').click();
+  const img = () => $('.canvas-stage .ink-figure img');
+  if (!(await until(() => img()?.naturalWidth, 15000))) return { none: true };
+  const stage = $('.canvas-stage');
+  const ed = () => $$('.editor-wrap textarea').find((t) => t.offsetParent);
+  const pt = (fx, fy) => { const r = img().getBoundingClientRect(); return { clientX: r.left + r.width * fx, clientY: r.top + r.height * fy }; };
+  const ptr = (type, el, p) => el.dispatchEvent(new PointerEvent(type, { bubbles: true, cancelable: true, button: 0, pointerId: 1, ...p }));
+  const out = {};
+  img().dispatchEvent(new MouseEvent('click', { bubbles: true })); await sleep(300);
+  stage.focus(); key('n', {}, stage);
+  ptr('pointerdown', img(), pt(0.3, 0.3)); ptr('pointerup', stage, pt(0.3, 0.3));
+  await until(() => ed().value.includes('num red: 120,90 1'), 8000);
+  await until(() => $('.canvas-stage .ink-mark[data-num="1"]'), 8000);
+  ptr('pointerdown', img(), pt(0.6, 0.6)); ptr('pointerup', stage, pt(0.6, 0.6));
+  await until(() => ed().value.includes('num red: 240,180 2'), 8000);
+  out.text = ed().value;
+  key('Escape', {}, stage);
+  await until(() => $('.canvas-stage .ink-mark[data-num="2"]'), 8000);
+  const t = ed();
+  const at = t.value.indexOf('2. Second');
+  t.focus(); t.setSelectionRange(at + 3, at + 3);
+  t.dispatchEvent(new KeyboardEvent('keyup', { bubbles: true, key: 'ArrowRight' }));
+  out.lit = (await until(() => $('.canvas-stage .ink-mark.ink-at'), 4000))?.dataset.num;
+  button('Preview').click();
+  const li = await until(() => $('.preview li[data-callout="1"], .md li[data-callout="1"]'), 8000);
+  li?.dispatchEvent(new PointerEvent('pointerover', { bubbles: true }));
+  await sleep(100);
+  out.hot = $$('.ink-mark.ink-hot').map((g) => g.dataset.num).join();
+  li?.closest('.md')?.querySelector('h1')?.dispatchEvent(new PointerEvent('pointerover', { bubbles: true }));
+  out.cold = !$('.ink-mark.ink-hot');
+  button('Canvas').click();
+  return out;
+`, (v) => (v?.text?.endsWith('```ink\nnum red: 120,90 1\nnum red: 240,180 2\n```\n\n1. First thing\n2. Second thing\n') && v.lit === '2' && v.hot === '1' && v.cold ? null : `got ${JSON.stringify(v)}`));
 
 await check('Settings shows Labs', `
   document.dispatchEvent(new KeyboardEvent('keydown', { key: ',', metaKey: navigator.platform.startsWith('Mac'), ctrlKey: !navigator.platform.startsWith('Mac'), bubbles: true }));

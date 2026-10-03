@@ -167,3 +167,16 @@ test('a frame caption: the first lines of a section, markup out, no blocks or pi
   assert.deepEqual(leadLines(note, 3, 12), ['Waiting for approval takes too long.', '· ask the ops team', 'keep it short']);
   assert.deepEqual(leadLines(note, 0, 99, 2), ['Waiting for approval takes too long.', '· ask the ops team'], 'front matter out, at most max');
 });
+
+test('numberedItems: numbered as they read; goalAt: a numbered item looks at its dot', async () => {
+  const { numberedItems } = await import('../public/figure-goal.js');
+  const v = ['# Login', '', '![s](s.png)', '', '1. The **button** is hidden', '1. Too small', '   more on it', '   1. nested', '3. Wrong colour', '', 'Text.', '', '4. after text', '```', '9. in code', '```', '# Next', '1. other'].join('\n');
+  assert.deepEqual(numberedItems(v, 0, 16).map((x) => [x.n, x.line, x.text]),
+    [['1', 4, 'The button is hidden'], ['2', 5, 'Too small'], ['1', 7, 'nested'], ['3', 8, 'Wrong colour'], ['4', 12, 'after text']]);
+  const fig = { inkMarks: [{ kind: 'box', line: 0 }, { kind: 'num', text: '2', line: 1 }], line: 2 };
+  const sections = [{ line: 0, figures: [fig] }, { line: 16, figures: [] }];
+  const info = (f) => ({ line: f.line, source: null, inkMarks: f.inkMarks });
+  const at = (line) => v.split('\n').slice(0, line).join('\n').length + 1;
+  assert.deepEqual(goalAt(sections, v, at(5), info).marks, [1]);
+  assert.equal(goalAt(sections, v, at(4), info).marks, undefined);
+});

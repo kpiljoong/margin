@@ -92,6 +92,7 @@ export class FigureCanvas {
   // dotted, label (arg: the words) or menu (arg: the event) ·
   // onArrowStep(pre, from, to): put the cursor on an arrow · onShapeMenu(pre, id, at) ·
   // pictures: onInk(fig, { add: line } | { remove: lineNo }) · onInkColor(at, color, pick)
+  // · onInkHover(fig, num) (null, null when it leaves) · onInkDot(fig, num): a numbered dot clicked
   // · onPastePictures(files) (⌘V of a picture here)
   constructor(handlers) {
     this.h = handlers;
@@ -369,7 +370,7 @@ export class FigureCanvas {
     const samePicture = !!goal && place(goal) === place(this.goal);
     this.goal = goal;
     this.mark();
-    const sig = goal ? `${goal.section.key}|${goal.section.figures.indexOf(goal.fig)}|${goal.nodes.map((n) => n.id).join(',')}` : null;
+    const sig = goal ? `${goal.section.key}|${goal.section.figures.indexOf(goal.fig)}|${goal.nodes.map((n) => n.id).join(',')}|${(goal.marks || []).join(',')}` : null;
     if (sig === this.sig && !this.fresh) return;
     this.sig = sig;
     // Picked on the canvas itself, in the picture being looked at: moving
@@ -496,6 +497,9 @@ export class FigureCanvas {
     if (this.walkAt) this.hit(this.walkAt.pre, this.walkAt.id)?.classList.add('walk-at');
     else for (const n of goal?.nodes || []) this.hit(n.pre, n.id)?.classList.add('on');
     this.markEdge();
+    // A numbered list item at the cursor: its dot on the picture.
+    this.world.querySelectorAll('.ink-mark.ink-at').forEach((g) => g.classList.remove('ink-at'));
+    for (const l of goal?.marks || []) goal.fig.querySelector(`:scope > .ink-marks > .ink-mark[data-line="${l}"]`)?.classList.add('ink-at');
     this.ink?.show(!!goal?.fig?.matches?.('.ink-figure'));
     this.drawLinksSoon();
   }
@@ -869,6 +873,12 @@ export class FigureCanvas {
     this.drawLinks();
   }
 
+  hoverDot(dot) {
+    if ((dot || null) === (this.dot || null)) return;
+    this.dot = dot;
+    this.h.onInkHover?.(dot?.closest('.ink-figure') || null, dot?.dataset.num ?? null);
+  }
+
   setHover(next) {
     if (same(next, this.hover) || (!next && !this.hover)) return;
     this.hover = next;
@@ -1072,9 +1082,11 @@ export class FigureCanvas {
       this.world.querySelectorAll('.node-hit.linked').forEach((x) => x.classList.remove('linked'));
       const link = e.target.closest?.('.canvas-link-hit')?.link;
       for (const end of link || []) this.hit(end.pre, end.id)?.classList.add('linked');
+      this.hoverDot(e.target.closest?.('.ink-mark[data-num]'));
     });
     stage.addEventListener('pointerleave', () => {
       this.setHover(null);
+      this.hoverDot(null);
       this.world.querySelectorAll('.node-hit.linked').forEach((x) => x.classList.remove('linked'));
     });
 
@@ -1285,7 +1297,8 @@ export class FigureCanvas {
     this.edgeAt = null;
     this.edgeSoon = null;
     if (b && fig.flowNodes) this.walkAt = { pre: fig, id: b.dataset.id };
-    const pick = () => (b ? this.h.onNode?.(fig, b.dataset.id) : this.h.onFigure?.(fig));
+    const dot = !this.ink?.tool && target.closest('.ink-mark[data-num]');
+    const pick = () => (dot ? this.h.onInkDot?.(fig, dot.dataset.num) : b ? this.h.onNode?.(fig, b.dataset.id) : this.h.onFigure?.(fig));
     if (looking) {
       this.picking = true;
       try { pick(); } finally { this.picking = false; }

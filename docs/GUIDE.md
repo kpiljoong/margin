@@ -438,12 +438,17 @@ Login request -> Auth server -> Success?
   arrow red: 410,220 -> 300,160
   text red: 420,230 The button is hidden
   pen blue: 100,100 120,104 140,112
+  num red: 300,110 1
   ```
+
+  1. The button is hidden behind the banner
   ````
 
   - **Paste a picture**: ⌘V on the canvas (a screenshot, say) keeps it in `assets/` and puts it below the cursor's block; the canvas goes to it. In the editor, paste works as always.
-  - **Tools**: click a picture (or look at it) and the tool bar shows at the top right: `D` pen, `A` arrow, `R` box, `T` words (click where they go, type, Enter), `E` eraser (click a mark), `C` colour (then a number). The same key again, or `Esc`, puts the tool down. With a tool on, a drag on the picture draws; beside it the canvas still pans.
+  - **Tools**: click a picture (or look at it) and the tool bar shows at the top right: `D` pen, `A` arrow, `R` box, `T` words (click where they go, type, Enter), `N` a numbered dot (click: the next number), `E` eraser (click a mark), `C` colour (then a number). The same key again, or `Esc`, puts the tool down. With a tool on, a drag on the picture draws; beside it the canvas still pans.
   - Each mark is one ⌘Z. Erasing the last mark takes the block out. The colour is optional (red), any of the flow colours (`blue`, `green`, …). Lines that aren't marks are left alone; `#` starts a comment.
+  - **Numbered dots** (`num`) go with a numbered list in the text of the picture's section: dot 1 is item 1 (as the list reads, so `1.` `1.` `1.` counts 1, 2, 3). In the preview, pointing at one lights the other, and a click on a dot shows its item; on the canvas, the cursor on an item lights its dot, and a click on a dot puts the cursor on its item. Presenting, each dot (with the marks written before it) is a step, its item the caption.
+  - **Copy with the marks**: ⧉ on a picture (or right-click → Copy as image / Save as PNG…) gives the picture with its marks drawn on, at its own size, to paste in a chat or an issue.
   - The preview draws the marks on the picture too; other apps show the picture and the lines as code.
   - **An agent marks it up too**: a task about pictures ("mark the problems on the screenshot", "스크린샷에 표시해줘" — words like picture, screenshot, image, ink, annotate) gets the ` ```ink ` notation and the sizes of the pictures, and the pictures the shared notes show are shared with it (the task dialog lists them). Its marks come back as red pen on the picture, each block's change to take or leave.
 

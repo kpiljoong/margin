@@ -13,7 +13,7 @@ import { pairInk, addMark, removeMark } from './ink.js';
 import { pictureHunks, penPlaces, pictureSummary, showPicture, PLACE } from './penpic.js';
 import { connect, addBox, freshName, nextAnswer, setColor, setDirection, removeBox, removeArrow, setArrowKind, setArrowLabel, reverseArrow, setShape, arrowSpot } from './flowedit.js';
 import { FigureCanvas } from './canvas.js';
-import { goalAt, boxAt, mentionRanges, definitionLines, leadLines } from './figure-goal.js';
+import { goalAt, boxAt, mentionRanges, definitionLines, leadLines, numberedItems } from './figure-goal.js';
 import { isDrawing, drawingFormat, DrawingFrame, renderDrawingEmbeds, cachedEmbed, forgetEmbed, drawingImageUrl } from './drawing.js';
 import { copyPng, copySvg, svgFromDataUrl, imageToPng } from './clip.js';
 import { openViewer } from './viewer.js';
@@ -2023,6 +2023,9 @@ function canvasFor(tab) {
     onArrowStep: (pre, from, to) => gotoArrow(tab, pre, from, to),
     onShapeMenu: (pre, id, at) => shapeMenu(tab, pre, id, at),
     onInk: (fig, change) => inkEdit(tab, fig, change),
+    // A numbered dot: its list item marked in the text; a click goes there.
+    onInkHover: (fig, num) => { const r = fig && calloutRange(tab, fig, num); tab.editor.setHints(r ? [r] : []); },
+    onInkDot: (fig, num) => { const r = calloutRange(tab, fig, num); if (r) gotoOffset(tab, r[0], r[0], false); else toast(`No item ${num}. in a numbered list of this section to say what it is.`); },
     onInkColor: (at, color, pick) => contextMenu({ preventDefault() {}, stopPropagation() {}, clientX: at.x, clientY: at.y },
       COLOR_ITEMS.map((c, i) => ({ label: `${colorLabel(c)}${c === color ? ' ✓' : ''}`, swatch: COLORS[c], key: String(i + 1), hotkey: String(i + 1), run: () => pick(c) }))),
     // The box under the pointer: its mentions in the text, marked.
@@ -2089,6 +2092,7 @@ function presentSteps(tab, prefer = new Map()) {
     const end = secs[k + 1]?.line ?? Infinity;
     steps.push({ frame: sec, pre: null, id: null, title: sec.title, text: '', note: '', via: '', lines: leadLines(v, begin, end) });
     const alone = sec.figures.length === 1;
+    const items = numberedItems(v, sec.line, end);
     for (const pre of sec.figures) {
       const marks = pre.matches('.ink-figure') ? pre.inkMarks || [] : [];
       if (!pre.flowNodes) {
@@ -2096,8 +2100,11 @@ function presentSteps(tab, prefer = new Map()) {
         let group = [];
         marks.forEach((m, j) => {
           group.push(m.line);
-          if (m.kind !== 'text' && j < marks.length - 1) return;
-          steps.push({ pre, id: null, marks: group, title: sec.title, text: m.kind === 'text' ? m.text : '', note: '', via: '', lines: [] });
+          if (m.kind !== 'text' && m.kind !== 'num' && j < marks.length - 1) return;
+          // A numbered dot says what its list item says.
+          const item = m.kind === 'num' && items.find((x) => x.n === m.text);
+          const said = m.kind === 'num' ? (item ? `${m.text}. ${item.text}` : m.text) : m.text;
+          steps.push({ pre, id: null, marks: group, title: sec.title, text: m.kind === 'text' || m.kind === 'num' ? said : '', note: '', via: '', lines: [] });
           group = [];
         });
         continue;
@@ -2219,7 +2226,23 @@ const figInfo = (fig) => ({
   source: fig.matches('pre[data-lang]') && !fig.dataset.from ? (fig.dataset.source ?? fig.textContent) : null,
   flowNodes: fig.flowNodes,
   diagramNodes: fig.diagramNodes,
+  inkMarks: fig.inkMarks,
 });
+
+// The numbered list item a picture's dot `num` stands for, in the note at
+// the canvas: [start, end] offsets of its text, or null.
+function calloutRange(tab, fig, num) {
+  const secs = tab.canvasSections || [];
+  const k = secs.findIndex((x) => x.figures.includes(fig));
+  if (k < 0 || num == null) return null;
+  const v = tab.editor.value;
+  const item = numberedItems(v, secs[k].line, secs[k + 1]?.line ?? Infinity).find((x) => x.n === num);
+  if (!item) return null;
+  const start = lineOffset(v, item.line);
+  const end = v.indexOf('\n', start);
+  const line = v.slice(start, end < 0 ? v.length : end);
+  return [start + line.search(/\d/), end < 0 ? v.length : end];
+}
 
 // What the cursor is on, for the canvas (see goalAt).
 const canvasGoal = (tab) => goalAt(tab.canvasSections, tab.editor.value, tab.editor.selectionStart, figInfo);
@@ -2524,7 +2547,8 @@ function cardMenu(tab, e, pre) {
     flow ? { label: 'Move to a note of its own…', run: () => moveFlowOut(tab, pre) } : null,
     from ? { label: `Open ${stem(from)}`, run: () => openFile(from) } : null,
     flow || from ? '-' : null,
-    ...(img ? pictureItems(() => diagramPicture(img, from || tab.path, `${stem(from || tab.path)}-diagram`)) : []),
+    ...(pre.matches('.ink-figure') ? pictureItems(() => inkPicture(pre, tab.path))
+      : img ? pictureItems(() => diagramPicture(img, from || tab.path, `${stem(from || tab.path)}-diagram`)) : []),
   ]);
 }
 
@@ -4061,6 +4085,38 @@ function diagramPicture(img, from, name) {
   };
 }
 
+// A picture with its ```ink marks drawn on, at its own size: an SVG holding
+// the picture and the marks, and a PNG made from it. from: the note (where
+// Save puts it, in assets/).
+function inkPicture(fig, from) {
+  const img = fig.querySelector(':scope > img');
+  const m = /[?&]path=([^&]+)/.exec(img?.getAttribute('src') || '');
+  const file = m ? decodeURIComponent(m[1]) : '';
+  let made = null;
+  const svg = () => (made ||= (async () => {
+    if (!img?.naturalWidth) throw new Error('the picture isn’t loaded');
+    const data = await blobDataUrl(await (await fetch(img.src)).blob());
+    const w = img.naturalWidth;
+    const hh = img.naturalHeight;
+    const marks = fig.querySelector(':scope > .ink-marks')?.cloneNode(true);
+    marks?.querySelectorAll('.ink-hit, .ink-draft').forEach((x) => x.remove());
+    const body = marks ? new XMLSerializer().serializeToString(marks).replace(/^<svg[^>]*>|<\/svg>$/g, '') : '';
+    return `<svg xmlns="http://www.w3.org/2000/svg" width="${w}" height="${hh}" viewBox="0 0 ${w} ${hh}"><image href="${data}" width="${w}" height="${hh}"/>${body}</svg>`;
+  })());
+  return {
+    from, name: `${stem(file || from)}-marked`, what: () => 'the picture with its marks',
+    svg,
+    png: async () => imageToPng(`data:image/svg+xml;charset=utf-8,${encodeURIComponent(await svg())}`, { scale: 1 }),
+  };
+}
+
+const blobDataUrl = (blob) => new Promise((resolve, reject) => {
+  const r = new FileReader();
+  r.onload = () => resolve(String(r.result));
+  r.onerror = () => reject(r.error);
+  r.readAsDataURL(blob);
+});
+
 // An embedded drawing, in its own colours like a copy made in the drawing.
 function drawingFilePicture(path) {
   let url = null;
@@ -4152,6 +4208,12 @@ const pictureItems = (pic, { view } = {}) => [
 
 // The diagram or embedded drawing under an element in a preview.
 function previewPicture(target) {
+  const fig = target.closest?.('.ink-figure');
+  if (fig && (target.closest('.diagram-copy') || !target.closest('.canvas-card'))) {
+    const tab = S.tabs.find((t) => t.previewEl?.contains(fig) || t.canvas?.el.contains(fig)) || fileTab();
+    const img = fig.querySelector(':scope > img');
+    return img && { box: fig, path: null, title: img.alt || 'Picture', pic: () => inkPicture(fig, tab?.path || '') };
+  }
   const box = target.closest?.('pre.diagram, .drawing-embed.ready');
   const img = box?.querySelector('img');
   if (!img) return null;
@@ -4178,6 +4240,28 @@ document.addEventListener('click', (e) => {
   const found = previewPicture(img);
   if (found) { e.preventDefault(); e.stopPropagation(); viewPicture(found.pic(), found.title); }
 }, true);
+// A numbered dot on a picture and its list item in the text (ink.js
+// linkCallouts): pointing at one lights the other; a click on the dot shows
+// its item.
+function hotCallout(fig, num) {
+  document.querySelectorAll('.ink-mark.ink-hot, li.callout-hot').forEach((x) => x.classList.remove('ink-hot', 'callout-hot'));
+  if (!fig || num == null) return;
+  for (const g of fig.querySelectorAll(':scope > .ink-marks > .ink-mark[data-num]')) if (g.dataset.num === num) g.classList.add('ink-hot');
+  fig.callouts?.get(num)?.classList.add('callout-hot');
+}
+document.addEventListener('pointerover', (e) => {
+  const dot = e.target.closest?.('.md .ink-mark[data-num]');
+  const li = dot ? null : e.target.closest?.('li[data-callout]');
+  const hot = !!document.querySelector('.ink-mark.ink-hot, li.callout-hot');
+  if (dot || li?.calloutFig?.isConnected) hotCallout(dot?.closest('.ink-figure') || li.calloutFig, dot?.dataset.num ?? li.dataset.callout);
+  else if (hot) hotCallout(null);
+});
+document.addEventListener('click', (e) => {
+  const dot = e.target.closest?.('.md .ink-mark[data-num]');
+  const li = dot && !dot.closest('.canvas-stage, .pen-doc') && dot.closest('.ink-figure')?.callouts?.get(dot.dataset.num);
+  if (li) li.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+});
+
 document.addEventListener('contextmenu', (e) => {
   const found = previewPicture(e.target);
   if (!found) return;

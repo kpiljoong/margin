@@ -9,10 +9,13 @@
 //   arrow red: 410,220 -> 300,160
 //   text red: 420,230 The button is hidden
 //   pen blue: 100,100 120,104 140,112
+//   num red: 300,110 1
 //   ```
 //
 // - pen: a line through the points · arrow: from → to · box: corner and
-//   size · text: where it starts, then the words.
+//   size · text: where it starts, then the words · num: a numbered dot, its
+//   centre and number — item 1 of the numbered list in the picture's section
+//   says what it is (linkCallouts).
 // - The colour is optional (red, the pen's), any of the flow colours.
 // - Other apps show the picture and the lines as code; Margin draws them on
 //   the picture. `#` or `//` starts a comment. Plain logic, tested without a
@@ -20,14 +23,15 @@
 
 import { COLORS, colorKey } from './flow.js';
 
-// Also in Korean: pen, arrow, box, text.
-const KINDS = { pen: 'pen', arrow: 'arrow', box: 'box', text: 'text', '\uD39C': 'pen', '\uD654\uC0B4\uD45C': 'arrow', '\uC0C1\uC790': 'box', '\uAE00': 'text' };
+// Also in Korean: pen, arrow, box, text, number.
+const KINDS = { pen: 'pen', arrow: 'arrow', box: 'box', text: 'text', num: 'num', number: 'num', '\uD39C': 'pen', '\uD654\uC0B4\uD45C': 'arrow', '\uC0C1\uC790': 'box', '\uAE00': 'text', '\uBC88\uD638': 'num' };
 const LINE = /^(\S+?)(?:\s+([^\s:]+))?\s*:\s*(.*)$/;
 const NUM = '(-?\\d+(?:\\.\\d+)?)';
 const POINT = new RegExp(`^${NUM},${NUM}$`);
 const ARROW = new RegExp(`^${NUM},${NUM}\\s*(?:->|→)\\s*${NUM},${NUM}$`);
 const BOX = new RegExp(`^${NUM},${NUM}\\s+${NUM}\\s*[x×]\\s*${NUM}$`);
 const TEXT = new RegExp(`^${NUM},${NUM}\\s+(.+)$`);
+const LABEL = new RegExp(`^${NUM},${NUM}\\s+([\\p{L}\\p{N}]{1,3})$`, 'u');
 
 export const INK_COLORS = Object.keys(COLORS);
 
@@ -56,6 +60,9 @@ export function parseInk(src) {
     } else if (kind === 'box') {
       const b = BOX.exec(rest);
       if (b) mark = { x: n(b[1]), y: n(b[2]), w: n(b[3]), h: n(b[4]) };
+    } else if (kind === 'num') {
+      const t = LABEL.exec(rest);
+      if (t) mark = { x: n(t[1]), y: n(t[2]), text: t[3] };
     } else {
       const t = TEXT.exec(rest);
       if (t) mark = { x: n(t[1]), y: n(t[2]), text: t[3].trim() };
@@ -135,7 +142,14 @@ export function markEl(m, sw, make) {
   const line = { fill: 'none', stroke: c, 'stroke-width': sw, 'stroke-linecap': 'round', 'stroke-linejoin': 'round' };
   if (m.kind === 'pen') g.append(make('polyline', { ...line, points: m.pts.map(([x, y]) => `${x},${y}`).join(' ') }));
   else if (m.kind === 'box') g.append(make('rect', { ...line, x: m.x, y: m.y, width: Math.max(1, m.w), height: Math.max(1, m.h), rx: sw * 2 }));
-  else if (m.kind === 'arrow') {
+  else if (m.kind === 'num') {
+    const rr = sw * 7;
+    g.dataset.num = m.text;
+    g.append(make('circle', { cx: m.x, cy: m.y, r: rr, fill: c, stroke: '#fff', 'stroke-width': sw }));
+    const t = make('text', { x: m.x, y: m.y, fill: '#fff', 'font-size': rr * (m.text.length > 1 ? 1 : 1.25), 'font-weight': 700, 'font-family': 'system-ui, sans-serif', 'text-anchor': 'middle', 'dominant-baseline': 'central' });
+    t.textContent = m.text;
+    g.append(t);
+  } else if (m.kind === 'arrow') {
     const [x1, y1] = m.from;
     const [x2, y2] = m.to;
     const a = Math.atan2(y2 - y1, x2 - x1);
@@ -155,6 +169,7 @@ export function markEl(m, sw, make) {
     hit.setAttribute('class', 'ink-hit');
     hit.setAttribute('stroke', 'transparent');
     hit.setAttribute('stroke-width', sw * 6);
+    if (m.kind === 'num') hit.setAttribute('fill', 'transparent');
     g.append(hit);
   }
   return g;
@@ -207,7 +222,13 @@ function inkFigure(img, line, inkLine, source, drawn) {
   fig.dataset.source = source;
   img.removeAttribute('loading');
   img.draggable = false;
-  fig.append(img);
+  // Copied with the marks on (the app's click handler for .diagram-copy).
+  const copy = document.createElement('button');
+  copy.type = 'button';
+  copy.className = 'diagram-copy';
+  copy.title = 'Copy with its marks (PNG)';
+  copy.textContent = '\u29C9';
+  fig.append(img, copy);
   drawn.push(img.decode().then(() => drawInk(fig), () => {}));
   return fig;
 }
@@ -219,4 +240,36 @@ export function drawInk(fig) {
   fig.querySelector(':scope > .ink-marks')?.remove();
   fig.inkMarks = parseInk(fig.dataset.source).marks;
   fig.append(inkSvg(fig.inkMarks, img.naturalWidth, img.naturalHeight));
+  linkCallouts(fig);
+}
+
+// A figure's numbered dots and the items of the numbered lists in its
+// section (from the heading above it to the next one) with the same
+// number, made a pair: li.dataset.callout = the number and li.calloutFig =
+// the figure; fig.callouts: number → li. Nothing to do on the canvas, where
+// the text isn't shown.
+export function linkCallouts(fig) {
+  fig.callouts = new Map();
+  const nums = (fig.inkMarks || []).filter((m) => m.kind === 'num').map((m) => m.text);
+  const root = fig.closest('.md');
+  if (!nums.length || !root) return;
+  const at = Number(fig.dataset.line);
+  let from = -1;
+  let to = Infinity;
+  for (const hd of root.querySelectorAll('h1, h2, h3, h4, h5, h6')) {
+    const l = Number(hd.dataset.line);
+    if (Number.isNaN(l)) continue;
+    if (l <= at) from = Math.max(from, l); else to = Math.min(to, l);
+  }
+  for (const ol of root.querySelectorAll('ol')) {
+    const l = Number(ol.querySelector(':scope > li')?.dataset.line);
+    if (!(l > from && l < to)) continue;
+    [...ol.children].forEach((li, i) => {
+      const n = String((Number(ol.getAttribute('start')) || 1) + i);
+      if (!nums.includes(n) || fig.callouts.has(n)) return;
+      li.dataset.callout = n;
+      li.calloutFig = fig;
+      fig.callouts.set(n, li);
+    });
+  }
 }

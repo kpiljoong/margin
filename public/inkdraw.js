@@ -3,10 +3,10 @@
 // (public/ink.js has the lines; the app writes them, one ⌘Z each).
 //
 // The tool bar shows when a picture is the one looked at, or a tool is on.
-// Keys: D pen, A arrow, R box, T text, E eraser, C colour, Esc: the tool off.
-// With a tool on, a drag on a picture draws (beside it the canvas still
-// pans); a click with T puts words there; with E a click on a mark takes it
-// out.
+// Keys: D pen, A arrow, R box, T text, N numbered dot, E eraser, C colour,
+// Esc: the tool off. With a tool on, a drag on a picture draws (beside it the
+// canvas still pans); a click with T puts words there, with N the next
+// number; with E a click on a mark takes it out.
 
 import { COLORS } from './flow.js';
 import { inkLine, simplify, markEl } from './ink.js';
@@ -17,9 +17,10 @@ export const TOOLS = [
   ['arrow', '↗', 'Arrow', 'A'],
   ['box', '▭', 'Box', 'R'],
   ['text', 'T', 'Words', 'T'],
+  ['num', '\u2460', 'Numbered dot: click where it goes; item 1. of a numbered list in the section says what it is', 'N'],
   ['erase', '⌫', 'Eraser: click a mark', 'E'],
 ];
-const KEYS = { d: 'pen', a: 'arrow', r: 'box', t: 'text', e: 'erase' };
+const KEYS = { d: 'pen', a: 'arrow', r: 'box', t: 'text', n: 'num', e: 'erase' };
 
 const el = (tag, cls, text) => {
   const e = document.createElement(tag);
@@ -33,7 +34,7 @@ export class InkTools {
   // onInkColor(at, color, pick).
   constructor(canvas) {
     this.c = canvas;
-    this.tool = null; // 'pen' | 'arrow' | 'box' | 'text' | 'erase'
+    this.tool = null; // 'pen' | 'arrow' | 'box' | 'text' | 'num' | 'erase'
     this.color = 'red';
     this.draft = null; // the mark being drawn: { fig, kind, pts, el }
     this.bar = el('div', 'ink-bar');
@@ -124,7 +125,7 @@ export class InkTools {
     const d = this.draft;
     if (!d) return false;
     const hit = this.at(e, d.fig);
-    if (!hit) return true;
+    if (!hit || d.kind === 'text' || d.kind === 'num') return true;
     if (d.kind === 'pen') d.pts.push(hit.p); else d.pts[1] = hit.p;
     this.preview();
     return true;
@@ -137,6 +138,12 @@ export class InkTools {
     d.el?.remove();
     const moved = Math.hypot(e.clientX - d.x, e.clientY - d.y) > 4;
     if (d.kind === 'text') { if (!moved) this.words(d); return true; }
+    if (d.kind === 'num') {
+      // The next number on this picture.
+      const n = Math.max(0, ...(d.fig.inkMarks || []).filter((m) => m.kind === 'num' && /^\d+$/.test(m.text)).map((m) => Number(m.text))) + 1;
+      if (!moved) this.c.h.onInk?.(d.fig, { add: inkLine({ kind: 'num', color: this.color, x: Math.round(d.pts[0][0]), y: Math.round(d.pts[0][1]), text: String(n) }) });
+      return true;
+    }
     if (!moved || d.pts.length < 2) return true;
     const mark = this.markOf(d);
     if (mark) this.c.h.onInk?.(d.fig, { add: inkLine(mark) });

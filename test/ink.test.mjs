@@ -25,3 +25,10 @@ test('a drawn line keeps its shape with fewer points; marks added and taken out'
   assert.equal(addMark('a\n\n', 'b'), 'a\nb');
   assert.equal(removeMark('a\nb\nc', 1), 'a\nc');
 });
+
+test('a numbered dot: its centre and a short number or letter', () => {
+  const { marks, bad } = parseInk(['num: 10,20 1', 'number blue: 5,6 A', '\uBC88\uD638: 1,2 12', 'num: 1,2 too long', 'num: 1,2'].join('\n'));
+  assert.deepEqual(marks.map((m) => [m.kind, m.color, m.text, m.x, m.y]), [['num', 'red', '1', 10, 20], ['num', 'blue', 'A', 5, 6], ['num', 'red', '12', 1, 2]]);
+  assert.deepEqual(bad, [3, 4]);
+  assert.equal(inkLine(marks[0]), 'num red: 10,20 1');
+});
