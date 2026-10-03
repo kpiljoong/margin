@@ -1176,7 +1176,7 @@ function agentInstructions() {
 // (lib/flow-notation.md).
 let flowNotation = null;
 const flowGuide = (text, note) => (/\bflow\b/i.test(text) || /^\s*```flow\s*$/m.test(note)
-  ? (flowNotation ??= fs.readFileSync(path.join(APP_DIR, 'lib', 'flow-notation.md'), 'utf8').trim())
+  ? (flowNotation ??= fs.readFileSync(path.join(APP_DIR, 'lib', 'flow-notation.md'), 'utf8').replace(/\r\n/g, '\n').trim())
   : '');
 
 // Tasks about pictures (in English or Korean): the ```ink notation
@@ -1187,7 +1187,7 @@ const MAX_PICTURES = 40;
 const MAX_PICTURE_BYTES = 10 * 1024 * 1024;
 let inkNotation = null;
 const inkGuide = (text, note) => (PICTURE_TASK.test(text) || /^\s*```ink\s*$/m.test(note)
-  ? (inkNotation ??= fs.readFileSync(path.join(APP_DIR, 'lib', 'ink-notation.md'), 'utf8').trim())
+  ? (inkNotation ??= fs.readFileSync(path.join(APP_DIR, 'lib', 'ink-notation.md'), 'utf8').replace(/\r\n/g, '\n').trim())
   : '');
 const picturesLine = (pictures = []) => {
   if (!pictures.length) return '';

@@ -41,7 +41,7 @@ test('a task about pictures shares the ones its note shows; another task does no
   fs.writeFileSync(path.join(ws, 'a.md'), '# A\n\n![Shot](assets/shot.png)\n');
   // An agent that writes down its prompt and what it can see.
   const agent = path.join(tools, 'agent.js');
-  fs.writeFileSync(agent, "const fs = require('fs'); fs.writeFileSync('prompt.txt', process.env.AGENT_NOTES_PROMPT + '\\n---\\n' + fs.readdirSync('.', { recursive: true }).sort().join('\\n'));\n");
+  fs.writeFileSync(agent, "const fs = require('fs'); fs.writeFileSync('prompt.txt', process.env.AGENT_NOTES_PROMPT + '\\n---\\n' + fs.readdirSync('.', { recursive: true }).map((f) => f.split(require('path').sep).join('/')).sort().join('\\n'));\n");
   const port = 20000 + Math.floor(Math.random() * 20000);
   const proc = spawn(process.execPath, [path.join(ROOT, 'server.js'), ws, '--port', String(port), '--no-open', '--agent', `"${process.execPath}" "${agent}"`], { stdio: ['ignore', 'pipe', 'pipe'] });
   t.after(() => proc.kill());
