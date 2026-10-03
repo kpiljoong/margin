@@ -8,7 +8,8 @@ import { fillTemplate, isTemplate, TEMPLATE_DIR } from './templates.js';
 import { MarkdownEditor, setEditorKeys } from './editor.js';
 import { hunksOf } from './track.js';
 import { renderDiagrams } from './diagrams.js';
-import { flowToMermaid, flowsAsMermaid, parseFlow, isStepText, flowStepNames, nameKey, flowTour, flowLineAt } from './flow.js';
+import { flowToMermaid, flowsAsMermaid, parseFlow, isStepText, flowStepNames, nameKey, flowTour, flowLineAt, COLORS } from './flow.js';
+import { connect, addBox, freshName, nextAnswer, setColor, setDirection, removeBox } from './flowedit.js';
 import { FigureCanvas } from './canvas.js';
 import { goalAt, boxAt, mentionRanges, definitionLines } from './figure-goal.js';
 import { isDrawing, drawingFormat, DrawingFrame, renderDrawingEmbeds, cachedEmbed, forgetEmbed, drawingImageUrl } from './drawing.js';
@@ -1994,13 +1995,24 @@ function markFigureRow() {
 
 function canvasFor(tab) {
   return (tab.canvas ||= new FigureCanvas({
-    onNode: (pre, id) => gotoBox(tab, pre, id),
-    // Clicks beside the boxes keep the keys on the canvas; a box's text is
-    // for editing, so a click on a box goes to the editor (onNode).
+    // A click selects: the cursor goes to the box's text, the keys stay
+    // on the canvas (Esc goes to the text).
+    onNode: (pre, id) => gotoBox(tab, pre, id, false),
     onFigure: (fig) => gotoOffset(tab, lineOffset(tab.editor.value, Number(fig.dataset.line) || 0), undefined, false),
     onSection: (sec) => gotoOffset(tab, lineOffset(tab.editor.value, sec.line), undefined, false),
-    canRename: (pre) => !!pre?.flowNodes,
+    canRename: (pre) => flowEditable(pre),
     onRename: (pre, node, text) => renameBox(tab, pre, node, text),
+    // Drawing (public/flowedit.js writes the text).
+    canEdit: (pre) => flowEditable(pre),
+    onAddAfter: (pre, id) => addBoxAfter(tab, pre, id),
+    onAddBox: (pre) => editFlow(tab, pre, (src) => { const name = freshName(src); return { text: addBox(src, name), select: name, rename: true }; }),
+    onConnect: (pre, from, to) => connectBoxes(tab, pre, from, to),
+    onDelete: (pre, id) => deleteBox(tab, pre, id),
+    onColorMenu: (pre, id, at) => colorMenu(tab, pre, id, at),
+    onBoxMenu: (e, pre, id) => boxMenu(tab, e, pre, id),
+    onCardMenu: (e, pre) => cardMenu(tab, e, pre),
+    onNewFlow: () => newFlowHere(tab),
+    onUndo: (redo) => { if (redo) tab.editor.redo(); else tab.editor.undo(); tab.canvas?.stage.focus({ preventScroll: true }); },
     // The box under the pointer: its mentions in the text, marked.
     onHover: (pre, id) => {
       const node = pre?.flowNodes?.find((n) => n.id === id);
@@ -2086,6 +2098,18 @@ function canvasExport(run) {
   try { run(canvasPicture(tab)); } catch (e) { toast(e.message, 'error'); }
 }
 
+function moveFlowAtCursor(tab = fileTab()) {
+  if (!tab?.editor || !isNote(tab.path)) { toast('Open a note first.', 'error'); return; }
+  if (!tab.canvas?.el.isConnected) { toast(withKey('This works in the Canvas view', 'cycle-mode')); return; }
+  const goal = canvasGoal(tab);
+  const v = tab.editor.value;
+  const cur = v.slice(0, tab.editor.selectionStart).split('\n').length - 1;
+  const pre = goal?.fig;
+  const lines = pre?.dataset.source?.replace(/\n$/, '').split('\n').length ?? 0;
+  if (!flowEditable(pre) || cur < Number(pre.dataset.line) || cur > Number(pre.dataset.line) + lines + 1) { toast('Put the cursor in a ```flow block first.'); return; }
+  moveFlowOut(tab, pre);
+}
+
 function presentFlows() {
   const tab = fileTab();
   if (!tab?.canvas?.el.isConnected) { toast(withKey('Presenting works in the Canvas view', 'cycle-mode')); return; }
@@ -2111,6 +2135,7 @@ function renderCanvas(tab) {
   doc.innerHTML = renderMarkdown(tab.content, { image: (url) => localImage(url, tab.path), embed: (target, label) => fileEmbed(target, label, tab.path) });
   let sec = { title: stem(tab.path), line: 0, figures: [] };
   const sections = [sec];
+  const waiting = new Set();
   for (const el of [...doc.children]) {
     if (el.matches('pre.frontmatter')) continue;
     if (/^H[1-6]$/.test(el.tagName)) {
@@ -2121,7 +2146,30 @@ function renderCanvas(tab) {
       const fig = el.tagName === 'P' ? el.firstElementChild : el;
       fig.dataset.line ??= el.dataset.line;
       sec.figures.push(fig);
+    } else if (el.tagName === 'P' && el.children.length === 1 && el.firstElementChild.matches('.note-embed') && el.textContent.trim() === el.firstElementChild.textContent.trim()) {
+      // ![[Note]] on its own line: the pictures in that note (a flow moved
+      // out to a note of its own), shown here as they are there.
+      const embed = el.firstElementChild;
+      const path = embed.dataset.path;
+      const src = S.tabs.find((t) => t.kind === 'file' && t.path === path && t.content != null)?.content ?? noteSources.get(path);
+      if (src == null) { waiting.add(path); continue; }
+      const part = linkSection(src, splitLink(embed.dataset.target).heading);
+      if (!part) continue;
+      const inner = h('div', {});
+      noteEmbedDepth++;
+      try { inner.innerHTML = renderMarkdown(part.text, { image: (url) => localImage(url, path), embed: () => null }); } finally { noteEmbedDepth--; }
+      for (const fig of inner.querySelectorAll('pre[data-lang="flow" i], pre[data-lang="mermaid" i]')) {
+        fig.dataset.line = el.dataset.line;
+        fig.dataset.from = path;
+        fig.title = `From ${path}`;
+        sec.figures.push(fig);
+      }
     }
+  }
+  if (waiting.size) {
+    Promise.all([...waiting].map((path) => api('GET', `/api/file?path=${encodeURIComponent(path)}`)
+      .then((f) => noteSources.set(path, f.content.replace(/\r\n/g, '\n')), () => noteSources.set(path, ''))))
+      .then(() => { if (tab.canvas?.el.isConnected) renderCanvas(tab); });
   }
   const seen = new Map();
   for (const s of sections) { const n = (seen.get(s.title) || 0) + 1; seen.set(s.title, n); s.key = `${s.title}#${n}`; }
@@ -2136,7 +2184,7 @@ function renderCanvas(tab) {
 // The pictures' part of a figure, as public/figure-goal.js reads it.
 const figInfo = (fig) => ({
   line: Number(fig.dataset.line) || 0,
-  source: fig.matches('pre[data-lang]') ? (fig.dataset.source ?? fig.textContent) : null,
+  source: fig.matches('pre[data-lang]') && !fig.dataset.from ? (fig.dataset.source ?? fig.textContent) : null,
   flowNodes: fig.flowNodes,
   diagramNodes: fig.diagramNodes,
 });
@@ -2158,6 +2206,8 @@ function gotoOffset(tab, start, end = start, focus = true) {
 // A box on the canvas → its text in the note, selected.
 function gotoBox(tab, pre, id, focus = true) {
   const v = tab.editor.value;
+  // A flow shown from another note (![[…]]): its line here.
+  if (pre.dataset.from) { gotoOffset(tab, lineOffset(v, Number(pre.dataset.line) || 0), undefined, focus); return; }
   const base = Number(pre.dataset.line) + 1;
   const spot = pre.flowNodes?.find((n) => n.id === id)?.spots[0];
   if (spot) { const o = lineOffset(v, base + spot.line); gotoOffset(tab, o + spot.start, o + spot.end, focus); return; }
@@ -2181,7 +2231,11 @@ function renameBox(tab, pre, node, text) {
   }
   const first = node.spots.reduce((a, b) => (a.line < b.line || (a.line === b.line && a.start < b.start) ? a : b));
   const caret = lineOffset(v, base + first.line) + first.start + text.length;
+  tab.editor.closeStep();
   tab.editor.replace(start, end, out.join('\n'), caret);
+  tab.editor.closeStep();
+  // The box stays selected on the canvas, under its new name.
+  if (tab.canvas?.el.isConnected) { tab.canvas.selectSoon(pre.dataset.line, text); tab.canvas.stage.focus({ preventScroll: true }); }
   renderStatus();
   // Other pictures may hold the same box, and the text may name it: offer to
   // keep them in step.
@@ -2191,6 +2245,208 @@ function renameBox(tab, pre, node, text) {
   if (!boxes && !said) return;
   const parts = [boxes && `${boxes} other ${boxes === 1 ? 'box' : 'boxes'}`, said && `${said} ${said === 1 ? 'place' : 'places'} in the text`].filter(Boolean);
   toast(`“${node.text}” also appears in ${parts.join(' and ')}.`, '', { label: 'Rename everywhere', run: () => renameEverywhere(tab, node.text, text) });
+}
+
+// ---- drawing on a ```flow picture: each change written in its block
+// (public/flowedit.js), as one undo step; the canvas then selects the box
+// the change was about.
+
+// A ```flow picture of this note (not one shown from another).
+const flowEditable = (pre) => !!pre?.flowNodes && pre.dataset.line != null && !pre.dataset.from;
+
+function cantEdit(pre) {
+  const from = pre?.dataset.from;
+  if (from) toast(`This flow is in “${stem(from)}”: draw on it there.`, '', { label: `Open ${stem(from)}`, run: () => openFile(from) });
+  else toast('Drawing works on ```flow pictures; a ```mermaid one changes in its text.');
+}
+
+// change(src) → { text, select?, rename? } or null (nothing to do).
+function editFlow(tab, pre, change) {
+  if (!flowEditable(pre)) { cantEdit(pre); return false; }
+  const v = tab.editor.value;
+  const src = pre.dataset.source.replace(/\n$/, '');
+  const start = lineOffset(v, Number(pre.dataset.line) + 1);
+  const end = start + src.length;
+  if (v.slice(start, end) !== src) { toast('The note changed — try again.', 'error'); return false; }
+  let r;
+  try { r = change(src); } catch (e) { toast(e.message, 'error'); return false; }
+  if (!r || r.text === src) return false;
+  // The cursor on the box selected; else where it was.
+  let caret = tab.editor.selectionStart;
+  if (caret > end) caret += r.text.length - src.length;
+  else if (caret > start + r.text.length) caret = start + r.text.length;
+  const spot = r.select && parseFlow(r.text).nodes.find((n) => n.text === r.select)?.spots.at(-1);
+  if (spot) caret = start + lineOffset(r.text, spot.line) + spot.start;
+  tab.editor.closeStep();
+  tab.editor.replace(start, end, r.text, caret);
+  tab.editor.closeStep();
+  if (r.select) tab.canvas?.selectSoon(pre.dataset.line, r.select, !!r.rename);
+  if (tab.canvas?.el.isConnected) tab.canvas.stage.focus({ preventScroll: true });
+  renderStatus();
+  bigFlowHint(tab, pre.dataset.line, r.text);
+  return true;
+}
+
+const nodeText = (pre, id) => pre.flowNodes?.find((n) => n.id === id)?.text;
+
+function addBoxAfter(tab, pre, id) {
+  const from = nodeText(pre, id);
+  if (from == null) return;
+  editFlow(tab, pre, (src) => { const name = freshName(src); return { text: connect(src, from, name, nextAnswer(src, from)), select: name, rename: true }; });
+}
+
+function connectBoxes(tab, pre, a, b) {
+  const from = nodeText(pre, a);
+  const to = nodeText(pre, b);
+  if (from == null || to == null) return;
+  const done = editFlow(tab, pre, (src) => ({ text: connect(src, from, to, nextAnswer(src, from)), select: to }));
+  if (!done && flowEditable(pre)) toast(`“${from}” goes to “${to}” already.`);
+}
+
+function deleteBox(tab, pre, id) {
+  const name = nodeText(pre, id);
+  if (name == null) return;
+  if (editFlow(tab, pre, (src) => ({ text: removeBox(src, name) }))) toast(`Deleted “${name}”.`, '', { label: 'Undo', run: () => tab.editor.undo() });
+}
+
+const COLOR_ITEMS = Object.keys(COLORS);
+const colorLabel = (c) => c[0].toUpperCase() + c.slice(1);
+function colorMenu(tab, pre, id, at) {
+  const node = pre.flowNodes?.find((n) => n.id === id);
+  if (!node) return;
+  if (!flowEditable(pre)) { cantEdit(pre); return; }
+  const r = tab.canvas?.stage.getBoundingClientRect();
+  const pos = at || { x: r ? r.left + r.width / 2 : 200, y: r ? r.top + 60 : 200 };
+  const paint = (c) => editFlow(tab, pre, (src) => ({ text: setColor(src, [node.text], c), select: node.text }));
+  contextMenu({ preventDefault() {}, stopPropagation() {}, clientX: pos.x, clientY: pos.y }, [
+    ...COLOR_ITEMS.map((c, i) => ({ label: `${colorLabel(c)}${node.color === c ? ' ✓' : ''}`, swatch: COLORS[c], key: String(i + 1), hotkey: String(i + 1), run: () => paint(c) })),
+    '-',
+    { label: `No colour${node.color ? '' : ' ✓'}`, swatch: null, key: '0', hotkey: '0', run: () => paint(null) },
+  ]);
+}
+
+function boxMenu(tab, e, pre, id) {
+  const name = nodeText(pre, id);
+  if (!flowEditable(pre)) {
+    const from = pre.dataset.from;
+    contextMenu(e, [from ? { label: `Open ${stem(from)} to draw on it`, run: () => openFile(from) } : null]);
+    return;
+  }
+  contextMenu(e, [
+    { label: 'Rename', key: 'Enter', run: () => tab.canvas.renameBox({ pre, id }) },
+    { label: 'Add a box after it', key: 'Tab', run: () => addBoxAfter(tab, pre, id) },
+    { label: 'Colour…', key: 'C', run: () => colorMenu(tab, pre, id, { x: e.clientX, y: e.clientY }) },
+    { label: 'Select its text in the note', run: () => gotoBox(tab, pre, id) },
+    '-',
+    { label: `Delete “${name}”`, key: '⌫', danger: true, run: () => deleteBox(tab, pre, id) },
+  ]);
+}
+
+const FLOW_WAYS = { TD: 'down', LR: 'right', RL: 'left', BT: 'up' };
+function cardMenu(tab, e, pre) {
+  const img = pre.querySelector(':scope > img');
+  const from = pre.dataset.from;
+  const flow = flowEditable(pre);
+  const way = FLOW_WAYS[pre.flowDirection] || 'down';
+  contextMenu(e, [
+    flow ? { label: 'New box', key: 'N', run: () => editFlow(tab, pre, (src) => { const name = freshName(src); return { text: addBox(src, name), select: name, rename: true }; }) } : null,
+    ...(flow ? ['down', 'right', 'left', 'up'].map((d) => ({ label: `Runs ${d}${d === way ? ' ✓' : ''}`, run: () => editFlow(tab, pre, (src) => ({ text: setDirection(src, d) })) })) : []),
+    flow ? { label: 'Move to a note of its own…', run: () => moveFlowOut(tab, pre) } : null,
+    from ? { label: `Open ${stem(from)}`, run: () => openFile(from) } : null,
+    flow || from ? '-' : null,
+    ...(img ? pictureItems(() => diagramPicture(img, from || tab.path, `${stem(from || tab.path)}-diagram`)) : []),
+  ]);
+}
+
+// Suggested once a picture: a flow this long reads better in a note of its own.
+const BIG_FLOW = 30;
+function bigFlowHint(tab, line, text) {
+  if (text.split('\n').length < BIG_FLOW) return;
+  tab.flowHinted ||= new Set();
+  if (tab.flowHinted.has(line)) return;
+  tab.flowHinted.add(line);
+  toast('This flow is getting long. It can live in a note of its own, shown here as ![[…]].', '', {
+    label: 'Move it…',
+    run: () => { const pre = tab.canvasSections?.flatMap((s) => s.figures).find((f) => f.dataset.line === line && flowEditable(f)); if (pre) moveFlowOut(tab, pre); },
+  });
+}
+
+// A ```flow block to its own note (in the same folder): the block becomes
+// ![[Name]], and the canvas still shows it here.
+async function moveFlowOut(tab, pre) {
+  if (!flowEditable(pre)) { cantEdit(pre); return; }
+  const line = Number(pre.dataset.line);
+  const src = pre.dataset.source.replace(/\n$/, '');
+  const where = () => {
+    const v = tab.editor.value;
+    const start = lineOffset(v, line);
+    const body = lineOffset(v, line + 1);
+    const closeAt = lineOffset(v, line + 1 + src.split('\n').length);
+    const nl = v.indexOf('\n', closeAt);
+    const end = nl < 0 ? v.length : nl;
+    const ok = v.slice(body, body + src.length) === src && /^\s*(`{3,}|~{3,})\s*$/.test(v.slice(closeAt, end));
+    return ok ? { v, start, end, fence: v.slice(start, body - 1).trim(), close: v.slice(closeAt, end).trim() } : null;
+  };
+  if (!where()) { toast('The note changed — try again.', 'error'); return; }
+  const section = tab.canvasSections?.find((s) => s.figures.includes(pre));
+  const suggested = section && section.line > 0 ? section.title : pre.flowNodes[0]?.text || 'Flow';
+  const dir = dirname(tab.path);
+  const typed = await askText({ title: 'Move this flow to a note of its own', label: `It goes to a new note${dir ? ` in ${dir}/` : ''}; here it becomes ![[name]] and shows as before.`, value: suggested.replace(/[\\/:*?"<>|#^[\]]/g, ' ').trim(), okLabel: 'Move' });
+  const name = typed?.trim().replace(/\.md$/i, '');
+  if (!name) return;
+  if (/[\\/#^[\]|]/.test(name)) { toast('A name without / \\ # ^ [ ] |, please.', 'error'); return; }
+  const path = `${dir ? `${dir}/` : ''}${name}.md`;
+  if (S.files.some((f) => f.path.toLowerCase() === path.toLowerCase())) { toast(`${path} is there already.`, 'error'); return; }
+  const w = where();
+  if (!w) { toast('The note changed — try again.', 'error'); return; }
+  const content = `${w.fence}\n${src}\n${w.close}\n`;
+  try { await api('POST', '/api/file', { path, content }); } catch (e) { toast(e.message, 'error'); return; }
+  noteSources.set(path, content);
+  // Known to the tree first, so the link finds it when the note is drawn again.
+  await loadTree();
+  const now = where();
+  if (!now) { toast(`${path} was made, but the note changed meanwhile: the flow stays here too.`, 'error'); return; }
+  tab.editor.closeStep();
+  tab.editor.replace(now.start, now.end, `![[${name}]]`, now.start);
+  tab.editor.closeStep();
+  toast(`Moved to ${path}.`, '', { label: 'Open it', run: () => openFile(path) });
+}
+
+// A new ```flow picture below the cursor's line (after the block the cursor
+// is in), with one box to name.
+function newFlowHere(tab = fileTab()) {
+  if (!tab?.editor || !isNote(tab.path)) { toast('Open a note to add a flow.', 'error'); return; }
+  const v = tab.editor.value;
+  const lines = v.split('\n');
+  let line = v.slice(0, tab.editor.selectionStart).split('\n').length - 1;
+  // Out of a fenced block (or front matter) the cursor is in.
+  let fence = null;
+  for (let i = 0; i < lines.length; i++) {
+    const m = /^ {0,3}(`{3,}|~{3,})/.exec(lines[i]);
+    if (!fence && m) fence = { mark: m[1], at: i };
+    else if (fence && m && lines[i].trim().startsWith(fence.mark) && !lines[i].trim().slice(fence.mark.length).trim()) {
+      if (line >= fence.at && line <= i) { line = i; break; }
+      fence = null;
+    }
+  }
+  const lineStart = lineOffset(v, line);
+  const nl = v.indexOf('\n', lineStart);
+  const pos = nl < 0 ? v.length : nl;
+  const blank = !lines[line]?.trim();
+  const at = blank ? lineStart : pos;
+  const before = v.slice(0, at);
+  const after = v.slice(blank ? pos : at);
+  const lead = !before || before.endsWith('\n\n') || (blank && before.endsWith('\n') && !before.trim()) ? '' : before.endsWith('\n') ? '\n' : '\n\n';
+  const tail = !after ? '\n' : after.startsWith('\n\n') ? '' : after.startsWith('\n') ? '\n' : '\n\n';
+  const block = '```flow\nStart\n```';
+  const fenceLine = (before + lead).split('\n').length - 1;
+  tab.editor.closeStep();
+  tab.editor.replace(at, blank ? pos : at, lead + block + tail, at + lead.length + 8);
+  tab.editor.closeStep();
+  if (tab.canvas?.el.isConnected) {
+    tab.canvas.selectSoon(fenceLine, 'Start', true);
+    tab.canvas.stage.focus({ preventScroll: true });
+  } else toast(withKey('A flow: draw on it in the Canvas view', 'cycle-mode'));
 }
 
 // Where ```flow blocks write a box named `name`: [[start, end]] offsets.
@@ -2611,6 +2867,8 @@ const COMMANDS = [
   ['View: preview only', () => setMode('preview')],
   ['View: editor and canvas (pictures follow the cursor)', () => setMode('canvas')],
   ['Canvas: present the flows (full screen, one box at a time)', () => presentFlows()],
+  ['Flow: new flow to draw on', () => newFlowHere()],
+  ['Flow: move the flow at the cursor to a note of its own', () => moveFlowAtCursor()],
   ['Canvas: copy the whole canvas as an image', () => canvasExport((p) => copyPicture(p))],
   ['Canvas: save the whole canvas as PNG', () => canvasExport((p) => savePicture(p))],
   ['Canvas: follow the flow to the next box', () => walkFlow(false), { key: 'flow-next' }],
@@ -3111,14 +3369,31 @@ function contextMenu(e, items) {
   document.querySelector('.ctx-menu')?.remove();
   const menu = h('div', { class: 'ctx-menu', role: 'menu' }, items.filter(Boolean).map((it) => (it === '-'
     ? h('div', { class: 'ctx-sep' })
-    : h('button', { class: `ctx-item${it.danger ? ' danger' : ''}`, onclick: () => { menu.remove(); it.run(); } }, h('span', {}, it.label), it.key ? h('span', { class: 'ctx-key' }, it.key) : null))));
+    : h('button', { class: `ctx-item${it.danger ? ' danger' : ''}`, onclick: () => { menu.remove(); it.run(); } }, h('span', {}, 'swatch' in it ? swatch(it.swatch) : null, it.label), it.key ? h('span', { class: 'ctx-key' }, it.key) : null))));
   document.body.append(menu);
   const r = menu.getBoundingClientRect();
   menu.style.left = `${Math.min(e.clientX, innerWidth - r.width - 6)}px`;
   menu.style.top = `${Math.min(e.clientY, innerHeight - r.height - 6)}px`;
   const close = (ev) => { if (!menu.contains(ev.target)) { menu.remove(); document.removeEventListener('mousedown', close, true); } };
   setTimeout(() => document.addEventListener('mousedown', close, true), 0);
-  document.addEventListener('keydown', function esc(ev) { if (ev.key === 'Escape') { menu.remove(); document.removeEventListener('keydown', esc, true); } }, true);
+  // Esc closes it; an item's `hotkey` runs it.
+  document.addEventListener('keydown', function esc(ev) {
+    if (!menu.isConnected) { document.removeEventListener('keydown', esc, true); return; }
+    const it = items.find((x) => x && x !== '-' && x.hotkey === ev.key);
+    if (ev.key !== 'Escape' && !it) return;
+    ev.preventDefault();
+    ev.stopPropagation();
+    menu.remove();
+    document.removeEventListener('keydown', esc, true);
+    it?.run();
+  }, true);
+}
+
+// A colour's dot in a menu ([fill, outline], or null: no colour).
+function swatch(c) {
+  const dot = h('span', { class: `ctx-swatch${c ? '' : ' none'}` });
+  if (c) { dot.style.background = c[0]; dot.style.borderColor = c[1]; }
+  return dot;
 }
 
 function fileMenu(e, f) {
@@ -6054,9 +6329,10 @@ const ACTIONS = {
   jump: jumpInNote,
   'paste-history': pasteFromHistory,
   buffers: pickTab,
-  // From the Edit menu: the editor's own history when a note has the focus.
-  undo: () => { const t = S.tabs.find((x) => x.editor?.ta === document.activeElement); if (t) t.editor.undo(); else document.execCommand('undo'); },
-  redo: () => { const t = S.tabs.find((x) => x.editor?.ta === document.activeElement); if (t) t.editor.redo(); else document.execCommand('redo'); },
+  // From the Edit menu: the editor's own history when a note has the focus
+  // (or its canvas, where drawing changed it).
+  undo: () => { const t = S.tabs.find((x) => x.editor?.ta === document.activeElement || (x.canvas && x.canvas.stage === document.activeElement)); if (t) t.editor.undo(); else document.execCommand('undo'); },
+  redo: () => { const t = S.tabs.find((x) => x.editor?.ta === document.activeElement || (x.canvas && x.canvas.stage === document.activeElement)); if (t) t.editor.redo(); else document.execCommand('redo'); },
   'macro-record': toggleRecording,
   'macro-play': () => (macros.recording ? stopRecording() : playMacro(1)),
   'search-next': () => stepSearch(1),

@@ -18,6 +18,15 @@
 // dot; the lines show for the boxes of the cursor's line and the box under
 // the pointer, or all of them ("Links"). Clicking a line goes to its other end.
 //
+// Drawing: a ```flow picture written in this note is drawn on as well, and
+// each change is written in its text (the app does that, public/flowedit.js).
+// A box under the pointer shows a + on the side the picture runs to: a
+// click adds a box after it, a drag draws an arrow to another box (or, let
+// go on nothing, to a new one). A click selects a box (the cursor goes to
+// its text, the keys stay here): Tab adds a box after it, Enter renames,
+// C colours, Delete takes it out; N or a double-click on the picture adds a
+// box on its own, and a right-click lists it all.
+//
 // Pictures are the preview's own elements, drawn by public/diagrams.js; each
 // diagram reports where its boxes are ('diagram-shown'), and a transparent
 // layer of hit boxes goes over it.
@@ -70,7 +79,10 @@ export class FigureCanvas {
   // onRename(pre, node, text) · onHover(pre, id) (null, null when it leaves) ·
   // onEscape() · here() → the ```flow box at the cursor { pre, id } ·
   // onStep(pre, id): put the cursor on a box, keeping the focus here ·
-  // tour() → the steps to present (see present)
+  // tour() → the steps to present (see present) ·
+  // drawing: canEdit(pre) · onAddAfter(pre, id) · onAddBox(pre) ·
+  // onConnect(pre, from, to) · onDelete(pre, id) · onColorMenu(pre, id, at) ·
+  // onBoxMenu(e, pre, id) · onCardMenu(e, pre) · onNewFlow() · onUndo(redo)
   constructor(handlers) {
     this.h = handlers;
     this.k = 1; this.x = 0; this.y = 0;
@@ -84,6 +96,8 @@ export class FigureCanvas {
     this.links = null; // [[{ pre, id }, { pre, id }]]
     this.hover = null; // the box under the pointer: { pre, id }
     this.pin = null; // the box kept still while the pictures redraw (pinBox)
+    this.pending = null; // a box to select (and rename) once its picture is drawn again
+    this.keep = null; // the box selected before the pictures were made again
     // Following the flow with the keys: the box walked to, the steps taken
     // (to go back), and the ways offered at a branch.
     this.walkAt = null; // { pre, id }
@@ -113,6 +127,11 @@ export class FigureCanvas {
     this.presentButton = button('▶', 'Present from the box you are on, one box at a time (P) · Home: from the start', () => this.present());
     this.caption = el('div', 'canvas-caption');
     this.caption.hidden = true;
+    this.wire = document.createElementNS(SVG, 'svg');
+    this.wire.setAttribute('class', 'canvas-wire');
+    this.wire.hidden = true;
+    this.wireLine = document.createElementNS(SVG, 'path');
+    this.wire.append(this.wireLine);
     this.empty = el('div', 'canvas-empty');
     this.note = el('div', 'canvas-note');
     this.note.hidden = true;
@@ -126,6 +145,8 @@ export class FigureCanvas {
         this.zoomLabel,
         button('+', 'Zoom in (+)', () => this.zoomBy(1.25))),
       this.stage, this.empty, this.note, this.caption);
+    this.stage.append(this.wire);
+    if (this.h.onNewFlow) this.el.querySelector('.canvas-bar').prepend(button('+ Flow', 'Add a ```flow picture to the note, below the cursor, and draw on it', () => this.h.onNewFlow()));
     this.apply();
     this.bind();
   }
@@ -147,11 +168,58 @@ export class FigureCanvas {
     }));
     this.links = null;
     this.hover = null;
+    // The box selected stays so when its picture comes again.
+    const sel = this.walkAt && !this.choice ? this.whereIs(this.walkAt) : null;
+    if (sel) this.keep = { ...sel, until: performance.now() + 5000 };
     this.endWalk();
     this.endPresent();
     this.whenLoaded(this.world, () => { this.holdPin(); this.drawLinksSoon(); });
     this.empty.hidden = sections.length > 0;
-    this.empty.textContent = sections.length ? '' : 'No pictures yet. Write a ```flow or ```mermaid block and it shows up here.';
+    this.empty.replaceChildren();
+    if (!sections.length) {
+      this.empty.append(el('div', null, 'No pictures yet. Write a ```flow or ```mermaid block and it shows up here — or draw one:'));
+      if (this.h.onNewFlow) {
+        const b = el('button', 'btn primary', 'New flow');
+        b.type = 'button';
+        b.onclick = () => this.h.onNewFlow();
+        this.empty.append(b);
+      }
+    }
+  }
+
+  // A box by what outlasts its elements: the picture's line in the note and
+  // the box's text.
+  whereIs(b) {
+    const name = this.textOf(b);
+    return name ? { line: b.pre.dataset.line, name } : null;
+  }
+
+  // Once the picture at `line` is drawn again, select its box `name` (and
+  // open its name for typing).
+  selectSoon(line, name, rename = false) {
+    this.pending = { line: String(line), name, rename, until: performance.now() + 5000 };
+  }
+
+  // A picture came: the box to select in it, if any.
+  takeSelection(pre) {
+    for (const want of [this.pending, this.keep]) {
+      if (!want || want.line !== pre.dataset.line) continue;
+      if (performance.now() > want.until) { if (want === this.pending) this.pending = null; else this.keep = null; continue; }
+      const n = pre.flowNodes?.find((x) => x.text === want.name);
+      if (!n) continue;
+      if (want === this.pending) this.pending = null;
+      this.keep = null;
+      this.walkAt = { pre, id: n.id };
+      this.trail = [];
+      this.mark();
+      if (want.rename) {
+        this.whenLoaded(pre, () => setTimeout(() => {
+          const b = this.hit(pre, n.id);
+          if (b?.isConnected) this.rename(pre, b);
+        }, Math.max(0, this.animEnd - performance.now()) + 20));
+      }
+      return;
+    }
   }
 
   cardOf(fig) { return fig?.closest('.canvas-card') || null; }
@@ -574,6 +642,8 @@ export class FigureCanvas {
 
   go(to, from = null) {
     this.clearChoice();
+    this.pending = null;
+    this.keep = null;
     if (from) this.trail.push({ from, to });
     if (this.trail.length > 200) this.trail.shift();
     this.walkAt = to;
@@ -708,6 +778,8 @@ export class FigureCanvas {
     const nodes = pre.diagramNodes || [];
     if (!nodes.length) return;
     const layer = el('div', 'node-layer');
+    const edit = !!pre.flowNodes && !!this.h.canEdit?.(pre);
+    const side = { LR: 'right', RL: 'left', BT: 'up' }[pre.flowDirection] || 'down';
     for (const n of nodes) {
       const b = el('div', 'node-hit');
       b.dataset.id = n.id;
@@ -719,6 +791,11 @@ export class FigureCanvas {
       // Round and diamond boxes: marks and dimming follow the outline.
       const shape = pre.flowNodes?.find((f) => f.id === n.id)?.shape;
       if (shape) b.classList.add(`shape-${shape}`);
+      if (edit) {
+        const plus = el('div', `box-handle to-${side}`, '+');
+        plus.title = 'Click: a new box after this one · Drag: an arrow to another box';
+        b.append(plus);
+      }
       layer.append(b);
     }
     pre.append(layer);
@@ -728,7 +805,10 @@ export class FigureCanvas {
 
   apply() {
     this.world.style.transform = `translate(${this.x}px, ${this.y}px) scale(${this.k})`;
+    // The + handles keep their size on screen.
+    this.world.style.setProperty('--inv', String(1 / this.k));
     this.zoomLabel.textContent = `${Math.round(this.k * 100)}%`;
+    this.editing?.place?.();
   }
 
   // Run once the pictures inside `root` have their sizes.
@@ -816,6 +896,7 @@ export class FigureCanvas {
       this.whenLoaded(e.target, () => this.holdPin());
       this.links = null;
       this.mark();
+      this.takeSelection(e.target);
       // A picture being looked at changed size: keep its target in view.
       if (this.view === 'picture' && this.goal?.fig === e.target && !this.fresh) {
         if (this.typing()) this.settleSoon();
@@ -859,9 +940,13 @@ export class FigureCanvas {
     let press = null;
     stage.addEventListener('pointerdown', (e) => {
       if (e.button !== 0 || e.target.closest('input, button')) return;
+      this.dragged = false;
+      const plus = e.target.closest('.box-handle');
+      if (plus) { this.startWire(e, plus); return; }
       press = { px: e.clientX, py: e.clientY, moved: false, id: e.pointerId };
     });
     stage.addEventListener('pointermove', (e) => {
+      if (this.wiring) { this.moveWire(e); return; }
       if (!press) return;
       const dx = e.clientX - press.px;
       const dy = e.clientY - press.py;
@@ -881,7 +966,8 @@ export class FigureCanvas {
       this.fresh = false;
       this.apply();
     });
-    const release = () => {
+    const release = (e) => {
+      if (this.wiring) { this.endWire(e.type === 'pointerup'); return; }
       this.dragged = !!press?.moved;
       press = null;
       stage.classList.remove('panning');
@@ -891,16 +977,32 @@ export class FigureCanvas {
     // The second click of a double-click is not another pick: the camera may
     // have moved since the first, so it could land on something else.
     stage.addEventListener('click', (e) => {
-      if (this.dragged || e.detail > 1 || e.target.closest('input, button')) return;
+      if (this.dragged || e.detail > 1 || e.target.closest('input, button, .box-handle')) return;
       this.click(e.target);
     });
     stage.addEventListener('dblclick', (e) => {
       // The box of the first click, even if the camera moved since.
       const n = this.clicked;
       if (this.presenting) return;
+      if (e.target.closest('.box-handle')) return;
       if (n && performance.now() - n.at < 800 && this.h.canRename?.(n.pre)) {
         setTimeout(() => { const b = this.hit(n.pre, n.id); if (b) this.rename(n.pre, b); }, Math.max(0, this.animEnd - performance.now()) + 20);
-      } else if (!e.target.closest('.canvas-section')) this.toggleAll();
+        return;
+      }
+      if (!e.target.closest('.canvas-section')) { this.toggleAll(); return; }
+      // Beside the boxes of a picture you can draw on: a new box.
+      const fig = this.figureOf(e.target);
+      if (fig?.flowNodes && !e.target.closest('.node-hit') && this.h.canEdit?.(fig)) this.h.onAddBox?.(fig);
+    });
+    stage.addEventListener('contextmenu', (e) => {
+      if (this.presenting || e.target.closest('input')) return;
+      const fig = this.figureOf(e.target);
+      if (!fig) return;
+      const b = e.target.closest('.node-hit');
+      if (b && fig.flowNodes) {
+        this.select(fig, b.dataset.id);
+        this.h.onBoxMenu?.(e, fig, b.dataset.id);
+      } else this.h.onCardMenu?.(e, fig);
     });
     // Leaving full screen (Esc there is the browser's) ends the presentation.
     document.addEventListener('fullscreenchange', () => {
@@ -909,6 +1011,14 @@ export class FigureCanvas {
       else setTimeout(() => this.showStep(this.presenting?.i ?? 0, true), 50); // the view grew
     });
     stage.addEventListener('keydown', (e) => {
+      if (this.wiring && e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); this.endWire(false); return; }
+      // ⌘Z / ⌘⇧Z (Ctrl+Z, Ctrl+Y): the note's undo, drawing included.
+      if ((e.metaKey || e.ctrlKey) && !e.altKey && /^[zy]$/i.test(e.key) && this.h.onUndo) {
+        e.preventDefault();
+        e.stopPropagation();
+        this.h.onUndo(e.key.toLowerCase() === 'y' || e.shiftKey);
+        return;
+      }
       if (e.metaKey || e.ctrlKey || e.altKey || e.target.closest('input')) return;
       const p = this.presenting;
       const show = p && {
@@ -939,6 +1049,7 @@ export class FigureCanvas {
         ArrowRight: () => this.step(), ArrowDown: () => this.step(), ArrowLeft: () => this.step(true), ArrowUp: () => this.step(true), g: () => this.jump(),
       }[e.key];
       if (walk) { e.preventDefault(); e.stopPropagation(); walk(); return; }
+      if (this.editKey(e)) { e.preventDefault(); e.stopPropagation(); return; }
       const act = {
         Escape: () => this.h.onEscape?.(), '+': () => this.zoomBy(1.25), '=': () => this.zoomBy(1.25), '-': () => this.zoomBy(1 / 1.25),
         0: () => this.toggleAll(), l: () => this.toggleLinks(), 1: () => { const r = stage.getBoundingClientRect(); this.zoomAt(1, r.width / 2, r.height / 2); },
@@ -981,6 +1092,12 @@ export class FigureCanvas {
       return;
     }
     const looking = this.view === 'picture' && this.goal?.fig === fig;
+    // A box clicked is the one selected (the keys act on it), over one a
+    // change was going to select.
+    this.endWalk();
+    this.pending = null;
+    this.keep = null;
+    if (b && fig.flowNodes) this.walkAt = { pre: fig, id: b.dataset.id };
     const pick = () => (b ? this.h.onNode?.(fig, b.dataset.id) : this.h.onFigure?.(fig));
     if (looking) {
       this.picking = true;
@@ -994,18 +1111,116 @@ export class FigureCanvas {
     if (this.sig === before) this.refocus(true);
   }
 
+  // ---- drawing
+
+  // The picture an element is in (a figure of a section), or null.
+  figureOf(target) {
+    const card = target.closest?.('.canvas-card');
+    if (!card) return null;
+    for (const s of this.sections) { const f = s.figures.find((x) => card.contains(x)); if (f) return f; }
+    return null;
+  }
+
+  // Select a box: marked here, the cursor on its text, the keys kept here.
+  select(pre, id) {
+    this.endWalk();
+    this.pending = null;
+    this.keep = null;
+    this.walkAt = { pre, id };
+    this.h.onStep?.(pre, id);
+    this.mark();
+  }
+
+  // Keys for the box selected (Tab, Enter/F2, Delete, C) and for a picture
+  // (N). → whether the key was one of them.
+  editKey(e) {
+    const at = this.walkAt;
+    const fig = at?.pre || this.goal?.fig;
+    const need = () => { this.say('Click a box first (or walk to one with the arrow keys).'); };
+    const run = {
+      Tab: () => (at ? this.h.onAddAfter?.(at.pre, at.id) : need()),
+      Enter: () => (at ? this.renameBox(at) : need()),
+      F2: () => (at ? this.renameBox(at) : need()),
+      Delete: () => (at ? this.h.onDelete?.(at.pre, at.id) : need()),
+      Backspace: () => (at ? this.h.onDelete?.(at.pre, at.id) : need()),
+      c: () => {
+        if (!at) { need(); return; }
+        const r = this.hit(at.pre, at.id)?.getBoundingClientRect();
+        this.h.onColorMenu?.(at.pre, at.id, r ? { x: r.left, y: r.bottom + 6 } : null);
+      },
+      n: () => (fig?.flowNodes ? this.h.onAddBox?.(fig) : this.say('Look at a ```flow picture first.')),
+    }[e.key];
+    if (!run || e.shiftKey || (e.key === 'Tab' && !at)) return false;
+    run();
+    return true;
+  }
+
+  renameBox(at) {
+    if (!this.h.canRename?.(at.pre)) return;
+    const b = this.hit(at.pre, at.id);
+    if (b) this.rename(at.pre, b);
+  }
+
+  // Dragging from a box's +: a line follows the pointer; let go on another
+  // box of the picture to draw an arrow to it, on nothing for a new box.
+  startWire(e, plus) {
+    const hit = plus.closest('.node-hit');
+    const pre = hit?.closest('pre');
+    if (!pre) return;
+    e.preventDefault();
+    const s = this.stage.getBoundingClientRect();
+    const r = plus.getBoundingClientRect();
+    this.wiring = { pre, from: hit.dataset.id, x0: r.left + r.width / 2 - s.left, y0: r.top + r.height / 2 - s.top, px: e.clientX, py: e.clientY, moved: false, to: null };
+    try { this.stage.setPointerCapture(e.pointerId); } catch { /* a pointer no longer down */ }
+    this.editing?.remove();
+  }
+
+  moveWire(e) {
+    const w = this.wiring;
+    if (!w.moved && Math.hypot(e.clientX - w.px, e.clientY - w.py) < 4) return;
+    w.moved = true;
+    this.stage.classList.add('wiring');
+    const s = this.stage.getBoundingClientRect();
+    const x = e.clientX - s.left;
+    const y = e.clientY - s.top;
+    this.wire.hidden = false;
+    this.wireLine.setAttribute('d', `M${w.x0},${w.y0} L${x},${y}`);
+    const under = document.elementsFromPoint(e.clientX, e.clientY).find((x) => x.classList?.contains('node-hit'));
+    const to = under && under.closest('pre') === w.pre && under.dataset.id !== w.from ? under : null;
+    if (to !== w.to) { w.to?.classList.remove('wire-to'); to?.classList.add('wire-to'); w.to = to; }
+    w.other = !to && under ? under : null; // a box of another picture
+  }
+
+  endWire(commit) {
+    const w = this.wiring;
+    this.wiring = null;
+    this.wire.hidden = true;
+    this.stage.classList.remove('wiring');
+    w.to?.classList.remove('wire-to');
+    this.dragged = w.moved;
+    if (!commit) return;
+    if (!w.moved || (!w.to && !w.other)) { this.h.onAddAfter?.(w.pre, w.from); return; }
+    if (w.to) { this.h.onConnect?.(w.pre, w.from, w.to.dataset.id); return; }
+    this.say('An arrow joins boxes of one picture. Boxes of the same name in two pictures are linked already.');
+  }
+
   // An input over the box; Enter renames it in the note, Esc or leaving cancels.
   rename(pre, box) {
     this.editing?.remove();
     const node = pre.flowNodes?.find((n) => n.id === box.dataset.id);
     if (!node) return;
-    const s = this.stage.getBoundingClientRect();
-    const r = box.getBoundingClientRect();
     const input = el('input', 'canvas-rename');
     input.value = node.text;
-    input.style.left = `${r.left - s.left}px`;
-    input.style.top = `${r.top - s.top + r.height / 2 - 16}px`;
-    input.style.width = `${Math.max(140, r.width)}px`;
+    // Over the box, wherever the camera goes meanwhile.
+    const place = () => {
+      if (!box.isConnected) return;
+      const s = this.stage.getBoundingClientRect();
+      const r = box.getBoundingClientRect();
+      input.style.left = `${r.left - s.left}px`;
+      input.style.top = `${r.top - s.top + r.height / 2 - 16}px`;
+      input.style.width = `${Math.max(140, r.width)}px`;
+    };
+    place();
     let done = false;
     const finish = (commit, refocus = true) => {
       if (done) return;
@@ -1014,9 +1229,9 @@ export class FigureCanvas {
       if (this.editing === handle) this.editing = null;
       const text = input.value.trim();
       if (commit && text && text !== node.text) this.h.onRename?.(pre, node, text);
-      else if (refocus) this.stage.focus({ preventScroll: true });
+      if (refocus) this.stage.focus({ preventScroll: true });
     };
-    const handle = { remove: () => finish(false, false) };
+    const handle = { remove: () => finish(false, false), place };
     input.addEventListener('keydown', (e) => {
       e.stopPropagation();
       if (e.key === 'Enter' && !e.isComposing) { e.preventDefault(); finish(true); }

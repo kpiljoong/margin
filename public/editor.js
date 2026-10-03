@@ -214,6 +214,8 @@ export class MarkdownEditor {
   undo() { if (this.track) this._trackStep(-1); else this._applyHistory(this.history.undo()); }
   redo() { if (this.track) this._trackStep(1); else this._applyHistory(this.history.redo()); }
   _closeStep() { this.history.close(); if (this.track) this.track.open = false; }
+  // The next change is an undo step of its own (a change made from outside).
+  closeStep() { this._closeStep(); }
   _applyHistory(c) {
     if (!c) return;
     this._clearMulti();

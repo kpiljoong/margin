@@ -273,6 +273,7 @@ function createFile({ path: relPath, content }) {
   if (fs.existsSync(abs)) throw httpError(409, 'A file with that name already exists');
   const title = path.basename(relPath).replace(/\.[^.]+$/, '');
   writeFileAtomic(abs, typeof content === 'string' ? content : `# ${title}\n\n`);
+  treeCache = null; // in the tree at once, not when the watcher tells
   return getFile(relOf(abs));
 }
 

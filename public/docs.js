@@ -104,6 +104,8 @@ const DOCS = {
   'Theme: toggle light / dark': 'The light or the dark side of the theme.',
   'Insert Mermaid diagram…': 'Writes a Mermaid diagram (of the kind you pick) in at the cursor.',
   'Insert flow (simple diagram notation)': 'Writes a flow (boxes and arrows in plain lines) in at the cursor.',
+  'Flow: new flow to draw on': 'Adds a ```flow block below the cursor with one box to name, and selects it on the canvas. Draw on from there: + or Tab for the next box, drag a + to another box for an arrow.',
+  'Flow: move the flow at the cursor to a note of its own': 'Moves the ```flow block at the cursor to a new note beside this one; the block becomes ![[name]] and the canvas still shows the flow here. For flows grown too long for the note.',
   'Canvas: present the flows (full screen, one box at a time)': 'Shows the note’s flows full screen, a box at a time.',
   'Canvas: copy the whole canvas as an image': 'Copies the canvas as a picture.',
   'Canvas: save the whole canvas as PNG': 'Saves the canvas as a PNG file.',

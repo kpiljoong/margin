@@ -18,13 +18,51 @@
 // - `!` at the end marks a step as a problem (drawn in red): `Waiting for approval !`.
 //   It is not part of the name.
 // - `direction: right` (or down, left, up) on its own line; down by default.
+// - `color blue: Auth server, Payment` on its own line colours those steps
+//   (red, orange, yellow, green, teal, blue, purple, gray).
 // - `#` or `//` at the start of a line is a comment.
 
-const ARROWS = { '->': '-->', '-->': '-->', '→': '-->', '..>': '-.->', '<->': '<-->', '--': '---' };
-const ARROW_RE = /(\s*(?:<->|\.\.>|-\([^()]*\)->|-->|->|→|--)\s*)/;
+export const ARROWS = { '->': '-->', '-->': '-->', '→': '-->', '..>': '-.->', '<->': '<-->', '--': '---' };
+export const ARROW_RE = /(\s*(?:<->|\.\.>|-\([^()]*\)->|-->|->|→|--)\s*)/;
 const WRAP = { circle: 2, db: 2, round: 1, box: 1 };
 // Also in Korean (down, right, left, up; and "direction" below).
-const DIRECTIONS = { down: 'TD', right: 'LR', left: 'RL', up: 'BT', '\uC544\uB798': 'TD', '\uC624\uB978\uCABD': 'LR', '\uC67C\uCABD': 'RL', '\uC704': 'BT' };
+export const DIRECTIONS = { down: 'TD', right: 'LR', left: 'RL', up: 'BT', '\uC544\uB798': 'TD', '\uC624\uB978\uCABD': 'LR', '\uC67C\uCABD': 'RL', '\uC704': 'BT' };
+
+// The colours a step can have: fill, outline. The text stays dark on
+// every fill, in a light or dark theme alike. Korean names too.
+export const COLORS = {
+  red: ['#fde2e1', '#e5484d'],
+  orange: ['#fee6d2', '#f76b15'],
+  yellow: ['#fdf1bf', '#c99a06'],
+  green: ['#d9f3e1', '#30a46c'],
+  teal: ['#d3f2ee', '#12a594'],
+  blue: ['#dce8fe', '#3e63dd'],
+  purple: ['#ece3fb', '#8e4ec6'],
+  gray: ['#e8e9ec', '#8b8d98'],
+};
+const COLOR_ALIASES = { grey: 'gray', '\uBE68\uAC15': 'red', '\uC8FC\uD669': 'orange', '\uB178\uB791': 'yellow', '\uCD08\uB85D': 'green', '\uCCAD\uB85D': 'teal', '\uD30C\uB791': 'blue', '\uBCF4\uB77C': 'purple', '\uD68C\uC0C9': 'gray' };
+export const colorKey = (word) => { const w = String(word || '').toLowerCase(); return COLORS[w] ? w : COLOR_ALIASES[w] || null; };
+// "color blue: A, B" ("\uC0C9 \uD30C\uB791: …" too): keyword, colour, names.
+export const COLOR_LINE = /^(color|colour|\uC0C9)\s+([^\s:]+)\s*:\s*(.*)$/i;
+export const DIRECTION_LINE = /^(direction|\uBC29\uD5A5)\s*:\s*(\S+)$/i;
+
+// The steps a colour line names, by the names known: a name may hold a
+// comma, so the longest run of pieces that is a name wins. [names].
+export function colorNames(list, known) {
+  const key = (t) => t.replace(/\s*,\s*/g, ',').replace(/\s+/g, ' ').trim();
+  const byKey = new Map([...known].map((n) => [key(n), n]));
+  const parts = list.split(',');
+  const out = [];
+  for (let i = 0; i < parts.length;) {
+    let j = parts.length;
+    for (; j > i; j--) {
+      const name = byKey.get(key(parseStep(parts.slice(i, j).join(',')).text));
+      if (name) { out.push(name); break; }
+    }
+    i = j > i ? j : i + 1;
+  }
+  return out;
+}
 
 const SHAPES = [
   [/^\(\((.+)\)\)$/, 'circle'],
@@ -36,7 +74,7 @@ const SHAPES = [
 // A trailing "!" (a problem mark): its length, or 0.
 const flagLength = (t) => { const m = /\s*!$/.exec(t); return m && m.index > 0 ? m[0].length : 0; };
 
-function parseStep(raw) {
+export function parseStep(raw) {
   let text = raw.trim().replace(/\s+/g, ' ');
   const flag = flagLength(text) > 0;
   if (flag) text = text.slice(0, text.length - flagLength(text));
@@ -77,6 +115,7 @@ export function parseFlow(src) {
   const groups = []; // { id, title, parent }
   const edges = []; // { from, to, kind, label }
   const notes = []; // { node, note, edge } — edge: the arrow its line drew into it
+  const colors = []; // { color, list } — read once every step is known
   let direction = 'TD';
   const stack = []; // { indent, last, group }
 
@@ -102,8 +141,10 @@ export function parseFlow(src) {
     const parent = stack[stack.length - 1] || null;
     const group = parent?.group ?? null;
 
-    const dir = /^(direction|\uBC29\uD5A5)\s*:\s*(\S+)$/i.exec(body);
+    const dir = DIRECTION_LINE.exec(body);
     if (dir && DIRECTIONS[dir[2].toLowerCase()]) { direction = DIRECTIONS[dir[2].toLowerCase()]; continue; }
+    const paint = COLOR_LINE.exec(body);
+    if (paint && colorKey(paint[2])) { colors.push({ color: colorKey(paint[2]), list: paint[3] }); continue; }
 
     const header = /^([^:]+?)\s*:$/.exec(body);
     if (header && !ARROW_RE.test(header[1])) {
@@ -167,6 +208,8 @@ export function parseFlow(src) {
   }
 
   if (!nodes.size) throw new Error('Nothing to draw yet — write steps like: Start -> Check -> End');
+  // A later line wins.
+  for (const c of colors) for (const name of colorNames(c.list, nodes.keys())) nodes.get(name).color = c.color;
 
   const label = (n) => `"${esc(n.text)}${n.note ? `<br>${esc(n.note)}` : ''}"`;
   const decl = (n) => {
@@ -186,11 +229,17 @@ export function parseFlow(src) {
   };
   emit(null, '  ');
   for (const e of edges) out.push(`  ${e.from.id} ${e.kind}${e.label ? `|${quote(e.label)}|` : ''} ${e.to.id}`);
+  // Colours first, so a problem's red outline wins.
+  for (const [color, [fill, stroke]] of Object.entries(COLORS)) {
+    const ids = [...nodes.values()].filter((n) => n.color === color).map((n) => n.id);
+    if (ids.length) out.push(`  classDef c-${color} fill:${fill},stroke:${stroke},color:#1c2024`, `  class ${ids.join(',')} c-${color}`);
+  }
   const flagged = [...nodes.values()].filter((n) => n.flag).map((n) => n.id);
   if (flagged.length) out.push('  classDef problem stroke:#e5484d,stroke-width:3px', `  class ${flagged.join(',')} problem`);
   return {
     mermaid: out.join('\n'),
-    nodes: [...nodes.values()].map(({ id, text, lines, spots, note, flag, shape }) => ({ id, text, lines, spots, note, flag, shape })),
+    direction,
+    nodes: [...nodes.values()].map(({ id, text, lines, spots, note, flag, shape, color }) => ({ id, text, lines, spots, note, flag, shape, color: color || null })),
     edges: edges.map((e) => ({ from: e.from.id, to: e.to.id, kind: e.kind, label: e.label })),
   };
 }

@@ -362,6 +362,7 @@ Login request -> Auth server -> Success?
   - If what happens on each branch is substantial, writing it as a box like `Yes -> Keep -> Result` is clearer (it becomes a step when presenting and connects to boxes with the same name).
 - A line with only `Name:` is a group containing the indented lines below it.
 - Shapes: `(Rounded)`, `((Circle))`, `[(DB)]`, a trailing `?` makes a diamond. `direction: right` (down, left, up) sets direction; `#` and `//` are comments.
+- **Colours**: `color blue: Auth server, Payment` on a line of its own colours those boxes (red, orange, yellow, green, teal, blue, purple, gray). The canvas writes these lines for you (see "Drawing on a flow" below).
 - **Problem marker**: A `!` at the end of a step (`Waiting for approval !`, `[Deploy]!`) draws it with a red border. The `!` isn't part of the name, so it's the same box as `Waiting for approval`.
 - **Name autocomplete**: When you start writing a step inside a flow block, names already in this note's flows are suggested (`Wait` → `Waiting for approval`, `Waitingforapproval` → `Waiting for approval`). **Tab** inserts; Enter closes the suggestion and just starts a new line. Since the same text is the same box, using it when repeating names keeps the drawing connected.
 - **Similar name warning**: Names differing only in case, spacing, `-`, or `_` (`Auth server`/`Authserver`) are drawn as different boxes, so the canvas marks them with a yellow dotted border, and hovering shows the other spelling.
@@ -387,7 +388,7 @@ Login request -> Auth server -> Success?
 - **Follows the cursor**: Inside a figure block, it goes to that figure and highlights the boxes that line produced (flow, mermaid). On a text line, it goes to the figure with a flow box whose name the line mentions, otherwise to the section's next figure. In a section without figures (such as intro text above subheadings), it looks at the nearest section with figures after it, or before it if none. English names are matched by whole words, and a Korean name still matches with a particle attached. While you stay on the same target, the camera doesn't move. When the target changes, it stays put if the target is already well visible, otherwise it moves only as much as needed. If the figure fits on screen, it moves so the whole figure is visible; if it's larger than the screen, it moves so the line's boxes are in the central part of the screen (the area excluding the 20% margins). Within the same figure, it moves only when the line's boxes are out of view. While you type, the camera doesn't chase the boxes that come and go at each key: it catches up once you pause (about a second), and when the figure is laid out again, the box you were looking at (the one nearest the cursor's boxes) stays where it was on screen, so the change happens around it.
 - **Clicking**:
   - Clicking another figure zooms and moves to it (in overview too).
-  - Clicking a box selects that box's text in the editor so you can edit it right away (keyboard goes to the editor too). Clicking empty space in a figure moves the cursor to the block's first line, and clicking a section title moves it to that heading line; the keyboard stays on the canvas so canvas keys (`0`, `l`, `p`, arrows, etc.) work immediately.
+  - Clicking a box selects it: it's outlined, the editor cursor goes to its text, and the keyboard stays on the canvas, so the drawing keys below work on it (`Esc` takes the keyboard to the editor, on that text). Clicking empty space in a figure moves the cursor to the block's first line, and clicking a section title moves it to that heading line; the keyboard stays on the canvas so canvas keys (`0`, `l`, `p`, arrows, etc.) work immediately.
   - Clicking inside the figure you're viewing doesn't move the camera.
 - **Double-click a box** (flow blocks only): Edit the text in place and press Enter. Every occurrence of the same text in the block changes at once, and a single ⌘Z reverts it. Esc cancels. Arrows, ` : `, and a trailing `:` can't be entered.
 - **Linking boxes with the same name**: Boxes written with the same text (case-insensitive) across several flow figures are treated as the same and linked in note order. Linked boxes get a purple dot at the top right, and only the lines of the box on the cursor line or the hovered box are shown. **Links** in the bar (`l` when the canvas has focus) toggles all lines (remembered). Clicking a line goes to the box at the other end. Lines to other sections route around the right outside. Lines are always drawn above figures.
@@ -408,7 +409,17 @@ Login request -> Auth server -> Success?
   - Boxes not yet visited are dimmed, the current box is highlighted. The figure is fitted large and centered in the screen area above the caption, and moves only when the figure changes. Figures too large to read follow the boxes.
   - Caption: the section title and step number, where you came from (`Success? — Yes →`), the box name, the ` : ` description, and list items of the form `- Box name: description` in that section (and the intro text above it), including indented lines below them. Sentences that merely contain the name are not included. Detailed rules in [FLOW.md](FLOW.md).
   - While presenting, link lines and dots and similar-name markers are hidden. The editor cursor follows too, so when you exit it's on the last box.
-- There's no moving figures by hand or drawing lines. The text is the source; the canvas is a view.
+- **Drawing on a flow**: a ` ```flow ` picture of the note can be drawn on, and every change is written into its text, the smallest change that does it, so the text stays the source and reads as you'd have written it (`Idea -> Ready? -(yes)-> Ship`). Each change is one ⌘Z.
+  - **A box after another**: hover a box and click the **+** on the side the picture runs to (or select it and press `Tab`). The new box is named at once: type and Enter. Typing the name of a box that's already there joins the two (the same text is the same box).
+  - **An arrow**: drag a box's **+** onto another box of the same picture. Let go on nothing for a new box there. From a question (`…?`), the first arrow drawn gets `yes`, the second `no`.
+  - **A box on its own**: double-click empty space in the picture, or `N`.
+  - **Colour**: select a box and press `C`, then a number (`1` red … `8` gray, `0` none), or right-click → **Colour…**. It writes a `color …:` line at the end of the block.
+  - **Delete**: select a box and press `Delete` (or right-click). The box goes from every line it's on; in a line of steps the ones on either side join up (`A -> B -> C` without B is `A -> C`). The notification has **Undo**.
+  - **Rename**: `Enter` on a selected box, or double-click it.
+  - **Right-click** a box for all of these; right-click a picture for a new box, the way it runs (down, right, left, up: a `direction:` line) and **Move to a note of its own…**.
+  - **New flow**: **+ Flow** in the bar (or **New flow** on an empty canvas, palette **Flow: new flow to draw on**) adds a ` ```flow ` block below the cursor with one box to name.
+  - **A flow grown long**: **Move to a note of its own…** (palette **Flow: move the flow at the cursor to a note of its own**) moves the block to a new note in the same folder and leaves `![[Name]]` in its place. The canvas still shows the flow here (marked `↳ Name`); draw on it in its own note. Past 30 lines the canvas offers this once.
+  - Boxes aren't placed by hand: the layout is automatic (Mermaid's), so a box's place follows from its arrows.
 
 ## Drawings (Excalidraw)
 
@@ -549,6 +560,7 @@ The only data created inside the workspace is `.agent-notes/`, which has its own
 
 ## Known limitations
 
+- Drawing on a flow: boxes can't be dragged to a place of their own (the layout is Mermaid's), arrow labels other than a question's yes/no are written in the text, and shapes other than `?` are set in the text too. A flow shown from another note (`![[…]]`) is drawn on in that note.
 - The editor is `textarea`-based.
   - Multi-cursor only goes as far as "editing the same text in several places at once" (⌘D/⌘⇧L). Adding cursors by clicking arbitrary positions and column selection are not supported.
   - Folding works only in the preview.

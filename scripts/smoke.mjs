@@ -46,6 +46,7 @@ fs.writeFileSync(path.join(ws, 'dired', 'alpha.md'), '# Alpha\n');
 fs.writeFileSync(path.join(ws, 'dired', 'keep.md'), '# Keep\n');
 fs.writeFileSync(path.join(ws, 'dired', 'zz-old.md'), '# Old\n');
 fs.writeFileSync(path.join(ws, 'cite.md'), 'See [[alpha]].\n');
+fs.writeFileSync(path.join(ws, 'board.md'), '# Board\n\n```flow\nA -> B\n```\n');
 fs.mkdirSync(path.join(ws, 'todo'));
 fs.writeFileSync(path.join(ws, 'todo', 'a.md'), 'TODO one\n\nTODO two\n');
 fs.writeFileSync(path.join(ws, 'todo', 'b.md'), 'TODO three\n');
@@ -243,6 +244,45 @@ await check('the whole canvas saves as one image', `
   const t = await until(() => !$('#toast').hidden && /Saved .*flow-canvas/.test($('#toast').textContent) && $('#toast'), 8000);
   return t?.textContent || null;
 `, (v) => (v ? null : 'no saved image'));
+
+await check('drawing on a flow writes its text: add, connect, colour, delete, undo', `
+  await openNote('board.md');
+  if (!$('.canvas-pane')?.offsetParent) button('Canvas').click();
+  const stage = await until(() => $$('.node-hit').length === 2 && $('.canvas-stage'), 15000);
+  const flow = () => { const v = $$('.editor-wrap textarea').find((t) => t.offsetParent).value; return v.slice(v.indexOf('\`\`\`flow') + 8, v.lastIndexOf('\`\`\`')).trim(); };
+  const box = (name) => $$('.node-hit').find((b) => b.closest('pre').flowNodes.find((n) => n.id === b.dataset.id)?.text === name);
+  const at = (el) => { const r = el.getBoundingClientRect(); return { clientX: r.left + r.width / 2, clientY: r.top + r.height / 2 }; };
+  const ptr = (type, el, p) => el.dispatchEvent(new PointerEvent(type, { bubbles: true, cancelable: true, button: 0, pointerId: 1, ...p }));
+  const out = {};
+  // The + of B, clicked: a box after it, named at once.
+  const plus = box('B').querySelector('.box-handle');
+  ptr('pointerdown', plus, at(plus)); ptr('pointerup', stage, at(plus));
+  const input = await until(() => $('.canvas-rename'), 8000);
+  input.value = 'C';
+  input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }));
+  await until(() => box('C'), 8000); await sleep(300);
+  out.add = flow();
+  // A drag from C's + to A: an arrow.
+  const from = box('C').querySelector('.box-handle');
+  ptr('pointerdown', from, at(from)); ptr('pointermove', stage, at(box('B'))); ptr('pointermove', stage, at(box('A'))); ptr('pointerup', stage, at(box('A')));
+  await until(() => flow().includes('C -> A'), 8000);
+  out.connect = flow();
+  // Select B, colour it (C, then a number), delete it, undo that.
+  await until(() => box('B'), 8000); await sleep(400);
+  ptr('pointerdown', box('B'), at(box('B'))); ptr('pointerup', box('B'), at(box('B'))); box('B').click(); await sleep(200);
+  stage.focus(); key('c', {}, stage); await sleep(200);
+  document.dispatchEvent(new KeyboardEvent('keydown', { key: '6', bubbles: true, cancelable: true }));
+  await until(() => flow().includes('color'), 8000);
+  out.color = flow();
+  await until(() => $('.node-hit.walk-at'), 8000); await sleep(400);
+  key('Delete', {}, stage);
+  await until(() => !flow().includes('B'), 8000);
+  out.del = flow();
+  key('z', { metaKey: navigator.platform.startsWith('Mac'), ctrlKey: !navigator.platform.startsWith('Mac') }, stage);
+  await until(() => flow().includes('B'), 8000);
+  out.undo = flow();
+  return out;
+`, (v) => (v?.add === 'A -> B -> C' && v.connect === 'A -> B -> C -> A' && v.color === 'A -> B -> C -> A\ncolor blue: B' && v.del === 'A -> C -> A' && v.undo === v.color ? null : `got ${JSON.stringify(v)}`));
 
 await check('Settings shows Labs', `
   document.dispatchEvent(new KeyboardEvent('keydown', { key: ',', metaKey: navigator.platform.startsWith('Mac'), ctrlKey: !navigator.platform.startsWith('Mac'), bubbles: true }));

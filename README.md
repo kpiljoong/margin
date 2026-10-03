@@ -8,7 +8,7 @@ A lightweight, local-first Markdown notes app where **the text is yours and the 
 - **Delegate, then review.** Ask an agent (Claude Code, Codex, or any CLI) to do something with your notes. It works on a copy; you see its changes marked on the note with a red pen (or as a diff) and apply only the marks you accept.
 - **Private by default.** Nothing leaves your machine unless you run an agent (or turn on update checks), and notes marked `private: true` are never shared.
 - **Fast editor.** Split preview, Mermaid diagrams (in notes or as `.mmd` files, copyable as images), themes, wiki links, backlinks, search, local git.
-- **Diagrams you type.** A plain ```flow notation drawn as you write, on a canvas beside the editor that follows your cursor, links boxes of the same name, walks a flow with the keys and presents it full screen ([notation](docs/FLOW.md)).
+- **Diagrams you type, or draw.** A plain ```flow notation drawn as you write, on a canvas beside the editor that follows your cursor, links boxes of the same name, walks a flow with the keys and presents it full screen ([notation](docs/FLOW.md)). Draw on it too — add boxes, drag arrows, colour, delete — and each change is written into the text.
 - **Drawings.** Open and edit `.excalidraw` files, and embed them in notes with `![[sketch.excalidraw]]`. The Excalidraw editor ships inside the app, runs fully offline and is sandboxed away from your notes.
 
 | Type a flow, see it drawn beside the text | Present it one step at a time |

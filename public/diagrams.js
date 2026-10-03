@@ -210,6 +210,7 @@ export function renderDiagrams(container) {
         source = flow.mermaid;
         pre.flowNodes = flow.nodes; // which lines wrote each box
         pre.flowEdges = flow.edges; // for following the flow on the canvas
+        pre.flowDirection = flow.direction; // where a box's + goes
       } catch (e) { show(pre, { error: e.message }, raw); return; }
     }
     const hit = cache.get(themeKey + '\n' + source);

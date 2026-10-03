@@ -2,7 +2,7 @@
 
 A ` ```flow ` block is a flowchart notation you write like text. It exists so that, in a meeting, you type on the keyboard instead of drawing with the mouse and see the diagram as you type. It is tuned for drawing "what leads to what": system architecture, process improvements, workflows.
 
-The text is the source; the diagram is only a view. You never move boxes or draw lines by hand. The app converts the notation into a mermaid flowchart, so preview, embedding, export, and image copy behave exactly as with ` ```mermaid `. Places that don't know this notation (GitHub, GitLab) show a ` ```flow ` block as plain text: to share a note there, use **Copy for GitHub (flows as Mermaid)** in the note's ⋯ menu, which copies it with every flow block written as Mermaid.
+The text is the source; the diagram is only a view. You can also draw on it in the Canvas view (add boxes, drag arrows, colour, delete): each change is written into the text, so the text stays the source (see "Drawing on the canvas" below). Boxes are never placed by hand; the layout follows the arrows. The app converts the notation into a mermaid flowchart, so preview, embedding, export, and image copy behave exactly as with ` ```mermaid `. Places that don't know this notation (GitHub, GitLab) show a ` ```flow ` block as plain text: to share a note there, use **Copy for GitHub (flows as Mermaid)** in the note's ⋯ menu, which copies it with every flow block written as Mermaid.
 
 ````markdown
 ```flow
@@ -29,6 +29,7 @@ Login request -> Auth server -> Success?
 | `(rounded)` `((circle))` `[(DB)]` `[box]` | Shapes |
 | `Service:` (alone on a line) | Group enclosing the indented lines below |
 | `direction: right` | Drawing direction (`down` default, `left`, `up`) |
+| `color blue: A, B` | Colours boxes (red, orange, yellow, green, teal, blue, purple, gray) |
 | `# …`, `// …` | Comments |
 
 ## Steps (boxes)
@@ -121,6 +122,38 @@ In meetings, we recommend writing labels or notes quickly first, then expanding 
   ```
 - **Direction**: `direction: right` on its own line (`down` default, `left`, `up`). The Korean equivalents of the keyword and values also work.
 - **Comments**: lines starting with `#` or `//` are not drawn. Blank lines are ignored too.
+
+## Colours
+
+`color <colour>: <names>` on a line of its own fills those boxes with a colour: red, orange, yellow, green, teal, blue, purple or gray (Korean colour names work too, as does the keyword `색`).
+
+```flow
+Request -> Auth server -> Payment -> Done
+color blue: Auth server, Payment
+color green: Done
+```
+
+- Names are separated by commas; a name that itself holds a comma still works, as the longest name that is a box wins.
+- A name that isn't a box is ignored. If a box is named on two colour lines, the later one wins.
+- The problem mark `!` keeps its red outline on a coloured box.
+- The text stays dark on every colour, in light and dark themes alike. **Copy for GitHub** keeps the colours (as Mermaid `classDef`s).
+
+## Drawing on the canvas
+
+In the Canvas view a flow can be drawn on; each change is written into the block (the details are in "Canvas view" in [GUIDE.md](GUIDE.md)):
+
+| On the canvas | Written in the block |
+|---|---|
+| **+** of `B` (or `Tab`), named `C` | `B -> C`: on the line that ends with `B` if it's the last one (`A -> B -> C`), else a new line |
+| Drag **+** of `C` onto `A` | `C -> A` (nothing if that arrow is there already) |
+| From a question `Ok?` | `Ok? -(yes)-> …`, then `-(no)->` |
+| Double-click empty space, `N` | `New step` on a line of its own |
+| `C` then a number | `color …:` line at the end |
+| Delete `B` | `B` taken out of every line; `A -> B -> C` becomes `A -> C`, a line left with nothing goes |
+| Right-click → Runs right | `direction: right` |
+| Move to a note of its own | the block goes to a new note; `![[Name]]` stays here |
+
+A flow too long for its note reads better in a note of its own: the canvas of the first note still shows it, through the `![[…]]`.
 
 ## Across diagrams
 

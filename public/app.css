@@ -712,7 +712,9 @@ iframe.mermaid-frame { position: fixed; left: -10000px; top: 0; width: 1600px; h
 .canvas-bar .icon-btn { width: auto; min-width: 26px; height: 24px; padding: 0 7px; font-size: 12px; }
 .canvas-stage { position: relative; flex: 1; overflow: hidden; cursor: grab; touch-action: none; outline: none; background-image: radial-gradient(circle, var(--border) 1px, transparent 1.2px); background-size: 22px 22px; }
 .canvas-stage.panning { cursor: grabbing; }
-.canvas-empty { position: absolute; inset: 0; display: grid; place-items: center; padding: 32px; color: var(--fg-dim); text-align: center; pointer-events: none; }
+.canvas-empty { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 14px; padding: 32px; color: var(--fg-dim); text-align: center; pointer-events: none; }
+.canvas-empty[hidden] { display: none; }
+.canvas-empty button { pointer-events: auto; }
 .canvas-world { position: absolute; left: 0; top: 0; transform-origin: 0 0; display: flex; flex-direction: column; align-items: flex-start; gap: 64px; padding: 0; user-select: none; }
 .canvas-section { padding: 10px 16px 18px; border: 1px dashed var(--border); border-radius: 14px; transition: border-color .15s; }
 .canvas-section.current { border-color: color-mix(in srgb, var(--accent) 50%, var(--border)); }
@@ -730,6 +732,26 @@ iframe.mermaid-frame { position: fixed; left: -10000px; top: 0; width: 1600px; h
 .node-hit { position: absolute; border-radius: 6px; cursor: pointer; }
 .node-hit:hover { box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 45%, transparent); }
 .node-hit.on { box-shadow: 0 0 0 3px var(--accent); background: color-mix(in srgb, var(--accent) 12%, transparent); }
+/* Drawing on a flow: the + beside a box (its size kept on screen), the
+   line while dragging an arrow, the box it would go to. */
+.box-handle { position: absolute; z-index: 2; display: none; place-items: center; width: 20px; height: 20px; border-radius: 50%; background: var(--accent); color: #fff; font: 600 15px/1 var(--sans); cursor: crosshair; box-shadow: 0 1px 3px rgb(0 0 0 / .25); }
+.node-hit:hover > .box-handle, .node-hit.walk-at > .box-handle { display: grid; }
+.box-handle.to-down { left: 50%; top: 100%; transform-origin: 50% 0; transform: translateX(-50%) scale(var(--inv, 1)); }
+.box-handle.to-up { left: 50%; bottom: 100%; transform-origin: 50% 100%; transform: translateX(-50%) scale(var(--inv, 1)); }
+.box-handle.to-right { top: 50%; left: 100%; transform-origin: 0 50%; transform: translateY(-50%) scale(var(--inv, 1)); }
+.box-handle.to-left { top: 50%; right: 100%; transform-origin: 100% 50%; transform: translateY(-50%) scale(var(--inv, 1)); }
+.box-handle:hover { filter: brightness(1.12); }
+.canvas-pane.presenting .box-handle, .canvas-stage.panning .box-handle { display: none; }
+/* A flow shown from another note (![[…]]): where it is drawn on. */
+.canvas-card pre[data-from] { position: relative; }
+.canvas-card pre[data-from]::before { content: "↳ " attr(data-from); position: absolute; left: 10px; top: 6px; z-index: 1; color: var(--fg-dim); font: 11px var(--sans); pointer-events: none; }
+.canvas-wire { position: absolute; inset: 0; width: 100%; height: 100%; z-index: 2; pointer-events: none; overflow: visible; }
+.canvas-wire[hidden] { display: none; }
+.canvas-wire path { fill: none; stroke: var(--accent); stroke-width: 2; stroke-dasharray: 6 4; }
+.canvas-stage.wiring, .canvas-stage.wiring * { cursor: crosshair; }
+.node-hit.wire-to { box-shadow: 0 0 0 3px var(--accent), 0 0 0 7px color-mix(in srgb, var(--accent) 30%, transparent); }
+.ctx-swatch { display: inline-block; width: 11px; height: 11px; margin-right: 8px; border-radius: 50%; border: 1px solid rgb(0 0 0 / .2); vertical-align: -1px; }
+.ctx-swatch.none { background: transparent; border-style: dashed; border-color: var(--fg-dim); }
 .canvas-rename { position: absolute; z-index: 3; height: 32px; padding: 0 8px; border: 2px solid var(--accent); border-radius: 6px; background: var(--bg); color: var(--fg); font: 14px var(--sans); outline: none; }
 .ed-find-layer mark.hint { background: color-mix(in srgb, var(--accent) 22%, transparent); box-shadow: 0 1px 0 var(--accent); }
 /* links between boxes of the same name in different pictures */
