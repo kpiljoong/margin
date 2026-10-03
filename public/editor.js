@@ -527,7 +527,12 @@ export class MarkdownEditor {
     const from = starts[first];
     const to = last + 1 < starts.length ? starts[last + 1] - 1 : text.length;
     const offsets = [];
-    for (const m of text.slice(from, to).matchAll(/[\p{L}\p{N}_]+|[^\s\p{L}\p{N}_]+/gu)) offsets.push(from + m.index);
+    // Words, and where each line's text starts (a heading's #, a list's -).
+    const part = text.slice(from, to);
+    const set = new Set();
+    for (const m of part.matchAll(/[\p{L}\p{N}_]+/gu)) set.add(from + m.index);
+    for (const m of part.matchAll(/^[ \t]*(?=\S)/gm)) set.add(from + m.index + m[0].length);
+    offsets.push(...[...set].sort((x, y) => x - y));
     if (!offsets.length) return [];
     const probe = this._probe();
     let html = '';
