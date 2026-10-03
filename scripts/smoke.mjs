@@ -485,6 +485,70 @@ await check('link hints in a focused preview: f, then a letter, follows that lin
   return { preview: !!preview, hints, followed: !!followed, left: $$('.link-hint').length };
 `, (v) => (v?.preview && v.hints?.[0] === 'a' && v.followed && v.left === 0 ? null : 'link hints did not work'));
 
+await check('back returns to the place in the note: after a jump inside it, and from another note', `
+  const mac = navigator.platform.startsWith('Mac');
+  const press = (code, key, opts = {}) => document.activeElement.dispatchEvent(new KeyboardEvent('keydown', { code, key, bubbles: true, cancelable: true, ...opts }));
+  const lineOf = (ta) => { const v = ta.value; const s = v.lastIndexOf('\\n', ta.selectionStart - 1) + 1; return v.slice(s, v.indexOf('\\n', s)); };
+  let ta = await openNote('flow.md');
+  ta.focus();
+  ta.setSelectionRange(10, 10);
+  await sleep(900);
+  press('KeyX', '≈', { altKey: true });
+  await until(() => $('.leader'));
+  press('KeyS', 's');
+  press('KeyL', 'l');
+  const input = await until(() => !$('#overlay').hidden && $('#overlay input'));
+  input.value = ':14';
+  input.dispatchEvent(new Event('input'));
+  await until(() => $('#overlay .palette-item'));
+  input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }));
+  const jumped = await until(() => lineOf(ta) === '## Proposal' && lineOf(ta));
+  await sleep(100);
+  press('BracketLeft', '[', { metaKey: mac, ctrlKey: !mac });
+  const backInNote = await until(() => ta.selectionStart === 10 && 10);
+  await openNote('sub/links.md');
+  await sleep(100);
+  press('BracketLeft', '[', { metaKey: mac, ctrlKey: !mac });
+  await until(() => $('.tab.active')?.textContent.includes('flow.md'));
+  ta = $$('.editor-wrap textarea').find((t) => t.offsetParent);
+  const backFromOther = await until(() => ta?.selectionStart === 10 && 10, 3000);
+  press('BracketRight', ']', { metaKey: mac, ctrlKey: !mac });
+  const forward = await until(() => $('.tab.active')?.textContent.includes('links.md'));
+  return { jumped, backInNote, backFromOther, forward: !!forward };
+`, (v) => (v?.jumped && v.backInNote === 10 && v.backFromOther === 10 && v.forward ? null : 'back did not return to the place'));
+
+await check('F8 / ⇧F8 step through the search results from the note; ⌥. repeats the last command', `
+  const press = (code, key, opts = {}) => document.activeElement.dispatchEvent(new KeyboardEvent('keydown', { code, key, bubbles: true, cancelable: true, ...opts }));
+  $('#activity [data-view="search"]').click();
+  const input = await until(() => $('#search-input'));
+  input.value = 'needle';
+  input.dispatchEvent(new Event('input'));
+  await until(() => $$('#search-results .search-hit').length >= 60);
+  $('#activity [data-view="files"]').click();
+  const ta0 = await openNote('flow.md');
+  ta0.focus();
+  const step = async (code, opts, n) => {
+    press(code, '', opts);
+    await until(() => $('#toast')?.textContent.startsWith(n + ' / 60'), 3000);
+    await sleep(150);
+    const ta = $$('.editor-wrap textarea').find((t) => t.offsetParent);
+    return { toast: $('#toast')?.textContent.split('  ')[0], sel: ta?.value.slice(ta.selectionStart, ta.selectionEnd), tab: $('.tab.active')?.textContent, current: $$('#search-results .search-hit').findIndex((r) => r.classList.contains('current')) };
+  };
+  const a = await step('F8', {}, 1);
+  const b = await step('F8', {}, 2);
+  const c = await step('F8', { shiftKey: true }, 1);
+  press('KeyX', '≈', { altKey: true });
+  await until(() => $('.leader'));
+  press('KeyS', 's');
+  const d = await step('KeyN', {}, 2);
+  const e = await step('Period', { altKey: true }, 3);
+  $('#activity [data-view="search"]').click();
+  await sleep(100);
+  e.current = $$('#search-results .search-hit').findIndex((r) => r.classList.contains('current'));
+  $('#activity [data-view="files"]').click();
+  return { a, b, c, d, e };
+`, (v) => (v?.a?.toast === '1 / 60' && v.a.sel === 'needle' && v.b.toast === '2 / 60' && v.c.toast === '1 / 60' && v.d.toast === '2 / 60' && v.e.toast === '3 / 60' && v.e.current === 2 ? null : 'stepping through the results did not work'));
+
 // The settings went to the app's config, not just this port's browser storage.
 {
   await sleep(600);

@@ -560,8 +560,44 @@ const navExists = (e) => S.files.some((f) => f.path === e.path);
 function navRecord(tab) {
   if (!nav.ready || nav.moving || !navable(tab)) return;
   if (nav.stack[nav.index]?.path === tab.path) return;
-  nav.stack = [...nav.stack.slice(0, nav.index + 1), { path: tab.path, kind: tab.kind }].slice(-NAV_MAX);
+  navKeep();
+  navPush({ path: tab.path, kind: tab.kind, t: performance.now() });
+}
+function navPush(e) {
+  nav.stack = [...nav.stack.slice(0, nav.index + 1), e].slice(-NAV_MAX);
   nav.index = nav.stack.length - 1;
+}
+
+// Back and forward return to the place in the note, not just the note (as
+// Vim's jump list): where the cursor and the scroll were when you left.
+function navKeep(e = nav.stack[nav.index]) {
+  const t = e && S.tabs.find((x) => x.kind === 'file' && x.path === e.path && x.editor);
+  if (!t) return;
+  e.pos = t.editor.selectionStart;
+  e.top = t.editor.ta.scrollTop;
+  e.ptop = t.previewEl?.isConnected ? t.previewEl.scrollTop : null;
+}
+function navRestore(e) {
+  const t = S.tabs.find((x) => x.kind === 'file' && x.path === e.path && x.editor);
+  if (!t || e.pos == null) return;
+  requestAnimationFrame(() => {
+    if (editorShown(t)) t.editor.focus();
+    t.editor.setSelection(Math.min(e.pos, t.editor.value.length));
+    t.editor.ta.scrollTop = e.top;
+    if (e.ptop != null && t.previewEl?.isConnected) t.previewEl.scrollTop = e.ptop;
+    renderStatus();
+    markActiveHeading();
+  });
+}
+// A jump inside the note (a heading, a line, a search result): the place it
+// leaves becomes a step back. Not the jump that comes with opening a note at
+// a line (that's one step).
+function navJump(tab = fileTab()) {
+  const e = nav.stack[nav.index];
+  if (!nav.ready || nav.moving || !tab?.editor || e?.path !== tab.path) return;
+  if (e.t && performance.now() - e.t < 800) return;
+  navKeep(e);
+  navPush({ path: tab.path, kind: tab.kind, jump: true });
 }
 
 // Drop entries for files that are gone and merge neighbours that became equal.
@@ -569,7 +605,7 @@ function navPrune() {
   const out = [];
   let index = -1;
   nav.stack.forEach((e, i) => {
-    if (navExists(e) && out[out.length - 1]?.path !== e.path) out.push(e);
+    if (navExists(e) && (e.jump || out[out.length - 1]?.path !== e.path)) out.push(e);
     if (i <= nav.index) index = out.length - 1;
   });
   nav.stack = out;
@@ -595,11 +631,14 @@ async function navGo(step) {
   const i = navTarget(step);
   if (i < 0) return;
   const e = nav.stack[i];
+  const here = activeTab();
+  if (navable(here) && here.path === nav.stack[nav.index]?.path) navKeep();
   nav.moving = true;
   try {
     if (e.kind === 'image') openImage(e.path);
-    else await openFile(e.path);
+    else await openFile(e.path, { focus: e.pos == null });
   } finally { nav.moving = false; }
+  navRestore(e);
   nav.index = i;
   navPrune();
   updateNavButtons();
@@ -1144,7 +1183,7 @@ const runSearch = debounce(async () => {
   if (!q.trim()) { S.searchResults = null; renderSearchResults(); return; }
   try {
     const r = await api('GET', `/api/search?q=${encodeURIComponent(q)}`);
-    if (q === S.searchQuery) { S.searchResults = r; renderSearchResults(); }
+    if (q === S.searchQuery) { S.searchResults = r; S.searchAt = null; renderSearchResults(); }
   } catch (e) { toast(e.message, 'error'); }
 }, 180);
 
@@ -1161,17 +1200,60 @@ function highlight(text, q) {
   return frag;
 }
 
+// The search results as a list to step through from the note (Emacs
+// next-error, Vim :cnext): ⌥X s n / s p, F8 / ⇧F8.
+const searchHits = () => (S.searchResults?.results || []).flatMap((f) => f.matches.map((m) => ({ path: f.path, line: m.line })));
+async function stepSearch(by) {
+  const hits = searchHits();
+  if (!hits.length) { toast(S.searchQuery ? 'No search results' : 'Nothing searched yet', '', { label: 'Search', run: () => ACTIONS.search() }); return; }
+  let i = S.searchAt ?? -1;
+  const tab = fileTab();
+  if (!(hits[i] && tab?.path === hits[i].path && tab.editor?.cursorLine() === hits[i].line)) {
+    // Not on the last one: from where the cursor is.
+    const line = tab?.editor?.cursorLine() ?? 0;
+    const here = hits.findIndex((x) => x.path === tab?.path && (by > 0 ? x.line > line : x.line >= line));
+    if (here >= 0) i = by > 0 ? here - 1 : here;
+    else if (tab && hits.some((x) => x.path === tab.path)) i = by > 0 ? hits.findLastIndex((x) => x.path === tab.path) : hits.findIndex((x) => x.path === tab.path);
+  }
+  i = ((i + by) % hits.length + hits.length) % hits.length;
+  await openSearchHit(i, { reveal: true });
+  toast(`${i + 1} / ${hits.length}  ${hits[i].path}:${hits[i].line}`);
+}
+async function openSearchHit(i, { reveal = false } = {}) {
+  const hit = searchHits()[i];
+  if (!hit) return;
+  S.searchAt = i;
+  document.querySelectorAll('#search-results .search-hit').forEach((r, k) => r.classList.toggle('current', k === i));
+  const same = fileTab()?.path === hit.path;
+  if (same) navJump();
+  await openFile(hit.path, { focus: false });
+  const tab = S.tabs.find((t) => t.kind === 'file' && t.path === hit.path);
+  if (!tab?.editor) return;
+  requestAnimationFrame(() => {
+    if (groupMode(tab) === 'preview') setMode('split');
+    const v = tab.editor.value;
+    const a = lineOffset(v, hit.line - 1);
+    const text = v.slice(a, (v.indexOf('\n', a) + 1 || v.length + 1) - 1);
+    const at = text.toLowerCase().indexOf(S.searchQuery.toLowerCase());
+    gotoOffset(tab, at >= 0 ? a + at : a, at >= 0 ? a + at + S.searchQuery.length : a);
+    if (reveal) $('#search-results .search-hit.current')?.scrollIntoView({ block: 'nearest' });
+  });
+}
+
 function renderSearchResults(box = $('#search-results')) {
   if (!box) return;
   const r = S.searchResults;
   if (!r) { box.replaceChildren(h('div', { class: 'empty' }, 'Search file names and contents. Case-insensitive.')); return; }
   if (!r.results.length) { box.replaceChildren(h('div', { class: 'empty' }, 'No matches.')); return; }
   const rows = [];
+  let n = 0;
   for (const f of r.results) {
-    rows.push(h('div', { class: 'search-file', title: f.path, onclick: () => openFile(f.path, { line: f.matches[0]?.line }) },
+    const first = n;
+    rows.push(h('div', { class: 'search-file', title: f.path, onclick: () => (f.matches.length ? openSearchHit(first) : openFile(f.path)) },
       h('span', {}, f.path), h('span', { class: 'count' }, f.matches.length || '')));
     for (const m of f.matches) {
-      rows.push(h('div', { class: 'search-hit', onclick: () => openFile(f.path, { line: m.line }) },
+      const i = n++;
+      rows.push(h('div', { class: `search-hit${i === S.searchAt ? ' current' : ''}`, onclick: () => openSearchHit(i) },
         h('span', { class: 'ln' }, m.line), highlight(m.text.trim(), S.searchQuery)));
     }
   }
@@ -2195,6 +2277,7 @@ function syncScroll(tab) {
 
 // Outline click: scroll the preview in preview mode, otherwise move the cursor.
 function gotoHeading(line) {
+  navJump();
   const p = fileTab()?.previewEl;
   if (groupMode(fileTab()) === 'preview' && p) {
     const el = p.querySelector(`[data-line="${line}"]`);
@@ -2221,6 +2304,7 @@ function markActiveHeading() {
 function gotoLine(line) {
   const tab = fileTab();
   if (!tab) return;
+  if (tab.editor && tab.editor.cursorLine() !== line) navJump(tab);
   if (groupMode(tab) === 'preview') setMode('split');
   tab.editor.gotoLine(line);
   renderStatus();
@@ -2530,7 +2614,7 @@ function openPalette(initial = '') {
         const cq = q.slice(1).trim();
         return COMMANDS.map(([name, run, key]) => ({ name, run, key, m: fuzzy(cq, name) })).filter((x) => x.m)
           .sort((a, b) => b.m.score - a.m.score)
-          .map((x) => ({ label: marked(x.name, x.m.idx), hint: x.key?.key ? kbd(x.key.key) : x.key, run: x.run }));
+          .map((x) => ({ label: marked(x.name, x.m.idx), hint: x.key?.key ? kbd(x.key.key) : x.key, run: () => { remember(x.name, x.run); x.run(); } }));
       }
       if (q.startsWith('#')) {
         const tab = fileTab();
@@ -4337,6 +4421,9 @@ const ACTIONS = {
   rename: () => fileTab() && renameItem(fileTab().path),
   'copy-drawing': () => drawingTab()?.frame && copyPicture(drawingPicture(drawingTab())),
   leader: openLeaderMenu,
+  repeat: repeatLast,
+  'search-next': () => stepSearch(1),
+  'search-prev': () => stepSearch(-1),
 };
 
 // ---------------------------------------------------------------- keyboard
@@ -4372,6 +4459,8 @@ function leaderTree() {
       { key: 'h', label: 'Heading in this note…', when: () => note, run: () => openPalette('#') },
       { key: 'a', label: 'Heading in any note…', run: () => openPalette('@') },
       { key: 'l', label: 'Go to line…', when: () => !!tab, run: () => openPalette(':') },
+      { key: 'n', label: 'Next search result', run: () => stepSearch(1) },
+      { key: 'p', label: 'Previous search result', run: () => stepSearch(-1) },
     ] },
     { key: 'b', label: 'tabs', items: [
       { key: 'b', label: 'Switch tab…', run: pickTab },
@@ -4417,6 +4506,7 @@ function leaderTree() {
       { key: 't', label: 'Theme…', run: pickTheme },
       { key: 'z', label: 'Focus mode', run: toggleFocusMode },
     ] },
+    { key: '.', label: lastRun ? `Repeat: ${lastRun.label}` : 'Repeat the last command', run: repeatLast },
     { key: ',', label: 'Settings', run: () => openSettings() },
     { key: 'k', label: 'Keyboard shortcuts…', run: () => openSettings({ keys: true }) },
   ];
@@ -4426,9 +4516,18 @@ function openLeaderMenu() {
   if ($('.leader')) return;
   openLeader(leaderTree(), {
     title: kbd('leader') || 'Commands',
+    // Again with ⌥X .: the same keys, looked up again (for the tab you're on then).
+    onRun: (keys, it) => { if (keys[0] !== '.' && keys[0] !== 'SPC') remember(it.label, () => runLeaderKeys(keys)); },
     isLeader: (e) => !!KEYS.leader && eventKeys(e, isMac) === KEYS.leader,
     onLeader: () => openPalette('>'),
   });
+}
+
+function runLeaderKeys(keys) {
+  let items = leaderTree();
+  let it = null;
+  for (const k of keys) { it = items.find((x) => x.key === k && (!x.when || x.when())); if (!it) break; items = it.items || []; }
+  if (it?.run) it.run(); else toast('That command isn’t available here');
 }
 
 function pickTab() {
@@ -4528,7 +4627,18 @@ function runCommand(name) {
   const now = performance.now();
   if (lastCommand.name === name && now - lastCommand.t < 150) return;
   lastCommand = { name, t: now };
+  if (!NOT_REPEATED.has(name) && ACTIONS[name]) remember(keyDefs().find((d) => d.id === name)?.label || name, () => ACTIONS[name]());
   ACTIONS[name]?.();
+}
+
+// Repeat the last command (Emacs C-x z, Vim's .): from the leader menu, the
+// palette or a shortcut. Opening a menu or a picker isn't one.
+const NOT_REPEATED = new Set(['leader', 'palette', 'quick-open', 'repeat', 'save', 'settings']);
+let lastRun = null;
+function remember(label, run) { lastRun = { label, run }; }
+function repeatLast() {
+  if (!lastRun) { toast('No command to repeat yet'); return; }
+  lastRun.run();
 }
 desktop?.onCommand?.(runCommand);
 

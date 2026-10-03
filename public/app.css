@@ -69,6 +69,7 @@ kbd { font: 11px var(--mono); padding: 1px 5px; border: 1px solid var(--border);
 .search-file .count { margin-left: auto; font-weight: 400; color: var(--fg-faint); }
 .search-hit { padding: 1px 12px 1px 26px; cursor: pointer; font: 12px/1.6 var(--mono); color: var(--fg-dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .search-hit:hover { background: var(--bg-hover); color: var(--fg); }
+.search-hit.current { background: var(--bg-3); color: var(--fg); box-shadow: inset 2px 0 0 var(--accent); }
 .search-hit b { color: var(--warn); font-weight: 600; }
 .search-hit .ln { color: var(--fg-faint); display: inline-block; min-width: 28px; }
 .empty { padding: 12px; color: var(--fg-faint); }

@@ -101,6 +101,8 @@ Built without external libraries to stay lightweight. The editor is a native `te
 | ⌘P | Quick open: recent notes first, fuzzy search, create if missing. `>` commands · `#` jump to a heading in the current note · `@` a heading in any note · `:` line number |
 | ⌘⇧P | Command palette |
 | ⌥X | Leader key: a menu of commands by letter (see below) |
+| ⌥. | Repeat the last command (from the leader menu, the palette or a shortcut) |
+| F8 / ⇧F8 | Next / previous search result, from the note: the match is selected, the results list follows |
 | ⌘⇧F | Workspace full-text search (`#tag` search works too) |
 | ⌘F / ⌘⌥F | Find / replace in note (case and regex options, ⌘G next). In Preview, ⌘F finds in the rendered note and stays in Preview; replacing switches to Split |
 | ⌘K | Delegate to agent (focuses on the selected text, if any) |
@@ -135,7 +137,7 @@ The shortcuts above (except typing behaviours like Tab, Enter, and bracket pairi
 | Keys | |
 |---|---|
 | `f` files | `f` find a file · `n` new note · `t` from a template · `j` today's journal · `r` rename · `b` bookmark · `y` copy [[link]] · `l` show in the tree · `h` history · `e` export HTML |
-| `s` search | `s` the workspace · `f` find in note · `r` replace · `h` heading here · `a` heading in any note · `l` go to line |
+| `s` search | `s` the workspace · `f` find in note · `r` replace · `h` heading here · `a` heading in any note · `l` go to line · `n`/`p` next/previous search result |
 | `b` tabs | `b` switch tab · `n`/`p` next/previous · `d` close · `o` close others · `[` `]` back/forward |
 | `w` windows | `h` the sidebar · `l` the editor · `p` the preview · `w` the other pane · `v` split · `s` show/hide the sidebar · `z` focus mode |
 | `m` mode | `e` Edit · `s` Split · `c` Canvas · `p` Preview |
@@ -143,7 +145,10 @@ The shortcuts above (except typing behaviours like Tab, Enter, and bracket pairi
 | `g` git | `g` the Git panel · `d` changes since the last commit · `h` this file's history |
 | `a` agent | `a` delegate a task · `r` agent runs |
 | `t` toggles | `f` tree follows the tab · `s` sidebar · `t` theme · `z` focus mode |
+| `.` | Repeat the last command (it shows which) |
 | `,` / `k` | Settings / keyboard shortcuts |
+
+**Back and forward (⌘[ / ⌘]) return to the place**, not just the note, as Vim's jump list: the cursor and the scroll where you left. A jump inside a note (a heading from the outline or `#`, `:` a line, a search result) is a step too, so ⌘[ after jumping to a heading goes back to where you were typing.
 
 **Without the mouse.** In the sidebar's lists (tree, bookmarks, outline, backlinks, search results): ↑↓ or `j`/`k` move, `g`/`G` (Home/End) jump to the ends, Enter opens (⌘Enter to the side), →/← or `l`/`h` open and close folders (← on a file goes to its folder), F2 renames, ⌘⌫ deletes (with Undo), Esc goes back to the editor. In the search box ↓ or Enter goes to the results. In a focused preview (⌥X w p): `j`/`k` scroll, `d`/`u` half a page, Space a page, `g`/`G` top/bottom, `/` find, `f` link hints (a letter on every link in view; type it to follow, as in Vimium), Esc back to the editor.
 

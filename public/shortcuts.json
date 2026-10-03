@@ -19,6 +19,9 @@
   { "id": "split", "label": "Split editor / switch pane", "group": "View", "keys": "CmdOrCtrl+Alt+\\", "scope": "app" },
   { "id": "files", "label": "Show files", "group": "View", "keys": "CmdOrCtrl+Shift+E", "scope": "app" },
   { "id": "git", "label": "Show git changes", "group": "View", "keys": "CmdOrCtrl+Shift+G", "scope": "app" },
+  { "id": "search-next", "label": "Next search result", "group": "View", "keys": "F8", "scope": "app" },
+  { "id": "search-prev", "label": "Previous search result", "group": "View", "keys": "Shift+F8", "scope": "app" },
+  { "id": "repeat", "label": "Repeat the last command", "group": "General", "keys": "Alt+.", "scope": "app" },
   { "id": "nav-back", "label": "Go back", "group": "View", "keys": "CmdOrCtrl+[", "scope": "app" },
   { "id": "nav-forward", "label": "Go forward", "group": "View", "keys": "CmdOrCtrl+]", "scope": "app" },
 

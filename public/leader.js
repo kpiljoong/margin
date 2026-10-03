@@ -17,8 +17,9 @@ export function menuKey(e) {
 
 // A tree: [{ key, label, run } | { key, label, items: [...] }]. Entries with
 // `when: () => false` are left out. Returns a promise that settles when the
-// menu closes. isLeader(e): the leader key again (→ onLeader).
-export function openLeader(tree, { isLeader, onLeader, title = 'Commands', mount = document.body } = {}) {
+// menu closes. isLeader(e): the leader key again (→ onLeader). onRun(keys, it):
+// a command was chosen, by these keys.
+export function openLeader(tree, { isLeader, onLeader, onRun, title = 'Commands', mount = document.body } = {}) {
   return new Promise((resolve) => {
     const before = document.activeElement;
     const box = document.createElement('div');
@@ -68,6 +69,7 @@ export function openLeader(tree, { isLeader, onLeader, title = 'Commands', mount
       // Back where the keys came from first: the command may move the focus.
       close(true);
       resolve(it);
+      onRun?.([...path, it.key], it);
       setTimeout(() => it.run(), 0);
     };
     const onKey = (e) => {
