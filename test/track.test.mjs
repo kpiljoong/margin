@@ -2,9 +2,9 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createRequire } from 'node:module';
-import { combine, original, proposed, reconcile, provisional, strike, runs, overlay, hunksOf } from '../public/track.js';
+import { combine, original, proposed, reconcile, provisional, strike, runs, overlay, hunksOf, pairLines } from '../public/track.js';
 
-const { buildHunks } = createRequire(import.meta.url)('../lib/diff.js');
+const { buildHunks, applyHunks } = createRequire(import.meta.url)('../lib/diff.js');
 // The text with its marks written out: [-struck-] {+written in+}.
 const show = ({ text, marks }) => {
   let s = '';
@@ -109,4 +109,22 @@ test('hunksOf: as the server builds them', () => {
   const work = 'intro\n\n- one\n- two two\n\nend\n';
   const strip = (hs) => hs.map(({ baseStart, baseEnd, removed, added }) => ({ baseStart, baseEnd, removed, added }));
   assert.deepEqual(strip(hunksOf(base, work)), strip(buildHunks(base, work)));
+});
+
+test('a line struck among lines changed: each still a change of its own', () => {
+  const base = '# M\n\n- ship by the end of the month\n- notes by Mina did did\n- beta for a week\n- load test needed\n';
+  const work = '# M\n\n- ship by the 25th\n- notes by Mina did\n- load test needed, Tae next week\n';
+  assert.deepEqual(pairLines(['a b c d', 'x y z'], ['a b c', 'q', 'x y z w']), [[['a b c d'], ['a b c']], [[], ['q']], [['x y z'], ['x y z w']]]);
+  const hs = buildHunks(base, work);
+  assert.deepEqual(hs.map((h) => [h.removed.length, h.added.length]), [[1, 1], [1, 1], [1, 0], [1, 1]]);
+  const strip = (x) => x.map(({ baseStart, baseEnd, removed, added }) => ({ baseStart, baseEnd, removed, added }));
+  assert.deepEqual(strip(hunksOf(base, work)), strip(hs));
+  // Each taken alone, all of them, or none: the text as it should be.
+  assert.equal(applyHunks(base, hs, new Set([0, 1, 2, 3])), work);
+  assert.equal(applyHunks(base, hs, new Set([2])), base.replace('- beta for a week\n', ''));
+  // In the editor: word marks on each line, the struck one whole.
+  const st = combine(base, work);
+  assert.deepEqual(both(st), [base, work]);
+  assert.match(show(st), /- ship by the \[-end of the month-\]\{\+25th\+\}\n/);
+  assert.match(show(st), /\[-- beta for a week\n-\]/);
 });

@@ -370,6 +370,7 @@ input[type=checkbox] { accent-color: var(--accent); }
 
 /* meeting mode: for sharing the screen — large text, the line you're on, nothing private around it */
 .meeting #activity, .meeting #sidebar, .meeting #sidebar-resizer, .meeting .tabs, .meeting .toolbar, .meeting .pane:not(.focused):not(:only-child), .meeting .pane-resizer, .meeting .ed-resizer { display: none !important; }
+.meeting .welcome h1, .meeting .welcome-sub, .meeting .welcome-grid > :nth-child(2) { display: none !important; }
 .meeting #app { grid-template-columns: 0 0 1fr; }
 .meeting #main { grid-column: 1 / -1; }
 .meeting #status { grid-column: 1 / -1; font-size: 13px; }

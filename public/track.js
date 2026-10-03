@@ -73,6 +73,53 @@ export function lineOps(a, b) {
   return ops;
 }
 
+// How alike two lines are (0..1): the pairs of characters they share.
+function likeness(x, y) {
+  if (x === y) return 1;
+  const grams = (s) => { const m = new Map(); const t = s.replace(/\s+/g, ' ').trim(); for (let i = 0; i < t.length - 1; i++) m.set(t.slice(i, i + 2), (m.get(t.slice(i, i + 2)) || 0) + 1); return m; };
+  const a = grams(x);
+  const b = grams(y);
+  let both = 0;
+  let all = 0;
+  for (const [g, v] of a) { both += Math.min(v, b.get(g) || 0); all += v; }
+  for (const v of b.values()) all += v;
+  return all ? (2 * both) / all : 0;
+}
+
+// A run of changed lines as changes that can be taken one by one:
+// [[removed lines, added lines]]. Lines changed one for one are a change
+// each; when lines also went or came, the ones still alike are paired and
+// what went or came between them is a change of its own.
+export function pairLines(R, A) {
+  if (R.length === A.length) return R.length > 1 ? R.map((r, j) => [[r], [A[j]]]) : [[R, A]];
+  if (!R.length || !A.length || R.length * A.length > 2500) return [[R, A]];
+  const w = A.length + 1;
+  const score = new Float64Array((R.length + 1) * w);
+  const sim = (i, j) => { const s = likeness(R[i], A[j]); return s >= 0.4 ? s : -1; };
+  for (let i = R.length - 1; i >= 0; i--) {
+    for (let j = A.length - 1; j >= 0; j--) {
+      const s = sim(i, j);
+      score[i * w + j] = Math.max(score[(i + 1) * w + j], score[i * w + j + 1], s > 0 ? score[(i + 1) * w + j + 1] + s : 0);
+    }
+  }
+  const out = [];
+  let r = [];
+  let a = [];
+  const flush = () => { if (r.length || a.length) out.push([r, a]); r = []; a = []; };
+  let i = 0;
+  let j = 0;
+  while (i < R.length && j < A.length) {
+    const s = sim(i, j);
+    if (s > 0 && score[i * w + j] === score[(i + 1) * w + j + 1] + s) { flush(); out.push([[R[i++]], [A[j++]]]); }
+    else if (score[i * w + j] === score[(i + 1) * w + j]) r.push(R[i++]);
+    else a.push(A[j++]);
+  }
+  while (i < R.length) r.push(R[i++]);
+  while (j < A.length) a.push(A[j++]);
+  flush();
+  return out;
+}
+
 // The hunks from base to work, shaped as the server's (lib/diff.js buildHunks,
 // lines changed one for one a hunk each): for drawing them (redpen.js).
 export function hunksOf(base, work) {
@@ -86,10 +133,13 @@ export function hunksOf(base, work) {
     for (; k < ops.length && ops[k][0] !== '='; k++) {
       if (ops[k][0] === '-') { hk.removed.push(ops[k][1]); ai++; } else { hk.added.push(ops[k][1]); bi++; }
     }
-    hk.baseEnd = ai;
-    if (hk.removed.length > 1 && hk.removed.length === hk.added.length) {
-      hk.removed.forEach((l, j) => hunks.push({ baseStart: hk.baseStart + j, newStart: hk.newStart + j, removed: [l], added: [hk.added[j]], baseEnd: hk.baseStart + j + 1 }));
-    } else hunks.push(hk);
+    let pa = hk.baseStart;
+    let pb = hk.newStart;
+    for (const [removed, added] of pairLines(hk.removed, hk.added)) {
+      hunks.push({ baseStart: pa, newStart: pb, removed, added, baseEnd: pa + removed.length });
+      pa += removed.length;
+      pb += added.length;
+    }
   }
   return hunks;
 }
@@ -108,14 +158,14 @@ export function combine(base, work) {
     const R = [];
     const A = [];
     for (; k < ops.length && ops[k][0] !== '='; k++) (ops[k][0] === '-' ? R : A).push(ops[k][1]);
-    if (R.length === A.length) {
-      R.forEach((r, j) => {
-        for (const [op, s] of wordOps(r, A[j])) put(s, op === '=' ? 'b' : op === '-' ? 'd' : 'i');
+    for (const [r, a] of pairLines(R, A)) {
+      if (r.length === 1 && a.length === 1) {
+        for (const [op, s] of wordOps(r[0], a[0])) put(s, op === '=' ? 'b' : op === '-' ? 'd' : 'i');
         put('\n', 'b');
-      });
-    } else {
-      for (const r of R) put(`${r}\n`, 'd');
-      for (const a of A) put(`${a}\n`, 'i');
+      } else {
+        for (const l of r) put(`${l}\n`, 'd');
+        for (const l of a) put(`${l}\n`, 'i');
+      }
     }
   }
   // Take the added last newline off again: from each side.
