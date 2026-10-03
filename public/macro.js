@@ -277,7 +277,7 @@ export class Macros {
       } else if (step.t === 'replaceAll') {
         ed.replaceAllMatches(step.spec);
       } else if (step.t === 'undo' || step.t === 'redo') {
-        document.execCommand(step.t);
+        ed[step.t]();
       }
     }
   }

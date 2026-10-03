@@ -660,7 +660,18 @@ function buildMenu() {
         ...(isMac ? [] : [{ type: 'separator' }, { role: 'quit' }]),
       ],
     },
-    { role: 'editMenu' },
+    {
+      // Undo and redo go to the page: a note's editor keeps its own history
+      // (public/undo.js), which the built-in Undo wouldn't reach.
+      label: 'Edit',
+      submenu: [
+        { label: 'Undo', accelerator: 'CmdOrCtrl+Z', click: (_i, w) => (w && w === win ? sendCommand('undo')() : w?.webContents.undo()) },
+        { label: 'Redo', accelerator: isMac ? 'Shift+CmdOrCtrl+Z' : 'Ctrl+Y', click: (_i, w) => (w && w === win ? sendCommand('redo')() : w?.webContents.redo()) },
+        { type: 'separator' },
+        { role: 'cut' }, { role: 'copy' }, { role: 'paste' },
+        ...(isMac ? [{ role: 'pasteAndMatchStyle' }, { role: 'delete' }, { role: 'selectAll' }, { type: 'separator' }, { label: 'Speech', submenu: [{ role: 'startSpeaking' }, { role: 'stopSpeaking' }] }] : [{ role: 'delete' }, { type: 'separator' }, { role: 'selectAll' }]),
+      ],
+    },
     {
       label: 'Agent',
       submenu: [

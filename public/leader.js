@@ -12,7 +12,7 @@ export function menuKey(e) {
   const c = e.code || '';
   if (/^Key[A-Z]$/.test(c)) return e.shiftKey ? c.slice(3) : c.slice(3).toLowerCase();
   if (/^Digit\d$/.test(c)) return c.slice(5);
-  return { Space: 'SPC', Slash: '/', Period: '.', Comma: ',', Semicolon: ';', Quote: "'", BracketLeft: '[', BracketRight: ']' }[c] || null;
+  return { Space: 'SPC', Backquote: '`', Slash: '/', Period: '.', Comma: ',', Semicolon: ';', Quote: "'", BracketLeft: '[', BracketRight: ']' }[c] || null;
 }
 
 // A tree: [{ key, label, run } | { key, label, items: [...] }]. Entries with

@@ -101,6 +101,8 @@ Built without external libraries to stay lightweight. The editor is a native `te
 | ⌘P | Quick open: recent notes first, fuzzy search, create if missing. `>` commands · `#` jump to a heading in the current note · `@` a heading in any note · `:` line number |
 | ⌘⇧P | Command palette |
 | ⌥X | Leader key: a menu of commands by letter (see below) |
+| ⌘⇧B | Switch note: the buffer list, most recent first (open notes, and notes closed this session) |
+| ⌃6 | Back to the note before (Vim's alternate buffer; also ⌥X `` ` ``) |
 | ⌥. | Repeat the last command (from the leader menu, the palette or a shortcut) |
 | F3 / F4 | Keyboard macro: F3 starts recording, F4 stops; then F4 plays it (see below) |
 | F8 / ⇧F8 | Next / previous search result, from the note: the match is selected, the results list follows |
@@ -139,7 +141,7 @@ The shortcuts above (except typing behaviours like Tab, Enter, and bracket pairi
 |---|---|
 | `f` files | `f` find a file · `n` new note · `t` from a template · `j` today's journal · `r` rename · `b` bookmark · `y` copy [[link]] · `l` show in the tree · `h` history · `e` export HTML |
 | `s` search | `s` the workspace · `f` find in note · `r` replace · `h` heading here · `a` heading in any note · `l` go to line · `n`/`p` next/previous search result |
-| `b` tabs | `b` switch tab · `n`/`p` next/previous · `d` close · `o` close others · `[` `]` back/forward |
+| `b` buffers | `b` switch note (most recent first) · `` ` `` the note before · `m` messages · `n`/`p` next/previous · `d` close · `o` close others · `[` `]` back/forward |
 | `w` windows | `h` the sidebar · `l` the editor · `p` the preview · `w` the other pane · `v` split · `s` show/hide the sidebar · `z` focus mode |
 | `m` mode | `e` Edit · `s` Split · `c` Canvas · `p` Preview |
 | `l` links | `l` follow the link at the cursor · `f` pick a link in the preview · `b` back |
@@ -149,6 +151,10 @@ The shortcuts above (except typing behaviours like Tab, Enter, and bracket pairi
 | `q` macro | `q` start/stop recording · `r` play · `n` play N times · `e` play until it can't go on · `s` play at every search result · `v` show it |
 | `.` | Repeat the last command (it shows which) |
 | `,` / `k` | Settings / keyboard shortcuts |
+
+**Buffers (as in Emacs and Vim).** A note you close is kept for the session with its cursor, scroll and undo history; opened again (from anywhere) it comes back as it was, as long as the file hasn't changed meanwhile (the 20 most recent are kept). ⌘⇧B / ⌥X b b lists the notes most recently used first — the one before this is at the top, closed ones are marked ○. ⌃6 or ⌥X `` ` `` switches back and forth between two notes. ⌥X b m shows the messages shown at the bottom so far (Enter copies one).
+
+**Undo is the editor's own.** It survives switching tabs, Edit/Split/Preview and closing the note; a run of typing is one step (a pause, a new line or a new word after a space starts the next). A change from outside — another program or an agent editing the open note's file — is one step too: ⌘Z takes it back.
 
 **Back and forward (⌘[ / ⌘]) return to the place**, not just the note, as Vim's jump list: the cursor and the scroll where you left. A jump inside a note (a heading from the outline or `#`, `:` a line, a search result) is a step too, so ⌘[ after jumping to a heading goes back to where you were typing.
 

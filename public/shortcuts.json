@@ -24,6 +24,8 @@
   { "id": "repeat", "label": "Repeat the last command", "group": "General", "keys": "Alt+.", "scope": "app" },
   { "id": "macro-record", "label": "Keyboard macro: start / stop recording", "group": "General", "keys": "F3", "scope": "app" },
   { "id": "macro-play", "label": "Keyboard macro: stop recording, or play", "group": "General", "keys": "F4", "scope": "app" },
+  { "id": "other-note", "label": "Back to the note before (alternate buffer)", "group": "View", "keys": "Ctrl+6", "scope": "app" },
+  { "id": "buffers", "label": "Switch note (buffer list)", "group": "View", "keys": "CmdOrCtrl+Shift+B", "scope": "app" },
   { "id": "nav-back", "label": "Go back", "group": "View", "keys": "CmdOrCtrl+[", "scope": "app" },
   { "id": "nav-forward", "label": "Go forward", "group": "View", "keys": "CmdOrCtrl+]", "scope": "app" },
 

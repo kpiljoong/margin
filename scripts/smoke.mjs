@@ -35,6 +35,7 @@ fs.writeFileSync(path.join(ws, 'pics.md'), '# Pics\n\n![Big picture](assets/big.
 // Lines for a keyboard macro, and notes to run one at every search result.
 fs.writeFileSync(path.join(ws, 'macro.md'), 'apple\nbanana\ncherry');
 fs.writeFileSync(path.join(ws, 'ime.md'), 'a\nb\n');
+fs.writeFileSync(path.join(ws, 'buf.md'), '# Buffer\n\nfirst line\nsecond line\n');
 fs.mkdirSync(path.join(ws, 'todo'));
 fs.writeFileSync(path.join(ws, 'todo', 'a.md'), 'TODO one\n\nTODO two\n');
 fs.writeFileSync(path.join(ws, 'todo', 'b.md'), 'TODO three\n');
@@ -640,6 +641,74 @@ await check('F8 / ⇧F8 step through the search results from the note; ⌥. repe
   console.log(`${problem ? '✗' : '✓'} ${name}${problem ? `\n    ${problem}\n    got: ${JSON.stringify(got)}` : ''}`);
   if (problem) failed = true;
 }
+
+await check('undo survives switching tabs and modes; one ⌘Z takes back a run of typing, and a change from outside', `
+  const mac = navigator.platform.startsWith('Mac');
+  let ta = await openNote('ime.md');
+  const start = ta.value;
+  ta.focus();
+  ta.setSelectionRange(start.length, start.length);
+  for (const c of 'xyz') document.execCommand('insertText', false, c);
+  await openNote('flow.md');
+  await sleep(100);
+  button('Split').click();
+  ta = await openNote('ime.md');
+  ta.focus();
+  ta.dispatchEvent(new KeyboardEvent('keydown', { code: 'KeyZ', key: 'z', bubbles: true, cancelable: true, metaKey: mac, ctrlKey: !mac }));
+  const undone = ta.value;
+  ta.dispatchEvent(new KeyboardEvent('keydown', { code: 'KeyZ', key: 'z', bubbles: true, cancelable: true, shiftKey: true, metaKey: mac, ctrlKey: !mac }));
+  const redone = ta.value;
+  ta.dispatchEvent(new KeyboardEvent('keydown', { code: 'KeyZ', key: 'z', bubbles: true, cancelable: true, metaKey: mac, ctrlKey: !mac }));
+  ta.dispatchEvent(new KeyboardEvent('keydown', { code: 'KeyS', key: 's', bubbles: true, cancelable: true, metaKey: mac, ctrlKey: !mac }));
+  await until(() => $('#status')?.textContent.includes('saved'));
+  return { undone, redone, start };
+`, (v) => (v?.undone === v?.start && v.redone === v.start + 'xyz' ? null : 'undo did not survive'));
+
+await check('buffers: a closed note comes back with its cursor and undo; ⌥X ` goes to the note before; the list is most recent first; messages are kept', `
+  const mac = navigator.platform.startsWith('Mac');
+  const press = (code, key, opts = {}) => document.activeElement.dispatchEvent(new KeyboardEvent('keydown', { code, key, bubbles: true, cancelable: true, ...opts }));
+  let ta = await openNote('buf.md');
+  ta.focus();
+  ta.setSelectionRange(ta.value.length, ta.value.length);
+  document.execCommand('insertText', false, 'third line\\n');
+  press('KeyS', 's', { metaKey: mac, ctrlKey: !mac });
+  await until(() => $('#status')?.textContent.includes('saved'));
+  ta.setSelectionRange(12, 12);
+  await sleep(100);
+  press('KeyW', 'w', { metaKey: mac, ctrlKey: !mac });
+  await until(() => !$$('.tab').some((t) => t.textContent.includes('buf.md')));
+  ta = await openNote('buf.md');
+  await sleep(150);
+  const caret = ta.selectionStart;
+  ta.focus();
+  ta.dispatchEvent(new KeyboardEvent('keydown', { code: 'KeyZ', key: 'z', bubbles: true, cancelable: true, metaKey: mac, ctrlKey: !mac }));
+  const undone = ta.value;
+  ta.dispatchEvent(new KeyboardEvent('keydown', { code: 'KeyZ', key: 'z', bubbles: true, cancelable: true, shiftKey: true, metaKey: mac, ctrlKey: !mac }));
+  await openNote('flow.md');
+  await sleep(50);
+  await openNote('sub/links.md');
+  await sleep(50);
+  press('KeyX', '≈', { altKey: true });
+  await until(() => $('.leader'));
+  press('Backquote', '\`');
+  const other = await until(() => $('.tab.active')?.textContent.includes('flow.md'));
+  press('Digit6', '6', { ctrlKey: true });
+  const back = await until(() => $('.tab.active')?.textContent.includes('links.md'));
+  press('KeyX', '≈', { altKey: true });
+  await until(() => $('.leader'));
+  press('KeyB', 'b');
+  press('KeyB', 'b');
+  const first = await until(() => !$('#overlay').hidden && $('#overlay .palette-item')?.textContent);
+  key('Escape', {}, $('#overlay input'));
+  await sleep(100);
+  press('KeyX', '≈', { altKey: true });
+  await until(() => $('.leader'));
+  press('KeyB', 'b');
+  press('KeyM', 'm');
+  const msgs = await until(() => !$('#overlay').hidden && $$('#overlay .palette-item').map((x) => x.textContent));
+  key('Escape', {}, $('#overlay input'));
+  return { caret, undone, other: !!other, back: !!back, first, saved: msgs?.some((m) => m.includes('Link copied') || m.length > 0) };
+`, (v) => (v?.caret === 12 && v.undone === '# Buffer\n\nfirst line\nsecond line\n' && v.other && v.back && /^●?flow\.md/.test(v.first || '') && v.saved ? null : 'buffers did not work'));
 
 // The settings went to the app's config, not just this port's browser storage.
 {

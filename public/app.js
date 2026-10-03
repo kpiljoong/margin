@@ -157,7 +157,11 @@ function askConfirm(message, { okLabel = 'OK', danger = false } = {}) {
 }
 
 let toastTimer;
+// Every message shown, for a look back (as Emacs's *Messages*): ⌥X b m.
+const messages = [];
 function toast(msg, kind = '', action = null) {
+  messages.push({ at: new Date(), msg: String(msg), kind });
+  if (messages.length > 200) messages.shift();
   const el = $('#toast');
   el.replaceChildren(msg, action ? h('button', { class: 'toast-action', onclick: () => { el.hidden = true; action.run(); } }, action.label) : '');
   el.className = kind;
@@ -514,6 +518,17 @@ function fromDisk(text) {
 }
 const toDisk = (text, eol) => (eol === '\r\n' ? text.replace(/\r?\n/g, '\r\n') : text);
 
+// A kept note opened again: its cursor and scroll as they were.
+function restoreKept(tab, focus) {
+  requestAnimationFrame(() => {
+    if (!tab.editor || !S.tabs.includes(tab)) return;
+    if (focus && editorShown(tab)) tab.editor.focus();
+    tab.editor.setSelection(Math.min(tab.sel || 0, tab.editor.value.length));
+    tab.editor.scrollTop = tab.scroll || 0;
+    renderStatus();
+  });
+}
+
 async function openFile(path, { line, focus = true, group, side = false, text = false } = {}) {
   if (isDrawing(path) && !text) return openDrawing(path, { focus, group, side });
   let tab = S.tabs.find((t) => t.kind === 'file' && t.path === path);
@@ -521,7 +536,10 @@ async function openFile(path, { line, focus = true, group, side = false, text = 
   if (!tab) {
     try {
       const f = await api('GET', `/api/file?path=${encodeURIComponent(path)}`);
-      tab = { id: `f:${path}`, kind: 'file', path, ...fromDisk(f.content), hash: f.hash, sel: 0, scroll: 0, group: target };
+      const kept = closedTabs.get(path);
+      closedTabs.delete(path);
+      if (kept && kept.hash === f.hash) { tab = kept; tab.group = target; restoreKept(tab, line == null && focus); }
+      else tab = { id: `f:${path}`, kind: 'file', path, ...fromDisk(f.content), hash: f.hash, sel: 0, scroll: 0, group: target };
       S.tabs.push(tab);
     } catch (e) { toast(e.message, 'error'); return; }
   } else if (side && tab.group !== target) moveTab(tab, target, false);
@@ -544,6 +562,7 @@ function activate(id) {
   S.groups[tab.group].active = id;
   S.focus = tab.group;
   navRecord(tab);
+  touchMru(tab);
   persist();
   render();
   if (S.settings.followTab && (tab.kind === 'file' || tab.kind === 'drawing')) requestAnimationFrame(() => showInTree(tab.path, { quiet: true }));
@@ -682,6 +701,42 @@ function splitRight() {
   openPalette();
 }
 
+// Buffers, as in Emacs and Vim: a note closed keeps its cursor, scroll and
+// undo for the session, and comes back as it was when opened again (if the
+// file hasn't changed meanwhile). The most recently used come first in the
+// buffer list (⌥X b b), and ⌥X \` goes back to the one before.
+const closedTabs = new Map(); // path → tab
+const CLOSED_MAX = 20;
+let mru = []; // tab ids, most recent first
+function touchMru(tab) { mru = [tab.id, ...mru.filter((x) => x !== tab.id)].slice(0, 100); }
+function keepClosed(tab) {
+  if (tab.kind !== 'file' || !tab.editor || tab.content !== tab.saved || tab.conflict) { mru = mru.filter((x) => x !== tab.id); return; }
+  tab.sel = tab.editor.selectionStart;
+  tab.scroll = tab.editor.scrollTop;
+  closedTabs.delete(tab.path);
+  closedTabs.set(tab.path, tab);
+  while (closedTabs.size > CLOSED_MAX) { const [p, t] = closedTabs.entries().next().value; closedTabs.delete(p); mru = mru.filter((x) => x !== t.id); }
+}
+// The buffers, most recent first: open tabs, then notes closed but kept.
+function buffers() {
+  const open = new Map(S.tabs.map((t) => [t.id, t]));
+  const kept = new Map([...closedTabs.values()].map((t) => [t.id, t]));
+  const ids = [...mru, ...S.tabs.map((t) => t.id)].filter((id, i, a) => a.indexOf(id) === i && (open.has(id) || kept.has(id)));
+  return ids.map((id) => ({ tab: open.get(id) || kept.get(id), closed: !open.has(id) }));
+}
+function showBuffer({ tab, closed }) {
+  if (closed) return openFile(tab.path);
+  activate(tab.id);
+  focusEditor();
+}
+// Back to the buffer before this one (Vim's ⌃^, Doom's SPC \`).
+function otherBuffer() {
+  const cur = activeTab();
+  const b = buffers().find((x) => x.tab !== cur && x.tab.kind !== 'welcome');
+  if (!b) { toast('No other note yet'); return; }
+  showBuffer(b);
+}
+
 async function closeTab(id) {
   const tab = S.tabs.find((t) => t.id === id);
   if (!tab) return;
@@ -699,6 +754,7 @@ async function closeTab(id) {
   const idx = siblings.indexOf(tab);
   S.tabs.splice(S.tabs.indexOf(tab), 1);
   if (attachedByGroup[g] === tab) attachedByGroup[g] = null;
+  keepClosed(tab);
   if (S.groups[g]?.active === id) {
     const rest = S.tabs.filter((t) => t.group === g);
     S.groups[g].active = (rest[idx] || rest[idx - 1])?.id || null;
@@ -751,7 +807,7 @@ async function reloadTab(tab) {
   Object.assign(tab, { ...fromDisk(f.content), hash: f.hash, conflict: false, missing: false });
   if (tab.editor) {
     const { selectionStart, scrollTop } = tab.editor;
-    tab.editor.value = tab.content;
+    tab.editor.loadText(tab.content);
     tab.editor.setSelection(Math.min(selectionStart, tab.content.length));
     tab.editor.scrollTop = scrollTop;
   }
@@ -2478,6 +2534,9 @@ function marked(text, idx) {
 }
 
 const COMMANDS = [
+  ['Switch note (buffers)…', () => setTimeout(pickTab, 0), { key: 'buffers' }],
+  ['Back to the note before', otherBuffer, { key: 'other-note' }],
+  ['Messages…', () => setTimeout(showMessages, 0)],
   ['New note', () => newNote()],
   ['New note from template…', () => setTimeout(() => pickTemplate((t) => newNote(undefined, t)), 0)],
   ['Insert template…', () => setTimeout(() => pickTemplate(insertTemplate, 'Insert template…'), 0)],
@@ -4424,6 +4483,11 @@ const ACTIONS = {
   'copy-drawing': () => drawingTab()?.frame && copyPicture(drawingPicture(drawingTab())),
   leader: openLeaderMenu,
   repeat: repeatLast,
+  'other-note': otherBuffer,
+  buffers: pickTab,
+  // From the Edit menu: the editor's own history when a note has the focus.
+  undo: () => { const t = S.tabs.find((x) => x.editor?.ta === document.activeElement); if (t) t.editor.undo(); else document.execCommand('undo'); },
+  redo: () => { const t = S.tabs.find((x) => x.editor?.ta === document.activeElement); if (t) t.editor.redo(); else document.execCommand('redo'); },
   'macro-record': toggleRecording,
   'macro-play': () => (macros.recording ? stopRecording() : playMacro(1)),
   'search-next': () => stepSearch(1),
@@ -4444,6 +4508,7 @@ function leaderTree() {
   const note = !!tab && isNote(tab.path);
   return [
     { key: 'SPC', label: 'All commands…', run: () => openPalette('>') },
+    { key: '`', label: 'The note before', run: otherBuffer },
     { key: 'f', label: 'files', items: [
       { key: 'f', label: 'Find a file…', run: () => openPalette() },
       { key: 'n', label: 'New note…', run: () => newNote() },
@@ -4467,7 +4532,9 @@ function leaderTree() {
       { key: 'p', label: 'Previous search result', run: () => stepSearch(-1) },
     ] },
     { key: 'b', label: 'tabs', items: [
-      { key: 'b', label: 'Switch tab…', run: pickTab },
+      { key: 'b', label: 'Switch note (buffers)…', run: pickTab },
+      { key: '`', label: 'The note before', run: otherBuffer },
+      { key: 'm', label: 'Messages…', run: showMessages },
       { key: 'n', label: 'Next tab', run: () => cycleTab(1) },
       { key: 'p', label: 'Previous tab', run: () => cycleTab(-1) },
       { key: 'd', label: 'Close tab', when: () => !!activeTab(), run: () => closeTab(activeTab().id) },
@@ -4607,11 +4674,30 @@ function runLeaderKeys(keys) {
   if (it?.run) it.run(); else toast('That command isn’t available here');
 }
 
+// The buffer list (Emacs C-x b): open notes and those closed but kept, the
+// most recent first — the one before this is at the top.
 function pickTab() {
+  const cur = activeTab();
+  const list = buffers().filter((b) => b.tab !== cur).concat(cur ? [{ tab: cur, closed: false }] : []);
   picker({
-    placeholder: 'Switch to a tab…',
-    source: (q) => S.tabs.map((t) => ({ t, name: t.path ? basename(t.path) : t.title || t.kind })).map((x) => ({ ...x, m: fuzzy(q, x.name) })).filter((x) => x.m)
-      .map(({ t, name, m }) => ({ icon: t.group === 1 ? '◫' : '', label: marked(name, m.idx), hint: t.path ? dirname(t.path) : '', run: () => { activate(t.id); focusEditor(); } })),
+    placeholder: 'Switch to a note…  (closed ones keep their place)',
+    source: (q) => list.map((b) => ({ b, name: b.tab.path ? basename(b.tab.path) : b.tab.title || b.tab.kind })).map((x) => ({ ...x, m: fuzzy(q, x.name) })).filter((x) => x.m)
+      .sort((a, b) => (q ? b.m.score - a.m.score : 0))
+      .map(({ b, name, m }) => ({
+        icon: b.closed ? '○' : b.tab.group === 1 ? '◫' : '●',
+        label: marked(name, m.idx),
+        hint: [b.tab.path ? dirname(b.tab.path) : '', b.closed ? 'closed' : b.tab === cur ? 'here' : ''].filter(Boolean).join(' · '),
+        run: () => showBuffer(b),
+      })),
+  });
+}
+
+function showMessages() {
+  const time = (d) => d.toTimeString().slice(0, 8);
+  picker({
+    placeholder: `Messages (${messages.length}) — Enter copies one`,
+    source: (q) => messages.slice().reverse().map((x) => ({ x, m: fuzzy(q, x.msg) })).filter((y) => y.m)
+      .map(({ x, m }) => ({ icon: x.kind === 'error' ? '!' : '', label: marked(x.msg, m.idx), hint: time(x.at), run: () => navigator.clipboard.writeText(x.msg) })),
   });
 }
 function cycleTab(by) {
@@ -4714,7 +4800,7 @@ function runCommand(name) {
 
 // Repeat the last command (Emacs C-x z, Vim's .): from the leader menu, the
 // palette or a shortcut. Opening a menu or a picker isn't one.
-const NOT_REPEATED = new Set(['leader', 'palette', 'quick-open', 'repeat', 'save', 'settings', 'macro-record', 'macro-play']);
+const NOT_REPEATED = new Set(['undo', 'redo', 'leader', 'palette', 'quick-open', 'repeat', 'save', 'settings', 'macro-record', 'macro-play']);
 let lastRun = null;
 function remember(label, run) { lastRun = { label, run }; }
 function repeatLast() {

@@ -5,6 +5,7 @@
 // widths never change and the layers stay aligned in proportional fonts too.
 
 import { eventKeys } from './keys.js';
+import { UndoHistory } from './undo.js';
 
 const esc = (s) => s.replace(/[&<>]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c]));
 const MAX_HIGHLIGHT = 300_000; // chars; beyond this we fall back to plain text
@@ -128,6 +129,7 @@ export class MarkdownEditor {
     this.find = { open: false, query: '', replace: '', caseSensitive: false, regex: false, matches: [], index: -1 };
     this.extra = []; // additional selections for multi-cursor editing: [start, end]
     this.hints = []; // ranges shown faintly for a moment (e.g. mentions of a box): [start, end]
+    this.history = new UndoHistory('');
 
     this.findLayer = h('div', 'ed-layer ed-find-layer');
     this.hlLayer = h('div', 'ed-layer ed-hl-layer');
@@ -142,10 +144,14 @@ export class MarkdownEditor {
     this.el = h('div', 'ed');
     this.el.append(this.findLayer, this.hlLayer, this.ta, this.popup, this.findBar);
 
-    this.ta.addEventListener('input', () => this._changed());
+    this.ta.addEventListener('input', (e) => this._changed(e));
+    this.ta.addEventListener('beforeinput', (e) => {
+      if (e.inputType === 'historyUndo' || e.inputType === 'historyRedo') { e.preventDefault(); if (e.inputType === 'historyUndo') this.undo(); else this.redo(); return; }
+      if (!this.busy) this._selBefore = [this.ta.selectionStart, this.ta.selectionEnd];
+    });
     this.ta.addEventListener('beforeinput', (e) => this._multiInput(e));
-    this.ta.addEventListener('mousedown', () => this._clearMulti());
-    this.ta.addEventListener('compositionstart', () => this._clearMulti());
+    this.ta.addEventListener('mousedown', () => { this._clearMulti(); this.history.close(); });
+    this.ta.addEventListener('compositionstart', () => { this._clearMulti(); this._selBefore = [this.ta.selectionStart, this.ta.selectionEnd]; });
     this.ta.addEventListener('scroll', () => this._syncScroll());
     this.ta.addEventListener('keydown', (e) => {
       this.handlingKey = true;
@@ -163,7 +169,33 @@ export class MarkdownEditor {
 
   // ---------------- public API
   get value() { return this.ta.value; }
-  set value(v) { this.ta.value = v; this.extra = []; this.hints = []; this._render(); }
+  set value(v) { this.ta.value = v; this.extra = []; this.hints = []; this.history.reset(v); this._render(); }
+
+  // New text from outside (the file changed on disk: another program, an
+  // agent): shown, and one ⌘Z takes it back.
+  loadText(v) {
+    if (v === this.ta.value) return;
+    const sel = [this.ta.selectionStart, this.ta.selectionEnd];
+    this.history.close();
+    this.ta.value = v;
+    this.extra = [];
+    this.hints = [];
+    this.history.record(v, [0, 0], sel);
+    this.history.close();
+    this._render();
+  }
+
+  undo() { this._applyHistory(this.history.undo()); }
+  redo() { this._applyHistory(this.history.redo()); }
+  _applyHistory(c) {
+    if (!c) return;
+    this._clearMulti();
+    this.ta.setRangeText(c.insert, c.at, c.at + c.remove);
+    this.ta.setSelectionRange(c.sel[0], c.sel[1]);
+    this._changed();
+    const y = this._caretCoords(c.sel[0]).top - this.ta.scrollTop;
+    if (y < 0 || y > this.ta.clientHeight - this.lineHeight()) this.scrollToOffset(c.sel[0]);
+  }
   focus() { this.ta.focus({ preventScroll: true }); }
   get selectionStart() { return this.ta.selectionStart; }
   get selectionEnd() { return this.ta.selectionEnd; }
@@ -228,9 +260,11 @@ export class MarkdownEditor {
     this._syncScroll();
   }
 
-  // Replace a range through execCommand so the native undo stack keeps working.
+  // Replace a range (one step in the undo history, undo.js). execCommand
+  // keeps the browser's own behaviour around typing (autocorrect, IME).
   replace(start, end, text, selStart = start + text.length, selEnd = selStart) {
     const ta = this.ta;
+    this._selBefore = [ta.selectionStart, ta.selectionEnd];
     if (!this.handlingKey && !this.quietEdit) editorWatch.edit?.(this, { start, end, text, selStart: ta.selectionStart, selEnd: ta.selectionEnd });
     this.busy = true;
     try { this._replace(start, end, text, selStart, selEnd); } finally { this.busy = false; }
@@ -278,7 +312,11 @@ export class MarkdownEditor {
   }
 
   // ---------------- rendering
-  _changed() {
+  _changed(e) {
+    if (!e?.isComposing) {
+      this.history.record(this.ta.value, this._selBefore, [this.ta.selectionStart, this.ta.selectionEnd]);
+      this._selBefore = null;
+    }
     this.hints = [];
     this._render();
     if (this.find.open) this._runFind(false);
@@ -370,6 +408,13 @@ export class MarkdownEditor {
     if (e.isComposing || e.keyCode === 229) return;
     if (!this.popup.hidden && this._popupKeys(e)) return;
     const ta = this.ta;
+    // Undo and redo: the editor's own history (undo.js).
+    if (modKey(e) && !e.altKey && (e.code === 'KeyZ' || (!isMac && e.code === 'KeyY' && !e.shiftKey))) {
+      e.preventDefault();
+      if (e.code === 'KeyZ' && !e.shiftKey) this.undo(); else this.redo();
+      return;
+    }
+    if (/^(Arrow|Home|End|Page)/.test(e.key)) this.history.close();
     const { selectionStart: s, selectionEnd: end, value } = ta;
     const mod = modKey(e);
     const lineStart = value.lastIndexOf('\n', s - 1) + 1;
