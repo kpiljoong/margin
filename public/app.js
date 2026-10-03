@@ -1491,7 +1491,7 @@ function renderTabs() {
   const bar = paneEl(g).querySelector('.tabs');
   bar.replaceChildren(...S.tabs.filter((t) => t.group === g).map((t) => {
     const dirty = (t.kind === 'file' && t.content !== t.saved) || (t.kind === 'drawing' && t.text !== t.saved);
-    const label = t.kind === 'review' ? `Review: ${t.title}` : t.kind === 'gitdiff' ? `Δ ${basename(t.path)}` : t.kind === 'history' ? `History: ${stem(t.path)}` : basename(t.path);
+    const label = t.kind === 'review' ? `Review: ${t.title}` : t.kind === 'outside' ? '↯ Changed outside' : t.kind === 'gitdiff' ? `Δ ${basename(t.path)}` : t.kind === 'history' ? `History: ${stem(t.path)}` : basename(t.path);
     return h('div', { class: `tab${t.id === grp.active ? ' active' : ''}${dirty ? ' dirty' : ''}`, title: t.path || t.title, draggable: 'true',
       'data-id': t.id,
       ondragstart: (e) => { e.dataTransfer.setData('text/x-agent-notes-tab', t.id); e.dataTransfer.effectAllowed = 'move'; document.body.classList.add('tab-dragging'); },
@@ -1638,7 +1638,7 @@ function renderContent(g = S.focus) {
   const tab = activeIn(g);
   if (attachedByGroup[g] && attachedByGroup[g] !== tab) attachedByGroup[g] = null;
   if (!tab) { c.replaceChildren(g === 0 ? welcome() : h('div', { class: 'empty pane-empty' }, 'Open a note here with ', h('kbd', {}, kbd('quick-open') || 'the palette'), '.')); return; }
-  if (tab.kind === 'review') { showReview(c, tab); return; }
+  if (tab.kind === 'review' || tab.kind === 'outside') { showReview(c, tab); return; }
   if (tab.kind === 'gitdiff') { c.replaceChildren(gitDiffView(tab)); return; }
   if (tab.kind === 'history') { c.replaceChildren(historyView(tab)); return; }
   if (tab.kind === 'drawing') { drawingView(tab, c); return; }
@@ -2478,6 +2478,10 @@ function renderStatus() {
     h('span', { class: 'grow' }),
     h('span', { class: 'item clickable', title: 'Change theme', onclick: () => pickTheme() }, `◐ ${currentTheme().name}${S.settings.theme === 'system' ? ' (auto)' : ''}`),
   ];
+  if (S.outside?.length) {
+    items.splice(2, 0, h('span', { class: 'item clickable outside-count', title: 'Notes another program changed (an agent in a terminal, another editor). Click to review them change by change.', onclick: openOutside },
+      `↯ ${S.outside.length} changed outside`));
+  }
   if (macros.recording) items.splice(2, 0, h('span', { class: 'item rec clickable', title: 'Click to stop recording', onclick: stopRecording }, `● Recording macro · ${kbd('macro-play') || '⌥X q q'} stops`));
   if (tab?.kind === 'file') {
     const ed = tab.editor;
@@ -2537,6 +2541,8 @@ const COMMANDS = [
   ['Switch note (buffers)…', () => setTimeout(pickTab, 0), { key: 'buffers' }],
   ['Back to the note before', otherBuffer, { key: 'other-note' }],
   ['Messages…', () => setTimeout(showMessages, 0)],
+  ['Changes from outside (agents, other editors)…', () => openOutside()],
+  ['Review the next agent run', () => reviewNext()],
   ['New note', () => newNote()],
   ['New note from template…', () => setTimeout(() => pickTemplate((t) => newNote(undefined, t)), 0)],
   ['Insert template…', () => setTimeout(() => pickTemplate(insertTemplate, 'Insert template…'), 0)],
@@ -4035,6 +4041,103 @@ function openReview(id) {
   refreshReview(tab);
 }
 
+// The run that waits longest for a look (the oldest in review), else the newest.
+function reviewNext() {
+  const waiting = S.runs.filter((r) => r.status === 'review');
+  const open = activeTab()?.kind === 'review' ? activeTab().runId : null;
+  const next = waiting.filter((r) => r.id !== open).at(-1) || waiting[0] || S.runs[0];
+  if (next) openReview(next.id);
+  else toast('No agent runs yet.');
+}
+
+// ------------------------------------------------------------------ changes from outside
+// An agent can also work in the folder directly (Claude Code or Codex in a
+// terminal), as can any other editor. What they changed is reviewed here like
+// a run: pick the changes to keep, the others are undone.
+
+async function loadOutside() {
+  const before = S.outside?.length || 0;
+  try { S.outside = (await api('GET', '/api/outside')).changes; } catch { S.outside = []; }
+  if (S.outside.length !== before && nav.ready) renderStatus();
+  const tab = S.tabs.find((t) => t.kind === 'outside');
+  if (tab) refreshOutside(tab);
+}
+
+function openOutside() {
+  let tab = S.tabs.find((t) => t.kind === 'outside');
+  if (!tab) {
+    tab = { id: 'outside', kind: 'outside', title: 'Changed outside', run: null, decisions: {}, group: S.focus };
+    S.tabs.push(tab);
+  }
+  tab.wantFocus = true;
+  activate(tab.id);
+  refreshOutside(tab);
+}
+
+async function refreshOutside(tab) {
+  let list;
+  try { list = (await api('GET', '/api/outside')).changes; } catch (e) { toast(e.message, 'error'); return; }
+  S.outside = list;
+  const old = new Map((tab.run?.changes || []).map((c) => [c.path, c]));
+  const changes = (await Promise.all(list.map((x) => api('GET', `/api/outside/diff?path=${encodeURIComponent(x.path)}`).then((c) => ({ ...c, at: x.at }), () => null)))).filter(Boolean);
+  const decisions = {};
+  // A note that changed again starts over: all of it kept.
+  for (const c of changes) decisions[c.path] = old.get(c.path)?.hash === c.hash ? tab.decisions[c.path] : { file: true, hunks: new Set(c.hunks.map((_, i) => i)) };
+  tab.run = { status: 'review', changes };
+  tab.decisions = decisions;
+  renderStatus();
+  if (S.groups[tab.group]?.active === tab.id) renderContent(tab.group);
+}
+
+function outsideView(tab) {
+  const wrap = h('div', { class: 'review', tabindex: 0, 'data-tab': tab.id, onkeydown: (e) => reviewKeys(e, tab),
+    onmousedown: (e) => { const it = e.target.closest('.kb-item'); if (it) setReviewCur(tab, it, false); } });
+  wrap.append(h('div', { class: 'review-head' },
+    h('span', { class: 'badge st-review' }, 'outside'),
+    h('div', { class: 'task' }, 'Changed outside Margin'),
+    h('div', { class: 'meta' }, h('span', {}, 'Notes another program changed while Margin was open — an agent in a terminal, another editor. Every change is kept until you undo it; earlier versions are also in each note’s history.'))));
+  const changes = tab.run?.changes;
+  if (!changes) { wrap.append(h('div', { class: 'empty' }, 'Loading…')); return wrap; }
+  if (!changes.length) { wrap.append(h('div', { class: 'review-note ok' }, 'Nothing changed outside since you last looked.')); return wrap; }
+  const total = changes.reduce((n, c) => n + c.hunks.length, 0);
+  const kept = changes.reduce((n, c) => n + tab.decisions[c.path].hunks.size, 0);
+  const undo = total - kept;
+  wrap.append(h('div', { class: 'review-actions' },
+    h('span', { class: 'grow' }, `${changes.length} note${changes.length === 1 ? '' : 's'} · keeping ${kept} of ${total} change${total === 1 ? '' : 's'}`,
+      h('span', { class: 'review-keys', title: 'j / k  next / previous change\nJ / K  next / previous note\nx or space  keep or undo the change · X  the whole note\nA / U  keep all / none\na  done (undo the ones not kept) · r  refresh\n=  diff / result · o or Enter  open at the change' }, 'j k · x · a done')),
+    h('button', { class: 'btn', onclick: () => refreshOutside(tab) }, 'Refresh'),
+    h('button', { class: `btn ${undo ? 'danger' : 'primary'}`, onclick: () => keepOutside(tab) }, undo ? `Undo ${undo}, keep ${kept}` : 'Keep all')));
+  for (const c of [...changes].sort((a, b) => b.at - a.at)) {
+    wrap.append(h('div', { class: 'outside-when' }, `changed ${timeAgo(c.at)}`));
+    wrap.append(fileCard(c, tab, false));
+  }
+  return wrap;
+}
+
+// Undo the changes that are not kept; all of them are looked at, then.
+async function keepOutside(tab) {
+  const changes = tab.run?.changes || [];
+  if (!changes.length) return;
+  const seen = [];
+  let undone = 0;
+  for (const c of changes) {
+    const d = tab.decisions[c.path];
+    if (d.hunks.size < c.hunks.length) {
+      const open = S.tabs.find((t) => t.kind === 'file' && t.path === c.path && t.content !== t.saved);
+      if (open) { toast(`${c.path} has unsaved edits here; save or revert them first.`, 'error'); continue; }
+      try {
+        await api('PUT', '/api/file', { path: c.path, content: applySelected(c.base, c.hunks, d.hunks), baseHash: c.hash, reason: 'restore' });
+        undone += c.hunks.length - d.hunks.size;
+      } catch (e) { toast(`${c.path}: ${e.status === 409 ? 'it changed again — look at it once more' : e.message}`, 'error'); continue; }
+    }
+    seen.push(c.path);
+  }
+  try { await api('POST', '/api/outside/seen', { paths: seen }); } catch (e) { toast(e.message, 'error'); }
+  if (seen.length) toast(undone ? `Undid ${undone} change${undone === 1 ? '' : 's'} from outside.` : `Kept the changes in ${seen.length} note${seen.length === 1 ? '' : 's'}.`);
+  await syncOpenTabs();
+  await refreshOutside(tab);
+}
+
 async function refreshReview(tab) {
   const prevStatus = tab.run?.status;
   try { tab.run = await api('GET', `/api/runs/${tab.runId}`); }
@@ -4233,7 +4336,7 @@ function showReview(c, tab) {
   const same = old?.dataset.tab === tab.id;
   const had = old?.contains(document.activeElement);
   const top = old?.scrollTop;
-  const wrap = reviewView(tab);
+  const wrap = (tab.kind === 'outside' ? outsideView : reviewView)(tab);
   c.replaceChildren(wrap);
   if (same) wrap.scrollTop = top;
   const cur = reviewItems(wrap).find((el) => itemKey(el) === tab.cur);
@@ -4266,6 +4369,7 @@ function reviewKeys(e, tab) {
   const i = items.findIndex((el) => itemKey(el) === tab.cur);
   const cur = items[i];
   const reviewable = ['review', 'failed', 'cancelled'].includes(tab.run?.status);
+  const outside = tab.kind === 'outside';
   const go = (el) => { if (el) setReviewCur(tab, el); };
   const fileOf = (el) => el?.closest('.file-card');
   const done = () => e.preventDefault();
@@ -4309,10 +4413,11 @@ function reviewKeys(e, tab) {
       renderContent(tab.group);
       return;
     }
-    case 'a': done(); if (reviewable && tab.run.changes.length && selectedCount(tab)) applyRun(tab); return;
-    case 'd': done(); if (reviewable) discardRun(tab); return;
-    case 'f': done(); if (reviewable) followUp(tab); return;
+    case 'a': done(); if (outside) keepOutside(tab); else if (reviewable && tab.run.changes.length && selectedCount(tab)) applyRun(tab); return;
+    case 'd': done(); if (reviewable && !outside) discardRun(tab); return;
+    case 'f': done(); if (reviewable && !outside) followUp(tab); return;
     case 'u': done(); if (tab.run?.status === 'applied') revertRun(tab); return;
+    case 'r': done(); if (outside) refreshOutside(tab); return;
     case 'l': { done(); const log = wrap.querySelector('details.log'); if (log) log.open = !log.open; return; }
     case '=': {
       done();
@@ -4547,7 +4652,7 @@ function connectEvents() {
     const affected = S.tabs.filter((t) => isDoc(t) && (!paths.length || changed.has(t.path)));
     if (affected.length) await syncTabs(affected);
     for (const p of paths) if (isDrawing(p) || isMermaidFile(p) || isNote(p)) refreshEmbeds(p);
-    if (paths.some((p) => /\.(md|markdown|mdx|txt)$/i.test(p))) { loadTags(); const t = fileTab(); if (t) loadBacklinks(t.path); }
+    if (paths.some((p) => /\.(md|markdown|mdx|txt)$/i.test(p))) { loadTags(); loadOutside(); const t = fileTab(); if (t) loadBacklinks(t.path); }
     loadGitSoon();
   }, 60));
   es.addEventListener('runs', () => loadRuns().then(() => {
@@ -4683,6 +4788,9 @@ function leaderTree() {
     { key: 'a', label: 'agent', items: [
       { key: 'a', label: 'Delegate a task…', run: () => openTaskDialog() },
       { key: 'r', label: 'Agent runs', run: () => showView('agent') },
+      { key: 'v', label: 'Review the next run', when: () => S.runs.some((r) => r.status === 'review'), run: reviewNext },
+      { key: 'o', label: `Changed outside${S.outside?.length ? ` (${S.outside.length})` : ''}`, run: openOutside },
+      ...RECIPES.map(([name, text], i) => ({ key: String(i + 1), label: `${name}…`, run: () => openTaskDialog(text) })),
     ] },
     { key: 't', label: 'toggles', items: [
       { key: 'f', label: `Tree follows the tab: ${S.settings.followTab ? 'on' : 'off'}`, run: toggleFollowTab },
@@ -4980,7 +5088,7 @@ async function boot() {
   $('#titlebar').textContent = `${S.info.name} — Margin`;
   S.recent = JSON.parse(store.getItem(`an.recent.${S.info.root}`) || '[]');
   try { S.bookmarks = JSON.parse(store.getItem(`an.bookmarks.${S.info.root}`) || '[]').filter((p) => typeof p === 'string'); } catch { S.bookmarks = []; }
-  await Promise.all([loadTree(), loadRuns(), loadTags(), loadGit()]);
+  await Promise.all([loadTree(), loadRuns(), loadTags(), loadGit(), loadOutside()]);
   const saved = JSON.parse(store.getItem(`an.tabs.${S.info.root}`) || 'null');
   // v0.2 format was { open, active }; v0.3 stores one entry per pane.
   const groups = saved?.groups || (saved ? [{ open: saved.open, active: saved.active }] : []);

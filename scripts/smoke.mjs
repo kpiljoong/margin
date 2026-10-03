@@ -35,6 +35,7 @@ fs.writeFileSync(path.join(ws, 'pics.md'), '# Pics\n\n![Big picture](assets/big.
 // Lines for a keyboard macro, and notes to run one at every search result.
 fs.writeFileSync(path.join(ws, 'macro.md'), 'apple\nbanana\ncherry');
 fs.writeFileSync(path.join(ws, 'ime.md'), 'a\nb\n');
+fs.writeFileSync(path.join(ws, 'outside.md'), Array.from({ length: 20 }, (_, i) => `line ${i + 1}`).join('\n') + '\n');
 fs.writeFileSync(path.join(ws, 'buf.md'), '# Buffer\n\nfirst line\nsecond line\n');
 fs.mkdirSync(path.join(ws, 'todo'));
 fs.writeFileSync(path.join(ws, 'todo', 'a.md'), 'TODO one\n\nTODO two\n');
@@ -741,6 +742,30 @@ await check('the search results keep their scroll position when one is opened', 
   return { before, after };
 `, (v) => (v?.before > 0 && Math.abs(v.after - v.before) < 2 ? null : 'the results list jumped'));
 
+// Another program (an agent in a terminal) changes a note: two changes.
+fs.writeFileSync(path.join(ws, 'outside.md'), Array.from({ length: 20 }, (_, i) => (i === 1 ? 'LINE 2 by agent' : i === 17 ? 'LINE 18 by agent' : `line ${i + 1}`)).join('\n') + '\n');
+await check('a change from outside shows in the status bar; undo one of its changes by keys, keep the other', `
+  const item = await until(() => $$('#status .outside-count').find((x) => /changed outside/.test(x.textContent)), 10000);
+  if (!item) return { error: 'no status item', status: $('#status').textContent };
+  item.click();
+  const wrap = await until(() => $('.review .hunk') && $('.review'));
+  const focused = document.activeElement === wrap;
+  // The newest first (a test before may have changed a note from outside too).
+  const hunks = $$('.review .file-card')[0]?.dataset.path === 'outside.md' && $$('.review .file-card')[0].querySelectorAll('.hunk').length;
+  key('j'); key('x'); await sleep(150);
+  const label = button('Undo')?.textContent;
+  key('a');
+  const ok = await until(() => /Nothing changed outside/.test($('.review')?.textContent || ''), 5000);
+  await sleep(200);
+  return { focused, hunks, label, ok: !!ok, gone: !$('#status .outside-count') };
+`, (v) => (v?.focused && v.hunks === 2 && /^Undo 1, keep \d+$/.test(v.label) && v.ok && v.gone ? null : 'reviewing the outside change did not work'));
+{
+  const t = fs.readFileSync(path.join(ws, 'outside.md'), 'utf8').split('\n');
+  const good = t[1] === 'line 2' && t[17] === 'LINE 18 by agent';
+  console.log(`${good ? '✓' : '✗'} the undone change is gone from the file, the kept one stays`);
+  if (!good) failed = true;
+}
+
 await check('a review by keys: U none, j/k to a change, x picks it, a click too, a applies', `
   const ta = await openNote('sub/messy.md');
   ta.focus();
@@ -802,5 +827,5 @@ const original = text.startsWith('#Title\ntext');
 console.log(`${original ? '✓' : '✗'} the restored file is the one from before`);
 if (!original) failed = true;
 
-console.log(failed ? `\nSmoke test failed (${results.filter((r) => !r.ok).length} of ${results.length + 2}).` : `\nAll ${results.length + 2} checks passed.`);
+console.log(failed ? `\nSmoke test failed (${results.filter((r) => !r.ok).length} of ${results.length + 3}).` : `\nAll ${results.length + 3} checks passed.`);
 done(failed ? 1 : 0);

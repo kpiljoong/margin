@@ -74,6 +74,12 @@ Both modes use the same server and UI. The desktop app launches `server.js` as a
 
 If you edited the same file while the agent was working, a 3-way merge lets you apply only non-overlapping changes; overlapping hunks are locked.
 
+**Reviewing by keyboard (as in magit).** The review tab takes the focus when it opens. `j`/`k` (or `n`/`p`, ↓/↑) step through the changes, `J`/`K` through the files, `g`/`G` first/last. `x` or Space picks or unpicks the change (`X` the whole file), `A`/`U` all/none. `a` applies, `d` discards, `f` follows up, `u` undoes an apply. `=` switches the file between Diff and Result, `o` or Enter opens the note at that change, `l` shows the log. A click works too and the keys go on from there. ⌥X a v opens the run that has waited longest for a look.
+
+### Changes from outside (an agent in a terminal, another editor)
+
+Agents don't have to run inside Margin: Claude Code or Codex can work in the notes folder directly. When another program changes a note while Margin is open, the status bar shows **↯ N changed outside**. Click it (or ⌥X a o) to review those changes like a run — from the text before the first change, change by change, with the same keys. Everything is kept unless you unpick it: **Undo 1, keep 3** (`a`) undoes the unpicked ones (the note must not have unsaved edits here) and marks the rest as seen. A note the other program changes back drops off by itself. The texts it replaced are in each note's local history as well. Notes it creates or deletes are not listed (the tree shows them).
+
 ## Privacy rules
 
 The following notes are never copied to the agent, whatever the scope.
@@ -146,7 +152,7 @@ The shortcuts above (except typing behaviours like Tab, Enter, and bracket pairi
 | `m` mode | `e` Edit · `s` Split · `c` Canvas · `p` Preview |
 | `l` links | `l` follow the link at the cursor · `f` pick a link in the preview · `b` back |
 | `g` git | `g` the Git panel · `d` changes since the last commit · `h` this file's history |
-| `a` agent | `a` delegate a task · `r` agent runs |
+| `a` agent | `a` delegate a task · `1`–`6` a recipe (Tidy, Summarize…) · `v` review the next run · `o` changes from outside · `r` agent runs |
 | `t` toggles | `f` tree follows the tab · `s` sidebar · `t` theme · `z` focus mode |
 | `q` macro | `q` start/stop recording · `r` play · `n` play N times · `e` play until it can't go on · `s` play at every search result · `v` show it |
 | `.` | Repeat the last command (it shows which) |

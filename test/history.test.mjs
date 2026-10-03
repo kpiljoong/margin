@@ -47,7 +47,7 @@ test('local history keeps what saves, outside changes and restores replaced', as
   assert.equal(await textOf(api, 'a.md', v[0].id), 'one\n');
 
   fs.writeFileSync(path.join(s.ws, 'a.md'), 'from another program\n');
-  for (let i = 0; i < 30 && (v = await versions(api, 'a.md')).length < 2; i++) await sleep(100);
+  for (let i = 0; i < 80 && (v = await versions(api, 'a.md')).length < 2; i++) await sleep(100);
   assert.deepEqual(v.map((x) => x.reason), ['outside', 'save']);
   assert.equal(await textOf(api, 'a.md', v[0].id), 'three\n', 'what the other program replaced');
 
@@ -57,6 +57,37 @@ test('local history keeps what saves, outside changes and restores replaced', as
   v = await versions(api, 'a.md');
   assert.deepEqual(v.map((x) => x.reason), ['restore', 'outside', 'save']);
   assert.equal(await textOf(api, 'a.md', v[0].id), 'from another program\n');
+});
+
+test('changes from outside wait for a look: listed, diffed from the first text, gone when seen or undone', async (t) => {
+  const s = await startServer();
+  t.after(s.stop);
+  const { api } = s;
+  await api('GET', '/api/tags'); // the server has read the notes
+  const lines = (f) => Array.from({ length: 20 }, (_, i) => f(i)).join('\n');
+  fs.writeFileSync(path.join(s.ws, 'b.md'), lines((i) => `line ${i}`));
+  await sleep(400);
+  await api('GET', '/api/tags');
+  assert.deepEqual((await api('GET', '/api/outside')).changes, [], 'a new note is not a change');
+  fs.writeFileSync(path.join(s.ws, 'b.md'), lines((i) => (i === 1 ? 'one' : `line ${i}`)));
+  let list;
+  for (let i = 0; i < 80 && !(list = (await api('GET', '/api/outside')).changes).length; i++) await sleep(100);
+  assert.deepEqual(list.map((c) => c.path), ['b.md']);
+  fs.writeFileSync(path.join(s.ws, 'b.md'), lines((i) => (i === 1 ? 'one' : i === 17 ? 'seventeen' : `line ${i}`)));
+  let d;
+  for (let i = 0; i < 80 && (d = await api('GET', '/api/outside/diff?path=b.md')).hunks.length < 2; i++) await sleep(100);
+  assert.equal(d.hunks.length, 2, 'from the text before the first change');
+  assert.equal(d.base, lines((i) => `line ${i}`));
+  await api('POST', '/api/outside/seen', { paths: ['b.md'] });
+  assert.deepEqual((await api('GET', '/api/outside')).changes, []);
+
+  // Changed back by the other program: nothing left to look at.
+  fs.writeFileSync(path.join(s.ws, 'a.md'), 'other\n');
+  for (let i = 0; i < 80 && !(list = (await api('GET', '/api/outside')).changes).length; i++) await sleep(100);
+  assert.deepEqual(list.map((c) => c.path), ['a.md']);
+  fs.writeFileSync(path.join(s.ws, 'a.md'), 'one\n');
+  for (let i = 0; i < 80 && (list = (await api('GET', '/api/outside')).changes).length; i++) await sleep(100);
+  assert.deepEqual(list, []);
 });
 
 test('history moves with a renamed note, and stays inside its folder', async (t) => {

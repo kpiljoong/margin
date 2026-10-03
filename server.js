@@ -361,7 +361,8 @@ function startWatcher() {
       if (!was || !NOTE_EXT.has(extOf(p))) continue;
       let now = null;
       try { now = readText(path.join(ROOT, p)); } catch { continue; } // moved or deleted: not a change of text
-      if (now != null && now !== was.text) keepVersion(p, was.text, 'outside');
+      if (now != null && now !== was.text) { keepVersion(p, was.text, 'outside'); changedOutside(p, was.text, now); }
+      cachedText(p); // so the next change is seen too
     }
     broadcast('fs', { paths: [...pending], structural });
     pending = new Set();
@@ -504,6 +505,51 @@ function getVersion(rel, id) {
   if (!VERSION_RE.test(String(id || ''))) throw httpError(400, 'Invalid version');
   const file = path.join(historyDir(relOf(workspacePath(rel))), id);
   try { return { id, content: fs.readFileSync(file, 'utf8') }; } catch { throw httpError(404, 'That version does not exist'); }
+}
+
+// Notes another program changed (an agent working in the folder, another
+// editor): the text from before the first such change, until they are looked
+// at — so they can be reviewed like an agent run, change by change.
+const outside = new Map(); // rel → { before, since, at }
+const OUTSIDE_MAX = 200;
+
+function changedOutside(rel, was, now) {
+  const seen = outside.get(rel);
+  if (seen) {
+    if (now === seen.before) outside.delete(rel); // back as it was
+    else seen.at = Date.now();
+    return;
+  }
+  if (Buffer.byteLength(was) > HISTORY_MAX_BYTES) return;
+  if (outside.size >= OUTSIDE_MAX) outside.delete(outside.keys().next().value);
+  outside.set(rel, { before: was, since: Date.now(), at: Date.now() });
+}
+
+function outsideNow(rel) {
+  const seen = outside.get(rel);
+  if (!seen) return null;
+  const now = cachedText(rel)?.text;
+  if (now == null || now === seen.before) { outside.delete(rel); return null; }
+  return now;
+}
+
+function listOutside() {
+  const changes = [];
+  for (const [rel, seen] of outside) if (outsideNow(rel) != null) changes.push({ path: rel, since: seen.since, at: seen.at });
+  return { changes: changes.sort((a, b) => b.at - a.at) };
+}
+
+function outsideDiff(rel) {
+  const abs = workspacePath(rel);
+  const key = relOf(abs);
+  const now = outsideNow(key);
+  if (now == null) throw httpError(404, 'No change from outside in that note');
+  return { path: key, status: 'modified', base: outside.get(key).before, hunks: buildHunks(outside.get(key).before, now), hash: hashOf(Buffer.from(now, 'utf8')) };
+}
+
+function outsideSeen({ paths }) {
+  for (const p of Array.isArray(paths) ? paths : []) outside.delete(relOf(workspacePath(p)));
+  return listOutside();
 }
 
 // Our own writes to notes: remember the new text, so the watcher doesn't
@@ -1285,6 +1331,9 @@ async function routeApi(method, url, body) {
   if (method === 'GET' && p === '/api/headings') return listHeadings();
   if (method === 'GET' && p === '/api/history') return listVersions(q('path'));
   if (method === 'GET' && p === '/api/history/version') return getVersion(q('path'), q('id'));
+  if (method === 'GET' && p === '/api/outside') return listOutside();
+  if (method === 'GET' && p === '/api/outside/diff') return outsideDiff(q('path'));
+  if (method === 'POST' && p === '/api/outside/seen') return outsideSeen(body || {});
   if (method === 'POST' && p === '/api/asset') return saveAsset(body || {});
   if (method === 'POST' && p === '/api/rename') return renamePath(body || {});
   if (method === 'POST' && p === '/api/delete') return deletePath(body || {});
