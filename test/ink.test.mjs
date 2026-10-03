@@ -1,7 +1,7 @@
 // node --test (npm test): marks drawn on a picture, as lines (public/ink.js).
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { parseInk, inkLine, simplify, addMark, removeMark } from '../public/ink.js';
+import { parseInk, inkLine, simplify, addMark, removeMark, bentPath } from '../public/ink.js';
 
 test('ink lines: read, written back the same', () => {
   const src = ['box red: 280,120 200x80', '# a comment', 'arrow: 410,220 -> 300,160', 'text blue: 420,230 The button is hidden', 'pen 초록: 100,100 120,104 140,112', '상자 빨강: 1,2 3×4', 'nonsense', 'pen red: 1,2', 'arrow purple: 1,2 -> x'].join('\n');
@@ -38,4 +38,16 @@ test('a hidden part: gray unless a colour is given, also blur and in Korean', ()
   assert.deepEqual(marks.map((m) => [m.kind, m.color, m.x, m.y, m.w, m.h]), [['hide', 'gray', 40, 20, 300, 30], ['hide', 'teal', 1, 2, 3, 4], ['hide', 'gray', 5, 6, 7, 8]]);
   assert.deepEqual(bad, [3]);
   assert.equal(inkLine(marks[0]), 'hide gray: 40,20 300x30');
+});
+
+test('an arrow that bends: its bends in order, drawn round at them', () => {
+  const { marks, bad } = parseInk(['arrow blue: 0,0 -> 100,0 -> 100,100', 'arrow: 1,2 → 3,4 → 5,6 → 7,8', 'arrow: 1,2 -> 3,4 -> x'].join('\n'));
+  assert.deepEqual(marks.map((m) => [m.from, m.via, m.to]), [[[0, 0], [[100, 0]], [100, 100]], [[1, 2], [[3, 4], [5, 6]], [7, 8]]]);
+  assert.deepEqual(bad, [2]);
+  assert.equal(inkLine(marks[0]), 'arrow blue: 0,0 -> 100,0 -> 100,100');
+  assert.equal(inkLine(parseInk('arrow: 1,2 -> 3,4').marks[0]), 'arrow red: 1,2 -> 3,4');
+  assert.equal(bentPath([[0, 0], [100, 0], [100, 100]], 20), 'M0,0 L80,0 Q100,0 100,20 L100,100');
+  // Never more than half a side: a short side is rounded all the way.
+  assert.equal(bentPath([[0, 0], [10, 0], [10, 100]], 20), 'M0,0 L5,0 Q10,0 10,5 L10,100');
+  assert.equal(bentPath([[0, 0], [5, 5]], 20), 'M0,0 L5,5');
 });

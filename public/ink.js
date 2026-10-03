@@ -7,13 +7,15 @@
 //   ```ink
 //   box red: 280,120 200x80
 //   arrow red: 410,220 -> 300,160
+//   arrow blue: 100,300 -> 180,240 -> 300,260
 //   text red: 420,230 The button is hidden
 //   pen blue: 100,100 120,104 140,112
 //   num red: 300,110 1
 //   hide: 40,20 300x30
 //   ```
 //
-// - pen: a line through the points · arrow: from → to · box: corner and
+// - pen: a line through the points · arrow: from → to, any bends between
+//   (drawn round) · box: corner and
 //   size · text: where it starts, then the words · num: a numbered dot, its
 //   centre and number — item 1 of the numbered list in the picture's section
 //   says what it is (linkCallouts) · hide: a part covered, corner and size
@@ -31,7 +33,6 @@ const KINDS = { pen: 'pen', arrow: 'arrow', box: 'box', text: 'text', num: 'num'
 const LINE = /^(\S+?)(?:\s+([^\s:]+))?\s*:\s*(.*)$/;
 const NUM = '(-?\\d+(?:\\.\\d+)?)';
 const POINT = new RegExp(`^${NUM},${NUM}$`);
-const ARROW = new RegExp(`^${NUM},${NUM}\\s*(?:->|→)\\s*${NUM},${NUM}$`);
 const BOX = new RegExp(`^${NUM},${NUM}\\s+${NUM}\\s*[x×]\\s*${NUM}$`);
 const TEXT = new RegExp(`^${NUM},${NUM}\\s+(.+)$`);
 const LABEL = new RegExp(`^${NUM},${NUM}\\s+([\\p{L}\\p{N}]{1,3})$`, 'u');
@@ -58,8 +59,11 @@ export function parseInk(src) {
       const pts = rest.split(/\s+/).map((p) => POINT.exec(p)).filter(Boolean).map((p) => [n(p[1]), n(p[2])]);
       if (pts.length >= 2 && pts.length === rest.split(/\s+/).length) mark = { pts };
     } else if (kind === 'arrow') {
-      const a = ARROW.exec(rest);
-      if (a) mark = { from: [n(a[1]), n(a[2])], to: [n(a[3]), n(a[4])] };
+      const ps = rest.split(/\s*(?:->|→)\s*/).map((p) => POINT.exec(p));
+      if (ps.length >= 2 && ps.every(Boolean)) {
+        const at = ps.map((p) => [n(p[1]), n(p[2])]);
+        mark = { from: at[0], to: at[at.length - 1], via: at.slice(1, -1) };
+      }
     } else if (kind === 'box' || kind === 'hide') {
       const b = BOX.exec(rest);
       if (b) mark = { x: n(b[1]), y: n(b[2]), w: n(b[3]), h: n(b[4]) };
@@ -83,7 +87,7 @@ const pt = ([x, y]) => `${r(x)},${r(y)}`;
 export function inkLine(mark) {
   const head = `${mark.kind} ${mark.color || 'red'}: `;
   if (mark.kind === 'pen') return head + mark.pts.map(pt).join(' ');
-  if (mark.kind === 'arrow') return `${head}${pt(mark.from)} -> ${pt(mark.to)}`;
+  if (mark.kind === 'arrow') return head + [mark.from, ...(mark.via || []), mark.to].map(pt).join(' -> ');
   if (mark.kind === 'box' || mark.kind === 'hide') return `${head}${pt([mark.x, mark.y])} ${r(mark.w)}x${r(mark.h)}`;
   return `${head}${pt([mark.x, mark.y])} ${String(mark.text).replace(/\s+/g, ' ').trim()}`;
 }
@@ -104,6 +108,24 @@ export function simplify(pts, eps) {
   }
   if (far <= eps) return [a, b];
   return [...simplify(pts.slice(0, at + 1), eps).slice(0, -1), ...simplify(pts.slice(at), eps)];
+}
+
+// A line through the points with its corners rounded (radius at most r,
+// and at most half of either side, so a line drawn bending reads as a
+// curve). → the SVG path.
+export function bentPath(pts, r) {
+  const f = (v) => Math.round(v * 10) / 10;
+  const p = (q) => `${f(q[0])},${f(q[1])}`;
+  let d = `M${p(pts[0])}`;
+  for (let i = 1; i < pts.length - 1; i++) {
+    const [a, c, b] = [pts[i - 1], pts[i], pts[i + 1]];
+    const la = Math.hypot(a[0] - c[0], a[1] - c[1]);
+    const lb = Math.hypot(b[0] - c[0], b[1] - c[1]);
+    const k = Math.min(r, la / 2, lb / 2);
+    if (!la || !lb || !k) { d += ` L${p(c)}`; continue; }
+    d += ` L${p([c[0] + (a[0] - c[0]) * k / la, c[1] + (a[1] - c[1]) * k / la])} Q${p(c)} ${p([c[0] + (b[0] - c[0]) * k / lb, c[1] + (b[1] - c[1]) * k / lb])}`;
+  }
+  return `${d} L${p(pts[pts.length - 1])}`;
 }
 
 // A line added after the marks; a line taken out.
@@ -157,12 +179,13 @@ export function markEl(m, sw, make) {
     t.textContent = m.text;
     g.append(t);
   } else if (m.kind === 'arrow') {
-    const [x1, y1] = m.from;
+    const pts = [m.from, ...(m.via || []), m.to];
+    const [x1, y1] = pts[pts.length - 2];
     const [x2, y2] = m.to;
     const a = Math.atan2(y2 - y1, x2 - x1);
     const head = sw * 5;
     const wing = (s) => `${x2 - head * Math.cos(a + s)},${y2 - head * Math.sin(a + s)}`;
-    g.append(make('line', { ...line, x1, y1, x2, y2 }));
+    g.append(make('path', { ...line, d: bentPath(pts, sw * 20) }));
     g.append(make('polyline', { ...line, points: `${wing(0.5)} ${x2},${y2} ${wing(-0.5)}` }));
   } else {
     const size = sw * 9;

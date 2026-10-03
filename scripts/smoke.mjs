@@ -427,6 +427,30 @@ await check('hiding a part of a picture: H covers it, and the task dialog says t
   return out;
 `, (v) => (v?.line === 'hide gray: 40,30 40x15' && v.drawn && v.list.includes('assets/screen.svg (picture, parts hidden)') ? null : `got ${JSON.stringify(v)}`));
 
+await check('an arrow drawn bending bends there; one drawn straight stays straight', `
+  const ed = () => $$('.editor-wrap textarea').find((t) => t.offsetParent);
+  const img = () => $('.canvas-stage .ink-figure img');
+  if (!(await until(() => img()?.naturalWidth, 15000))) return { none: true };
+  const stage = $('.canvas-stage');
+  const pt = (fx, fy) => { const r = img().getBoundingClientRect(); return { clientX: r.left + r.width * fx, clientY: r.top + r.height * fy }; };
+  const ptr = (type, el, p) => el.dispatchEvent(new PointerEvent(type, { bubbles: true, cancelable: true, button: 0, pointerId: 1, ...p }));
+  img().dispatchEvent(new MouseEvent('click', { bubbles: true })); await sleep(300);
+  stage.focus(); key('a', {}, stage);
+  ptr('pointerdown', img(), pt(0.5, 0.5));
+  for (let i = 1; i <= 10; i++) ptr('pointermove', stage, pt(0.5 + 0.03 * i, 0.5));
+  for (let i = 1; i <= 10; i++) ptr('pointermove', stage, pt(0.8, 0.5 + 0.03 * i));
+  ptr('pointerup', stage, pt(0.8, 0.8));
+  await until(() => ed().value.includes('arrow red: 200,150 ->'), 8000);
+  await until(() => $('.canvas-stage .ink-mark path[d*="Q"]'), 8000); await sleep(500); // drawn again
+  ptr('pointerdown', img(), pt(0.1, 0.9));
+  for (let i = 1; i <= 10; i++) ptr('pointermove', stage, pt(0.1 + 0.02 * i, 0.9 - 0.02 * i));
+  ptr('pointerup', stage, pt(0.3, 0.7));
+  await until(() => ed().value.includes('arrow red: 40,270 ->'), 8000);
+  key('Escape', {}, stage);
+  const bent = $('.canvas-stage .ink-mark path[d*="Q"]');
+  return { lines: ed().value.split('\\n').filter((l) => l.startsWith('arrow')), bent: !!bent };
+`, (v) => (v?.lines?.join('|') === 'arrow red: 200,150 -> 320,150 -> 320,240|arrow red: 40,270 -> 120,210' && v.bent ? null : `got ${JSON.stringify(v)}`));
+
 await check('Settings shows Labs', `
   document.dispatchEvent(new KeyboardEvent('keydown', { key: ',', metaKey: navigator.platform.startsWith('Mac'), ctrlKey: !navigator.platform.startsWith('Mac'), bubbles: true }));
   const d = await until(() => $('.dialog.settings'));

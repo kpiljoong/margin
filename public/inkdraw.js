@@ -1,5 +1,5 @@
-// Drawing on a picture in the canvas: a pen, an arrow, a box, words, and an
-// eraser. Each mark finished is a line written in the picture's ```ink block
+// Drawing on a picture in the canvas: a pen, an arrow (straight, or bending
+// as it was drawn), a box, words, and an eraser. Each mark finished is a line written in the picture's ```ink block
 // (public/ink.js has the lines; the app writes them, one ⌘Z each).
 //
 // The tool bar shows when a picture is the one looked at, or a tool is on.
@@ -14,7 +14,7 @@ import { inkLine, simplify, markEl } from './ink.js';
 const SVG = 'http://www.w3.org/2000/svg';
 export const TOOLS = [
   ['pen', '✎', 'Pen', 'D'],
-  ['arrow', '↗', 'Arrow', 'A'],
+  ['arrow', '↗', 'Arrow: drag straight, or bend it as you go', 'A'],
   ['box', '▭', 'Box', 'R'],
   ['text', 'T', 'Words', 'T'],
   ['num', '\u2460', 'Numbered dot: click where it goes; item 1. of a numbered list in the section says what it is', 'N'],
@@ -127,7 +127,7 @@ export class InkTools {
     if (!d) return false;
     const hit = this.at(e, d.fig);
     if (!hit || d.kind === 'text' || d.kind === 'num') return true;
-    if (d.kind === 'pen') d.pts.push(hit.p); else d.pts[1] = hit.p;
+    if (d.kind === 'pen' || d.kind === 'arrow') d.pts.push(hit.p); else d.pts[1] = hit.p;
     this.preview();
     return true;
   }
@@ -160,7 +160,17 @@ export class InkTools {
     const [a, b] = [d.pts[0], d.pts[d.pts.length - 1]];
     const color = this.color;
     if (d.kind === 'pen') return { kind: 'pen', color, pts: simplify(d.pts, 1.2 * d.scale).map(([x, y]) => [Math.round(x), Math.round(y)]) };
-    if (d.kind === 'arrow') return { kind: 'arrow', color, from: a, to: b };
+    if (d.kind === 'arrow') {
+      // Drawn bending, it bends where the drag turned; a nearly straight
+      // drag stays straight, and a hook at either end (the hand slipping)
+      // doesn't count.
+      const at = simplify(d.pts, 5 * d.scale);
+      const near = (p, q) => Math.hypot(p[0] - q[0], p[1] - q[1]) < 16 * d.scale;
+      while (at.length > 2 && near(at[at.length - 2], b)) at.splice(-2, 1);
+      while (at.length > 2 && near(at[1], a)) at.splice(1, 1);
+      const via = at.slice(1, -1).map(([x, y]) => [Math.round(x), Math.round(y)]);
+      return { kind: 'arrow', color, from: a, to: b, via };
+    }
     return { kind: d.kind === 'hide' ? 'hide' : 'box', color: d.kind === 'hide' ? 'gray' : color, x: Math.min(a[0], b[0]), y: Math.min(a[1], b[1]), w: Math.abs(b[0] - a[0]), h: Math.abs(b[1] - a[1]) };
   }
 
