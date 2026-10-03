@@ -6,6 +6,7 @@ import { openLeader, linkHints, pickHint } from './leader.js';
 import { Macros, describe as describeMacro } from './macro.js';
 import { fillTemplate, isTemplate, TEMPLATE_DIR } from './templates.js';
 import { MarkdownEditor, setEditorKeys } from './editor.js';
+import { hunksOf } from './track.js';
 import { renderDiagrams } from './diagrams.js';
 import { flowToMermaid, flowsAsMermaid, parseFlow, isStepText, flowStepNames, nameKey, flowTour, flowLineAt } from './flow.js';
 import { FigureCanvas } from './canvas.js';
@@ -233,6 +234,8 @@ const DEFAULT_SETTINGS = {
   labSteadyDraw: false, labWheelPans: false,
   // The file tree shows the active tab's file (as VS Code's Auto Reveal).
   followTab: true,
+  // Pens: yours (suggesting, comments) and the agent's; '' is the theme's.
+  penMe: '', penAgent: '',
 };
 const ACCENTS = ['#7aa2f7', '#bb9af7', '#2ac3de', '#9ece6a', '#e0af68', '#ff9e64', '#f7768e', '#c0caf5'];
 const LINE_HEIGHTS = { 1.5: 'Compact', 1.7: 'Normal', 1.9: 'Relaxed' };
@@ -270,6 +273,7 @@ function applySettings() {
   r.setProperty('--line-width', (WIDTHS[st.width] || WIDTHS.normal)[1]);
   r.setProperty('--sidebar-width', `${st.sidebarWidth}px`);
   r.setProperty('--ed-line-height', String(st.lineHeight || 1.7));
+  for (const [v, key] of [['--pen-me', 'penMe'], ['--pen', 'penAgent']]) { if (st[key]) r.setProperty(v, st[key]); else r.removeProperty(v); }
   for (const t of S.tabs) t.editor?.setOptions({ highlight: st.highlight, spellcheck: st.spellcheck });
   // Diagrams are drawn in theme colours.
   for (const t of S.tabs) if (t.previewEl?.querySelector('pre.diagram, pre[data-lang="mermaid" i], .drawing-embed, .mmd-embed')) renderPreview(t);
@@ -810,7 +814,9 @@ async function flushAutosave(tab) {
 async function reloadTab(tab) {
   const f = await api('GET', `/api/file?path=${encodeURIComponent(tab.path)}`);
   Object.assign(tab, { ...fromDisk(f.content), hash: f.hash, conflict: false, missing: false });
-  if (tab.editor) {
+  // Suggesting: the editor shows the suggestions; the note's new text comes
+  // when suggesting stops (and the review merges them with it).
+  if (tab.editor && !tab.editor.tracking) {
     const { selectionStart, scrollTop } = tab.editor;
     tab.editor.loadText(tab.content);
     tab.editor.setSelection(Math.min(selectionStart, tab.content.length));
@@ -1713,15 +1719,18 @@ function renderContent(g = S.focus) {
 function editorFor(tab) {
   if (tab.editor) return tab.editor;
   const ed = new MarkdownEditor({
-    onChange: (v) => { tab.content = v; onEdit(tab); },
+    onChange: (v) => { tab.content = v; onEdit(tab); drawNotesSoon(tab); },
     onScroll: () => { if (isAttached(tab) && !tab.restoring) { tab.scroll = ed.scrollTop; syncScroll(tab); } },
     onCursor: renderStatus,
     complete: completeFor,
     onPasteFiles: (files) => attachFiles(tab, files),
+    onTrack: () => proofChanged(tab),
   });
   ed.value = tab.content;
   ed.setOptions({ highlight: S.settings.highlight, spellcheck: S.settings.spellcheck });
+  ed.setCurrentLine(!!S.meeting);
   tab.editor = ed;
+  if (isNote(tab.path)) loadComments(tab);
   ed.ta.addEventListener('mousemove', (e) => editorLinkHover(e, ed, tab));
   ed.ta.addEventListener('click', (e) => editorLinkClick(e, ed, tab));
   ed.ta.addEventListener('mouseleave', () => { if (linkPop.el || linkPop.timer) leaveLinkPreview(); });
@@ -1865,7 +1874,15 @@ function renderPreview(tab) {
     renderDiagrams(p);
     return;
   }
-  p.innerHTML = renderMarkdown(tab.content, { image: (url) => localImage(url, tab.path), embed: (target, label) => fileEmbed(target, label, tab.path) });
+  // Suggesting: the note as it is, with your suggestions and comments on it.
+  const proof = tab.editor?.tracking && pen ? tab.editor.trackTexts() : null;
+  p.classList.toggle('mine', !!proof);
+  if (proof) {
+    const notes = openComments(tab).map((c, n) => ({ n, comment: c.comment, quote: [c.quote, ...(c.alts || [])].find((q) => q && proof.original.includes(q)) || c.quote }));
+    const text = pen.penSource(proof.original, hunksOf(proof.original, proof.proposed), notes).text;
+    p.innerHTML = renderMarkdown(text, { image: (url) => localImage(url, tab.path), embed: (target, label) => fileEmbed(target, label, tab.path) });
+    pen.decorate(p);
+  } else p.innerHTML = renderMarkdown(tab.content, { image: (url) => localImage(url, tab.path), embed: (target, label) => fileEmbed(target, label, tab.path) });
   if (p.querySelector('.note-embed.loading')) {
     fillNoteEmbeds(p).then(() => { // the ones read from disk: draw what's in them
       if (!p.isConnected) return;
@@ -2486,6 +2503,21 @@ function renderStatus() {
       `↯ ${S.outside.length} changed outside`));
   }
   if (macros.recording) items.splice(2, 0, h('span', { class: 'item rec clickable', title: 'Click to stop recording', onclick: stopRecording }, `● Recording macro · ${kbd('macro-play') || '⌥X q q'} stops`));
+  // Suggesting, comments, meeting mode: what a meeting needs to see.
+  const mine = [];
+  if (tab?.kind === 'file' && isNote(tab.path)) {
+    const waiting = !tab.proof?.on && proofRun(tab);
+    if (tab.proof?.on) mine.push(h('span', { class: 'item clickable pen-chip', title: `Your edits are suggestions: the note stays as it is. Click or ${kbd('suggest') || '⌥X p p'} to stop.`, onclick: () => toggleSuggest(tab) }, '✎ Suggesting'));
+    else if (waiting) mine.push(h('span', { class: 'item clickable pen-chip', title: 'Your suggestions on this note wait for review', onclick: () => openReview(waiting.id) }, '✎ Suggestions waiting'));
+    const n = openComments(tab).length;
+    if (n) mine.push(h('span', { class: 'item clickable pen-chip', title: `Comments beside this note · ${kbd('leader') || '⌥X'} p n: the next one`, onclick: () => stepNote(tab, 1) }, `✍ ${n} comment${n === 1 ? '' : 's'}`));
+  }
+  if (S.meeting) {
+    $('#status').replaceChildren(h('span', { class: 'item clickable meeting-chip', title: `Leave meeting mode (${kbd('meeting') || '⌥X p m'})`, onclick: toggleMeeting }, '● Meeting'), ...mine, h('span', { class: 'grow' }),
+      h('span', { class: 'item' }, [kbd('suggest') && `${kbd('suggest')} suggest`, kbd('strike') && `${kbd('strike')} strike`, kbd('comment') && `${kbd('comment')} comment`].filter(Boolean).join(' · ')));
+    return;
+  }
+  items.splice(2, 0, ...mine);
   if (tab?.kind === 'file') {
     const ed = tab.editor;
     if (ed) {
@@ -3020,6 +3052,10 @@ function openSettings({ keys = false } = {}) {
           h('button', { class: `accent-dot none${!st.accent ? ' on' : ''}`, title: 'Theme default', onclick: () => { setSetting('accent', ''); openSettings(); } }, '∅'),
           ACCENTS.map((c) => { const b = h('button', { class: `accent-dot${st.accent === c ? ' on' : ''}`, title: c, onclick: () => { setSetting('accent', c); openSettings(); } }); b.style.background = c; return b; }),
           h('input', { type: 'color', class: 'accent-custom', title: 'Custom accent', value: st.accent || currentTheme().vars.accent, onchange: (e) => { setSetting('accent', e.target.value); openSettings(); } })),
+        h('div', { class: 'set-label' }, 'Pens'), h('div', { class: 'accent-row' },
+          ...[['penMe', 'Yours', '--pen-me'], ['penAgent', 'The agent’s', '--pen']].map(([key, label, v]) => h('label', { class: 'pen-pick', title: `${label} pen: suggestions and comments` }, label,
+            h('input', { type: 'color', class: 'accent-custom', value: st[key] || getComputedStyle(document.documentElement).getPropertyValue(v).trim() || '#000000', onchange: (e) => { setSetting(key, e.target.value); openSettings(); } }),
+            st[key] ? h('button', { class: 'accent-dot none', title: 'Theme default', onclick: (e) => { e.preventDefault(); setSetting(key, ''); openSettings(); } }, '∅') : null))),
         h('div', { class: 'set-label' }, 'Editor font'), segRow('font', Object.fromEntries(Object.entries(FONTS).map(([k, v]) => [k, v.label]))),
         h('div', { class: 'set-label' }, 'Text size'), h('div', { class: 'seg' },
           h('button', { onclick: () => { setSetting('fontSize', Math.max(11, st.fontSize - 1)); openSettings(); } }, '−'),
@@ -4077,6 +4113,8 @@ async function loadRuns() {
   if (S.view === 'agent') renderSidebar(); else renderActivity();
   redrawSpecial('runs');
   for (const r of S.runs) if (was.get(r.id) === 'running' && r.status !== 'running') runFinished(r);
+  proofsSettled();
+  renderStatus();
 }
 
 // Delegate and keep writing: a run that ends says so — here, and as a
@@ -4550,7 +4588,9 @@ function penPage(c, tab, lock) {
       stuck ? null : h('div', { class: 'pen-acts' },
         h('button', { class: 'pen-yes', title: `${what[0]} (y)`, onclick: () => penDecide(tab, c.path, m.key, 'y', false) }, '✓'),
         h('button', { class: 'pen-no', title: `${what[1]} (n)`, onclick: () => penDecide(tab, c.path, m.key, 'n', false) }, '✗')),
-      m.notes.map((x) => h('div', { class: 'pen-note', title: x.comment || x.suggest }, x.comment || `→ ${x.suggest}`)),
+      m.notes.map((x) => h('div', { class: 'pen-note', title: x.comment || x.suggest },
+        x.speaker ? h('span', { class: 'pen-who' }, `@${x.speaker}`) : null, x.time ? h('span', { class: 'pen-when' }, hhmm(x.time)) : null,
+        x.comment || `→ ${x.suggest}`, x.replies?.length ? h('span', { class: 'pen-when' }, ` +${x.replies.length}`) : null)),
       conflicts.has(m.i) ? h('div', { class: 'pen-stuck' }, 'overlaps your edit') : null);
   });
   const page = h('div', { class: 'pen-page' },
@@ -4945,15 +4985,16 @@ function openChangeAt(tab, cur) {
 
 function reviewView(tab) {
   const run = tab.run;
-  const wrap = h('div', { class: 'review' });
+  const wrap = h('div', { class: `review${run?.kind === 'proof' ? ' mine' : ''}` });
   if (!run) { wrap.append(h('div', { class: 'empty' }, 'Loading…')); return wrap; }
   const reviewable = ['review', 'failed', 'cancelled'].includes(run.status);
   const took = run.finishedAt ? `${Math.max(1, Math.round((new Date(run.finishedAt) - new Date(run.startedAt)) / 1000))}s` : null;
 
+  const proof = run.kind === 'proof';
   wrap.append(h('div', { class: 'review-head' },
     h('span', { class: `badge st-${run.status}` }, run.status),
     h('div', { class: 'task' }, run.task),
-    h('div', { class: 'meta' },
+    proof ? h('div', { class: 'meta' }, h('span', {}, 'by you (suggesting)'), h('span', {}, `started ${timeAgo(run.startedAt)}`)) : h('div', { class: 'meta' },
       h('span', {}, `agent: ${run.agent}`),
       run.liveModel || run.resolvedModel || run.model ? h('span', {}, `model: ${run.liveModel || run.resolvedModel || run.model}`) : null,
       run.usage ? h('span', { title: usageTitle(run.usage) }, usageText(run.usage)) : null,
@@ -5009,17 +5050,17 @@ function reviewView(tab) {
   const quiet = run.status !== 'running' && !run.changes?.length && !run.reply;
   log.open = tab.logOpen ?? (run.status === 'running' || quiet);
   log.addEventListener('toggle', () => { tab.logOpen = log.open; });
-  wrap.append(log);
+  if (run.kind !== 'proof') wrap.append(log);
 
   if (run.status !== 'running') {
     const remarks = Object.entries(run.commentBases || {});
-    if (!run.changes.length) wrap.append(h('div', { class: 'review-note' }, remarks.length ? 'The agent made no changes, only notes in the margin.' : 'The agent made no changes.'));
+    if (!run.changes.length) wrap.append(h('div', { class: 'review-note' }, run.kind === 'proof' ? 'No suggestions (yet).' : remarks.length ? 'The agent made no changes, only notes in the margin.' : 'The agent made no changes.'));
     if (reviewable && run.changes.length) {
       const n = selectedCount(tab);
       wrap.append(h('div', { class: 'review-actions' },
         h('span', { class: 'grow' }, `${run.changes.length} file${run.changes.length === 1 ? '' : 's'} changed · ${n} change${n === 1 ? '' : 's'} ${penFirst() ? 'accepted' : 'selected'}`,
           h('span', { class: 'review-keys', title: keysHint('review') }, penFirst() ? 'j k · y n · A all · a apply · v diff' : 'j k · x · a apply · v red pen')),
-        S.git?.repo ? h('label', { class: 'commit-toggle', title: 'Commit the applied files to git, authored by the agent (local only)' },
+        S.git?.repo && run.kind !== 'proof' ? h('label', { class: 'commit-toggle', title: 'Commit the applied files to git, authored by the agent (local only)' },
           h('input', { type: 'checkbox', checked: store.getItem('an.commitOnApply') !== 'false', onchange: (e) => store.setItem('an.commitOnApply', String(e.target.checked)) }), 'Commit to git') : null,
         h('button', { class: 'btn', onclick: () => followUp(tab) }, 'Follow up…'),
         h('button', { class: 'btn danger', onclick: () => discardRun(tab) }, 'Discard'),
@@ -5042,7 +5083,7 @@ async function applyRun(tab) {
   const dirtyOpen = S.tabs.filter((t) => t.kind === 'file' && t.content !== t.saved && decisions[t.path]);
   if (dirtyOpen.length && !(await askConfirm(`You have unsaved edits in ${dirtyOpen.map((t) => t.path).join(', ')}. Applying will create a conflict with them. Continue?`, { okLabel: 'Apply' }))) return;
   try {
-    const commit = !!S.git?.repo && store.getItem('an.commitOnApply') !== 'false';
+    const commit = !!S.git?.repo && tab.run?.kind !== 'proof' && store.getItem('an.commitOnApply') !== 'false';
     const r = await api('POST', `/api/runs/${tab.runId}/apply`, { decisions, commit });
     const n = r.applied.files.length;
     toast(`Applied changes to ${n} file${n === 1 ? '' : 's'}${r.commit?.hash ? ` · committed ${r.commit.hash}` : ''}.`, r.commit?.error ? 'error' : '');
@@ -5175,6 +5216,295 @@ async function loadTags() {
 // Shortcuts that also exist in the desktop app's native menu run through one
 // dispatcher; a repeat of the same command within 150ms is ignored, so a key
 // press can never trigger an action twice (menu + page handler).
+
+// ------------------------------------------------------------------ suggesting, comments, meetings
+// Suggesting (tracked changes): the note's own text stays as it is; your edits
+// are marked on it — struck through, written in in your pen — and kept as a
+// run of yours (server: openProof) that the red pen review settles like any
+// proposal (y n A a). Comments sit beside the note, never in it (server:
+// saveComments), in the editor's margin. Meeting mode is for sharing the
+// screen: large text, the line you're on, nothing private around it.
+
+const localStamp = (d = new Date()) => {
+  const p = (n) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`;
+};
+const hhmm = (t) => (/\d\d:\d\d/.exec(t || '') || [t])[0];
+const proofRun = (tab) => tab && S.runs.find((r) => r.kind === 'proof' && r.focus === tab.path && r.status === 'review');
+const openComments = (tab) => (tab?.comments || []).filter((c) => !c.resolved);
+const LINE_PREFIX = /^\s*(?:(?:[-*+]|\d+[.)])\s+(?:\[[ xX]\]\s+)?|#{1,6}\s+|>\s?)*/;
+
+async function toggleSuggest(tab = fileTab()) {
+  if (!tab || !isNote(tab.path)) { toast('Suggesting is for notes: open one first.'); return; }
+  if (tab.proof?.on) { await stopSuggest(tab); return; }
+  await flushAutosave(tab);
+  if (tab.conflict || tab.content !== tab.saved) { toast('Save the note first: suggestions start from the note as it is on disk.', 'error'); return; }
+  let r;
+  try { [r] = await Promise.all([api('POST', '/api/proofs', { path: tab.path }), loadPen()]); }
+  catch (e) { toast(e.message, 'error', e.data?.id ? { label: 'Review', run: () => openReview(e.data.id) } : null); return; }
+  const ed = editorFor(tab);
+  const at = ed.selectionStart;
+  tab.proof = { id: r.id, on: true };
+  ed.startTrack(fromDisk(r.base).content, fromDisk(r.work).content);
+  ed.setSelection(Math.min(at, ed.value.length));
+  if (isAttached(tab)) { if (!editorShown(tab)) setMode('edit'); ed.focus(); renderPreview(tab); }
+  drawNotes(tab);
+  renderStatus();
+  loadRuns();
+  toast(`Suggesting: the note stays as it is · ${kbd('suggest') || '⌥X p p'} to stop`);
+}
+
+function proofChanged(tab) {
+  if (!tab.proof?.on) return;
+  clearTimeout(tab.proof.timer);
+  tab.proof.timer = setTimeout(() => saveProof(tab), 400);
+  livePreview(tab);
+  drawNotesSoon(tab);
+  renderStatus();
+}
+
+async function saveProof(tab) {
+  const p = tab.proof;
+  if (!p?.on || !tab.editor?.tracking) return;
+  clearTimeout(p.timer);
+  if (p.saving) { p.again = true; await p.saving; return; }
+  const text = toDisk(tab.editor.trackTexts().proposed, tab.eol);
+  if (text === p.kept) return;
+  p.saving = api('PUT', `/api/proofs/${p.id}`, { text }).then(() => { p.kept = text; }, (e) => toast(`Suggestions not kept: ${e.message}`, 'error'));
+  await p.saving;
+  p.saving = null;
+  if (p.again) { p.again = false; await saveProof(tab); }
+}
+
+// Back to editing the note itself; the suggestions wait for review (none:
+// the empty run goes). settled: they were applied or discarded.
+async function stopSuggest(tab, { settled = false } = {}) {
+  const p = tab.proof;
+  if (!p) return;
+  if (p.on && !settled) await saveProof(tab);
+  const texts = tab.editor?.trackTexts();
+  const n = texts ? hunksOf(texts.original, texts.proposed).length : 0;
+  p.on = false;
+  if (tab.editor?.tracking) tab.editor.stopTrack(tab.content);
+  if (settled || !n) {
+    tab.proof = null;
+    if (!settled) api('POST', `/api/runs/${p.id}/discard`).then(loadRuns, () => {});
+  }
+  if (isAttached(tab)) renderPreview(tab);
+  drawNotes(tab);
+  renderStatus();
+  if (!settled && n) toast(`${n} suggestion${n === 1 ? '' : 's'} waiting · the note is as it was`, '', { label: 'Review', run: () => openReview(p.id) });
+}
+
+// After the meeting: your suggestions in the red pen review.
+async function reviewSuggestions(tab = fileTab()) {
+  if (tab?.proof?.on) await saveProof(tab);
+  const r = tab && (tab.proof ? { id: tab.proof.id } : proofRun(tab));
+  if (!r) { toast('No suggestions on this note.'); return; }
+  openReview(r.id);
+}
+
+// A run of suggestions settled (applied, discarded): its note edits on.
+function proofsSettled() {
+  for (const t of S.tabs) {
+    if (!t.proof) continue;
+    const r = S.runs.find((x) => x.id === t.proof.id);
+    if (r && r.status !== 'review') stopSuggest(t, { settled: true });
+  }
+}
+
+function replaceSel(tab = fileTab()) {
+  if (!tab?.proof?.on) { toast(`Replace as a suggestion while suggesting (${kbd('suggest') || '⌥X p p'})`); return; }
+  if (!tab.editor.replaceSelection()) toast('Select the words to replace');
+}
+
+// ---------------- comments
+
+async function loadComments(tab) {
+  if (tab.commentsLoading) return;
+  tab.commentsLoading = true;
+  try { tab.comments = (await api('GET', `/api/comments?path=${encodeURIComponent(tab.path)}`)).comments; } catch { tab.comments = []; }
+  tab.commentsLoading = false;
+  drawNotes(tab);
+  renderStatus();
+}
+
+function keepComments(tab) {
+  drawNotes(tab);
+  renderStatus();
+  api('PUT', '/api/comments', { path: tab.path, comments: tab.comments }).catch((e) => toast(`Comment not kept: ${e.message}`, 'error'));
+}
+
+// Where a comment is in the text: its words, the nearest to its line.
+function anchorOf(text, c) {
+  let want = 0;
+  for (let i = 0; i < (c.line || 0) && want >= 0; i++) want = text.indexOf('\n', want) + 1 || -1;
+  if (want < 0) want = text.length;
+  for (const q of [c.quote, ...(c.alts || [])]) {
+    if (!q) continue;
+    let best = -1;
+    for (let i = text.indexOf(q); i >= 0; i = text.indexOf(q, i + 1)) {
+      if (best < 0 || Math.abs(i - want) < Math.abs(best - want)) best = i;
+      if (i > want) break;
+    }
+    if (best >= 0) return [best, best + q.length];
+  }
+  return null;
+}
+
+const drawNotesSoon = debounce((tab) => drawNotes(tab), 120);
+function drawNotes(tab) {
+  const ed = tab?.editor;
+  if (!ed || tab.draft) return;
+  if (!tab.comments) { if (isNote(tab.path)) loadComments(tab); return; }
+  const text = ed.value;
+  ed.setNotes(tab.comments.filter((c) => !c.resolved || tab.showResolved).map((c) => {
+    const at = anchorOf(text, c);
+    return { from: at ? at[0] : 0, to: at ? at[1] : 0, el: noteCard(tab, c, !at), cur: tab.noteCur === c.id };
+  }));
+}
+
+function noteCard(tab, c, lost) {
+  const card = h('div', { class: `mnote${c.resolved ? ' resolved' : ''}${lost ? ' lost' : ''}${tab.noteCur === c.id ? ' cur' : ''}`, 'data-id': c.id },
+    h('div', { class: 'mnote-head' },
+      c.speaker ? h('span', { class: 'mnote-who' }, `@${c.speaker}`) : null,
+      c.time ? h('span', { class: 'mnote-when', title: c.time }, hhmm(c.time)) : null,
+      h('span', { class: 'grow' }),
+      h('button', { class: 'mnote-btn', title: 'Reply', onclick: () => replyTo(tab, c) }, '↩'),
+      h('button', { class: 'mnote-btn', title: c.resolved ? 'Open again' : 'Resolve (close)', onclick: () => resolveNote(tab, c) }, c.resolved ? '↺' : '✓')),
+    h('div', { class: 'mnote-text' }, c.comment),
+    lost ? h('div', { class: 'mnote-lost' }, 'on words no longer in the note') : null,
+    (c.replies || []).map((r) => h('div', { class: 'mnote-reply' },
+      r.speaker ? h('span', { class: 'mnote-who' }, `@${r.speaker}`) : null, r.text, r.time ? h('span', { class: 'mnote-when' }, hhmm(r.time)) : null)));
+  card.addEventListener('mousedown', (e) => { if (!e.target.closest('button, input')) { e.preventDefault(); gotoNote(tab, c); } });
+  return card;
+}
+
+function gotoNote(tab, c) {
+  tab.noteCur = c.id;
+  const at = anchorOf(tab.editor.value, c);
+  if (at) tab.editor.selectRange(at[0], at[1]);
+  drawNotes(tab);
+}
+
+// A comment (or reply) being written, in the margin where it will be:
+// "@name" first says who said it; the clock adds the time.
+function writeNote(tab, from, to, { placeholder, done }) {
+  let timeOn = store.getItem('an.commentTime') !== 'false';
+  const input = h('input', { class: 'mnote-input', placeholder, spellcheck: false });
+  const clock = h('button', { class: `mnote-btn clock${timeOn ? ' on' : ''}`, title: 'Add the time (on / off)', onmousedown: (e) => e.preventDefault(),
+    onclick: () => { timeOn = !timeOn; store.setItem('an.commentTime', String(timeOn)); clock.classList.toggle('on', timeOn); input.focus(); } }, '🕑');
+  const box = h('div', { class: 'mnote draft' }, h('div', { class: 'mnote-head' }, h('span', { class: 'mnote-hint' }, '@name · Enter · Esc'), h('span', { class: 'grow' }), clock), input);
+  let over = false;
+  const finish = (keep) => {
+    if (over) return;
+    over = true;
+    tab.draft = null;
+    const v = input.value.trim();
+    const m = /^@(\S+)\s*/u.exec(v);
+    const text = m ? v.slice(m[0].length).trim() : v;
+    if (keep && text) done({ text, speaker: m?.[1], time: timeOn ? localStamp() : undefined });
+    drawNotes(tab);
+    tab.editor.focus();
+  };
+  input.addEventListener('keydown', (e) => {
+    e.stopPropagation();
+    if (e.isComposing || e.keyCode === 229) return;
+    if (e.key === 'Enter') { e.preventDefault(); finish(true); }
+    else if (e.key === 'Escape') { e.preventDefault(); finish(false); }
+    else if (e.key === 'Tab') {
+      // @mi⇥ → @minsu: the names said so far.
+      e.preventDefault();
+      const part = /^@(\S*)$/u.exec(input.value.trim())?.[1] ?? null;
+      const names = [...new Set((tab.comments || []).flatMap((c) => [c.speaker, ...(c.replies || []).map((r) => r.speaker)]).filter(Boolean))];
+      const hit = part != null && names.find((n) => n.toLowerCase().startsWith(part.toLowerCase()) && n !== part);
+      if (hit) input.value = `@${hit} `;
+    }
+  });
+  input.addEventListener('blur', () => setTimeout(() => { if (!box.contains(document.activeElement)) finish(true); }, 120));
+  tab.draft = { from, to, el: box, cur: true };
+  const ed = tab.editor;
+  ed.setNotes([...ed.notes.filter((n) => !n.el.classList.contains('draft')), tab.draft]);
+  requestAnimationFrame(() => input.focus());
+}
+
+function commentHere(tab = fileTab()) {
+  if (!tab || !isNote(tab.path)) { toast('Comments are for notes: open one first.'); return; }
+  if (tab.draft) return;
+  const ed = editorFor(tab);
+  if (!editorShown(tab)) setMode('edit');
+  const v = ed.value;
+  let a = ed.selectionStart;
+  let b = ed.selectionEnd;
+  if (a === b) {
+    const on = openComments(tab).find((c) => { const at = anchorOf(v, c); return at && at[0] <= a && a <= at[1]; });
+    if (on) { replyTo(tab, on); return; }
+    a = v.lastIndexOf('\n', a - 1) + 1;
+    b = v.indexOf('\n', a);
+    if (b < 0) b = v.length;
+    a += LINE_PREFIX.exec(v.slice(a, b))[0].length;
+    if (!v.slice(a, b).trim()) { toast('Select some words, or go to a line with text, to comment on.'); return; }
+  }
+  const quote = v.slice(a, b).slice(0, 2000);
+  const line = v.slice(0, a).split('\n').length - 1;
+  const alts = ed.tracking ? Object.values(ed.trackSlice(a, b)).filter((x) => x.trim() && x !== quote) : [];
+  writeNote(tab, a, b, { placeholder: 'Comment… (@name who said it)', done: ({ text, speaker, time }) => {
+    const c = { id: Math.random().toString(36).slice(2, 10), quote, alts, line, comment: text, speaker, time, replies: [] };
+    (tab.comments ||= []).push(c);
+    tab.noteCur = c.id;
+    keepComments(tab);
+  } });
+}
+
+function replyTo(tab, c) {
+  const at = anchorOf(tab.editor.value, c) || [0, 0];
+  tab.noteCur = c.id;
+  writeNote(tab, at[0], at[1], { placeholder: 'Reply… (@name)', done: ({ text, speaker, time }) => {
+    (c.replies ||= []).push({ text, speaker, time });
+    keepComments(tab);
+  } });
+}
+
+function resolveNote(tab, c) {
+  c.resolved = c.resolved ? undefined : localStamp();
+  keepComments(tab);
+  if (c.resolved) toast('Comment resolved', '', { label: 'Undo', run: () => { c.resolved = undefined; keepComments(tab); } });
+}
+
+const commentAt = (tab) => {
+  const v = tab.editor.value;
+  const a = tab.editor.selectionStart;
+  const list = openComments(tab).map((c) => [c, anchorOf(v, c)]).filter(([, at]) => at);
+  return (list.find(([c]) => c.id === tab.noteCur) || list.find(([, at]) => at[0] <= a && a <= at[1]))?.[0] || null;
+};
+
+function stepNote(tab, dir) {
+  const v = tab.editor.value;
+  const a = tab.editor.selectionStart;
+  const list = openComments(tab).map((c) => [c, anchorOf(v, c)]).filter(([, at]) => at).sort((x, y) => x[1][0] - y[1][0]);
+  if (!list.length) { toast('No comments here'); return; }
+  const next = dir > 0 ? list.find(([, at]) => at[0] > a) || list[0] : [...list].reverse().find(([, at]) => at[0] < a) || list.at(-1);
+  gotoNote(tab, next[0]);
+}
+
+// ---------------- meeting mode
+
+function toggleMeeting() {
+  S.meeting = !S.meeting;
+  document.documentElement.classList.toggle('meeting', S.meeting);
+  for (const t of S.tabs) t.editor?.setCurrentLine(S.meeting);
+  document.title = S.meeting ? 'Margin' : `${S.info?.name || ''} — Margin`;
+  $('#titlebar').textContent = document.title;
+  // The text itself, wide: the preview comes back after.
+  const g = S.groups[S.focus];
+  if (S.meeting && g && g.mode !== 'edit') { S.meetingFrom = g.mode; setMode('edit'); }
+  else if (!S.meeting && S.meetingFrom) { if (g?.mode === 'edit') setMode(S.meetingFrom); S.meetingFrom = null; }
+  renderStatus();
+  const t = fileTab();
+  if (t?.editor && editorShown(t)) t.editor.focus();
+  toast(S.meeting ? `Meeting mode · ${kbd('meeting') || '⌥X p m'} to leave` : 'Meeting mode off');
+}
+
 const ACTIONS = {
   'new-note': () => newNote(),
   'quick-open': () => openPalette(),
@@ -5218,6 +5548,10 @@ const ACTIONS = {
   'macro-play': () => (macros.recording ? stopRecording() : playMacro(1)),
   'search-next': () => stepSearch(1),
   'search-prev': () => stepSearch(-1),
+  suggest: () => toggleSuggest(),
+  'replace-sel': () => replaceSel(),
+  comment: () => commentHere(),
+  meeting: toggleMeeting,
 };
 
 // ---------------------------------------------------------------- keyboard
@@ -5317,6 +5651,20 @@ function leaderTree() {
       { key: 's', label: 'Sidebar', cmd: 'Toggle sidebar', run: toggleSidebar },
       { key: 't', label: 'Theme…', cmd: 'Theme: choose…', run: pickTheme },
       { key: 'z', label: 'Focus mode', run: toggleFocusMode },
+      { key: 'p', label: tab?.proof?.on ? 'Suggesting: on' : 'Suggesting: off', cmd: 'Suggest changes (tracked; the note stays as it is) on / off', when: () => note, run: () => toggleSuggest() },
+      { key: 'm', label: `Meeting mode: ${S.meeting ? 'on' : 'off'}`, cmd: 'Meeting mode (large text, for sharing the screen)', run: toggleMeeting },
+    ] },
+    { key: 'p', label: 'pen: suggest, comment, meeting', items: [
+      { key: 'p', label: tab?.proof?.on ? 'Stop suggesting' : 'Suggest changes (tracked)', cmd: 'Suggest changes (tracked; the note stays as it is) on / off', when: () => note, run: () => toggleSuggest() },
+      { key: 'd', label: 'Strike the line / selection', cmd: 'Suggest: strike the selection or the line', when: () => !!tab?.proof?.on, run: () => tab.editor.strikeSelection() },
+      { key: 'r', label: 'Replace the selection', cmd: 'Suggest: replace the selection', when: () => !!tab?.proof?.on, run: () => replaceSel(tab) },
+      { key: 'c', label: 'Comment…', cmd: 'Comment on the selection or the line', when: () => note, run: () => commentHere(tab) },
+      { key: 'n', label: 'Next comment', when: () => note && openComments(tab).length > 0, run: () => stepNote(tab, 1) },
+      { key: 'N', label: 'Previous comment', when: () => note && openComments(tab).length > 0, run: () => stepNote(tab, -1) },
+      { key: 'x', label: 'Resolve the comment here', when: () => note && openComments(tab).length > 0, run: () => { const c = commentAt(tab); if (c) resolveNote(tab, c); else toast('No comment here'); } },
+      { key: 'h', label: tab?.showResolved ? 'Hide resolved comments' : 'Show resolved comments', when: () => note && !!tab.comments?.some((c) => c.resolved), run: () => { tab.showResolved = !tab.showResolved; drawNotes(tab); } },
+      { key: 'v', label: 'Review my suggestions (y n A a)', cmd: 'Review your suggestions on this note', when: () => note && !!(tab.proof || proofRun(tab)), run: () => reviewSuggestions(tab) },
+      { key: 'm', label: S.meeting ? 'Leave meeting mode' : 'Meeting mode', cmd: 'Meeting mode (large text, for sharing the screen)', run: toggleMeeting },
     ] },
     { key: 'q', label: 'macro', items: [
       { key: 'q', label: macros.recording ? 'Stop recording' : 'Start recording', run: toggleRecording },

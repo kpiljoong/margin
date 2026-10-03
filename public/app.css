@@ -328,6 +328,59 @@ input[type=checkbox] { accent-color: var(--accent); }
 .review .pen-card.kb-cur { box-shadow: none; background: color-mix(in srgb, var(--pen) 10%, var(--bg)); }
 .review:focus .pen-card.kb-cur { outline: 1px solid color-mix(in srgb, var(--pen) 45%, transparent); }
 @media (max-width: 760px) { .pen-body { grid-template-columns: minmax(0, 1fr) 150px; column-gap: 18px; } }
+
+/* suggesting and comments: your pen (track.js; the editor's margin) */
+:root { --pen-me: #6cb6ff; --notes-w: 232px; }
+@media (prefers-color-scheme: light) { :root { --pen-me: #1d5fd1; } }
+:root[data-kind="light"] { --pen-me: #1d5fd1; }
+:root[data-kind="dark"] { --pen-me: #6cb6ff; }
+.mine { --pen: var(--pen-me); }
+.ed.tracking .ed-input { caret-color: var(--pen-me); }
+.ed .tr-d { color: var(--pen-me); text-decoration: line-through; text-decoration-color: var(--pen-me); text-decoration-thickness: 2px; }
+.ed .tr-i { color: var(--pen-me); text-decoration: underline; text-decoration-color: color-mix(in srgb, var(--pen-me) 60%, transparent); text-underline-offset: 3px; background: color-mix(in srgb, var(--pen-me) 9%, transparent); }
+.ed .tr-nl { position: relative; }
+.ed .tr-nl.tr-d::after { content: "¶"; position: absolute; left: 2px; color: var(--pen-me); text-decoration: line-through; }
+.ed-find-layer mark.note { background: color-mix(in srgb, var(--pen-me) 13%, transparent); box-shadow: 0 2px 0 color-mix(in srgb, var(--pen-me) 70%, transparent); border-radius: 0; }
+.ed-find-layer mark.note.cur { background: color-mix(in srgb, var(--pen-me) 28%, transparent); }
+.ed.with-notes .ed-layer, .ed.with-notes .ed-input { padding-left: max(24px, calc((100% - var(--line-width, 760px) - var(--notes-w) - 30px) / 2)); padding-right: max(calc(var(--notes-w) + 40px), calc((100% - var(--line-width, 760px) - var(--notes-w) - 30px) / 2 + var(--notes-w) + 30px)); }
+.ed-notes { position: absolute; top: 0; right: 22px; width: var(--notes-w); z-index: 3; pointer-events: none; display: none; }
+.ed.with-notes .ed-notes { display: block; }
+.mnote { position: absolute; left: 0; right: 0; box-sizing: border-box; pointer-events: auto; padding: 3px 6px 5px 9px; border-left: 2px solid var(--pen-me); border-radius: 0 6px 6px 0; background: color-mix(in srgb, var(--pen-me) 6%, var(--bg)); font: 12.5px/1.4 var(--sans); color: var(--fg); cursor: pointer; }
+.mnote.cur { background: color-mix(in srgb, var(--pen-me) 15%, var(--bg)); }
+.mnote.resolved { opacity: .5; }
+.mnote.lost { border-left-style: dashed; }
+.mnote-head { display: flex; align-items: center; gap: 4px; min-height: 18px; font-size: 11.5px; color: var(--fg-faint); }
+.mnote-head .grow { flex: 1; }
+.mnote-who { color: var(--pen-me); font-weight: 600; margin-right: 4px; }
+.mnote-when { color: var(--fg-faint); font-variant-numeric: tabular-nums; margin-left: 4px; }
+.mnote-text { color: var(--pen-me); font: 16px/1.3 var(--hand); overflow-wrap: anywhere; white-space: pre-wrap; }
+.mnote-reply { margin-top: 3px; padding-left: 8px; border-left: 1px solid var(--border); overflow-wrap: anywhere; }
+.mnote-lost { font-size: 11px; color: var(--warn); }
+.mnote-btn { border: 0; background: none; color: var(--fg-faint); cursor: pointer; padding: 0 4px; border-radius: 4px; font-size: 12px; }
+.mnote-btn:hover { color: var(--fg); background: var(--bg-hover); }
+.mnote-btn.clock { opacity: .4; }
+.mnote-btn.clock.on { opacity: 1; }
+.mnote-hint { font-size: 11px; }
+.mnote-input { width: 100%; box-sizing: border-box; margin-top: 3px; padding: 4px 6px; border: 1px solid var(--pen-me); border-radius: 5px; background: var(--bg); color: var(--fg); font: 13px var(--sans); outline: none; }
+.ed-curline { position: absolute; left: 0; right: 0; z-index: 0; pointer-events: none; background: color-mix(in srgb, var(--accent) 10%, transparent); box-shadow: inset 4px 0 0 var(--accent); }
+.pen-who { font: 600 11.5px var(--sans); margin-right: 5px; }
+.pen-when { font: 11px var(--sans); color: var(--fg-faint); margin-right: 5px; }
+#status .pen-chip { color: var(--pen-me); }
+#status .meeting-chip { color: var(--bad); font-weight: 600; }
+
+/* meeting mode: for sharing the screen — large text, the line you're on, nothing private around it */
+.meeting #activity, .meeting #sidebar, .meeting #sidebar-resizer, .meeting .tabs, .meeting .toolbar, .meeting .pane:not(.focused):not(:only-child), .meeting .pane-resizer, .meeting .ed-resizer { display: none !important; }
+.meeting #app { grid-template-columns: 0 0 1fr; }
+.meeting #main { grid-column: 1 / -1; }
+.meeting #status { grid-column: 1 / -1; font-size: 13px; }
+.meeting { --notes-w: 300px; }
+.meeting .ed-layer, .meeting .ed-input { font-size: max(21px, calc(var(--ed-size, 15px) * 1.4)); line-height: 1.75; padding-top: 28px; }
+.meeting .preview { font-size: 1.3em; }
+.meeting .ed .tr-d { text-decoration-thickness: 3px; }
+.meeting .ed .tr-i { background: color-mix(in srgb, var(--pen-me) 18%, transparent); text-decoration-thickness: 2px; }
+.meeting .mnote { font-size: 14px; }
+.meeting .mnote-text { font-size: 20px; }
+.meeting .ed-curline { background: color-mix(in srgb, var(--accent) 15%, transparent); }
 .file-card-head .seg button { padding: 1px 8px; }
 
 /* desktop (macOS): inset traffic lights over a draggable title strip */
@@ -792,3 +845,4 @@ iframe.mermaid-frame { position: fixed; left: -10000px; top: 0; width: 1600px; h
 .message-text { min-width: 0; white-space: pre-wrap; overflow-wrap: anywhere; }
 .history:focus { outline: none; }
 .chip.add { padding: 1px 8px; }
+.pen-pick { display: inline-flex; align-items: center; gap: 5px; margin-right: 12px; font-size: 12px; color: var(--fg-dim); }

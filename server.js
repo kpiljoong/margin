@@ -647,6 +647,125 @@ function moveHistory(fromRel, toRel) {
   } catch { /* keep it where it was */ }
 }
 
+// ---------------------------------------------------------------- your margin comments
+
+// Your comments on a note: beside it (DATA_DIR/comments/<note>.json), never
+// in it — each on the words it quotes, with who said it and when if you like,
+// replies, and resolved or not.
+const COMMENTS_DIR = path.join(DATA_DIR, 'comments');
+const commentsOf = (rel) => `${resolveInside(COMMENTS_DIR, rel)}.json`;
+function noteComments(rel) {
+  try { const list = JSON.parse(fs.readFileSync(commentsOf(rel), 'utf8')); return Array.isArray(list) ? list : []; } catch { return []; }
+}
+function getComments(relPath) {
+  const rel = relOf(workspacePath(relPath));
+  return { path: rel, comments: noteComments(rel) };
+}
+function saveComments({ path: relPath, comments }) {
+  const rel = relOf(workspacePath(relPath));
+  if (!Array.isArray(comments) || comments.length > 1000) throw httpError(400, 'comments should be a list');
+  const str = (v, max) => (typeof v === 'string' && v ? v.slice(0, max) : undefined);
+  const said = (r) => ({ text: str(r?.text, 4000) || '', speaker: str(r?.speaker, 80), time: str(r?.time, 40) });
+  const clean = comments.map((c) => ({
+    id: str(c?.id, 40)?.replace(/[^\w-]/g, '') || crypto.randomBytes(4).toString('hex'),
+    quote: str(c?.quote, 2000) || '',
+    alts: Array.isArray(c?.alts) ? c.alts.map((a) => str(a, 2000)).filter(Boolean).slice(0, 3) : [],
+    line: Number.isInteger(c?.line) && c.line >= 0 ? c.line : undefined,
+    comment: str(c?.comment, 4000) || '',
+    speaker: str(c?.speaker, 80),
+    time: str(c?.time, 40),
+    replies: Array.isArray(c?.replies) ? c.replies.slice(0, 100).map(said).filter((r) => r.text.trim()) : [],
+    resolved: str(c?.resolved, 40),
+  })).filter((c) => c.comment.trim() || c.replies.length);
+  const file = commentsOf(rel);
+  if (!clean.length) fs.rmSync(file, { force: true });
+  else { ensureDataDir(); writeFileAtomic(file, JSON.stringify(clean, null, 2)); }
+  return { path: rel, comments: clean };
+}
+function moveComments(fromRel, toRel) {
+  try {
+    const from = commentsOf(fromRel);
+    if (!fs.existsSync(from)) return;
+    const to = commentsOf(toRel);
+    fs.mkdirSync(path.dirname(to), { recursive: true });
+    if (!fs.existsSync(to)) fs.renameSync(from, to);
+  } catch { /* keep them where they were */ }
+}
+// The open ones, as an agent reads them (with a task about the note).
+function commentsForAgent(rel) {
+  const open = noteComments(rel).filter((c) => !c.resolved && c.comment.trim());
+  if (!open.length) return '';
+  const who = (x) => [x.speaker && `said by ${x.speaker}`, x.time && `at ${x.time}`].filter(Boolean).join(' ');
+  const line = (c) => {
+    const head = `- on "${c.quote.replace(/\s+/g, ' ').slice(0, 300)}": ${c.comment.replace(/\s+/g, ' ')}${who(c) ? ` (${who(c)})` : ''}`;
+    return [head, ...c.replies.map((r) => `  - reply: ${r.text.replace(/\s+/g, ' ')}${who(r) ? ` (${who(r)})` : ''}`)].join('\n');
+  };
+  return `The user's own margin comments on ${rel} (kept beside the note, not in its text):\n${open.slice(0, 200).map(line).join('\n')}`;
+}
+
+// ---------------------------------------------------------------- your suggestions
+
+// Your suggestions on a note (suggesting, as tracked changes): a run like an
+// agent's — base the note as it is, work as you would have it — written by
+// you, so they are reviewed and applied the same way and the note itself is
+// untouched until then. One open at a time for each note.
+function openProof({ path: relPath }) {
+  const rel = relOf(workspacePath(relPath));
+  if (!NOTE_EXT.has(extOf(rel))) throw httpError(400, 'Suggestions are for notes');
+  let now;
+  try { now = readText(path.join(ROOT, rel)); } catch { throw httpError(404, 'Not found'); }
+  if (now == null) throw httpError(400, 'Not a text file');
+  const open = listRuns().find((r) => r.kind === 'proof' && r.focus === rel && r.status === 'review');
+  if (open) {
+    const dir = runDir(open.id);
+    const base = fs.readFileSync(path.join(dir, 'base', rel), 'utf8');
+    const work = fs.readFileSync(path.join(dir, 'work', rel), 'utf8');
+    if (base === now) return { id: open.id, base, work };
+    // The note changed since: the suggestions go on over it, where they can.
+    const hunks = buildHunks(base, work);
+    const m = mergeHunks(base, now, hunks, new Set(hunks.keys()));
+    if (m.conflicts.length) throw httpError(409, 'The note changed where you made suggestions: settle those first', { id: open.id });
+    fs.writeFileSync(path.join(dir, 'base', rel), now);
+    fs.writeFileSync(path.join(dir, 'work', rel), m.text);
+    return { id: open.id, base: now, work: m.text };
+  }
+  ensureDataDir();
+  const id = newRunId();
+  const dir = runDir(id);
+  for (const sub of ['base', 'work']) {
+    fs.mkdirSync(path.dirname(path.join(dir, sub, rel)), { recursive: true });
+    fs.writeFileSync(path.join(dir, sub, rel), now);
+  }
+  const at = new Date().toISOString();
+  writeMeta({
+    id, kind: 'proof', task: `Your suggestions on ${rel}`, scope: 'file', focus: rel, parent: null, round: 1, recipe: '',
+    agent: 'You', agentId: null, command: null, model: '', status: 'review', startedAt: at, finishedAt: at,
+    exitCode: 0, files: [rel], excluded: [], applied: null, selection: 0,
+  });
+  return { id, base: now, work: now, created: true };
+}
+
+// The note as you would have it, kept as you type.
+function saveProof(id, { text }) {
+  const meta = readMeta(id);
+  if (meta.kind !== 'proof') throw httpError(400, 'Not your suggestions');
+  if (meta.status !== 'review') throw httpError(409, 'These suggestions were settled already');
+  if (typeof text !== 'string' || text.length > 5 * 1024 * 1024) throw httpError(400, 'text required');
+  fs.writeFileSync(path.join(runDir(id), 'work', meta.focus), text);
+  return { id, saved: true };
+}
+
+// Your comments, shown with your suggestions: each on the words of the note
+// as it was that it quotes.
+function proofComments(meta) {
+  let base = '';
+  try { base = fs.readFileSync(path.join(runDir(meta.id), 'base', meta.focus), 'utf8'); } catch { /* gone */ }
+  return noteComments(meta.focus).filter((c) => !c.resolved).map((c, n) => ({
+    file: meta.focus, n, by: 'you', comment: c.comment, speaker: c.speaker, time: c.time, replies: c.replies,
+    quote: [c.quote, ...(c.alts || [])].find((q) => q && base.includes(q)) || c.quote,
+  }));
+}
+
 // ---------------------------------------------------------------- attachments
 
 const RAW_MIME = {
@@ -777,7 +896,7 @@ function renamePath({ from, to }) {
   ours(fromRel, toRel, ...moved.keys(), ...moved.values());
   fs.renameSync(src, dst);
   treeCache = null;
-  for (const [a, b] of moved) moveHistory(a, b);
+  for (const [a, b] of moved) { moveHistory(a, b); moveComments(a, b); }
 
   const updated = [];
   for (const f of all) {
@@ -1092,6 +1211,8 @@ function startRun({ task, scope, focus, selection, agentId, model, recipe }) {
     exitCode: null, files: included, excluded, applied: null, selection: sel ? sel.length : 0,
   };
   let prompt = buildPrompt(task, focusShared);
+  const mine = focusShared ? commentsForAgent(focusShared) : '';
+  if (mine) prompt += `\n\n${mine}`;
   if (sel) prompt += `\n\nThe user selected this passage in ${focusShared}; focus the task on it:\n<<<\n${sel}\n>>>`;
   return launchAgent(meta, prompt);
 }
@@ -1116,7 +1237,7 @@ function followUpRun(prevId, { task }) {
   if (fs.existsSync(path.join(runDir(prevId), 'comments.json'))) fs.copyFileSync(path.join(runDir(prevId), 'comments.json'), path.join(dir, 'comments.json'));
   const round = (prev.round || 1) + 1;
   const meta = {
-    ...prev, id, task, parent: prevId, round, originalTask: prev.originalTask || prev.task,
+    ...prev, kind: undefined, id, task, parent: prevId, round, originalTask: prev.originalTask || prev.task,
     agent: agent.label, agentId: agent.id, command, model: command === agent.command ? agent.model : prev.model,
     status: 'running', startedAt: new Date().toISOString(), finishedAt: null,
     exitCode: null, signal: null, usage: undefined, resolvedModel: undefined, cancelReason: undefined, applied: null, child: undefined,
@@ -1445,7 +1566,7 @@ function listRuns() {
   let ids = [];
   try { ids = fs.readdirSync(RUNS_DIR).filter((n) => /^[\w-]+$/.test(n)); } catch { /* none yet */ }
   return ids.sort().reverse().slice(0, 100).map((id) => {
-    try { const m = readMeta(id); return { id, task: m.task, recipe: m.recipe || '', status: m.status, startedAt: m.startedAt, scope: m.scope, focus: m.focus, agent: m.agent, usage: m.usage || null }; }
+    try { const m = readMeta(id); return { id, kind: m.kind || 'agent', task: m.task, recipe: m.recipe || '', status: m.status, startedAt: m.startedAt, scope: m.scope, focus: m.focus, agent: m.agent, usage: m.usage || null }; }
     catch { return null; }
   }).filter(Boolean);
 }
@@ -1512,12 +1633,16 @@ async function routeApi(method, url, body) {
     const list = await Promise.all(AGENTS.map(async (a) => ({ id: a.id, ...(await agentStatus(a, fresh)) })));
     return { agents: list };
   }
+  if (method === 'GET' && p === '/api/comments') return getComments(q('path'));
+  if (method === 'PUT' && p === '/api/comments') return saveComments(body || {});
+  if (method === 'POST' && p === '/api/proofs') return openProof(body || {});
+  if ((m = p.match(/^\/api\/proofs\/([\w-]+)$/)) && method === 'PUT') return saveProof(m[1], body || {});
   if (method === 'POST' && p === '/api/runs') return { ...startRun(body || {}), command: undefined };
   if ((m = p.match(/^\/api\/runs\/([\w-]+)$/)) && method === 'GET') {
     const meta = readMeta(m[1]);
     const reviewable = meta.status !== 'running';
     const changes = reviewable ? computeChanges(m[1]) : [];
-    const comments = readComments(m[1]);
+    const comments = meta.kind === 'proof' ? proofComments(meta) : readComments(m[1]);
     return { ...meta, command: undefined, ...runReport(m[1]), changes, comments, commentBases: commentBases(m[1], comments, changes) };
   }
   if ((m = p.match(/^\/api\/runs\/([\w-]+)\/(apply|discard|cancel|revert|followup)$/)) && method === 'POST') {

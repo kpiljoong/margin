@@ -7,6 +7,7 @@
 import { eventKeys } from './keys.js';
 import { UndoHistory } from './undo.js';
 import { expandRange } from './expand.js';
+import { combine, original, proposed, reconcile, provisional, strike, overlay } from './track.js';
 
 const esc = (s) => s.replace(/[&<>]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c]));
 const MAX_HIGHLIGHT = 300_000; // chars; beyond this we fall back to plain text
@@ -120,8 +121,9 @@ export function findPattern({ query, caseSensitive, regex }) {
 }
 
 export class MarkdownEditor {
-  constructor({ onChange, onScroll, onCursor, complete, onPasteFiles } = {}) {
+  constructor({ onChange, onScroll, onCursor, complete, onPasteFiles, onTrack } = {}) {
     this.onChange = onChange || (() => {});
+    this.onTrack = onTrack || (() => {});
     this.onScroll = onScroll || (() => {});
     this.onCursor = onCursor || (() => {});
     this.complete = complete || (() => []);
@@ -131,6 +133,8 @@ export class MarkdownEditor {
     this.extra = []; // additional selections for multi-cursor editing: [start, end]
     this.hints = []; // ranges shown faintly for a moment (e.g. mentions of a box): [start, end]
     this.history = new UndoHistory('');
+    this.track = null; // suggesting: { text, marks, undo, redo } (track.js)
+    this.notes = []; // margin notes: { from, to, el, cur }
 
     this.findLayer = h('div', 'ed-layer ed-find-layer');
     this.hlLayer = h('div', 'ed-layer ed-hl-layer');
@@ -143,7 +147,10 @@ export class MarkdownEditor {
     this.popup.hidden = true;
     this.findBar = this._buildFindBar();
     this.el = h('div', 'ed');
-    this.el.append(this.findLayer, this.hlLayer, this.ta, this.popup, this.findBar);
+    this.curLine = h('div', 'ed-curline');
+    this.curLine.hidden = true;
+    this.notesCol = h('div', 'ed-notes');
+    this.el.append(this.curLine, this.findLayer, this.hlLayer, this.ta, this.notesCol, this.popup, this.findBar);
 
     this.ta.addEventListener('input', (e) => this._changed(e));
     this.ta.addEventListener('beforeinput', (e) => {
@@ -151,7 +158,7 @@ export class MarkdownEditor {
       if (!this.busy) this._selBefore = [this.ta.selectionStart, this.ta.selectionEnd];
     });
     this.ta.addEventListener('beforeinput', (e) => this._multiInput(e));
-    this.ta.addEventListener('mousedown', () => { this._clearMulti(); this.history.close(); });
+    this.ta.addEventListener('mousedown', () => { this._clearMulti(); this._closeStep(); });
     this.ta.addEventListener('compositionstart', () => { this._clearMulti(); this._selBefore = [this.ta.selectionStart, this.ta.selectionEnd]; });
     this.ta.addEventListener('scroll', () => this._syncScroll());
     this.ta.addEventListener('keydown', (e) => {
@@ -159,13 +166,14 @@ export class MarkdownEditor {
       try { this._keydown(e); } finally { this.handlingKey = false; }
       editorWatch.key?.(this, e, commandOf(e));
     });
-    this.ta.addEventListener('keyup', () => this.onCursor());
-    this.ta.addEventListener('click', () => { this._closePopup(); this.onCursor(); });
+    this.ta.addEventListener('keyup', () => { this._placeCurLine(); this.onCursor(); });
+    this.ta.addEventListener('click', () => { this._closePopup(); this._placeCurLine(); this.onCursor(); });
+    this.ta.addEventListener('selectionchange', () => this._placeCurLine());
     this.ta.addEventListener('blur', () => setTimeout(() => { if (document.activeElement !== this.ta) this._closePopup(); }, 150));
     this.ta.addEventListener('paste', (e) => this._paste(e));
     this.ta.addEventListener('drop', (e) => this._drop(e));
     this.ta.addEventListener('compositionend', () => this._changed());
-    new ResizeObserver(() => { this._lineOffsetCache = null; this._syncScroll(); }).observe(this.ta);
+    new ResizeObserver(() => { this._lineOffsetCache = null; this._syncScroll(); this._placeNotes(); this._placeCurLine(); }).observe(this.ta);
   }
 
   // ---------------- public API
@@ -175,7 +183,7 @@ export class MarkdownEditor {
   // New text from outside (the file changed on disk: another program, an
   // agent): shown, and one ⌘Z takes it back.
   loadText(v) {
-    if (v === this.ta.value) return;
+    if (v === this.ta.value || this.track) return;
     const sel = [this.ta.selectionStart, this.ta.selectionEnd];
     this.history.close();
     this.ta.value = v;
@@ -186,8 +194,9 @@ export class MarkdownEditor {
     this._render();
   }
 
-  undo() { this._applyHistory(this.history.undo()); }
-  redo() { this._applyHistory(this.history.redo()); }
+  undo() { if (this.track) this._trackStep(-1); else this._applyHistory(this.history.undo()); }
+  redo() { if (this.track) this._trackStep(1); else this._applyHistory(this.history.redo()); }
+  _closeStep() { this.history.close(); if (this.track) this.track.open = false; }
   _applyHistory(c) {
     if (!c) return;
     this._clearMulti();
@@ -314,6 +323,7 @@ export class MarkdownEditor {
 
   // ---------------- rendering
   _changed(e) {
+    if (this.track) { this._trackChanged(e); return; }
     if (!e?.isComposing) {
       this.history.record(this.ta.value, this._selBefore, [this.ta.selectionStart, this.ta.selectionEnd]);
       this._selBefore = null;
@@ -327,13 +337,17 @@ export class MarkdownEditor {
 
   _render() {
     const text = this.ta.value;
-    const on = this.highlightOn && text.length <= MAX_HIGHLIGHT;
+    const on = (this.highlightOn || !!this.track) && text.length <= MAX_HIGHLIGHT;
     this.el.classList.toggle('plain', !on);
-    if (on) this.hlLayer.innerHTML = `${highlightMarkdown(text)}\n `;
-    else this.hlLayer.textContent = '';
+    if (on) {
+      let html = this.highlightOn ? highlightMarkdown(text) : esc(text);
+      if (this.track) html = overlay(html, this.track.pending || this.track.marks);
+      this.hlLayer.innerHTML = `${html}\n `;
+    } else this.hlLayer.textContent = '';
     this._lineOffsetCache = null;
     this._renderFind();
     this._syncScroll();
+    this._placeCurLine();
   }
 
   // Mark these ranges faintly until the next edit or setHints([]).
@@ -349,6 +363,7 @@ export class MarkdownEditor {
     if (this.find.open) this.find.matches.forEach(([a, b], i) => marks.push([a, b, i === index ? 'cur' : '']));
     for (const [a, b] of this.extra) marks.push([a, b, a === b ? 'mcaret' : 'msel']);
     for (const [a, b] of this.hints) marks.push([a, b, 'hint']);
+    for (const n of this.notes) if (n.to > n.from) marks.push([n.from, n.to, n.cur ? 'note cur' : 'note']);
     if (!marks.length) { this.findLayer.textContent = ''; return; }
     marks.sort((x, y) => x[0] - y[0]);
     const text = this.ta.value;
@@ -365,7 +380,193 @@ export class MarkdownEditor {
   _syncScroll() {
     this.hlLayer.scrollTop = this.ta.scrollTop;
     this.findLayer.scrollTop = this.ta.scrollTop;
+    this.notesCol.style.transform = `translateY(${-this.ta.scrollTop}px)`;
+    if (!this.curLine.hidden) this.curLine.style.transform = `translateY(${-this.ta.scrollTop}px)`;
     this.onScroll();
+  }
+
+  // ---------------- suggesting (track.js)
+  get tracking() { return !!this.track; }
+
+  // Show base with work's changes marked, and go on suggesting from there.
+  startTrack(base, work) {
+    const c = combine(base, work);
+    this.track = { text: c.text, marks: c.marks, undo: [], redo: [], open: false, last: 0, pending: null };
+    this.extra = [];
+    this.hints = [];
+    this.ta.value = c.text;
+    this.history.reset(c.text);
+    this.el.classList.add('tracking');
+    this._render();
+  }
+
+  // Back to plain editing, with this text.
+  stopTrack(text) {
+    this.track = null;
+    this.el.classList.remove('tracking');
+    this.value = text;
+  }
+
+  // The note as it is, and as the suggestions would make it.
+  trackTexts() {
+    const t = this.track;
+    return t && { original: original(t.text, t.marks), proposed: proposed(t.text, t.marks) };
+  }
+
+  // a..b as it was and as it would be.
+  trackSlice(a, b) {
+    const t = this.track;
+    return t && { original: original(t.text.slice(a, b), t.marks.slice(a, b)), proposed: proposed(t.text.slice(a, b), t.marks.slice(a, b)) };
+  }
+
+  // Where a place in the text is (the offset) in the note as proposed.
+  proposedOffset(offset) {
+    const t = this.track;
+    if (!t) return offset;
+    let n = 0;
+    for (let i = 0; i < offset && i < t.marks.length; i++) if (t.marks[i] !== 'd') n++;
+    return n;
+  }
+
+  _trackChanged(e) {
+    const t = this.track;
+    const next = this.ta.value;
+    if (e?.isComposing) { t.pending = provisional(t, next); this._render(); return; }
+    const before = this._selBefore;
+    this._selBefore = null;
+    t.pending = null;
+    if (next === t.text) { this._render(); return; }
+    const r = reconcile(t, next, before, this.ta.selectionStart);
+    this._trackKeep(before);
+    if (r.restored) {
+      this.ta.setRangeText(r.back, r.at, r.at);
+      this.ta.setSelectionRange(r.caret, r.caret);
+    }
+    t.text = r.text;
+    t.marks = r.marks;
+    this.hints = [];
+    this._render();
+    if (this.find.open) this._runFind(false);
+    this.onTrack();
+    this._maybeComplete();
+  }
+
+  // One step back: typing together is one, as in the editor's own history.
+  _trackKeep(sel, force = false) {
+    const t = this.track;
+    const now = Date.now();
+    if (force || !t.open || now - t.last > 1500) {
+      t.undo.push({ text: t.text, marks: t.marks, sel: sel || [this.ta.selectionStart, this.ta.selectionEnd] });
+      if (t.undo.length > 500) t.undo.shift();
+    }
+    t.open = !force;
+    t.last = now;
+    t.redo = [];
+  }
+
+  _trackStep(dir) {
+    const t = this.track;
+    const s = (dir < 0 ? t.undo : t.redo).pop();
+    if (!s) return;
+    (dir < 0 ? t.redo : t.undo).push({ text: t.text, marks: t.marks, sel: [this.ta.selectionStart, this.ta.selectionEnd] });
+    t.open = false;
+    this._trackSet(s.text, s.marks, s.sel);
+    const y = this._caretCoords(s.sel[0]).top - this.ta.scrollTop;
+    if (y < 0 || y > this.ta.clientHeight - this.lineHeight()) this.scrollToOffset(s.sel[0]);
+  }
+
+  _trackSet(text, marks, sel) {
+    const t = this.track;
+    const old = this.ta.value;
+    let p = 0;
+    while (p < old.length && p < text.length && old[p] === text[p]) p++;
+    let q = 0;
+    while (q < old.length - p && q < text.length - p && old[old.length - 1 - q] === text[text.length - 1 - q]) q++;
+    this.ta.setRangeText(text.slice(p, text.length - q), p, old.length - q);
+    t.text = text;
+    t.marks = marks;
+    this.ta.setSelectionRange(sel[0], sel[1]);
+    this._render();
+    this.onTrack();
+  }
+
+  // Strike the selection, or the line (the next line is then the current
+  // one, for striking line after line). Struck already: unstruck.
+  strikeSelection() {
+    const t = this.track;
+    if (!t) return false;
+    const v = this.ta.value;
+    let a = this.ta.selectionStart;
+    let b = this.ta.selectionEnd;
+    const line = a === b;
+    if (line) {
+      a = v.lastIndexOf('\n', a - 1) + 1;
+      const nl = v.indexOf('\n', a);
+      b = nl === -1 ? v.length : nl + 1;
+      if (a === b) return true;
+    }
+    const r = strike(t, a, b);
+    this._trackKeep(null, true);
+    let caret = r.end;
+    if (line) { const nl = r.text.indexOf('\n', a); caret = nl === -1 ? r.text.length : nl + 1; }
+    this._trackSet(r.text, r.marks, [caret, caret]);
+    this._placeCurLine();
+    return true;
+  }
+
+  // Strike the selection (or the word at the caret) and write after it.
+  replaceSelection() {
+    const t = this.track;
+    if (!t) return false;
+    let a = this.ta.selectionStart;
+    let b = this.ta.selectionEnd;
+    if (a === b) [a, b] = this._wordAt(a);
+    if (a === b) return false;
+    const r = strike(t, a, b);
+    if (!r.struck) return false;
+    this._trackKeep(null, true);
+    this._trackSet(r.text, r.marks, [r.end, r.end]);
+    return true;
+  }
+
+  // ---------------- the current line, marked (for showing the screen)
+  setCurrentLine(on) {
+    this.curLine.hidden = !on;
+    this._placeCurLine();
+  }
+
+  _placeCurLine() {
+    if (this.curLine.hidden || !this.el.isConnected) return;
+    const v = this.ta.value;
+    const s = this.ta.selectionStart;
+    const a = v.lastIndexOf('\n', s - 1) + 1;
+    const nl = v.indexOf('\n', s);
+    const top = this._caretCoords(a).top;
+    const bottom = this._caretCoords(nl === -1 ? v.length : nl).top + this.lineHeight();
+    this.curLine.style.top = `${top}px`;
+    this.curLine.style.height = `${Math.max(this.lineHeight(), bottom - top)}px`;
+    this.curLine.style.transform = `translateY(${-this.ta.scrollTop}px)`;
+  }
+
+  // ---------------- notes in the margin: [{ from, to, el, cur }], each
+  // element beside its line, the words it is on marked.
+  setNotes(notes) {
+    this.notes = notes;
+    this.el.classList.toggle('with-notes', notes.length > 0);
+    this.notesCol.replaceChildren(...notes.map((n) => n.el));
+    this._renderFind();
+    this._placeNotes();
+  }
+
+  _placeNotes() {
+    if (!this.notes.length || !this.el.isConnected) return;
+    let y = 0;
+    for (const n of [...this.notes].sort((x, z) => x.from - z.from)) {
+      const want = this._caretCoords(n.from).top;
+      const top = Math.max(want, y);
+      n.el.style.top = `${top}px`;
+      y = top + n.el.offsetHeight + 8;
+    }
   }
 
   // y offset of each source line inside the scrolled content.
@@ -415,7 +616,7 @@ export class MarkdownEditor {
       if (e.code === 'KeyZ' && !e.shiftKey) this.undo(); else this.redo();
       return;
     }
-    if (/^(Arrow|Home|End|Page)/.test(e.key)) this.history.close();
+    if (/^(Arrow|Home|End|Page)/.test(e.key)) this._closeStep();
     const { selectionStart: s, selectionEnd: end, value } = ta;
     const mod = modKey(e);
     const lineStart = value.lastIndexOf('\n', s - 1) + 1;
@@ -496,7 +697,7 @@ export class MarkdownEditor {
       'find-prev': () => this.find.open && (this._step(-1), true),
       bold: () => this._wrap('**'),
       italic: () => this._wrap('*'),
-      strike: () => this._wrap('~~'),
+      strike: () => (this.track ? this.strikeSelection() : this._wrap('~~')),
       'toggle-task': () => this._toggleTask(),
       'duplicate-line': () => this._duplicateLine(),
       'move-line-up': () => this._moveLines(-1),

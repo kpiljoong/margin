@@ -51,6 +51,7 @@ fs.mkdirSync(path.join(ws, 'hits'));
 for (let i = 0; i < 12; i++) fs.writeFileSync(path.join(ws, 'hits', `h${i}.md`), Array.from({ length: 5 }, (_, j) => `needle ${i}.${j}`).join('\n\n') + '\n');
 const filler = (p) => Array.from({ length: 10 }, (_, i) => `${p} ${i}`);
 fs.writeFileSync(path.join(ws, 'sub', 'proof.md'), '# Proof\n\nThis is a very good plan for the the team.\n\nWe ship on Friday.\n');
+fs.writeFileSync(path.join(ws, 'sub', 'meet.md'), '# Meet\n\nWe ship on Monday.\nDocs by Friday.\n');
 fs.writeFileSync(path.join(ws, 'sub', 'messy.md'), ['#Title', 'text', ...filler('a'), '* one', ...filler('b'), '##Sub', 'more', ...filler('c'), '+ two', ''].join('\n'));
 fs.writeFileSync(path.join(userData, 'config.json'), JSON.stringify({
   workspace: ws, recent: [ws], agents: [{ name: 'Demo', command: 'demo' }], agentDefault: 'Demo', autoUpdateCheck: false, quickCapture: false,
@@ -475,7 +476,7 @@ await check('the leader key (⌥X): f f finds a file, Space all commands; w h go
   key('Escape');
   const back = await until(() => !document.activeElement?.closest('#sidebar'));
   return { focused, groups, files, quick: !!quick, quickValue, typedInEditor, paletteValue, from, moved, opened, back: !!back };
-`, (v) => (v?.focused && v.groups === 'fsbwmlgartq' && v.files && v.quick && v.quickValue === '' && !v.typedInEditor && v.paletteValue === '>' && v.from === 'flow.md' && v.moved && v.opened && v.back ? null : 'the leader key did not work'));
+`, (v) => (v?.focused && v.groups === 'fsbwmlgartpq' && v.files && v.quick && v.quickValue === '' && !v.typedInEditor && v.paletteValue === '>' && v.from === 'flow.md' && v.moved && v.opened && v.back ? null : 'the leader key did not work'));
 
 await check('link hints in a focused preview: f, then a letter, follows that link', `
   await openNote('sub/links.md');
@@ -785,23 +786,23 @@ await check('a review by keys: U none, j/k to a change, x picks it, a click too,
   const o = await until(() => !$('#overlay').hidden && $('#overlay'));
   button('Tidy', o).click(); await sleep(200);
   button('Run on staged copy', o).click();
-  const apply = await until(() => button('Apply'), 20000);
+  const apply = await until(() => button('Apply', $('#main')), 20000);
   if (!apply) return { error: 'no review', page: ($('.review') || $('#overlay'))?.innerText.slice(0, 400) };
   const focused = document.activeElement === $('.review');
   const hunks = $$('.hunk-head input').length;
-  const all = button('Apply').textContent;
+  const all = button('Apply', $('#main')).textContent;
   key('U'); await sleep(100);
-  const none = button('Apply').textContent;
+  const none = button('Apply', $('#main')).textContent;
   key('j'); key('j'); key('k'); await sleep(50);
   const cur = $('.kb-cur')?.dataset.hunk;
   key('x'); await sleep(150);
-  const one = button('Apply').textContent;
+  const one = button('Apply', $('#main')).textContent;
   const kept = document.activeElement === $('.review') && $('.kb-cur')?.dataset.hunk === '0';
   // A click picks too (the box is redrawn), and the keys go on working after it.
   $$('.hunk-head input')[1].click(); await sleep(150);
-  const two = button('Apply').textContent;
+  const two = button('Apply', $('#main')).textContent;
   key('j'); key('x'); await sleep(150);
-  const back = button('Apply').textContent;
+  const back = button('Apply', $('#main')).textContent;
   key('a');
   await until(() => /Applied/.test($('.review')?.textContent || ''), 10000);
   return { focused, hunks, all, none, cur, one, kept, two, back, applied: /Applied/.test($('.review').textContent) };
@@ -820,7 +821,7 @@ await check('red pen: the marks on the note, the reasons in the margin; y takes 
   const o = await until(() => !$('#overlay').hidden && $('#overlay'));
   button('Red pen', o).click(); await sleep(200);
   button('Run on staged copy', o).click();
-  await until(() => button('Apply'), 20000);
+  await until(() => button('Apply', $('#main')), 20000);
   // The reviews before this one switched to the diff: back to the red pen,
   // where U leaves every mark open again.
   if (!$('.pen-card')) { key('v'); await until(() => $('.pen-card')); }
@@ -829,9 +830,9 @@ await check('red pen: the marks on the note, the reasons in the margin; y takes 
   if (!card) return { error: 'no red pen', page: $('.review')?.innerText.slice(0, 400) };
   const struck = $$('.pen-doc .pen-del').map((x) => x.textContent.trim());
   const notes = $$('.pen-card .pen-note').map((x) => x.textContent);
-  const none = button('Apply').textContent;
+  const none = button('Apply', $('#main')).textContent;
   key('j'); await sleep(50); key('y'); await sleep(200);
-  const one = button('Apply').textContent;
+  const one = button('Apply', $('#main')).textContent;
   const taken = $('.pen-card').classList.contains('pen-y') && $$('.pen-doc .pen-del.pen-y').length === struck.length;
   key('a');
   await until(() => /Applied/.test($('.review')?.textContent || ''), 10000);
@@ -997,6 +998,70 @@ await check('M-x (⌥X :) runs a recipe from RECIPES.md by name; the runs, the r
   const runsTabs = $$('.tab').filter((t) => /Agent runs/.test(t.textContent)).length;
   return { label, done: !!done, runText, review: !!review, first, closed: !!closed, runsTabs };
 `, (v) => (v && /^✦Recipe: Shout.*(⌥X|Alt\+X) r s/.test(v.label) && v.done && /^Shout · /.test(v.runText || '') && v.review && /^◆Review: /.test(v.first || '') && v.closed && v.runsTabs === 1 ? null : 'M-x, recipes or buffers did not work'));
+
+// Suggesting in a meeting, with real keys: the note stays as it is, what is
+// typed is pen, a struck line stays in view; a comment beside it; settled
+// in the review.
+{
+  const mac = process.platform === 'darwin';
+  const MOD = mac ? 4 : 2;
+  const key = async (k, code, vk, modifiers = 0) => {
+    await send('Input.dispatchKeyEvent', { type: 'rawKeyDown', key: k, code, windowsVirtualKeyCode: vk, modifiers });
+    await send('Input.dispatchKeyEvent', { type: 'keyUp', key: k, code, windowsVirtualKeyCode: vk, modifiers });
+    await sleep(150);
+  };
+  const letter = (c, modifiers) => key(c, `Key${c.toUpperCase()}`, c.toUpperCase().charCodeAt(0), modifiers);
+  const type = (text) => send('Input.insertText', { text });
+  const note = path.join(ws, 'sub', 'meet.md');
+  const before = fs.readFileSync(note, 'utf8');
+  let got = {};
+  let problem = null;
+  try {
+    await inPage(`const ta = await openNote('sub/meet.md'); ta.focus(); const i = ta.value.indexOf('ship') + 4; ta.setSelectionRange(i, i);`);
+    await letter('t', MOD | 8);
+    got.on = await inPage(`return await until(() => $('.editor-wrap .ed.tracking')) ? $('#status').textContent : null;`);
+    await type(' soon');
+    await inPage(`const ta = $('.editor-wrap .ed.tracking textarea'); const i = ta.value.indexOf('Docs'); ta.setSelectionRange(i + 2, i + 2);`);
+    await letter('x', MOD | 8);
+    await inPage(`const ta = $('.editor-wrap .ed.tracking textarea'); const i = ta.value.indexOf('Monday'); ta.setSelectionRange(i, i + 6);`);
+    await letter('m', MOD | 1);
+    await inPage(`await until(() => $('.mnote input'));`);
+    await type('@Mina check the date');
+    await key('Enter', 'Enter', 13);
+    got.marks = await inPage(`
+      await until(() => $('.mnote .mnote-text'));
+      const ed = $('.editor-wrap .ed.tracking');
+      return { d: $$('.tr-d', ed).map((x) => x.textContent).join(''), i: $$('.tr-i', ed).map((x) => x.textContent).join(''), note: $('.mnote', ed)?.textContent };
+    `);
+    got.untouched = fs.readFileSync(note, 'utf8') === before;
+    let comments = null;
+    for (let i = 0; i < 20 && !comments; i++) { await sleep(150); try { comments = JSON.parse(fs.readFileSync(path.join(ws, '.agent-notes', 'comments', 'sub', 'meet.md.json'), 'utf8')); } catch { /* not yet */ } }
+    got.comment = comments?.[0] && `${comments[0].speaker}: ${comments[0].comment} on ${comments[0].quote}`;
+    await letter('m', MOD | 8);
+    got.meeting = await inPage(`await sleep(200); return document.documentElement.classList.contains('meeting') && !$('#sidebar').offsetParent && $('.ed-curline') && !$('.ed-curline').hidden;`);
+    await letter('m', MOD | 8);
+    await inPage(`
+      const press = (code, key, opts = {}) => document.activeElement.dispatchEvent(new KeyboardEvent('keydown', { code, key, bubbles: true, cancelable: true, ...opts }));
+      press('KeyX', '≈', { altKey: true });
+      await until(() => $('.leader'));
+      press('KeyP', 'p'); press('KeyV', 'v');
+      await until(() => $('.review.mine .pen-card'));
+      key('A'); await sleep(200); key('a');
+      await until(() => /Applied/.test($('.review')?.textContent || ''), 10000);
+    `);
+    got.after = fs.readFileSync(note, 'utf8');
+    got.off = await inPage(`await openNote('sub/meet.md'); await sleep(300); return !$('.editor-wrap .ed.tracking') && $$('.editor-wrap textarea').find((t) => t.offsetParent).value;`);
+    if (!/Suggesting/.test(got.on || '')) problem = 'suggesting did not start';
+    else if (got.marks?.i !== ' soon' || !got.marks.d.includes('Docs by Friday.') || !got.untouched) problem = 'the marks were not drawn, or the note changed';
+    else if (got.comment !== 'Mina: check the date on Monday' || !/@Mina/.test(got.marks.note || '')) problem = 'the comment was not kept beside the note';
+    else if (!got.meeting) problem = 'meeting mode did not show';
+    else if (got.after !== '# Meet\n\nWe ship soon on Monday.\n' || got.off !== got.after) problem = 'the suggestions were not applied';
+  } catch (e) { problem = e.message; }
+  const name = 'suggesting: typing in pen and striking a line leave the note as it is; a comment beside it; meeting mode; applied from the review';
+  results.push({ name, ok: !problem });
+  console.log(`${problem ? '✗' : '✓'} ${name}${problem ? `\n    ${problem}\n    got: ${JSON.stringify(got)}` : ''}`);
+  if (problem) failed = true;
+}
 
 console.log(failed ? `\nSmoke test failed (${results.filter((r) => !r.ok).length} of ${results.length + 4}).` : `\nAll ${results.length + 4} checks passed.`);
 done(failed ? 1 : 0);

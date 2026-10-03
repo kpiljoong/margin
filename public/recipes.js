@@ -22,7 +22,9 @@ export const BUILTIN_RECIPES = [
   ['Draw as flow', 'Where the text describes a process, workflow or system, add a ```flow block right after it that draws it. Keep the text unchanged and use its names.'],
   ['Red pen', 'Proofread like an editor with a red pen. Do not change the note itself: write your marks to .agent-notes/comments.json — for spelling, grammar and wording, the better text as "suggest" and a few words why as "comment". Mark only what is worth changing.'],
   ['Comments only', 'Review the note like an editor, with comments only: no edits and no "suggest". Remarks on clarity, structure, gaps and claims to check, each next to the passage it is about, in .agent-notes/comments.json.'],
-].map(([name, prompt], i) => ({ name, prompt, key: String(i + 1), scope: null, ask: true, builtin: true }));
+  ['Meeting minutes', 'Make this meeting note clean minutes, as a red pen proposal. Keep what was said and decided; fold in the user\'s margin comments (below) where they belong; fix typos, wording and structure. End with a decisions section (one line each) and an action items section as tasks: "- [ ] what @owner 📅 YYYY-MM-DD" (owner and date only when the note or the comments give them). Headings in the note\'s language (for a Korean note: 결정 사항, 액션 아이템). Edit the note itself, and in .agent-notes/comments.json put a few words on each change, quoting the note as it was (no "suggest" for these).'],
+  ['Apply my comments', 'Revise the note as the user\'s margin comments (below) ask, as a red pen proposal: for each comment that asks for a change, an entry in .agent-notes/comments.json quoting the exact words to change, with the new text as "suggest" and as "comment" which comment it answers (its @name, if any). Do not edit the note itself. Skip comments that ask for nothing.'],
+].map(([name, prompt], i) => ({ name, prompt, key: String((i + 1) % 10), scope: null, ask: true, builtin: true }));
 
 const SCOPES = { note: 'file', file: 'file', folder: 'folder', workspace: 'workspace', all: 'workspace' };
 const YES = { yes: true, true: true, on: true, no: false, false: false, off: false };

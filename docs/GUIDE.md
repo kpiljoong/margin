@@ -65,7 +65,7 @@ Both modes use the same server and UI. The desktop app launches `server.js` as a
 ## Core flow: delegate → review → apply
 
 1. Open a note and press **⌘K** (or `✦ Ask agent`).
-2. Write a task or pick a recipe (Tidy / Summarize / Extract tasks / Link notes / Proofread / Draw as flow / Red pen / Comments only, and your own from `RECIPES.md`, see below), and set the scope (this note / this folder / everything). **The list of files that will actually be shared, and the files excluded as private,** is shown before running.
+2. Write a task or pick a recipe (Tidy / Summarize / Extract tasks / Link notes / Proofread / Draw as flow / Red pen / Comments only / Meeting minutes / Apply my comments, and your own from `RECIPES.md`, see below), and set the scope (this note / this folder / everything). **The list of files that will actually be shared, and the files excluded as private,** is shown before running.
    - **Draw as flow**: Proposes a ` ```flow ` block drawing a process, flow, or system right after the text that describes it. If the task contains "flow", a summary of the flow syntax (`lib/flow-notation.md`) is passed to the agent too. The result is reviewed like any other task, and you apply only what you pick. If you select text before running, only that part is drawn.
 3. The agent works on a copy in `.agent-notes/runs/<id>/work/`. Your original notes don't change meanwhile, so you can keep writing: when the run ends, a message with a **Review** button says so (and a system notification, while Margin is in the background).
 4. The review tab shows each changed note with the **red pen** (below): the changes marked on the note itself, to accept or reject one by one. **Diff** shows them as a diff with word-level highlighting and checkboxes per hunk, **Result** the note as it will read after applying.
@@ -102,11 +102,38 @@ Two recipes ask the agent to write **in the margin only**, not in the note:
 
 The agent writes these notes to `.agent-notes/comments.json` in its copy (any task that mentions that file, "red pen" or "margin notes" gets the format). Margin keeps them with the run, never in the note: a suggested text becomes a change on the proof, to accept like any other; a remark is a wavy underline with its note, which `y` marks as seen and `n` dismisses. A run with remarks only shows the note with them (and **Discard** closes it). A follow-up round keeps the notes of the rounds before.
 
+### Suggesting: your own red pen, in a meeting
+
+Margin's red pen is for you too, as tracked changes are in a word processor: made for leading a meeting with the note on a shared screen and correcting it as people talk. Only you write; it is not shared editing.
+
+**Suggesting** (⌘⇧T, ⌥X p p, or ⌥X t p; the ✎ chip in the status bar shows it) keeps the note as it is while you edit it. What you delete stays in view struck through, what you type comes in in pen, on the editing screen itself — and in the preview, in the pen's handwriting. Your pen is blue, the agent's red (both in Settings → Pens). The suggestions are kept as a run of yours, a staged copy beside the note, never in it: they survive a restart, the note can change meanwhile (they go on over it), and ⌘⇧T again stops suggesting with them kept (✎ Suggestions waiting). ⌘Z takes back your suggestions step by step.
+
+Quick keys for a meeting:
+
+| Key | |
+|---|---|
+| ⌘⇧X (⌥X p d) | strike the selection, or the line you're on and go to the next; again: unstrike |
+| ⌘⌥R (⌥X p r) | replace: strike the selection (or the word) and type the new words after it |
+| ⌘⌥M (⌥X p c) | a comment on the selection (or the line) in the margin; on a comment: a reply |
+| ⌥X p n / p N | next / previous comment |
+| ⌥X p x | resolve the comment you're on (Undo in the message); ⌥X p h shows the resolved ones |
+| ⌥X p v | review your suggestions |
+| ⌘⇧M (⌥X p m, ⌥X t m) | meeting mode on / off |
+
+A comment may start with who said it, `@Mina …` (Tab completes a name used before), and 🕑 adds the time (remembered). Comments are kept beside the note, in `.agent-notes/comments/<note>.json`, never in its text; they go with a renamed note, have replies, and are resolved, not deleted. An agent asked about the note reads the open ones.
+
+**Meeting mode** is for sharing the screen: large text, the line you're on highlighted, the marks heavier, and nothing else — no file tree, tabs, toolbar or path; the title says only "Margin", and the status bar shows only the pen and the keys. The same key leaves it, as it was.
+
+**After the meeting**, ⌥X p v opens your suggestions in the red pen review (in blue, with your comments in the margin): `y` / `n` / `A` and `a` apply, as for an agent's — the same apply and merge, no other way of writing. Then two recipes:
+
+- **Meeting minutes** (⌥X r 9): clean minutes from the note, your corrections and comments folded in, with the decisions and the action items as tasks (`- [ ] what @owner 📅 date`), as red pen marks to accept.
+- **Apply my comments** (⌥X r 0): the agent revises the note as your comments ask, a mark for each.
+
 ### Recipes: your own tasks as commands
 
 A recipe is a task for the agent written once and run by name — the agent takes the place Emacs gives to elisp, and like everything an agent does, what it changes comes back as a run to review. Recipes are text only: a name, what to ask, which notes to share. No code runs and there are no plugins.
 
-Margin has eight (Tidy, Summarize, Extract tasks, Link notes, Proofread, Draw as flow, Red pen, Comments only: ⌥X a 1–8 or ⌥X r 1–8). Add your own in **`RECIPES.md`** at the top of the workspace (⌥X r e makes it with two examples, or the ＋ next to the recipes in the task dialog). Each `##` heading is a recipe; the lines right under it may set:
+Margin has ten (Tidy, Summarize, Extract tasks, Link notes, Proofread, Draw as flow, Red pen, Comments only, Meeting minutes, Apply my comments: ⌥X a 1–9, 0 or ⌥X r 1–9, 0). Add your own in **`RECIPES.md`** at the top of the workspace (⌥X r e makes it with two examples, or the ＋ next to the recipes in the task dialog). Each `##` heading is a recipe; the lines right under it may set:
 
 ```markdown
 ## Meeting notes to decisions
@@ -499,6 +526,7 @@ The only data created inside the workspace is `.agent-notes/`, which has its own
   - Multi-cursor only goes as far as "editing the same text in several places at once" (⌘D/⌘⇧L). Adding cursors by clicking arbitrary positions and column selection are not supported.
   - Folding works only in the preview.
   - Styles that change character width, like heading sizes, are not used in the editor (visible in the preview).
+  - Suggesting marks in the editor are color, strike and underline in the editor's own font; the pen's handwriting is in the preview and the review.
 - Notes over 300,000 characters have syntax coloring turned off in the editor (to keep it fast). Even in a 1.5-million-character note, input latency is about 12ms.
 - Search scans cached contents without an index. With 5,000 notes: tree 3ms, search 6–55ms, tag aggregation 33ms.
 - Automatic link fixing handles `[[name]]`, `[[path/name]]`, and relative `[..](..)` links. If several notes share the same name, `[[name]]` links are left alone (ambiguous).

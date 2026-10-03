@@ -9,6 +9,8 @@
 // into elements afterwards. A start character and an id character open a
 // mark, END closes it; marks never cross a line.
 
+import { wordOps } from './track.js';
+
 const DEL = '\uE000';
 const END = '\uE001';
 const INS = '\uE002';
@@ -30,42 +32,7 @@ const PREFIX = /^\s*(?:(?:[-*+]|\d+[.)])\s+(?:\[[ xX]\]\s+)?|#{1,6}\s+|>\s?|\|\s
 // Lines a mark would break: blank, fences, rules and table/heading underlines.
 const structural = (l) => !l.trim() || /^\s*(```|~~~)/.test(l) || /^\s*[-*_=|:\s]+$/.test(l);
 const split = (l) => { const p = PREFIX.exec(l)[0]; return [p, l.slice(p.length)]; };
-const TOKENS = /\s+|[\p{L}\p{N}_]+|./gu;
-
-// The words of a and b: [[op, text]] with op '=', '-' or '+'.
-export function wordOps(a, b) {
-  const A = a.match(TOKENS) || [];
-  const B = b.match(TOKENS) || [];
-  if (A.length * B.length > 40000) return [['-', a], ['+', b]];
-  const dp = Array.from({ length: A.length + 1 }, () => new Uint16Array(B.length + 1));
-  for (let i = A.length - 1; i >= 0; i--) for (let j = B.length - 1; j >= 0; j--) dp[i][j] = A[i] === B[j] ? dp[i + 1][j + 1] + 1 : Math.max(dp[i + 1][j], dp[i][j + 1]);
-  const ops = [];
-  const push = (op, s) => { const last = ops.at(-1); if (last?.[0] === op) last[1] += s; else ops.push([op, s]); };
-  let i = 0;
-  let j = 0;
-  while (i < A.length || j < B.length) {
-    if (i < A.length && j < B.length && A[i] === B[j]) { push('=', A[i]); i++; j++; }
-    else if (j >= B.length || (i < A.length && dp[i + 1][j] >= dp[i][j + 1])) push('-', A[i++]);
-    else push('+', B[j++]);
-  }
-  // A lone space kept between two changes reads better inside them.
-  for (let k = 1; k < ops.length - 1; k++) {
-    if (ops[k][0] === '=' && !ops[k][1].trim() && ops[k - 1][0] !== '=' && ops[k + 1][0] !== '=') {
-      ops.splice(k, 1, ['-', ops[k][1]], ['+', ops[k][1]]);
-    }
-  }
-  // Deletions first, then insertions, within each run of changes.
-  const out = [];
-  for (let k = 0; k < ops.length;) {
-    if (ops[k][0] === '=') { out.push(ops[k++]); continue; }
-    let del = '';
-    let ins = '';
-    for (; k < ops.length && ops[k][0] !== '='; k++) ops[k][0] === '-' ? (del += ops[k][1]) : (ins += ops[k][1]);
-    if (del) out.push(['-', del]);
-    if (ins) out.push(['+', ins]);
-  }
-  return out;
-}
+export { wordOps };
 
 // The note with the marks of `hunks` (the run's, against `base`) and of
 // `comments` (the agent's margin notes on this note: { quote, comment,
