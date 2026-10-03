@@ -792,6 +792,7 @@ iframe.mermaid-frame { position: fixed; left: -10000px; top: 0; width: 1600px; h
 .canvas-caption { position: absolute; left: 50%; bottom: 28px; transform: translateX(-50%); max-width: min(760px, calc(100% - 48px)); padding: 14px 22px; border: 1px solid var(--border); border-radius: 12px; background: color-mix(in srgb, var(--bg) 94%, transparent); box-shadow: 0 8px 30px rgba(0, 0, 0, .25); pointer-events: none; }
 .canvas-caption[hidden] { display: none; }
 .canvas-caption .cap-head { color: var(--fg-dim); font-size: 12px; }
+.canvas-caption .cap-head.cap-frame { color: var(--fg); font-size: 22px; font-weight: 600; }
 .canvas-caption .cap-via { color: var(--fg-dim); font-size: 14px; margin-top: 6px; }
 .canvas-caption .cap-text { font-size: 22px; font-weight: 600; margin-top: 2px; }
 .canvas-caption .cap-note { font-size: 15px; margin-top: 4px; }
@@ -908,7 +909,7 @@ iframe.mermaid-frame { position: fixed; left: -10000px; top: 0; width: 1600px; h
 /* Drawing on pictures in the canvas: the tools, the pen's cursor, the
    eraser's marks to point at. */
 .ink-bar { position: absolute; top: 56px; right: 12px; z-index: 4; display: flex; gap: 2px; padding: 3px; border: 1px solid var(--border); border-radius: 8px; background: var(--bg-2); box-shadow: 0 2px 8px rgb(0 0 0 / .15); }
-.ink-bar[hidden] { display: none; }
+.ink-bar[hidden], .canvas-pane.presenting .ink-bar { display: none; }
 .ink-tool { width: 30px; height: 28px; border: 0; border-radius: 6px; background: none; color: var(--fg); font: 600 15px/1 var(--sans); cursor: pointer; }
 .ink-tool:hover { background: var(--bg-3); }
 .ink-tool.on { background: var(--accent); color: #fff; }
@@ -918,3 +919,6 @@ iframe.mermaid-frame { position: fixed; left: -10000px; top: 0; width: 1600px; h
 .canvas-stage.ink-erasing .ink-hit { pointer-events: stroke; cursor: pointer; }
 .canvas-stage.ink-erasing .ink-mark text { pointer-events: bounding-box; cursor: pointer; }
 .canvas-stage.ink-erasing .ink-mark:hover { opacity: .45; }
+/* Presenting: marks still to come. */
+.ink-mark { transition: opacity .25s; }
+.ink-mark.unseen { opacity: 0; }

@@ -181,7 +181,7 @@ When a note has several flow blocks, the canvas shows them connected.
     - 12 per day on average
   - Fix: deployed directly without another review — the current problem
   ```
-- Presentation order: by section and diagram order; each diagram starts from boxes with no incoming arrows and follows the arrows. At a branch, the first-written answer is followed to the end before returning to the next answer. Each box's content is shown only once.
+- Presentation order: by section (each first as a whole frame: heading and first lines of text) and diagram order; each diagram starts from boxes with no incoming arrows and follows the arrows. At a branch, the first-written answer is followed to the end before returning to the next answer. Each box's content is shown only once.
   - When returning to the next answer, the branch box is shown once more ("↩ Back to this branch", "Next: no").
   - An arrow to an already-seen box is also shown as a step: "⤷ Joins here" when it merges with another branch, "↺ Back to a step on the way here" when it returns to a box on the path you came by (a loop).
   - At a branch, the caption lists the branches by number. Space goes to the highlighted branch (outlined); a number key or click goes to the chosen branch first. Unchosen branches follow afterwards, and branches already visited are dimmed.

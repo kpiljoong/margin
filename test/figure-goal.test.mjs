@@ -147,3 +147,23 @@ test('definitionLines: list items that say what a box is, and the lines under th
   assert.deepEqual(definitionLines(note, 'PR', 5, 99), ['a second note'], 'only in the range');
   assert.deepEqual(definitionLines(note, 'Fix', 0, 99), []);
 });
+
+test('a frame caption: the first lines of a section, markup out, no blocks or pictures', async () => {
+  const { leadLines } = await import('../public/figure-goal.js');
+  const note = [
+    '---', 'title: x', '---',                   // 0-2
+    '# Deploy',                                  // 3
+    '',                                          // 4
+    'Waiting for **approval** takes [too long](x.md).', // 5
+    '![shot](a.png)',                            // 6
+    '```flow',                                   // 7
+    'A -> B',                                    // 8
+    '```',                                       // 9
+    '- [ ] ask [[Ops|the ops team]]',            // 10
+    '> [!tip] keep it short',                    // 11
+    '## Next',                                   // 12
+    'later',                                     // 13
+  ].join('\n');
+  assert.deepEqual(leadLines(note, 3, 12), ['Waiting for approval takes too long.', '· ask the ops team', 'keep it short']);
+  assert.deepEqual(leadLines(note, 0, 99, 2), ['Waiting for approval takes too long.', '· ask the ops team'], 'front matter out, at most max');
+});

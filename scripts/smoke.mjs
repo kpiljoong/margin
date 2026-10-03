@@ -212,6 +212,7 @@ await check('presenting zoomed in: the camera keeps each step in view, and the z
   key('p', {}, stage);
   await until(() => $('.cap-head')?.textContent);
   key('Home', {}, stage); await sleep(400);
+  key(' ', {}, stage); await sleep(400); // from the frame to its first box
   const width = () => $('.node-hit.walk-at')?.getBoundingClientRect().width || 0;
   const fitted = width();
   for (let i = 0; i < 4; i++) key('+', {}, stage);
@@ -229,7 +230,8 @@ await check('presenting zoomed in: the camera keeps each step in view, and the z
   const go = async (k) => {
     key(k, {}, stage); await sleep(450);
     const b = $('.node-hit.walk-at')?.getBoundingClientRect();
-    seen.push({ k, step: $('.cap-head')?.textContent, ok: inView(), box: b && [b.left, b.top, b.right, b.bottom].map(Math.round), view: [stage.clientWidth, stage.clientHeight, Math.round($('.canvas-caption').getBoundingClientRect().top)] });
+    // A frame step: the section whole, no box.
+    seen.push({ k, step: $('.cap-head')?.textContent, ok: $('.cap-head.cap-frame') ? !$('.node-hit.walk-at') : inView(), box: b && [b.left, b.top, b.right, b.bottom].map(Math.round), view: [stage.clientWidth, stage.clientHeight, Math.round($('.canvas-caption').getBoundingClientRect().top)] });
   };
   for (let i = 0; i < 4; i++) await go(' ');
   await go('ArrowLeft');
@@ -344,6 +346,24 @@ await check('a picture on the canvas: a box drawn on it is a line of its ```ink 
   out.off = !$('.ink-tool.on');
   return out;
 `, (v) => (v?.bar && /^# Shot\n\n!\[Screen\]\(assets\/screen\.svg\)\n\n```ink\nbox red: \d+,\d+ \d+x\d+\n```\n\nAfter\.\n$/.test(v.drawn) && v.erased === '# Shot\n\n![Screen](assets/screen.svg)\n\nAfter.\n' && v.undone && v.off ? null : `got ${JSON.stringify(v)}`));
+
+await check('presenting a picture: its frame first, the marks still to come hidden, then shown; [ goes back to the frame', `
+  const stage = $('.canvas-stage');
+  await sleep(1500); // the canvas drawn again after the undo before (that ends a presentation)
+  stage.focus();
+  key('p', {}, stage);
+  await until(() => $('.cap-head')?.textContent);
+  key('Home', {}, stage); await sleep(300);
+  const out = { frame: !!$('.cap-head.cap-frame'), head: $('.cap-head').textContent, hidden: $$('.ink-mark.unseen').length, bar: getComputedStyle($('.ink-bar')).display };
+  key(' ', {}, stage); await sleep(300);
+  out.next = $('.cap-head').textContent;
+  out.shown = $$('.ink-mark').length - $$('.ink-mark.unseen').length;
+  key('[', {}, stage); await sleep(300);
+  out.back = $('.cap-head').textContent;
+  key('Escape', {}, stage); await sleep(300);
+  out.after = $$('.ink-mark.unseen').length + ($('.canvas-pane').classList.contains('presenting') ? 1 : 0);
+  return out;
+`, (v) => (v?.frame && v.head.startsWith('Shot') && /1 \/ 2$/.test(v.head) && v.hidden === 1 && v.bar === 'none' && /2 \/ 2$/.test(v.next) && v.shown === 1 && /1 \/ 2$/.test(v.back) && v.after === 0 ? null : `got ${JSON.stringify(v)}`));
 
 await check('Settings shows Labs', `
   document.dispatchEvent(new KeyboardEvent('keydown', { key: ',', metaKey: navigator.platform.startsWith('Mac'), ctrlKey: !navigator.platform.startsWith('Mac'), bubbles: true }));

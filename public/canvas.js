@@ -524,8 +524,10 @@ export class FigureCanvas {
   // ---- presenting
 
   // Full screen, one step at a time: [{ pre, id (null for a whole picture),
-  // title, text, note, via, lines }] from h.tour(). Boxes not reached yet
-  // are dimmed; the caption tells the step and the text that names it.
+  // frame (a section, seen whole), marks (ink lines shown with it), title,
+  // text, note, via, lines }] from h.tour(). Boxes not reached yet are
+  // dimmed and marks hidden; the caption tells the step and the text that
+  // names it. ] and [ go frame to frame.
   // It starts from the box being walked, else the one at the cursor.
   present() {
     const prefer = new Map();
@@ -533,6 +535,7 @@ export class FigureCanvas {
     if (!steps.length) { this.say('Nothing to present: write a ```flow block.'); return; }
     const at = this.walkAt || this.h.here?.();
     const first = Math.max(0, steps.findIndex((st) => st.pre === at?.pre && st.id === at?.id));
+    if (this.ink.tool) this.ink.use(null);
     this.presenting = { steps, i: -1, prefer };
     this.framed = null;
     this.userCam = false;
@@ -553,23 +556,34 @@ export class FigureCanvas {
     i = Math.max(0, Math.min(p.steps.length - 1, i));
     p.i = i;
     const st = p.steps[i];
-    // Reached so far: dim the rest.
-    const reached = new Set(p.steps.slice(0, i + 1).map((x) => x));
+    // Reached so far: dim the rest (a frame: all of it, the marks to come
+    // aside).
+    const reached = p.steps.slice(0, i + 1);
     this.world.querySelectorAll('.node-hit').forEach((b) => b.classList.add('unseen'));
+    const shown = new Map(); // ink figure → the lines of its marks shown
     for (const x of reached) {
+      if (x.marks) shown.set(x.pre, new Set([...(shown.get(x.pre) || []), ...x.marks]));
       if (x.id) this.hit(x.pre, x.id)?.classList.remove('unseen');
-      else x.pre.querySelectorAll(':scope > .node-layer > .node-hit').forEach((b) => b.classList.remove('unseen'));
+      else if (x.pre) x.pre.querySelectorAll(':scope > .node-layer > .node-hit').forEach((b) => b.classList.remove('unseen'));
+    }
+    if (st.frame) st.frame.el.querySelectorAll('.node-hit').forEach((b) => b.classList.remove('unseen'));
+    for (const fig of new Set(p.steps.filter((x) => x.marks).map((x) => x.pre))) {
+      for (const m of fig.querySelectorAll('.ink-mark')) m.classList.toggle('unseen', !shown.get(fig)?.has(Number(m.dataset.line)));
     }
     this.clearChoice();
     this.walkAt = st.id ? { pre: st.pre, id: st.id } : null;
     this.trail = [];
     // The cursor follows, but the camera frames the picture (below).
     this.picking = true;
-    try { if (st.id) this.h.onStep?.(st.pre, st.id); else this.h.onFigure?.(st.pre); } finally { this.picking = false; }
+    try {
+      if (st.frame) this.h.onSection?.(st.frame);
+      else if (st.id) this.h.onStep?.(st.pre, st.id);
+      else this.h.onFigure?.(st.pre);
+    } finally { this.picking = false; }
     if (st.id) this.hit(st.pre, st.id)?.classList.add('walk-at');
     const line = (cls, text) => (text ? el('div', cls, text) : null);
     this.caption.replaceChildren(...[
-      el('div', 'cap-head', `${st.title}  ·  ${i + 1} / ${p.steps.length}`),
+      el('div', st.frame ? 'cap-head cap-frame' : 'cap-head', `${st.title}  ·  ${i + 1} / ${p.steps.length}`),
       line('cap-via', st.via),
       line('cap-text', st.text),
       line('cap-note', st.note),
@@ -623,8 +637,8 @@ export class FigureCanvas {
   // picture (userCam), that zoom stays and the camera only glides as far as
   // needed to keep each step's box in view; a new picture is framed afresh.
   frame(st, force) {
-    const card = this.cardOf(st.pre);
-    if (!card) return;
+    const card = st.frame ? st.frame.el : this.cardOf(st.pre);
+    if (!card?.isConnected) return;
     this.whenLoaded(card, () => {
       const s = this.stage.getBoundingClientRect();
       const cap = this.caption.hidden ? 0 : this.caption.offsetHeight + 36;
@@ -632,13 +646,15 @@ export class FigureCanvas {
       const h = s.height - cap - PAD * 2;
       const c = this.bounds([card]);
       const fit = Math.min(2, w / c.w, h / c.h);
-      const box = st.id && this.hit(st.pre, st.id);
-      const b = box ? this.bounds([box]) : c;
+      const marks = st.marks && [...st.pre.querySelectorAll('.ink-mark')].filter((m) => st.marks.includes(Number(m.dataset.line)));
+      const box = st.id ? this.hit(st.pre, st.id) : null;
+      const b = box ? this.bounds([box]) : marks?.length ? this.bounds(marks) : c;
       const same = this.framed === card && !force;
       if (same && this.userCam) { this.reveal(b, s.width, s.height - cap); return; }
       this.userCam = false;
       this.framed = card;
-      if (fit >= 0.5) {
+      // A frame is seen whole, however small.
+      if (fit >= 0.5 || st.frame) {
         if (same) return;
         this.moveTo(fit, s.width / 2 - (c.x + c.w / 2) * fit, PAD + (h - c.h * fit) / 2 - c.y * fit, true);
         return;
@@ -669,7 +685,7 @@ export class FigureCanvas {
     if (!this.presenting) return;
     this.presenting = null;
     this.el.classList.remove('presenting');
-    this.world.querySelectorAll('.node-hit.unseen').forEach((b) => b.classList.remove('unseen'));
+    this.world.querySelectorAll('.node-hit.unseen, .ink-mark.unseen').forEach((b) => b.classList.remove('unseen'));
     this.caption.hidden = true;
     if (document.fullscreenElement === this.el) document.exitFullscreen().catch(() => {});
     this.stage.focus({ preventScroll: true });
@@ -1171,6 +1187,15 @@ export class FigureCanvas {
         this.pickBranch(Number(e.key) - 1);
         return;
       }
+      // ] [: the next frame, the one before (or the start of this one).
+      if (p && (e.key === ']' || e.key === '[')) {
+        e.preventDefault();
+        e.stopPropagation();
+        const frames = p.steps.map((x, j) => (x.frame ? j : -1)).filter((j) => j >= 0);
+        const to = e.key === ']' ? frames.find((j) => j > p.i) : frames.filter((j) => j < p.i).pop();
+        this.showStep(to ?? (e.key === ']' ? p.steps.length - 1 : 0));
+        return;
+      }
       if (p && (show || ['Home', 'End', 'Escape'].includes(e.key))) {
         e.preventDefault();
         e.stopPropagation();
@@ -1231,9 +1256,11 @@ export class FigureCanvas {
     const b = target.closest('.node-hit');
     if (b && fig) this.clicked = { pre: fig, id: b.dataset.id, at: performance.now() };
     if (this.presenting) {
-      // Go on from the box clicked (or the picture's first step).
+      // Go on from the box clicked (or the picture's first step, or the
+      // frame's).
       const steps = this.presenting.steps;
-      const i = fig ? steps.findIndex((st) => st.pre === fig && (!b || st.id === b.dataset.id || !st.id)) : -1;
+      let i = fig ? steps.findIndex((st) => st.pre === fig && (!b || st.id === b.dataset.id || !st.id)) : -1;
+      if (i < 0) i = steps.findIndex((st) => st.frame === section);
       if (i >= 0) this.showStep(i);
       return;
     }

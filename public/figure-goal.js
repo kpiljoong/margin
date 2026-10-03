@@ -125,6 +125,28 @@ export function definitionLines(v, name, from, to) {
   }
   return out;
 }
+
+// A frame's caption when presenting: the first lines of text of a section,
+// lines `from` to `to` (`to` excluded) — not its heading, blocks, pictures
+// or tables — markup taken out, at most `max`.
+export function leadLines(v, from, to, max = 4) {
+  const lines = v.split('\n');
+  const out = [];
+  let fence = null;
+  let front = v.startsWith('---\n');
+  for (let i = 0; i < lines.length && i < to && out.length < max; i++) {
+    const t = lines[i].trim();
+    const f = /^(`{3,}|~{3,})/.exec(t);
+    if (front) { if (i > 0 && t === '---') front = false; continue; }
+    if (fence) { if (f && t.startsWith(fence)) fence = null; continue; }
+    if (f) { fence = f[1]; continue; }
+    if (i < from || !t || /^(#{1,6}\s|\||!\[|<)/.test(t)) continue;
+    const text = plain(t.replace(/^>\s*(\[![^\]]*\]\s*)?/, '').replace(/^([-*+]|\d+[.)])\s+(\[[ xX]\]\s+)?/, '· ').replace(/[*_]{1,2}(\S[^*_]*?)[*_]{1,2}/g, '$1'));
+    if (text.trim()) out.push(text.length > 160 ? `${text.slice(0, 159)}…` : text);
+  }
+  return out;
+}
+
 const defKey = (name) => name.toLowerCase().replace(/[?!]+\s*$/, '').replace(/[\s\-_.·]+/g, '');
 // Inline markup out: **bold**, `code`, [[link]], [text](url).
 const plain = (s) => s.replace(/\[\[([^\]|]+)(?:\|([^\]]+))?\]\]/g, (_, a, b) => b || a).replace(/\[([^\]]*)\]\([^)]*\)/g, '$1').replace(/\*\*|__|`/g, '');

@@ -12,7 +12,7 @@ import { flowToMermaid, flowsAsMermaid, parseFlow, isStepText, flowStepNames, na
 import { pairInk, addMark, removeMark } from './ink.js';
 import { connect, addBox, freshName, nextAnswer, setColor, setDirection, removeBox, removeArrow, setArrowKind, setArrowLabel, reverseArrow, setShape, arrowSpot } from './flowedit.js';
 import { FigureCanvas } from './canvas.js';
-import { goalAt, boxAt, mentionRanges, definitionLines } from './figure-goal.js';
+import { goalAt, boxAt, mentionRanges, definitionLines, leadLines } from './figure-goal.js';
 import { isDrawing, drawingFormat, DrawingFrame, renderDrawingEmbeds, cachedEmbed, forgetEmbed, drawingImageUrl } from './drawing.js';
 import { copyPng, copySvg, svgFromDataUrl, imageToPng } from './clip.js';
 import { openViewer } from './viewer.js';
@@ -2065,24 +2065,42 @@ function canvasPicture(tab) {
   return { from: tab.path, name: `${stem(tab.path)}-canvas`, what: () => 'the canvas', url, svg: async () => svg, png: () => imageToPng(url, { scale: 2, background: bg }) };
 }
 
-// The steps of a presentation: section by section, each ```flow picture
-// along its arrows (flowTour), other pictures whole. A step's caption: the
-// box, its note, the arrow it was reached by, and what the section's text
-// says it is (`- Name: …` items, definitionLines). At a step with several ways out, `choices` lists them (a
-// number picks one: `prefer`, pre → { stepId: [ids first] }); going back to
-// such a step and arrows to a step shown already are steps of their own.
+// The steps of a presentation: section by section (the canvas's frames),
+// each first whole (a `frame` step: its title and first lines of text), then
+// each ```flow picture along its arrows (flowTour), a picture's ```ink marks
+// a few at a time (marks up to and with a text mark, whose words are the
+// caption), other pictures whole (unless the frame has only them). A box
+// step's caption: the box, its note, the arrow it was reached by, and what
+// the section's text says it is (`- Name: …` items, definitionLines). At a
+// step with several ways out, `choices` lists them (a number picks one:
+// `prefer`, pre → { stepId: [ids first] }); going back to such a step and
+// arrows to a step shown already are steps of their own.
 function presentSteps(tab, prefer = new Map()) {
   const v = tab.editor.value;
   const secs = tab.canvasSections || [];
   const steps = [];
   secs.forEach((sec, k) => {
+    if (!sec.figures.length) return;
     // Its text, and that of an intro above it without pictures of its own.
     let start = k;
     while (start > 0 && !secs[start - 1].figures.length) start--;
     const begin = secs[start].line;
     const end = secs[k + 1]?.line ?? Infinity;
+    steps.push({ frame: sec, pre: null, id: null, title: sec.title, text: '', note: '', via: '', lines: leadLines(v, begin, end) });
+    const alone = sec.figures.length === 1;
     for (const pre of sec.figures) {
-      if (!pre.flowNodes) { steps.push({ pre, id: null, title: sec.title, text: '', note: '', via: '', lines: [] }); continue; }
+      const marks = pre.matches('.ink-figure') ? pre.inkMarks || [] : [];
+      if (!pre.flowNodes) {
+        if (!alone) steps.push({ pre, id: null, title: sec.title, text: '', note: '', via: '', lines: [] });
+        let group = [];
+        marks.forEach((m, j) => {
+          group.push(m.line);
+          if (m.kind !== 'text' && j < marks.length - 1) return;
+          steps.push({ pre, id: null, marks: group, title: sec.title, text: m.kind === 'text' ? m.text : '', note: '', via: '', lines: [] });
+          group = [];
+        });
+        continue;
+      }
       const edges = pre.flowEdges || [];
       const byId = new Map(pre.flowNodes.map((n) => [n.id, n]));
       const choicesOf = (id) => {
