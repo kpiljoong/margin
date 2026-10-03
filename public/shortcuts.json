@@ -1,5 +1,6 @@
 [
   { "id": "quick-open", "label": "Quick open", "group": "General", "keys": "CmdOrCtrl+P", "scope": "app" },
+  { "id": "leader", "label": "Leader key: commands by letter", "group": "General", "keys": "Alt+X", "scope": "app" },
   { "id": "palette", "label": "Command palette", "group": "General", "keys": "CmdOrCtrl+Shift+P", "scope": "app" },
   { "id": "search", "label": "Search the workspace", "group": "General", "keys": "CmdOrCtrl+Shift+F", "scope": "app" },
   { "id": "new-note", "label": "New note", "group": "General", "keys": "CmdOrCtrl+N", "scope": "app" },

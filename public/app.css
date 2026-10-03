@@ -685,3 +685,23 @@ iframe.mermaid-frame { position: fixed; left: -10000px; top: 0; width: 1600px; h
 .link-preview-body { overflow: auto; padding: 10px 14px; font-size: 13px; line-height: 1.6; }
 .link-preview-body > :first-child { margin-top: 0; }
 .link-preview-body > :last-child { margin-bottom: 0; }
+
+/* Leader key menu (leader.js): which-key style, at the bottom. */
+.leader { position: fixed; left: 50%; bottom: 36px; transform: translateX(-50%); width: min(720px, 92vw); max-height: 60vh; overflow: auto; padding: 8px 12px 10px; background: var(--bg-3); border: 1px solid var(--border); border-radius: var(--radius); box-shadow: 0 10px 32px rgba(0, 0, 0, .35); z-index: 30; outline: none; }
+.leader-head { display: flex; justify-content: space-between; gap: 12px; padding: 2px 2px 8px; color: var(--fg-dim); font-size: 12px; border-bottom: 1px solid var(--border); margin-bottom: 6px; }
+.leader-hint { color: var(--fg-faint); }
+.leader-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 1px 12px; }
+.leader-item { display: flex; align-items: center; gap: 8px; padding: 3px 4px; border: 0; border-radius: 4px; background: none; text-align: left; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.leader-item:hover { background: var(--bg-hover); }
+.leader-item kbd { min-width: 26px; text-align: center; color: var(--accent); }
+.leader-item.group span { color: var(--accent-2); }
+.leader.nope { animation: nope .25s; }
+@keyframes nope { 25% { transform: translateX(calc(-50% - 6px)); } 75% { transform: translateX(calc(-50% + 6px)); } }
+
+/* Link hints (leader l f, or f in a focused preview). */
+.link-hints { position: fixed; inset: 0; z-index: 30; pointer-events: none; outline: none; }
+.link-hint { position: fixed; transform: translate(-4px, -60%); padding: 0 4px; font: 600 11px/16px var(--mono); color: #1b1d23; background: #e0af68; border-radius: 3px; box-shadow: 0 1px 3px rgba(0, 0, 0, .4); text-transform: uppercase; }
+
+/* Rows and the preview, focused from the keyboard. */
+#sidebar :is(.tree-row, .outline-row, .search-file, .search-hit):focus { outline: 1px solid var(--accent); outline-offset: -1px; }
+.preview:focus { outline: none; box-shadow: inset 2px 0 0 var(--accent); }

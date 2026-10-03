@@ -423,6 +423,68 @@ await check('⌘F in Preview finds in the preview (it stays Preview); Replace…
   return { count, marks, next, stayed, cleared, split, replaceRow, query };
 `, (v) => (/^1 \/ [2-9]/.test(v?.count || '') && v.marks >= 2 && /^2 \//.test(v.next) && v.stayed && v.cleared && v.split && v.replaceRow && v.query === 'pro' ? null : 'finding in the preview did not work'));
 
+await check('the leader key (⌥X): f f finds a file, Space all commands; w h goes to the tree, j and Enter open', `
+  const ta = await openNote('flow.md');
+  const leaderKey = (code, key, opts = {}) => document.activeElement.dispatchEvent(new KeyboardEvent('keydown', { code, key, bubbles: true, cancelable: true, ...opts }));
+  ta.focus();
+  leaderKey('KeyX', '≈', { altKey: true });
+  const menu = await until(() => $('.leader'));
+  const focused = document.activeElement === menu;
+  const groups = $$('.leader-item.group', menu).map((b) => b.dataset.key).join('');
+  leaderKey('KeyF', 'f');
+  const files = $('.leader-head', menu)?.textContent.includes('files');
+  leaderKey('KeyF', 'f');
+  const quick = await until(() => $$('.palette-list').find((l) => l.offsetParent));
+  const quickValue = $('#overlay input')?.value;
+  const typedInEditor = ta.value.includes('≈') || ta.value.startsWith('f');
+  key('Escape', {}, $('#overlay input'));
+  await sleep(100);
+  ta.focus();
+  leaderKey('KeyX', '≈', { altKey: true });
+  await until(() => $('.leader'));
+  leaderKey('Space', ' ');
+  await until(() => $$('.palette-list').find((l) => l.offsetParent));
+  const paletteValue = $('#overlay input')?.value;
+  key('Escape', {}, $('#overlay input'));
+  await sleep(100);
+  ta.focus();
+  leaderKey('KeyX', '≈', { altKey: true });
+  await until(() => $('.leader'));
+  leaderKey('KeyW', 'w');
+  leaderKey('KeyH', 'h');
+  const row = await until(() => document.activeElement?.closest?.('#sidebar .tree-row') && document.activeElement);
+  const from = row?.dataset.path;
+  key('j');
+  const next = document.activeElement;
+  const moved = next !== row && next.matches('.tree-row');
+  const target = next.dataset.path;
+  key('Enter');
+  const opened = target ? !!(await until(() => $('.tab.active')?.textContent.includes(target.split('/').pop().replace(/\\.md$/, '')))) : true;
+  key('Escape');
+  const back = await until(() => !document.activeElement?.closest('#sidebar'));
+  return { focused, groups, files, quick: !!quick, quickValue, typedInEditor, paletteValue, from, moved, opened, back: !!back };
+`, (v) => (v?.focused && v.groups === 'fsbwmlgat' && v.files && v.quick && v.quickValue === '' && !v.typedInEditor && v.paletteValue === '>' && v.from === 'flow.md' && v.moved && v.opened && v.back ? null : 'the leader key did not work'));
+
+await check('link hints in a focused preview: f, then a letter, follows that link', `
+  await openNote('sub/links.md');
+  button('Preview').click();
+  await sleep(300);
+  const leaderKey = (code, key, opts = {}) => document.activeElement.dispatchEvent(new KeyboardEvent('keydown', { code, key, bubbles: true, cancelable: true, ...opts }));
+  leaderKey('KeyX', '≈', { altKey: true });
+  await until(() => $('.leader'));
+  leaderKey('KeyW', 'w');
+  leaderKey('KeyP', 'p');
+  const preview = await until(() => document.activeElement?.classList.contains('preview') && document.activeElement);
+  leaderKey('KeyF', 'f');
+  const hints = await until(() => $$('.link-hint').map((m) => m.textContent));
+  leaderKey('KeyA', 'a');
+  const followed = await until(() => $('.tab.active')?.textContent.includes('flow.md'));
+  await openNote('sub/links.md');
+  button('Split').click();
+  await sleep(200);
+  return { preview: !!preview, hints, followed: !!followed, left: $$('.link-hint').length };
+`, (v) => (v?.preview && v.hints?.[0] === 'a' && v.followed && v.left === 0 ? null : 'link hints did not work'));
+
 // The settings went to the app's config, not just this port's browser storage.
 {
   await sleep(600);

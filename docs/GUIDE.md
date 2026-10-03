@@ -100,6 +100,7 @@ Built without external libraries to stay lightweight. The editor is a native `te
 |---|---|
 | ⌘P | Quick open: recent notes first, fuzzy search, create if missing. `>` commands · `#` jump to a heading in the current note · `@` a heading in any note · `:` line number |
 | ⌘⇧P | Command palette |
+| ⌥X | Leader key: a menu of commands by letter (see below) |
 | ⌘⇧F | Workspace full-text search (`#tag` search works too) |
 | ⌘F / ⌘⌥F | Find / replace in note (case and regex options, ⌘G next). In Preview, ⌘F finds in the rendered note and stays in Preview; replacing switches to Split |
 | ⌘K | Delegate to agent (focuses on the selected text, if any) |
@@ -128,6 +129,23 @@ The shortcuts above (except typing behaviours like Tab, Enter, and bracket pairi
 - In the desktop app they are stored in the app settings file (`shortcuts` in `config.json`, changes only), and the menu labels and the global quick capture key (⌃⌥N) change too. You're told if another app already holds a global key. In browser mode they are stored in that browser.
 - Next/previous in the find bar (⌘G/⌘⇧G) only work while finding, so when the find bar is closed ⌘⇧G opens the Git panel.
 - Inside an Excalidraw drawing, only the few keys the drawing frame passes through (default combinations like ⌘S, ⌘P) and shortcuts in the menu work.
+
+**Leader key (⌥X, like Emacs M-x).** One key that works the same everywhere — editor, preview, tree, search results. It opens a small menu at the bottom listing the keys that can follow (as in which-key / LazyVim), so nothing needs to be memorized up front. The menu takes the focus, so the next key never types into the note, and keys go by their place on the keyboard (Korean input works). Esc or ⌃G closes, ⌫ goes up a level, Space (or ⌥X again) opens every command in the palette. Change the key in Settings → Keyboard shortcuts.
+
+| Keys | |
+|---|---|
+| `f` files | `f` find a file · `n` new note · `t` from a template · `j` today's journal · `r` rename · `b` bookmark · `y` copy [[link]] · `l` show in the tree · `h` history · `e` export HTML |
+| `s` search | `s` the workspace · `f` find in note · `r` replace · `h` heading here · `a` heading in any note · `l` go to line |
+| `b` tabs | `b` switch tab · `n`/`p` next/previous · `d` close · `o` close others · `[` `]` back/forward |
+| `w` windows | `h` the sidebar · `l` the editor · `p` the preview · `w` the other pane · `v` split · `s` show/hide the sidebar · `z` focus mode |
+| `m` mode | `e` Edit · `s` Split · `c` Canvas · `p` Preview |
+| `l` links | `l` follow the link at the cursor · `f` pick a link in the preview · `b` back |
+| `g` git | `g` the Git panel · `d` changes since the last commit · `h` this file's history |
+| `a` agent | `a` delegate a task · `r` agent runs |
+| `t` toggles | `f` tree follows the tab · `s` sidebar · `t` theme · `z` focus mode |
+| `,` / `k` | Settings / keyboard shortcuts |
+
+**Without the mouse.** In the sidebar's lists (tree, bookmarks, outline, backlinks, search results): ↑↓ or `j`/`k` move, `g`/`G` (Home/End) jump to the ends, Enter opens (⌘Enter to the side), →/← or `l`/`h` open and close folders (← on a file goes to its folder), F2 renames, ⌘⌫ deletes (with Undo), Esc goes back to the editor. In the search box ↓ or Enter goes to the results. In a focused preview (⌥X w p): `j`/`k` scroll, `d`/`u` half a page, Space a page, `g`/`G` top/bottom, `/` find, `f` link hints (a letter on every link in view; type it to follow, as in Vimium), Esc back to the editor.
 
 - **Split editing**: Open two notes side by side. Each pane has its own tabs and Edit/Split/Preview mode.
   - How to open: ⌘-click in the tree, ⌘↵ in quick open, ◫ in the toolbar, the tab context menu, and **dragging a tab onto the left or right half of the editor area** (the drop target is highlighted)

@@ -2,6 +2,7 @@ import { renderMarkdown, outline, slug } from './markdown.js';
 import { store } from './store.js';
 import { linkAt } from './links.js';
 import { PreviewFind } from './previewfind.js';
+import { openLeader, linkHints } from './leader.js';
 import { fillTemplate, isTemplate, TEMPLATE_DIR } from './templates.js';
 import { MarkdownEditor, setEditorKeys } from './editor.js';
 import { renderDiagrams } from './diagrams.js';
@@ -940,11 +941,15 @@ function renderSidebar() {
   // The panel is rebuilt on every change: keep its scroll position.
   const keep = sb.dataset.view === S.view ? sb.querySelector('.panel-body')?.scrollTop : 0;
   const shown = sb.dataset.view !== S.view && S.view === 'files';
+  // A row focused from the keyboard keeps the focus.
+  const fr = sb.contains(document.activeElement) && document.activeElement.closest?.(LIST_ROWS);
+  const was = fr && { cls: fr.classList[0], id: fr.dataset.path || fr.dataset.bookmark || fr.title, text: fr.textContent };
   sb.dataset.view = S.view;
   sb.replaceChildren(...(S.view === 'search' ? searchPanel() : S.view === 'agent' ? agentPanel() : S.view === 'git' ? gitPanel() : filesPanel()));
   const body = sb.querySelector('.panel-body');
   if (body && keep) body.scrollTop = keep;
   if (shown && S.settings.followTab) sb.querySelector('.tree-row.active[data-path]')?.scrollIntoView({ block: 'nearest' });
+  if (was) focusRow([...sb.querySelectorAll(LIST_ROWS)].find((r) => r.classList[0] === was.cls && (r.dataset.path || r.dataset.bookmark || r.title) === was.id && r.textContent === was.text));
   renderActivity();
 }
 
@@ -1176,7 +1181,8 @@ function renderSearchResults(box = $('#search-results')) {
 
 function searchPanel() {
   const input = h('input', { class: 'input', id: 'search-input', placeholder: 'Search workspace', value: S.searchQuery,
-    oninput: (e) => { S.searchQuery = e.target.value; runSearch(); } });
+    oninput: (e) => { S.searchQuery = e.target.value; runSearch(); },
+    onkeydown: (e) => { if (e.key === 'ArrowDown' || (e.key === 'Enter' && !e.isComposing)) { e.preventDefault(); focusRow($('#search-results')?.querySelector('.search-hit, .search-file')); } } });
   const list = h('div', { class: 'panel-body', id: 'search-results' });
   // Filled now, not later: renderSidebar puts the scroll position back right
   // after this, and an empty list would take it back to the top.
@@ -1504,7 +1510,7 @@ function renderContent(g = S.focus) {
   }
 
   const ed = editorFor(tab);
-  const preview = h('div', { class: 'preview md', onclick: (e) => previewClick(e, tab), onmouseover: (e) => previewLinkHover(e, tab) });
+  const preview = h('div', { class: 'preview md', onclick: (e) => previewClick(e, tab), onmouseover: (e) => previewLinkHover(e, tab), onkeydown: (e) => previewKeys(e, tab) });
   let mode = groupMode(tab);
   if (mode === 'canvas' && !isNote(tab.path)) mode = 'split';
   const wrap = h('div', { class: `editor-wrap mode-${hasPreview(tab.path) ? mode : 'edit'}` }, ed.el, preview, mode === 'canvas' ? canvasFor(tab).el : null,
@@ -2292,15 +2298,24 @@ async function followOrCreate(link, fromPath) {
 // has already put the caret there).
 function editorLinkClick(e, ed, tab) {
   if (!(isMac ? e.metaKey : e.ctrlKey) || e.shiftKey || e.altKey || e.button !== 0) return;
+  if (ed.ta.selectionStart !== ed.ta.selectionEnd) return; // a selection being made
+  if (followLinkAt(ed, tab)) e.preventDefault();
+}
+
+// Follow the link the caret is on (⌘-click, or the leader key's l l).
+// Returns whether there was one.
+function followLinkAt(ed, tab) {
   const text = ed.value;
   const pos = ed.ta.selectionStart;
-  if (pos !== ed.ta.selectionEnd) return; // a selection being made
   const start = text.lastIndexOf('\n', pos - 1) + 1;
   const end = text.indexOf('\n', pos);
   const l = linkAt(text.slice(start, end < 0 ? text.length : end), pos - start);
-  if (!l) return;
-  e.preventDefault();
+  if (!l) return false;
   hideLinkPreview();
+  followLinkTarget(l, tab);
+  return true;
+}
+function followLinkTarget(l, tab) {
   if (l.kind === 'url' || /^(https?:|mailto:)/i.test(l.target)) { window.open(l.target, '_blank', 'noopener,noreferrer'); return; }
   if (/^[a-z][\w+.-]*:/i.test(l.target)) return; // javascript:, file: … never
   if (l.kind === 'wiki') { followOrCreate(l.target, tab.path); return; }
@@ -4321,7 +4336,193 @@ const ACTIONS = {
   print: () => printNote(),
   rename: () => fileTab() && renameItem(fileTab().path),
   'copy-drawing': () => drawingTab()?.frame && copyPicture(drawingPicture(drawingTab())),
+  leader: openLeaderMenu,
 };
+
+// ---------------------------------------------------------------- keyboard
+// One leader key everywhere (Alt+X by default, like Emacs M-x): a menu of
+// the keys that can follow, grouped by letter as in LazyVim / Doom. The
+// leader again, or Space, opens every command. See leader.js.
+const isFileTab = (t) => t?.kind === 'file';
+const editorShown = (t) => isFileTab(t) && (!hasPreview(t.path) || groupMode(t) !== 'preview');
+const previewShown = (t) => isFileTab(t) && hasPreview(t.path) && ['split', 'preview'].includes(groupMode(t));
+
+function leaderTree() {
+  const tab = fileTab();
+  const doc = tab || drawingTab();
+  const note = !!tab && isNote(tab.path);
+  return [
+    { key: 'SPC', label: 'All commands…', run: () => openPalette('>') },
+    { key: 'f', label: 'files', items: [
+      { key: 'f', label: 'Find a file…', run: () => openPalette() },
+      { key: 'n', label: 'New note…', run: () => newNote() },
+      { key: 't', label: 'New note from template…', run: () => pickTemplate((t) => newNote(undefined, t)) },
+      { key: 'j', label: 'Today’s journal', run: openDaily },
+      { key: 'r', label: 'Rename / move…', when: () => !!doc, run: () => renameItem(doc.path) },
+      { key: 'b', label: doc && isBookmarked(doc.path) ? 'Remove bookmark' : 'Bookmark', when: () => !!doc, run: () => toggleBookmark(doc.path) },
+      { key: 'y', label: 'Copy [[link]]', when: () => note, run: () => navigator.clipboard.writeText(`[[${stem(tab.path)}]]`).then(() => toast('Link copied')) },
+      { key: 'l', label: 'Show in the tree', when: () => !!doc, run: () => { showInTree(doc.path); focusSidebar(); } },
+      { key: 'h', label: 'History…', when: () => !!doc, run: () => openHistory(doc.path) },
+      { key: 'e', label: 'Export as HTML…', when: () => note, run: () => exportHtml(tab) },
+    ] },
+    { key: 's', label: 'search', items: [
+      { key: 's', label: 'Search the workspace', run: () => ACTIONS.search() },
+      { key: 'f', label: 'Find in note', when: () => !!tab, run: () => findInNote(tab) },
+      { key: 'r', label: 'Replace in note', when: () => !!tab, run: () => findInNote(tab, { replace: true }) },
+      { key: 'h', label: 'Heading in this note…', when: () => note, run: () => openPalette('#') },
+      { key: 'a', label: 'Heading in any note…', run: () => openPalette('@') },
+      { key: 'l', label: 'Go to line…', when: () => !!tab, run: () => openPalette(':') },
+    ] },
+    { key: 'b', label: 'tabs', items: [
+      { key: 'b', label: 'Switch tab…', run: pickTab },
+      { key: 'n', label: 'Next tab', run: () => cycleTab(1) },
+      { key: 'p', label: 'Previous tab', run: () => cycleTab(-1) },
+      { key: 'd', label: 'Close tab', when: () => !!activeTab(), run: () => closeTab(activeTab().id) },
+      { key: 'o', label: 'Close other tabs', when: () => !!activeTab(), run: () => closeTabs(S.tabs.filter((x) => x.group === S.focus && x !== activeTab())) },
+      { key: '[', label: 'Back', run: () => navGo(-1) },
+      { key: ']', label: 'Forward', run: () => navGo(1) },
+    ] },
+    { key: 'w', label: 'windows', items: [
+      { key: 'h', label: 'Go to the sidebar', run: focusSidebar },
+      { key: 'l', label: 'Go to the editor', run: focusEditor },
+      { key: 'p', label: 'Go to the preview', when: () => previewShown(tab), run: () => focusPreview(tab) },
+      { key: 'w', label: 'Go to the other pane', when: () => S.groups.length > 1, run: () => { splitRight(); focusEditor(); } },
+      { key: 'v', label: 'Split to the side', when: () => S.groups.length < 2, run: splitRight },
+      { key: 's', label: 'Show / hide the sidebar', run: toggleSidebar },
+      { key: 'z', label: 'Focus mode', run: toggleFocusMode },
+    ] },
+    { key: 'm', label: 'mode', when: () => isFileTab(tab) && hasPreview(tab.path), items: [
+      { key: 'e', label: 'Edit', run: () => setMode('edit') },
+      { key: 's', label: 'Split', run: () => setMode('split') },
+      { key: 'c', label: 'Canvas', when: () => note, run: () => setMode('canvas') },
+      { key: 'p', label: 'Preview', run: () => setMode('preview') },
+    ] },
+    { key: 'l', label: 'links', items: [
+      { key: 'l', label: 'Follow the link at the cursor', when: () => editorShown(tab), run: () => { if (!followLinkAt(tab.editor, tab)) toast('No link at the cursor'); } },
+      { key: 'f', label: 'Pick a link in the preview…', when: () => previewShown(tab), run: () => linkHints(tab.previewEl) },
+      { key: 'b', label: 'Back', run: () => navGo(-1) },
+    ] },
+    { key: 'g', label: 'git', items: [
+      { key: 'g', label: 'Git panel', run: () => showView('git') },
+      { key: 'd', label: 'Changes since last commit', when: () => !!doc && S.gitMap.has(doc.path), run: () => openGitDiff(doc.path) },
+      { key: 'h', label: 'History of this file…', when: () => !!doc, run: () => openHistory(doc.path) },
+    ] },
+    { key: 'a', label: 'agent', items: [
+      { key: 'a', label: 'Delegate a task…', run: () => openTaskDialog() },
+      { key: 'r', label: 'Agent runs', run: () => showView('agent') },
+    ] },
+    { key: 't', label: 'toggles', items: [
+      { key: 'f', label: `Tree follows the tab: ${S.settings.followTab ? 'on' : 'off'}`, run: toggleFollowTab },
+      { key: 's', label: 'Sidebar', run: toggleSidebar },
+      { key: 't', label: 'Theme…', run: pickTheme },
+      { key: 'z', label: 'Focus mode', run: toggleFocusMode },
+    ] },
+    { key: ',', label: 'Settings', run: () => openSettings() },
+    { key: 'k', label: 'Keyboard shortcuts…', run: () => openSettings({ keys: true }) },
+  ];
+}
+
+function openLeaderMenu() {
+  if ($('.leader')) return;
+  openLeader(leaderTree(), {
+    title: kbd('leader') || 'Commands',
+    isLeader: (e) => !!KEYS.leader && eventKeys(e, isMac) === KEYS.leader,
+    onLeader: () => openPalette('>'),
+  });
+}
+
+function pickTab() {
+  picker({
+    placeholder: 'Switch to a tab…',
+    source: (q) => S.tabs.map((t) => ({ t, name: t.path ? basename(t.path) : t.title || t.kind })).map((x) => ({ ...x, m: fuzzy(q, x.name) })).filter((x) => x.m)
+      .map(({ t, name, m }) => ({ icon: t.group === 1 ? '◫' : '', label: marked(name, m.idx), hint: t.path ? dirname(t.path) : '', run: () => { activate(t.id); focusEditor(); } })),
+  });
+}
+function cycleTab(by) {
+  const list = S.tabs.filter((t) => t.group === S.focus);
+  const i = list.indexOf(activeTab());
+  if (list.length < 2) return;
+  activate(list[(i + by + list.length) % list.length].id);
+  focusEditor();
+}
+
+// Moving the focus without the mouse.
+function focusEditor() {
+  const t = activeIn(S.focus);
+  if (!t) return;
+  if (isFileTab(t) && !editorShown(t)) { focusPreview(t); return; }
+  requestAnimationFrame(() => t.editor?.focus());
+}
+function focusPreview(t = fileTab()) {
+  const p = t?.previewEl;
+  if (!p?.isConnected) return;
+  p.tabIndex = -1;
+  p.focus({ preventScroll: true });
+}
+const LIST_ROWS = '.tree-row, .outline-row, .search-file, .search-hit';
+function focusSidebar() {
+  const app = $('#app');
+  if (app.classList.contains('no-sidebar')) { app.classList.remove('no-sidebar'); persist(); renderSidebar(); }
+  const sb = $('#sidebar');
+  if (S.view === 'search' && !sb.querySelector('.search-hit, .search-file')) { $('#search-input')?.focus(); return; }
+  focusRow(sb.querySelector('.tree-row.active[data-path]') || sb.querySelector(LIST_ROWS));
+}
+function focusRow(row) {
+  if (!row) return;
+  row.tabIndex = -1;
+  row.focus({ preventScroll: true });
+  row.scrollIntoView({ block: 'nearest' });
+}
+
+// Lists in the sidebar (tree, bookmarks, outline, backlinks, search results):
+// ↑↓ or j/k move, Enter opens (⌘/Ctrl+Enter: to the side), →/← or l/h open
+// and close folders, F2 renames, ⌘⌫ / Delete deletes, Esc goes back to the
+// editor.
+function sidebarKeys(e) {
+  const row = e.target.closest?.(LIST_ROWS);
+  if (!row || e.altKey) return;
+  const mod = isMac ? e.metaKey : e.ctrlKey;
+  const rows = () => [...$('#sidebar').querySelectorAll(LIST_ROWS)].filter((r) => r.offsetParent);
+  const move = (by) => { const all = rows(); focusRow(all[Math.max(0, Math.min(all.length - 1, all.indexOf(row) + by))]); };
+  const folder = row.classList.contains('tree-row') && !row.dataset.path && !row.dataset.bookmark;
+  const open = folder && row.querySelector('.chev')?.textContent === '▾';
+  const k = e.key;
+  const done = () => { e.preventDefault(); e.stopPropagation(); };
+  if (k === 'ArrowDown' || (k === 'j' && !mod)) { done(); move(1); }
+  else if (k === 'ArrowUp' || (k === 'k' && !mod)) { done(); move(-1); }
+  else if (k === 'Home' || (k === 'g' && !mod && !e.shiftKey)) { done(); focusRow(rows()[0]); }
+  else if (k === 'End' || (k === 'G' && !mod)) { done(); focusRow(rows().at(-1)); }
+  else if (k === 'Enter' || (k === 'o' && !mod)) {
+    done();
+    row.dispatchEvent(new MouseEvent('click', { bubbles: true, metaKey: isMac && mod, ctrlKey: !isMac && mod }));
+    if (folder) requestAnimationFrame(() => focusRow([...$('#sidebar').querySelectorAll('.tree-row')].find((r) => r.title === row.title && !r.dataset.path)));
+  } else if ((k === 'ArrowRight' || (k === 'l' && !mod)) && folder) { done(); if (!open) row.click(); else move(1); }
+  else if ((k === 'ArrowLeft' || (k === 'h' && !mod)) && row.classList.contains('tree-row')) {
+    done();
+    if (folder && open) { row.click(); return; }
+    const parent = dirname(folder ? row.title : row.dataset.path || '');
+    const up = parent && [...$('#sidebar').querySelectorAll('.tree-row')].find((r) => r.title === parent && !r.dataset.path);
+    if (up) focusRow(up);
+  } else if (k === 'F2' && row.classList.contains('tree-row')) { done(); renameItem(folder ? row.title : row.dataset.path || row.dataset.bookmark, folder); }
+  else if ((k === 'Delete' || (k === 'Backspace' && mod)) && row.classList.contains('tree-row') && !row.dataset.bookmark) { done(); deleteItem(folder ? row.title : row.dataset.path, folder); }
+  else if (k === 'Escape') { done(); focusEditor(); }
+}
+$('#sidebar').addEventListener('keydown', sidebarKeys);
+
+// The preview, focused (leader w p): j/k and Space scroll, f picks a link,
+// / finds, Esc goes back to the editor.
+function previewKeys(e, tab) {
+  const p = tab.previewEl;
+  if (e.target !== p || e.metaKey || e.ctrlKey || e.altKey) return;
+  const by = { j: 60, ArrowDown: 60, k: -60, ArrowUp: -60, d: p.clientHeight / 2, u: -p.clientHeight / 2, ' ': (e.shiftKey ? -0.9 : 0.9) * p.clientHeight }[e.key];
+  if (by) { e.preventDefault(); p.scrollBy({ top: by }); return; }
+  if (e.key === 'g') { e.preventDefault(); p.scrollTop = 0; }
+  else if (e.key === 'G') { e.preventDefault(); p.scrollTop = p.scrollHeight; }
+  else if (e.key === 'f') { e.preventDefault(); linkHints(p); }
+  else if (e.key === '/') { e.preventDefault(); findInNote(tab); }
+  else if (e.key === 'Escape' && editorShown(tab)) { e.preventDefault(); tab.editor.focus(); }
+}
+
 let lastCommand = { name: '', t: 0 };
 function runCommand(name) {
   const now = performance.now();
