@@ -9,6 +9,7 @@ import { MarkdownEditor, setEditorKeys } from './editor.js';
 import { hunksOf } from './track.js';
 import { renderDiagrams } from './diagrams.js';
 import { flowToMermaid, flowsAsMermaid, parseFlow, isStepText, flowStepNames, nameKey, flowTour, flowLineAt, COLORS } from './flow.js';
+import { pairInk, addMark, removeMark } from './ink.js';
 import { connect, addBox, freshName, nextAnswer, setColor, setDirection, removeBox, removeArrow, setArrowKind, setArrowLabel, reverseArrow, setShape, arrowSpot } from './flowedit.js';
 import { FigureCanvas } from './canvas.js';
 import { goalAt, boxAt, mentionRanges, definitionLines } from './figure-goal.js';
@@ -185,6 +186,7 @@ const dirname = (p) => (p.includes('/') ? p.slice(0, p.lastIndexOf('/')) : '');
 const stem = (p) => basename(p).replace(/\.[^.]+$/, '');
 const isNote = (p) => /\.(md|markdown|mdx|txt)$/i.test(p);
 const isMermaidFile = (p) => /\.(mmd|mermaid)$/i.test(p || '');
+const IMAGE_FILE = /\.(png|jpe?g|gif|webp|avif|svg|bmp)$/i;
 // Files with a rendered view next to the source (Edit / Split / Preview).
 const hasPreview = (p) => isNote(p) || isMermaidFile(p);
 const debounce = (fn, ms) => { let t; return (...a) => { clearTimeout(t); t = setTimeout(() => fn(...a), ms); }; };
@@ -361,8 +363,9 @@ function buildLinkIndex() {
   const byName = new Map();
   for (const f of S.files) {
     byPath.set(f.path, f.path);
-    if (!f.note && (isDrawing(f.path) || isMermaidFile(f.path))) {
-      // ![[sketch.excalidraw]] / ![[flow.mmd]] embed a drawing or diagram from anywhere.
+    if (!f.note && (isDrawing(f.path) || isMermaidFile(f.path) || IMAGE_FILE.test(f.path))) {
+      // ![[sketch.excalidraw]] / ![[flow.mmd]] / ![[shot.png]] embed a drawing,
+      // diagram or picture from anywhere.
       const name = basename(f.path).toLowerCase();
       if (!byName.has(name)) byName.set(name, f.path);
     }
@@ -1890,6 +1893,7 @@ function renderPreview(tab) {
     p.innerHTML = renderMarkdown(text, { image: (url) => localImage(url, tab.path), embed: (target, label) => fileEmbed(target, label, tab.path) });
     pen.decorate(p);
   } else p.innerHTML = renderMarkdown(tab.content, { image: (url) => localImage(url, tab.path), embed: (target, label) => fileEmbed(target, label, tab.path) });
+  pairInk(p); // a picture and its ```ink marks: one figure, before the layout moves them
   if (p.querySelector('.note-embed.loading')) {
     fillNoteEmbeds(p).then(() => { // the ones read from disk: draw what's in them
       if (!p.isConnected) return;
@@ -1950,7 +1954,7 @@ function hasFiguresLayout(content) {
   return end > 0 && /^layout:\s*figures\s*$/m.test(text.slice(4, end));
 }
 
-const FIGURE_BLOCK = 'pre[data-lang="mermaid" i], pre[data-lang="flow" i], .mmd-embed, .drawing-embed';
+const FIGURE_BLOCK = 'pre[data-lang="mermaid" i], pre[data-lang="flow" i], .mmd-embed, .drawing-embed, figure.ink-figure';
 function isFigure(el) {
   if (el.matches(FIGURE_BLOCK)) return true;
   // An embed on a line of its own is a paragraph holding just that.
@@ -2013,9 +2017,13 @@ function canvasFor(tab) {
     onCardMenu: (e, pre) => cardMenu(tab, e, pre),
     onArrow: (pre, a, what, arg) => editArrow(tab, pre, a, what, arg),
     onNewFlow: () => newFlowHere(tab),
+    onPastePictures: (files) => pastePictures(tab, files),
     onUndo: (redo) => drawUndo(tab, redo),
     onArrowStep: (pre, from, to) => gotoArrow(tab, pre, from, to),
     onShapeMenu: (pre, id, at) => shapeMenu(tab, pre, id, at),
+    onInk: (fig, change) => inkEdit(tab, fig, change),
+    onInkColor: (at, color, pick) => contextMenu({ preventDefault() {}, stopPropagation() {}, clientX: at.x, clientY: at.y },
+      COLOR_ITEMS.map((c, i) => ({ label: `${colorLabel(c)}${c === color ? ' ✓' : ''}`, swatch: COLORS[c], key: String(i + 1), hotkey: String(i + 1), run: () => pick(c) }))),
     // The box under the pointer: its mentions in the text, marked.
     onHover: (pre, id) => {
       const node = pre?.flowNodes?.find((n) => n.id === id);
@@ -2136,6 +2144,8 @@ function renderCanvas(tab) {
   if (!cv?.el.isConnected) return;
   const doc = h('div', {});
   doc.innerHTML = renderMarkdown(tab.content, { image: (url) => localImage(url, tab.path), embed: (target, label) => fileEmbed(target, label, tab.path) });
+  // Every picture on a line of its own is a card, to draw on.
+  pairInk(doc, { all: true });
   let sec = { title: stem(tab.path), line: 0, figures: [] };
   const sections = [sec];
   const waiting = new Set();
@@ -2328,6 +2338,44 @@ function gotoArrow(tab, pre, a, b) {
   gotoOffset(tab, o + spot.start, o + spot.end, false);
 }
 
+// A mark drawn on a picture: a line added to (or taken out of) the ```ink
+// block after it, the block made with the first mark and gone with the last.
+// One ⌘Z each.
+function inkEdit(tab, fig, change) {
+  const v = tab.editor.value;
+  const eol = (n) => { const i = v.indexOf('\n', lineOffset(v, n)); return i < 0 ? v.length : i; };
+  const pic = Number(fig.dataset.line);
+  if (!/!\[/.test(v.slice(lineOffset(v, pic), eol(pic)))) { toast('The note changed — try again.', 'error'); return; }
+  let from;
+  let to;
+  let text;
+  if (fig.dataset.inkLine === '') {
+    if (!change.add) return;
+    from = eol(pic);
+    to = from;
+    const next = v.slice(from + 1, eol(pic + 1));
+    text = `\n\n\`\`\`ink\n${change.add}\n\`\`\`${from < v.length && next.trim() ? '\n' : ''}`;
+  } else {
+    const at = Number(fig.dataset.inkLine);
+    const src = fig.dataset.source;
+    const start = lineOffset(v, at + 1);
+    const close = at + 1 + (src ? src.split('\n').length : 0);
+    if (v.slice(start, start + src.length) !== src || !/^\s*(`{3,}|~{3,})\s*$/.test(v.slice(lineOffset(v, close), eol(close)))) { toast('The note changed — try again.', 'error'); return; }
+    const next = change.add ? addMark(src, change.add) : removeMark(src, change.remove);
+    if (next.trim()) { from = start; to = start + src.length; text = next; } else {
+      // The last mark gone: the block too, the picture as it was.
+      from = eol(pic);
+      to = eol(close);
+      text = '';
+    }
+  }
+  tab.editor.closeStep();
+  // The cursor on the picture's line: the canvas stays on it.
+  tab.editor.replace(from, to, text, lineOffset(v, pic));
+  tab.editor.closeStep();
+  renderStatus();
+}
+
 const SHAPE_ITEMS = [['box', 'Box'], ['round', 'Rounded'], ['circle', 'Circle'], ['db', 'Database'], ['decision', 'Question (diamond)']];
 function shapeMenu(tab, pre, id, at) {
   const node = pre.flowNodes?.find((n) => n.id === id);
@@ -2515,22 +2563,31 @@ async function moveFlowOut(tab, pre) {
   toast(`Moved to ${path}.`, '', { label: 'Open it', run: () => openFile(path) });
 }
 
-// A new ```flow picture below the cursor's line (after the block the cursor
-// is in), with one box to name.
-function newFlowHere(tab = fileTab()) {
-  if (!tab?.editor || !isNote(tab.path)) { toast('Open a note to add a flow.', 'error'); return; }
+// Where a new block goes: after the cursor's line, out of the fenced block
+// (or front matter) the cursor is in, and after the ```ink of a picture it is
+// on (that pair stays one). → the text to replace it with, and the block's
+// first line.
+function belowCursor(tab, block) {
   const v = tab.editor.value;
   const lines = v.split('\n');
   let line = v.slice(0, tab.editor.selectionStart).split('\n').length - 1;
-  // Out of a fenced block (or front matter) the cursor is in.
+  const fences = [];
   let fence = null;
   for (let i = 0; i < lines.length; i++) {
-    const m = /^ {0,3}(`{3,}|~{3,})/.exec(lines[i]);
-    if (!fence && m) fence = { mark: m[1], at: i };
+    const m = /^ {0,3}(`{3,}|~{3,})(.*)$/.exec(lines[i]);
+    if (!fence && m) fence = { mark: m[1], at: i, info: m[2].trim() };
     else if (fence && m && lines[i].trim().startsWith(fence.mark) && !lines[i].trim().slice(fence.mark.length).trim()) {
-      if (line >= fence.at && line <= i) { line = i; break; }
+      fences.push({ ...fence, end: i });
       fence = null;
     }
+  }
+  const inside = fences.find((f) => line >= f.at && line <= f.end);
+  if (inside) line = inside.end;
+  else if (/!\[/.test(lines[line] || '')) {
+    let next = line + 1;
+    while (next < lines.length && !lines[next].trim()) next++;
+    const ink = fences.find((f) => f.at === next && /^ink$/i.test(f.info));
+    if (ink) line = ink.end;
   }
   const lineStart = lineOffset(v, line);
   const nl = v.indexOf('\n', lineStart);
@@ -2541,15 +2598,40 @@ function newFlowHere(tab = fileTab()) {
   const after = v.slice(blank ? pos : at);
   const lead = !before || before.endsWith('\n\n') || (blank && before.endsWith('\n') && !before.trim()) ? '' : before.endsWith('\n') ? '\n' : '\n\n';
   const tail = !after ? '\n' : after.startsWith('\n\n') ? '' : after.startsWith('\n') ? '\n' : '\n\n';
-  const block = '```flow\nStart\n```';
-  const fenceLine = (before + lead).split('\n').length - 1;
+  return { at, end: blank ? pos : at, text: lead + block + tail, start: at + lead.length, line: (before + lead).split('\n').length - 1 };
+}
+
+// A new ```flow picture below the cursor's line (after the block the cursor
+// is in), with one box to name.
+function newFlowHere(tab = fileTab()) {
+  if (!tab?.editor || !isNote(tab.path)) { toast('Open a note to add a flow.', 'error'); return; }
+  const b = belowCursor(tab, '```flow\nStart\n```');
   tab.editor.closeStep();
-  tab.editor.replace(at, blank ? pos : at, lead + block + tail, at + lead.length + 8);
+  tab.editor.replace(b.at, b.end, b.text, b.start + 8);
   tab.editor.closeStep();
   if (tab.canvas?.el.isConnected) {
-    tab.canvas.selectSoon(fenceLine, 'Start', true);
+    tab.canvas.selectSoon(b.line, 'Start', true);
     tab.canvas.stage.focus({ preventScroll: true });
   } else toast(withKey('A flow: draw on it in the Canvas view', 'cycle-mode'));
+}
+
+// Pictures pasted on the canvas: kept in ./assets/ (as the editor does), each
+// on a line of its own below the cursor's block; the camera goes to it, to
+// draw on.
+async function pastePictures(tab, files) {
+  if (!isNote(tab.path)) return;
+  for (const file of files) {
+    if (file.size > 25 * 1024 * 1024) { toast(`${file.name} is larger than 25 MB`, 'error'); continue; }
+    try {
+      const ext = (file.type.split('/')[1] || 'png').replace('jpeg', 'jpg').replace('svg+xml', 'svg');
+      const res = await api('POST', '/api/asset', { note: tab.path, name: file.name || `pasted.${ext}`, data: await blobBase64(file) });
+      const b = belowCursor(tab, `![${stem(res.path)}](${encodeURI(res.path)})`);
+      tab.editor.closeStep();
+      tab.editor.replace(b.at, b.end, b.text, b.start);
+      tab.editor.closeStep();
+    } catch (e) { toast(`Could not add ${file.name}: ${e.message}`, 'error'); }
+  }
+  tab.canvas?.stage.focus({ preventScroll: true });
 }
 
 // Where ```flow blocks write a box named `name`: [[start, end]] offsets.
@@ -3862,7 +3944,10 @@ function fileEmbed(target, label, fromPath) {
   // another, nor in itself.
   if (rel && isNote(rel)) return noteEmbedDepth || rel === fromPath ? null : noteEmbed(rel, target);
   if (rel && isMermaidFile(rel)) return mermaidEmbed(rel, label || target);
-  return rel && isDrawing(rel) ? drawingEmbed(rel, label, target) : null;
+  if (rel && isDrawing(rel)) return drawingEmbed(rel, label, target);
+  // ![[shot.png]]: the picture, as ![](shot.png) shows it.
+  if (rel && IMAGE_FILE.test(rel)) return `<img src="${escAttr(`/api/raw?path=${encodeURIComponent(rel)}&t=${token}`)}" alt="${escAttr(label || stem(rel))}">`;
+  return null;
 }
 
 // ![[Note]] / ![[Note#Section]]: the note, or that section, shown in place.

@@ -35,6 +35,7 @@
 
 import { similarNames } from './flow.js';
 import { store } from './store.js';
+import { InkTools } from './inkdraw.js';
 
 const el = (tag, cls, ...kids) => {
   const e = document.createElement(tag);
@@ -89,7 +90,9 @@ export class FigureCanvas {
   // onBoxMenu(e, pre, id) · onCardMenu(e, pre) · onNewFlow() · onUndo(redo) ·
   // onArrow(pre, { from, to }, what, arg): what is delete, both, reverse,
   // dotted, label (arg: the words) or menu (arg: the event) ·
-  // onArrowStep(pre, from, to): put the cursor on an arrow · onShapeMenu(pre, id, at)
+  // onArrowStep(pre, from, to): put the cursor on an arrow · onShapeMenu(pre, id, at) ·
+  // pictures: onInk(fig, { add: line } | { remove: lineNo }) · onInkColor(at, color, pick)
+  // · onPastePictures(files) (⌘V of a picture here)
   constructor(handlers) {
     this.h = handlers;
     this.k = 1; this.x = 0; this.y = 0;
@@ -158,6 +161,9 @@ export class FigureCanvas {
         button('+', 'Zoom in (+)', () => this.zoomBy(1.25))),
       this.stage, this.empty, this.note, this.caption);
     this.stage.append(this.wire);
+    this.ink = new InkTools(this);
+    this.ink.bar.addEventListener('click', () => this.stage.focus({ preventScroll: true }));
+    this.el.append(this.ink.bar);
     if (this.h.onNewFlow) this.el.querySelector('.canvas-bar').prepend(button('+ Flow', 'Add a ```flow picture to the note, below the cursor, and draw on it', () => this.h.onNewFlow()));
     this.apply();
     this.bind();
@@ -490,6 +496,7 @@ export class FigureCanvas {
     if (this.walkAt) this.hit(this.walkAt.pre, this.walkAt.id)?.classList.add('walk-at');
     else for (const n of goal?.nodes || []) this.hit(n.pre, n.id)?.classList.add('on');
     this.markEdge();
+    this.ink?.show(!!goal?.fig?.matches?.('.ink-figure'));
     this.drawLinksSoon();
   }
 
@@ -1059,11 +1066,13 @@ export class FigureCanvas {
     stage.addEventListener('pointerdown', (e) => {
       if (e.button !== 0 || e.target.closest('input, button')) return;
       this.dragged = false;
+      if (this.ink.down(e)) { press = null; return; }
       const plus = e.target.closest('.box-handle');
       if (plus) { this.startWire(e, plus); return; }
       press = { px: e.clientX, py: e.clientY, moved: false, id: e.pointerId };
     });
     stage.addEventListener('pointermove', (e) => {
+      if (this.ink.move(e)) return;
       if (this.wiring) { this.moveWire(e); return; }
       if (!press) return;
       const dx = e.clientX - press.px;
@@ -1085,6 +1094,9 @@ export class FigureCanvas {
       this.apply();
     });
     const release = (e) => {
+      // A mark drawn: the click it ends in is not a pick.
+      if (e.type === 'pointercancel') this.ink.cancel();
+      else if (this.ink.up(e)) { this.dragged = true; return; }
       if (this.wiring) { this.endWire(e.type === 'pointerup'); return; }
       this.dragged = !!press?.moved;
       press = null;
@@ -1132,6 +1144,13 @@ export class FigureCanvas {
       if (document.fullscreenElement !== this.el) this.endPresent();
       else setTimeout(() => this.showStep(this.presenting?.i ?? 0, true), 50); // the view grew
     });
+    // ⌘V of a picture: into the note, to draw on.
+    stage.addEventListener('paste', (e) => {
+      const files = [...(e.clipboardData?.files || [])].filter((f) => f.type.startsWith('image/'));
+      if (!files.length || !this.h.onPastePictures) return;
+      e.preventDefault();
+      this.h.onPastePictures(files);
+    });
     stage.addEventListener('keydown', (e) => {
       if (this.wiring && e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); this.endWire(false); return; }
       // ⌘Z / ⌘⇧Z (Ctrl+Z, Ctrl+Y): the note's undo, drawing included.
@@ -1160,6 +1179,9 @@ export class FigureCanvas {
         return;
       }
       if (!p && e.key === 'p') { e.preventDefault(); this.present(); return; }
+      // A picture looked at (no box or arrow selected): its drawing keys.
+      const picture = !!this.goal?.fig?.matches?.('.ink-figure') && !this.walkAt && !this.edgeAt;
+      if (!p && !e.shiftKey && this.ink.key(e, picture)) { e.preventDefault(); e.stopPropagation(); return; }
       const c = this.choice;
       const pick = c && {
         Tab: () => { c.i = (c.i + (e.shiftKey ? c.list.length - 1 : 1)) % c.list.length; this.showChoice(); },

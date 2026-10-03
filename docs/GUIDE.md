@@ -422,6 +422,23 @@ Login request -> Auth server -> Success?
   - **New flow**: **+ Flow** in the bar (or **New flow** on an empty canvas, palette **Flow: new flow to draw on**) adds a ` ```flow ` block below the cursor with one box to name.
   - **A flow grown long**: **Move to a note of its own…** (palette **Flow: move the flow at the cursor to a note of its own**) moves the block to a new note in the same folder and leaves `![[Name]]` in its place. The canvas still shows the flow here (marked `↳ Name`); draw on it in its own note. Past 30 lines the canvas offers this once.
   - Boxes aren't placed by hand: the layout is automatic (Mermaid's), so a box's place follows from its arrows.
+- **Drawing on a picture**: a picture on a line of its own (`![…](assets/x.png)` or `![[x.png]]`) is a card on the canvas too, and can be marked up: a pen line, an arrow, a box, words. The marks are lines of a ` ```ink ` block right under the picture, in the picture's own pixels, so they stay plain text an agent (or you) can read and write:
+
+  ````
+  ![Login](assets/login.png)
+
+  ```ink
+  box red: 280,120 200x80
+  arrow red: 410,220 -> 300,160
+  text red: 420,230 The button is hidden
+  pen blue: 100,100 120,104 140,112
+  ```
+  ````
+
+  - **Paste a picture**: ⌘V on the canvas (a screenshot, say) keeps it in `assets/` and puts it below the cursor's block; the canvas goes to it. In the editor, paste works as always.
+  - **Tools**: click a picture (or look at it) and the tool bar shows at the top right: `D` pen, `A` arrow, `R` box, `T` words (click where they go, type, Enter), `E` eraser (click a mark), `C` colour (then a number). The same key again, or `Esc`, puts the tool down. With a tool on, a drag on the picture draws; beside it the canvas still pans.
+  - Each mark is one ⌘Z. Erasing the last mark takes the block out. The colour is optional (red), any of the flow colours (`blue`, `green`, …). Lines that aren't marks are left alone; `#` starts a comment.
+  - The preview draws the marks on the picture too; other apps show the picture and the lines as code.
 
 ## Drawings (Excalidraw)
 

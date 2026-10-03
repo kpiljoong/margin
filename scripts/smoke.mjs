@@ -32,6 +32,9 @@ fs.writeFileSync(path.join(ws, 'sub', 'links.md'), '# Links\n\nSee [[flow#Propos
 fs.mkdirSync(path.join(ws, 'assets'));
 fs.writeFileSync(path.join(ws, 'assets', 'big.svg'), '<svg xmlns="http://www.w3.org/2000/svg" width="3000" height="2000"><rect width="3000" height="2000" fill="#48c"/></svg>');
 fs.writeFileSync(path.join(ws, 'pics.md'), '# Pics\n\n![Big picture](assets/big.svg)\n');
+// A picture to draw on.
+fs.writeFileSync(path.join(ws, 'assets', 'screen.svg'), '<svg xmlns="http://www.w3.org/2000/svg" width="400" height="300"><rect width="400" height="300" fill="#ddd"/></svg>');
+fs.writeFileSync(path.join(ws, 'shot.md'), '# Shot\n\n![Screen](assets/screen.svg)\n\nAfter.\n');
 // Lines for a keyboard macro, and notes to run one at every search result.
 fs.writeFileSync(path.join(ws, 'macro.md'), 'apple\nbanana\ncherry');
 fs.writeFileSync(path.join(ws, 'ime.md'), 'a\nb\n');
@@ -312,6 +315,35 @@ await check('an arrow on a flow: click it, make it two-way, take it out; a boxâ€
   out.shape = flow();
   return out;
 `, (v) => (v?.on && v.both === 'A -> B -> C <-> A\ncolor blue: B' && v.gone === 'A -> B -> C\ncolor blue: B' && v.shape === 'A -> B -> (C)\ncolor blue: B' ? null : `got ${JSON.stringify(v)}`));
+
+await check('a picture on the canvas: a box drawn on it is a line of its ```ink block; the eraser takes it out, âŒ˜Z brings it back', `
+  await openNote('shot.md');
+  if (!$('.canvas-pane')?.offsetParent) button('Canvas').click();
+  const img = () => $('.canvas-stage .ink-figure img');
+  if (!(await until(() => img()?.naturalWidth, 15000))) return { none: true };
+  const stage = $('.canvas-stage');
+  const text = () => $$('.editor-wrap textarea').find((t) => t.offsetParent).value;
+  const pt = (fx, fy) => { const r = img().getBoundingClientRect(); return { clientX: r.left + r.width * fx, clientY: r.top + r.height * fy }; };
+  const ptr = (type, el, p) => el.dispatchEvent(new PointerEvent(type, { bubbles: true, cancelable: true, button: 0, pointerId: 1, ...p }));
+  const out = {};
+  img().dispatchEvent(new MouseEvent('click', { bubbles: true })); await sleep(300);
+  stage.focus(); key('r', {}, stage);
+  out.bar = !$('.ink-bar').hidden && !!$('.ink-tool.on');
+  ptr('pointerdown', img(), pt(0.25, 0.25)); ptr('pointermove', stage, pt(0.5, 0.5)); ptr('pointerup', stage, pt(0.75, 0.75));
+  await until(() => text().includes('\`\`\`ink'), 8000);
+  out.drawn = text();
+  const mark = await until(() => $('.canvas-stage .ink-figure .ink-mark .ink-hit'), 8000);
+  key('e', {}, stage);
+  ptr('pointerdown', mark, pt(0.25, 0.5)); ptr('pointerup', stage, pt(0.25, 0.5));
+  await until(() => !text().includes('\`\`\`ink'), 8000);
+  out.erased = text();
+  key('z', { metaKey: navigator.platform.startsWith('Mac'), ctrlKey: !navigator.platform.startsWith('Mac') }, stage);
+  await until(() => text().includes('\`\`\`ink'), 8000);
+  out.undone = text() === out.drawn;
+  key('Escape', {}, stage);
+  out.off = !$('.ink-tool.on');
+  return out;
+`, (v) => (v?.bar && /^# Shot\n\n!\[Screen\]\(assets\/screen\.svg\)\n\n```ink\nbox red: \d+,\d+ \d+x\d+\n```\n\nAfter\.\n$/.test(v.drawn) && v.erased === '# Shot\n\n![Screen](assets/screen.svg)\n\nAfter.\n' && v.undone && v.off ? null : `got ${JSON.stringify(v)}`));
 
 await check('Settings shows Labs', `
   document.dispatchEvent(new KeyboardEvent('keydown', { key: ',', metaKey: navigator.platform.startsWith('Mac'), ctrlKey: !navigator.platform.startsWith('Mac'), bubbles: true }));

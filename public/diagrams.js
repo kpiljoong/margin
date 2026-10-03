@@ -9,6 +9,7 @@
 // script or load resources.
 
 import { parseFlow } from './flow.js';
+import { pairInk } from './ink.js';
 
 const FRAME_URL = '/mermaid-frame.html';
 const cache = new Map(); // theme key + source -> { url } | { error }
@@ -193,6 +194,12 @@ function show(pre, result, source) {
 // Cached diagrams appear synchronously, so re-rendering the preview while
 // typing elsewhere does not flicker. Resolves when every diagram is done.
 export function renderDiagrams(container) {
+  // Pictures with marks (```ink) first: they are drawn as they load.
+  const inked = pairInk(container);
+  return Promise.all([inked, drawDiagrams(container)]).then(() => {});
+}
+
+function drawDiagrams(container) {
   const blocks = [...container.querySelectorAll('pre[data-lang="mermaid" i], pre[data-lang="flow" i]')];
   if (!blocks.length) return Promise.resolve();
   const theme = currentTheme();
