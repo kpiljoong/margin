@@ -41,6 +41,7 @@
 import { similarNames } from './flow.js';
 import { store } from './store.js';
 import { InkTools } from './inkdraw.js';
+import { letterKey } from './keys.js';
 
 const el = (tag, cls, ...kids) => {
   const e = document.createElement(tag);
@@ -1307,6 +1308,7 @@ export class FigureCanvas {
         return;
       }
       if (e.metaKey || e.ctrlKey || e.altKey || e.target.closest('input')) return;
+      const key = letterKey(e);
       const p = this.presenting;
       const show = p && {
         ' ': 1, ArrowRight: 1, ArrowDown: 1, PageDown: 1, Enter: 1, ArrowLeft: -1, ArrowUp: -1, PageUp: -1, Backspace: -1,
@@ -1333,7 +1335,7 @@ export class FigureCanvas {
         else this.showStep(e.key === 'Home' ? 0 : e.key === 'End' ? p.steps.length - 1 : p.i + show);
         return;
       }
-      if (!p && e.key === 'p') { e.preventDefault(); this.present(); return; }
+      if (!p && key === 'p') { e.preventDefault(); this.present(); return; }
       // A picture looked at (no box or arrow selected): its drawing keys.
       const picture = !!this.goal?.fig?.matches?.('.ink-figure') && !this.walkAt && !this.edgeAt;
       if (!p && !e.shiftKey && this.ink.key(e, picture)) { e.preventDefault(); e.stopPropagation(); return; }
@@ -1346,7 +1348,7 @@ export class FigureCanvas {
       const n = c && /^[1-9]$/.test(e.key) ? Number(e.key) - 1 : -1;
       const walk = pick || (n >= 0 && n < c.list.length ? () => this.choose(n) : null) || {
         ArrowRight: () => this.step(), ArrowDown: () => this.step(), ArrowLeft: () => this.step(true), ArrowUp: () => this.step(true), g: () => this.jump(),
-      }[e.key];
+      }[key];
       if (walk) { e.preventDefault(); e.stopPropagation(); walk(); return; }
       if (this.busy && performance.now() > this.busy.until) { this.busy = null; this.queued = []; }
       if (this.busy && (EDIT_KEYS.has(e.key) || (this.pending?.rename && e.key.length === 1))) {
@@ -1360,7 +1362,7 @@ export class FigureCanvas {
       const act = {
         Escape: () => (this.picks ? this.clearPicks() : this.h.onEscape?.()), '+': () => this.zoomBy(1.25), '=': () => this.zoomBy(1.25), '-': () => this.zoomBy(1 / 1.25),
         0: () => this.toggleAll(), l: () => this.toggleLinks(), 1: () => { const r = stage.getBoundingClientRect(); this.zoomAt(1, r.width / 2, r.height / 2); },
-      }[e.key];
+      }[key];
       if (!act) return;
       e.preventDefault();
       e.stopPropagation();
@@ -1453,9 +1455,10 @@ export class FigureCanvas {
   // Keys for the box selected (Tab, Enter/F2, Delete, C, S) and for a picture
   // (N). → whether the key was one of them.
   editKey(e) {
+    const key = letterKey(e);
     const ed = this.edgeAt;
     if (ed && !e.shiftKey) {
-      const what = { Delete: 'delete', Backspace: 'delete', b: 'both', r: 'reverse', d: 'dotted', Enter: 'label', F2: 'label', Escape: 'unselect' }[e.key];
+      const what = { Delete: 'delete', Backspace: 'delete', b: 'both', r: 'reverse', d: 'dotted', Enter: 'label', F2: 'label', Escape: 'unselect' }[key];
       if (what === 'unselect') { this.edgeAt = null; this.mark(); return true; }
       if (what === 'label') { this.labelEdge(ed); return true; }
       if (what) { this.h.onArrow?.(ed.pre, ed, what); return true; }
@@ -1481,7 +1484,7 @@ export class FigureCanvas {
       },
       n: () => (fig?.flowNodes ? this.h.onAddBox?.(fig) : this.say('Look at a ```flow picture first.')),
       m: () => (at ? this.h.onBoxComment?.(at.pre, at.id, () => this.hit(at.pre, at.id)?.getBoundingClientRect() || null) : need()),
-    }[e.key];
+    }[key];
     if (!run || e.shiftKey || (e.key === 'Tab' && !at)) return false;
     run();
     return true;

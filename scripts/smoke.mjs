@@ -467,7 +467,7 @@ await check('hiding a part of a picture: H covers it, and the task dialog says t
   return out;
 `, (v) => (v?.line === 'hide gray: 40,30 40x15' && v.drawn && v.list.includes('assets/screen.svg (picture, parts hidden)') ? null : `got ${JSON.stringify(v)}`));
 
-await check('an arrow: clicks draw it point by point (a double-click ends it), a drag draws it straight; A again changes its kind', `
+await check('an arrow: clicks draw it point by point (a double-click ends it), a drag draws it straight; A again changes its kind (with a Korean input source on too)', `
   const ed = () => $$('.editor-wrap textarea').find((t) => t.offsetParent);
   const img = () => $('.canvas-stage .ink-figure img');
   if (!(await until(() => img()?.naturalWidth, 15000))) return { none: true };
@@ -490,7 +490,8 @@ await check('an arrow: clicks draw it point by point (a double-click ends it), a
   await until(() => ed().value.includes('arrow red: 40,270 ->'), 8000);
   await sleep(300);
   const kinds = [];
-  for (let i = 0; i < 3; i++) { key('a', {}, stage); kinds.push($('.ink-bar .ink-tool.on')?.title.split(':')[0]); }
+  // The second A typed with a Korean input source on: the key's letter is \u3141.
+  for (let i = 0; i < 3; i++) { key(i === 1 ? '\u3141' : 'a', { code: 'KeyA' }, stage); kinds.push($('.ink-bar .ink-tool.on')?.title.split(':')[0]); }
   key('Escape', {}, stage);
   return { lines: ed().value.split('\\n').filter((l) => l.startsWith('arrow')), following, sharp: !!sharp, kinds, off: !$('.ink-bar .ink-tool.on') };
 `, (v) => (v?.lines?.join('|') === 'arrow red: 200,150 -> 320,150 -> 320,240|arrow red: 40,270 -> 120,210' && v.following && v.sharp && v.kinds.join('|') === 'Arrow, curved|Arrow, elbow|Arrow, straight' && v.off ? null : `got ${JSON.stringify(v)}`));

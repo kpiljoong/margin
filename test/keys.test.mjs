@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
-import { normalize, eventKeys, unusable, effectiveKeys, conflicts, customOnly, keyLabel } from '../public/keys.js';
+import { normalize, eventKeys, unusable, effectiveKeys, conflicts, customOnly, keyLabel, letterKey } from '../public/keys.js';
 
 const DEFAULTS = JSON.parse(fs.readFileSync(new URL('../public/shortcuts.json', import.meta.url), 'utf8'));
 const ev = (code, m = {}) => ({ code, metaKey: false, ctrlKey: false, altKey: false, shiftKey: false, ...m });
@@ -74,4 +74,13 @@ test('labels', () => {
   assert.equal(keyLabel('CmdOrCtrl+Shift+Enter', false), 'Ctrl+Shift+Enter');
   assert.equal(keyLabel('Alt+Up', false), 'Alt+↑');
   assert.equal(keyLabel('', true), '');
+});
+
+test('a one-letter command by its place, with another input source on', () => {
+  assert.equal(letterKey({ key: '\u3141', code: 'KeyA', shiftKey: false }), 'a');
+  assert.equal(letterKey({ key: '\u3131', code: 'KeyR', shiftKey: false }), 'r');
+  assert.equal(letterKey({ key: '\u3132', code: 'KeyR', shiftKey: true }), 'R');
+  assert.equal(letterKey({ key: 'a', code: 'KeyA', shiftKey: false }), 'a');
+  assert.equal(letterKey({ key: 'q', code: 'KeyA', shiftKey: false }), 'q'); // AZERTY: its own letter
+  assert.equal(letterKey({ key: 'Escape', code: 'Escape', shiftKey: false }), 'Escape');
 });

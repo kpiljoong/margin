@@ -40,6 +40,7 @@
 // each of its parts moves that part across, and the way is then its own
 // (its corners written; "Route it again" lets it find its way anew).
 
+import { letterKey } from './keys.js';
 import { INK, inkLine, parseInk, simplify, markEl, movedMark, grips, reshapedMark, textSize, anchors, snapEnd, snapArrow, followBoxes, wordsIn, arrowMids, markBounds, elbowPoints, movedPart, ARROW_STYLES } from './ink.js';
 
 const SVG = 'http://www.w3.org/2000/svg';
@@ -190,10 +191,11 @@ export class InkTools {
       }
     }
     if (!looking && !this.tool) return false;
-    const kind = KEYS[e.key];
+    const key = letterKey(e);
+    const kind = KEYS[key];
     if (kind === 'arrow' && this.tool === 'arrow') { this.nextArrow(); return true; }
     if (kind) { this.use(this.tool === kind ? null : kind); return true; }
-    if (e.key === 'c') { this.pickColor(this.bar.getBoundingClientRect()); return true; }
+    if (key === 'c') { this.pickColor(this.bar.getBoundingClientRect()); return true; }
     return false;
   }
 

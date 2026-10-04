@@ -29,6 +29,10 @@ const keyOfChar = (k) => {
   return CODES[k] || (/^F\d{1,2}$/.test(k) ? k : null);
 };
 const isKey = (k) => KEY_RE.test(k) || NAMED.includes(k);
+
+// The key of a one-letter command (A, R, P …) as on a US keyboard: with
+// another input source on, event.key is its letter (Korean: "\u3141" for A).
+export const letterKey = (e) => (/^Key[A-Z]$/.test(e.code || '') && !/^[\x20-\x7e]$/.test(e.key) ? (e.shiftKey ? e.code[3] : e.code[3].toLowerCase()) : e.key);
 const isFnKey = (k) => /^F\d{1,2}$/.test(k);
 
 // The same keys written one way: "shift+cmd+p" → "CmdOrCtrl+Shift+P". Off a
