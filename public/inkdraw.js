@@ -3,7 +3,8 @@
 // (public/ink.js has the lines; the app writes them, one ⌘Z each).
 //
 // The tool bar shows when a picture is the one looked at, or a tool is on.
-// Keys: D pen, A arrow, R box, T text, N numbered dot, H hide, E eraser, C colour,
+// Keys: D pen, A arrow, R box, T text, N numbered dot, H hide, E eraser,
+// M a comment (kept beside the note, not drawn: the app has it), C colour,
 // Esc: the tool off. With a tool on, a drag on a picture draws (beside it the
 // canvas still pans); a click with T puts words there, with N the next
 // number; with E a click on a mark takes it out.
@@ -25,8 +26,9 @@ export const TOOLS = [
   ['num', '\u2460', 'Numbered dot: click where it goes; item 1. of a numbered list in the section says what it is', 'N'],
   ['hide', '\u25A9', 'Hide a part: covered here, in a copy, and for an agent', 'H'],
   ['erase', '⌫', 'Eraser: click a mark', 'E'],
+  ['note', '\u{1F4AC}', 'Comment: click where it goes (kept beside the note, as its other comments)', 'M'],
 ];
-const KEYS = { d: 'pen', a: 'arrow', r: 'box', t: 'text', n: 'num', h: 'hide', e: 'erase' };
+const KEYS = { d: 'pen', a: 'arrow', r: 'box', t: 'text', n: 'num', h: 'hide', e: 'erase', m: 'note' };
 
 const el = (tag, cls, text) => {
   const e = document.createElement(tag);
@@ -40,7 +42,7 @@ export class InkTools {
   // onInkColor(at, color, pick).
   constructor(canvas) {
     this.c = canvas;
-    this.tool = null; // 'pen' | 'arrow' | 'box' | 'text' | 'num' | 'hide' | 'erase'
+    this.tool = null; // 'pen' | 'arrow' | 'box' | 'text' | 'num' | 'hide' | 'erase' | 'note'
     this.color = 'red';
     this.draft = null; // the mark being drawn: { fig, kind, pts, el }
     this.edit = null; // a mark being moved or reshaped: { fig, mark, grip, from, next, el }
@@ -148,7 +150,7 @@ export class InkTools {
     const d = this.draft;
     if (!d) return false;
     const hit = this.at(e, d.fig);
-    if (!hit || d.kind === 'text' || d.kind === 'num') return true;
+    if (!hit || d.kind === 'text' || d.kind === 'num' || d.kind === 'note') return true;
     if (d.kind === 'pen' || d.kind === 'arrow') d.pts.push(hit.p); else d.pts[1] = hit.p;
     this.preview();
     return true;
@@ -162,6 +164,14 @@ export class InkTools {
     d.el?.remove();
     const moved = Math.hypot(e.clientX - d.x, e.clientY - d.y) > 4;
     if (d.kind === 'text') { if (!moved) this.words(d); return true; }
+    if (d.kind === 'note') {
+      // One comment, then the tool is put down.
+      if (moved) return true;
+      const [x, y] = d.pts[0].map(Math.round);
+      this.use(null);
+      this.c.h.onInkComment?.(d.fig, [x, y], this.spot(d.fig, x, y));
+      return true;
+    }
     if (d.kind === 'num') {
       // The next number on this picture.
       const n = Math.max(0, ...(d.fig.inkMarks || []).filter((m) => m.kind === 'num' && /^\d+$/.test(m.text)).map((m) => Number(m.text))) + 1;
@@ -313,17 +323,22 @@ export class InkTools {
     svg.append(d.el);
   }
 
+  // Where on the screen a point of a picture is, as it moves: () → a rect
+  // (dx, dy from the point, w wide), or null once the picture is gone.
+  spot(fig, x, y, dx = 0, dy = 0, w = 0) {
+    const img = fig.querySelector(':scope > img');
+    return () => {
+      if (!img?.isConnected) return null;
+      const r = img.getBoundingClientRect();
+      const k = r.width / img.naturalWidth;
+      return { left: r.left + x * k + dx, top: r.top + y * k + dy, width: w, height: 0 };
+    };
+  }
+
   // Words where the picture was clicked.
   words(d) {
     const [x, y] = d.pts[0];
-    const img = d.fig.querySelector(':scope > img');
-    const rect = () => {
-      if (!img.isConnected) return null;
-      const r = img.getBoundingClientRect();
-      const k = r.width / img.naturalWidth;
-      return { left: r.left + x * k + 70, top: r.top + y * k + 16, width: 0, height: 0 };
-    };
-    this.c.typeOver(rect, '', (text) => {
+    this.c.typeOver(this.spot(d.fig, x, y, 70, 16), '', (text) => {
       if (text) this.c.h.onInk?.(d.fig, { add: inkLine({ kind: 'text', color: this.color, x, y, text }) });
     }, 'Words on the picture');
   }

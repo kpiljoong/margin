@@ -362,6 +362,7 @@ input[type=checkbox] { accent-color: var(--accent); }
 .mnote-text { color: var(--pen-me); font: 16px/1.3 var(--hand); overflow-wrap: anywhere; white-space: pre-wrap; }
 .mnote-reply { margin-top: 3px; padding-left: 8px; border-left: 1px solid var(--border); overflow-wrap: anywhere; }
 .mnote-lost { font-size: 11px; color: var(--warn); }
+.mnote-on { font-size: 11px; color: var(--fg-faint); }
 .mnote-btn { border: 0; background: none; color: var(--fg-faint); cursor: pointer; padding: 0 4px; border-radius: 4px; font-size: 12px; }
 .mnote-btn:hover { color: var(--fg); background: var(--bg-hover); }
 .mnote-btn.clock { opacity: .4; }
@@ -929,6 +930,14 @@ iframe.mermaid-frame { position: fixed; left: -10000px; top: 0; width: 1600px; h
 .ink-tool:hover { background: var(--bg-3); }
 .ink-tool.on { background: var(--accent); color: #fff; }
 .ink-tool.ink-color { width: 18px; height: 18px; margin: 5px 6px; border: 3px solid; border-radius: 50%; }
+/* A comment on a picture (canvas): a bubble whose bottom left corner is its
+   spot, its size kept on screen (--inv: 1 / zoom). */
+.cpin { all: unset; position: absolute; z-index: 3; box-sizing: border-box; display: flex; align-items: baseline; gap: 5px; width: max-content; max-width: 240px; padding: 3px 8px 4px; border: 1px solid var(--pen-me); border-radius: 9px 9px 9px 0; background: color-mix(in srgb, var(--pen-me) 10%, var(--bg)); color: var(--pen-me); font: 15px/1.25 var(--hand); text-align: left; white-space: normal; cursor: pointer; transform-origin: 0 0; transform: scale(var(--inv, 1)) translateY(-100%); box-shadow: 0 1px 4px rgb(0 0 0 / .18); }
+.cpin-text { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; overflow-wrap: anywhere; }
+.cpin.open .cpin-text, .cpin:hover .cpin-text { -webkit-line-clamp: unset; display: block; }
+.cpin-who, .cpin-n { flex: none; font: 600 11px var(--sans); }
+.cpin-n { opacity: .7; }
+.cpin.cur { outline: 2px solid var(--pen-me); outline-offset: 1px; }
 .canvas-stage.inking .ink-figure { cursor: crosshair; }
 .canvas-stage.ink-erasing .ink-figure { cursor: default; }
 .canvas-stage.ink-erasing .ink-hit { pointer-events: stroke; cursor: pointer; }

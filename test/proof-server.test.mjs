@@ -47,12 +47,17 @@ test('suggesting: the note untouched until applied; comments beside it, read by 
     { id: 'a1', quote: 'docs by Friday', line: 3, comment: 'Who writes them?', speaker: '민수', time: '2026-10-03 14:05', replies: [{ text: 'Jin', time: '2026-10-03 14:06' }] },
     { id: 'a2', quote: 'Meeting', comment: 'Done', resolved: '2026-10-03 14:10' },
     { quote: 'x', comment: '   ' },
+    // On drawings: a box of a flow, a point of a sketch; a pin that says nothing is dropped.
+    { id: 'a3', quote: 'Meeting', comment: 'Split it', pin: { on: 'flow', box: 'Pay', x: 3 } },
+    { id: 'a4', quote: 'Meeting', comment: 'Here', pin: { on: 'sketch', x: 120.6, y: '80' } },
+    { id: 'a5', quote: 'Meeting', comment: 'Odd', pin: { on: 'wall', x: 1, y: 2 } },
   ] });
-  assert.deepEqual(saved.comments.map((c) => c.id), ['a1', 'a2']);
+  assert.deepEqual(saved.comments.map((c) => c.id), ['a1', 'a2', 'a3', 'a4', 'a5']);
+  assert.deepEqual(saved.comments.map((c) => c.pin), [undefined, undefined, { on: 'flow', box: 'Pay' }, { on: 'sketch', x: 121, y: 80 }, undefined]);
   assert.equal(fs.readFileSync(path.join(ws, 'm.md'), 'utf8'), note);
   assert.equal((await api('GET', '/api/comments?path=m.md')).comments[0].speaker, '민수');
   let run = await api('GET', `/api/runs/${p.id}`);
-  assert.deepEqual(run.comments.map((c) => [c.quote, c.comment, c.speaker]), [['docs by Friday', 'Who writes them?', '민수']]);
+  assert.deepEqual(run.comments.map((c) => [c.quote, c.comment, c.speaker]).slice(0, 1), [['docs by Friday', 'Who writes them?', '민수']]);
   assert.equal(run.changes[0].hunks.length, 1);
 
   // An agent asked about the note reads the open ones.
@@ -61,6 +66,7 @@ test('suggesting: the note untouched until applied; comments beside it, read by 
   const prompt = fs.readFileSync(path.join(ws, '.agent-notes', 'runs', r.id, 'prompt-1.txt'), 'utf8');
   assert.match(prompt, /margin comments on m\.md[\s\S]*"docs by Friday": Who writes them\? \(said by 민수 at 2026-10-03 14:05\)\n {2}- reply: Jin/);
   assert.doesNotMatch(prompt, /Done/);
+  assert.match(prompt, /- on "Meeting" \(on the box "Pay" of the flow chart\): Split it\n- on "Meeting" \(on the sketch at x 121, y 80 of its pixels\): Here\n- on "Meeting": Odd/);
   await api('POST', `/api/runs/${r.id}/discard`);
 
   // The note changed elsewhere: the suggestions go on over it.
@@ -77,6 +83,6 @@ test('suggesting: the note untouched until applied; comments beside it, read by 
 
   // Comments go with a renamed note.
   await api('POST', '/api/rename', { from: 'm.md', to: 'minutes.md' });
-  assert.equal((await api('GET', '/api/comments?path=minutes.md')).comments.length, 2);
+  assert.equal((await api('GET', '/api/comments?path=minutes.md')).comments.length, 5);
   await assert.rejects(api('GET', '/api/comments?path=../x.md'), { status: 400 });
 });

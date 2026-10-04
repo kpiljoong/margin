@@ -508,6 +508,27 @@ await check('a sketch: + Sketch adds a blank board with the pen up; a line drawn
   return out;
 `, (v) => (v?.pen?.startsWith('Pen') && v.keys && v.still && /^# Sketch\n\nTalk\.\n\n```ink\nboard: 1600x(1[0-9]00)\npen black: [\d, ]+\n```\n$/.test(v.text) && v.tall > 900 ? null : `got ${JSON.stringify(v)}`));
 
+await check('a comment on the sketch: M, a click, the words; a bubble on it and a card in the margin', `
+  const stage = $('.canvas-stage');
+  const img = () => $('.canvas-stage .ink-board img');
+  if (!img()?.naturalWidth) return { none: true };
+  stage.focus();
+  key('m', {}, stage);
+  const tool = $('.ink-tool.on')?.title;
+  const r = img().getBoundingClientRect();
+  const p = { clientX: r.left + r.width / 2, clientY: r.top + r.height / 4 };
+  const ptr = (type, el) => el.dispatchEvent(new PointerEvent(type, { bubbles: true, cancelable: true, button: 0, pointerId: 1, ...p }));
+  ptr('pointerdown', img());
+  ptr('pointerup', stage);
+  const input = await until(() => $('.canvas-rename'), 4000);
+  if (!input) return { tool, input: false };
+  input.value = '@Mina \uC5EC\uAE30 \uB2E4\uC2DC';
+  key('Enter', {}, input);
+  const pin = await until(() => $('.canvas-stage .ink-board .cpin'), 4000);
+  const card = await until(() => $$('.mnote').find((c) => c.textContent.includes('on the sketch')), 4000);
+  return { tool, pin: pin?.textContent, left: pin?.style.left, card: !!card };
+`, (v) => (v?.tool?.startsWith('Comment') && v.pin === '@Mina\uC5EC\uAE30 \uB2E4\uC2DC' && Math.abs(parseFloat(v.left) - 50) < 1 && v.card ? null : `got ${JSON.stringify(v)}`));
+
 await check('Settings shows Labs', `
   document.dispatchEvent(new KeyboardEvent('keydown', { key: ',', metaKey: navigator.platform.startsWith('Mac'), ctrlKey: !navigator.platform.startsWith('Mac'), bubbles: true }));
   const d = await until(() => $('.dialog.settings'));

@@ -12,10 +12,11 @@ import { emacs, occurLines, occurPattern, keyName as emacsKeyName, commandOf as 
 import { hunksOf } from './track.js';
 import { renderDiagrams } from './diagrams.js';
 import { flowToMermaid, flowsAsMermaid, parseFlow, isStepText, flowStepNames, nameKey, flowTour, flowLineAt, COLORS } from './flow.js';
-import { pairInk, addMark, removeMark, setMark, fitBoard, boardLine, INK, INK_COLORS } from './ink.js';
+import { pairInk, parseInk, addMark, removeMark, setMark, fitBoard, boardLine, INK, INK_COLORS } from './ink.js';
 import { pictureHunks, penPlaces, pictureSummary, showPicture, PLACE } from './penpic.js';
 import { connect, addBox, freshName, nextAnswer, setColor, setDirection, removeBox, removeArrow, setArrowKind, setArrowLabel, reverseArrow, setShape, arrowSpot } from './flowedit.js';
 import { FigureCanvas } from './canvas.js';
+import { pinnedFigure, pinLabel } from './pins.js';
 import { goalAt, boxAt, mentionRanges, definitionLines, leadLines, numberedItems } from './figure-goal.js';
 import { isDrawing, drawingFormat, DrawingFrame, renderDrawingEmbeds, cachedEmbed, forgetEmbed, drawingImageUrl } from './drawing.js';
 import { copyPng, copySvg, svgFromDataUrl, imageToPng } from './clip.js';
@@ -2047,6 +2048,10 @@ function canvasFor(tab) {
     onArrowStep: (pre, from, to) => gotoArrow(tab, pre, from, to),
     onShapeMenu: (pre, id, at) => shapeMenu(tab, pre, id, at),
     onInk: (fig, change) => inkEdit(tab, fig, change),
+    // Comments on the pictures (kept with the note's others).
+    onBoxComment: (pre, id, rect) => drawingComment(tab, pre, { on: 'flow', box: nodeText(pre, id) }, rect),
+    onInkComment: (fig, [x, y], rect) => drawingComment(tab, fig, { on: fig.dataset.board != null ? 'sketch' : 'picture', x, y }, rect),
+    onCommentPin: (id) => { const c = tab.comments?.find((x) => x.id === id); if (c) gotoNote(tab, c, false); },
     // A numbered dot: its list item marked in the text; a click goes there.
     onInkHover: (fig, num) => { const r = fig && calloutRange(tab, fig, num); tab.editor.setHints(r ? [r] : []); },
     onInkDot: (fig, num) => { const r = calloutRange(tab, fig, num); if (r) gotoOffset(tab, r[0], r[0], false); else toast(`No item ${num}. in a numbered list of this section to say what it is.`); },
@@ -2242,6 +2247,7 @@ function renderCanvas(tab) {
   renderDiagrams(cv.world);
   if (cv.world.querySelector('.drawing-embed:not(.ready)')) fillDrawingEmbeds(cv.world);
   if (cv.world.querySelector('.mmd-embed.loading')) fillMermaidEmbeds(cv.world).then(() => renderDiagrams(cv.world));
+  if (tab.comments) canvasComments(tab);
   followCursor(tab);
 }
 
@@ -2313,10 +2319,16 @@ function renameBox(tab, pre, node, text) {
   const first = node.spots.reduce((a, b) => (a.line < b.line || (a.line === b.line && a.start < b.start) ? a : b));
   const caret = lineOffset(v, base + first.line) + first.start + text.length;
   const before = tab.canvas?.selectionNames();
+  const pinned = pinnedOn(tab, pre).filter((c) => c.pin.box === node.text);
   tab.editor.closeStep();
   tab.editor.replace(start, end, out.join('\n'), caret);
   tab.editor.closeStep();
   drawn(tab, pre.dataset.line, before);
+  // Its comments go with it.
+  if (pinned.length) {
+    for (const c of pinned) { c.pin = { ...c.pin, box: text }; c.quote = text; c.alts = []; }
+    keepComments(tab);
+  }
   // The box stays selected on the canvas, under its new name.
   if (tab.canvas?.el.isConnected) { tab.canvas.selectSoon(pre.dataset.line, text); tab.canvas.stage.focus({ preventScroll: true }); }
   renderStatus();
@@ -2434,7 +2446,17 @@ function inkEdit(tab, fig, change) {
     const close = at + 1 + (src ? src.split('\n').length : 0);
     if (v.slice(start, start + src.length) !== src || !/^\s*(`{3,}|~{3,})\s*$/.test(v.slice(lineOffset(v, close), eol(close)))) { toast('The note changed — try again.', 'error'); return; }
     let next = change.add ? addMark(src, change.add) : change.set ? setMark(src, ...change.set) : removeMark(src, change.remove);
-    if (board) next = fitBoard(next);
+    if (board) {
+      next = fitBoard(next);
+      // A sketch grown: its comments are on its new board line.
+      const was = boardText(src);
+      const now = boardText(next);
+      if (was && now && was !== now) {
+        const pinned = pinnedOn(tab, fig).filter((c) => c.quote === was);
+        for (const c of pinned) c.quote = now;
+        if (pinned.length) keepComments(tab);
+      }
+    }
     if (next.trim()) { from = start; to = start + src.length; text = next; } else {
       // The last mark gone: the block too, the picture as it was.
       from = eol(pic);
@@ -2572,6 +2594,7 @@ function boxMenu(tab, e, pre, id) {
     { label: 'Colour…', key: 'C', run: () => colorMenu(tab, pre, id, { x: e.clientX, y: e.clientY }) },
     { label: 'Shape…', key: 'S', run: () => shapeMenu(tab, pre, id, { x: e.clientX, y: e.clientY }) },
     { label: 'Select its text in the note', run: () => gotoBox(tab, pre, id) },
+    { label: 'Comment…', key: 'M', run: () => drawingComment(tab, pre, { on: 'flow', box: name }, () => tab.canvas.hit(pre, id)?.getBoundingClientRect() || null) },
     '-',
     { label: `Delete “${name}”`, key: '⌫', danger: true, run: () => deleteBox(tab, pre, id) },
   ]);
@@ -2782,6 +2805,11 @@ function renameEverywhere(tab, from, to) {
   const at = tab.editor.selectionStart;
   const caret = at + ranges.filter(([, y]) => y <= at).length * (to.length - from.length);
   tab.editor.replace(a, b, out, caret);
+  const pinned = openComments(tab).filter((c) => c.pin?.on === 'flow' && c.pin.box === from);
+  if (pinned.length) {
+    for (const c of pinned) { c.pin = { ...c.pin, box: to }; c.quote = to; c.alts = []; }
+    keepComments(tab);
+  }
   toast(`Renamed ${ranges.length === 1 ? 'one more place' : `${ranges.length} more places`}.`);
 }
 
@@ -6741,6 +6769,7 @@ function anchorOf(text, c) {
 
 const drawNotesSoon = debounce((tab) => drawNotes(tab), 120);
 function drawNotes(tab) {
+  if (tab?.comments) canvasComments(tab);
   const ed = tab?.editor;
   if (!ed || tab.draft) return;
   if (!tab.comments) { if (isNote(tab.path)) loadComments(tab); return; }
@@ -6759,6 +6788,7 @@ function noteCard(tab, c, lost) {
       h('span', { class: 'grow' }),
       h('button', { class: 'mnote-btn', title: 'Reply', onclick: () => replyTo(tab, c) }, '↩'),
       h('button', { class: 'mnote-btn', title: c.resolved ? 'Open again' : 'Resolve (close)', onclick: () => resolveNote(tab, c) }, c.resolved ? '↺' : '✓')),
+    c.pin ? h('div', { class: 'mnote-on' }, pinLabel(c.pin)) : null,
     h('div', { class: 'mnote-text' }, c.comment),
     lost ? h('div', { class: 'mnote-lost' }, 'on words no longer in the note') : null,
     (c.replies || []).map((r) => h('div', { class: 'mnote-reply' },
@@ -6767,10 +6797,10 @@ function noteCard(tab, c, lost) {
   return card;
 }
 
-function gotoNote(tab, c) {
+function gotoNote(tab, c, focus = true) {
   tab.noteCur = c.id;
   const at = anchorOf(tab.editor.value, c);
-  if (at) tab.editor.selectRange(at[0], at[1]);
+  if (at) tab.editor.selectRange(at[0], at[1], focus);
   drawNotes(tab);
 }
 
@@ -6872,6 +6902,83 @@ function stepNote(tab, dir) {
   if (!list.length) { toast('No comments here'); return; }
   const next = dir > 0 ? list.find(([, at]) => at[0] > a) || list[0] : [...list].reverse().find(([, at]) => at[0] < a) || list.at(-1);
   gotoNote(tab, next[0]);
+}
+
+// ---- comments on the pictures (public/pins.js): a box of a ```flow, a
+// point of a picture or a sketch. Each is a comment of the note as any
+// other, on the words that say where its picture is (the box's name, the
+// picture's line, the sketch's board line), with its pin; the canvas shows
+// it on the picture.
+
+const boardText = (src) => { const b = parseInk(src).board; return b ? src.split('\n')[b.line].trim() : ''; };
+
+// A figure of the canvas: its lines in the note, and what kind of picture.
+function figSpan(f) {
+  const start = Number(f.dataset.line) || 0;
+  const n = (f.dataset.source ?? f.textContent).replace(/\n$/, '').split('\n').length;
+  if (f.flowNodes) return { start, end: start + n + 1, on: 'flow', boxes: f.flowNodes.map((x) => x.text) };
+  if (!f.matches('.ink-figure')) return { start, end: start, on: '' };
+  const ink = f.dataset.inkLine;
+  return { start, end: ink === '' ? start : Number(ink) + n + 1, on: f.dataset.board != null ? 'sketch' : 'picture' };
+}
+
+// The open comments pinned on the canvas's pictures: [[comment, figure]].
+function canvasPins(tab) {
+  const figs = (tab.canvasSections || []).flatMap((s) => s.figures).filter((f) => !f.dataset.from);
+  const spans = figs.map(figSpan);
+  const text = tab.content ?? '';
+  return openComments(tab).filter((c) => c.pin).map((c) => {
+    const at = anchorOf(text, c);
+    const i = pinnedFigure(c.pin, spans, at ? text.slice(0, at[0]).split('\n').length - 1 : null, c.line || 0);
+    return i < 0 ? null : [c, figs[i]];
+  }).filter(Boolean);
+}
+const pinnedOn = (tab, fig) => (tab.canvas?.el.isConnected ? canvasPins(tab).filter(([, f]) => f === fig).map(([c]) => c) : []);
+
+function canvasComments(tab) {
+  if (!tab.canvas?.el.isConnected) return;
+  tab.canvas.setComments(canvasPins(tab).map(([c, fig]) => ({
+    fig, pin: c.pin, id: c.id, text: c.comment, who: c.speaker, replies: c.replies?.length || 0, cur: tab.noteCur === c.id,
+  })));
+}
+
+// A comment written on a picture, in a field over its spot (rect).
+function drawingComment(tab, fig, pin, rect) {
+  if (!isNote(tab.path) || !tab.canvas?.el.isConnected) return;
+  if (fig.dataset.from) { toast(`This picture is in “${stem(fig.dataset.from)}”: comment on it there.`); return; }
+  const src = (fig.dataset.source ?? '').replace(/\n$/, '');
+  const lines = (tab.content ?? '').split('\n');
+  let line;
+  let quote;
+  if (pin.on === 'flow') {
+    const spot = fig.flowNodes?.find((n) => n.text === pin.box)?.spots[0];
+    if (!spot) return;
+    line = Number(fig.dataset.line) + 1 + spot.line;
+    quote = pin.box;
+  } else if (pin.on === 'sketch') {
+    const b = parseInk(src).board;
+    if (!b) return;
+    line = Number(fig.dataset.inkLine) + 1 + b.line;
+    quote = boardText(src);
+  } else {
+    line = Number(fig.dataset.line);
+    quote = (lines[line] || '').trim();
+  }
+  if (!quote) return;
+  const timeOn = store.getItem('an.commentTime') !== 'false';
+  const where = () => {
+    const r = rect();
+    return r && { left: r.left + r.width / 2 - 20, top: r.top - 22, width: 280, height: 0 };
+  };
+  tab.canvas.typeOver(where, '', (v) => {
+    const m = /^@(\S+)\s*/u.exec(v);
+    const text = m ? v.slice(m[0].length).trim() : v;
+    if (!text) return;
+    const c = { id: Math.random().toString(36).slice(2, 10), quote, alts: [], line, comment: text, speaker: m?.[1], time: timeOn ? localStamp() : undefined, replies: [], pin };
+    (tab.comments ||= []).push(c);
+    tab.noteCur = c.id;
+    keepComments(tab);
+  }, `Comment ${pinLabel(pin)}… (@name who said it)`);
 }
 
 // ---------------- meeting mode

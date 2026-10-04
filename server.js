@@ -663,6 +663,21 @@ function getComments(relPath) {
   const rel = relOf(workspacePath(relPath));
   return { path: rel, comments: noteComments(rel) };
 }
+// A comment on a drawing is pinned there: on a box of a flow, or at a point
+// (in the picture's own pixels) of a picture or a sketch.
+const PIN_ON = new Set(['flow', 'picture', 'sketch']);
+function pinOf(p) {
+  if (!p || typeof p !== 'object') return undefined;
+  if (p.on === 'flow') return typeof p.box === 'string' && p.box.trim() ? { on: 'flow', box: p.box.slice(0, 300) } : undefined;
+  const x = Number(p.x), y = Number(p.y);
+  if (!PIN_ON.has(p.on) || !Number.isFinite(x) || !Number.isFinite(y) || Math.abs(x) > 1e5 || Math.abs(y) > 1e5) return undefined;
+  return { on: p.on, x: Math.round(x), y: Math.round(y) };
+}
+function pinText(p) {
+  if (!p) return '';
+  if (p.on === 'flow') return ` (on the box "${p.box.replace(/\s+/g, ' ')}" of the flow chart)`;
+  return ` (on the ${p.on} at x ${p.x}, y ${p.y} of its pixels)`;
+}
 function saveComments({ path: relPath, comments }) {
   const rel = relOf(workspacePath(relPath));
   if (!Array.isArray(comments) || comments.length > 1000) throw httpError(400, 'comments should be a list');
@@ -678,6 +693,7 @@ function saveComments({ path: relPath, comments }) {
     time: str(c?.time, 40),
     replies: Array.isArray(c?.replies) ? c.replies.slice(0, 100).map(said).filter((r) => r.text.trim()) : [],
     resolved: str(c?.resolved, 40),
+    pin: pinOf(c?.pin),
   })).filter((c) => c.comment.trim() || c.replies.length);
   const file = commentsOf(rel);
   if (!clean.length) fs.rmSync(file, { force: true });
@@ -699,7 +715,7 @@ function commentsForAgent(rel) {
   if (!open.length) return '';
   const who = (x) => [x.speaker && `said by ${x.speaker}`, x.time && `at ${x.time}`].filter(Boolean).join(' ');
   const line = (c) => {
-    const head = `- on "${c.quote.replace(/\s+/g, ' ').slice(0, 300)}": ${c.comment.replace(/\s+/g, ' ')}${who(c) ? ` (${who(c)})` : ''}`;
+    const head = `- on "${c.quote.replace(/\s+/g, ' ').slice(0, 300)}"${pinText(c.pin)}: ${c.comment.replace(/\s+/g, ' ')}${who(c) ? ` (${who(c)})` : ''}`;
     return [head, ...c.replies.map((r) => `  - reply: ${r.text.replace(/\s+/g, ' ')}${who(r) ? ` (${who(r)})` : ''}`)].join('\n');
   };
   return `The user's own margin comments on ${rel} (kept beside the note, not in its text):\n${open.slice(0, 200).map(line).join('\n')}`;

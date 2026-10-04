@@ -29,6 +29,11 @@
 // selects it: Delete takes it out, B makes it go both ways (or one again),
 // R turns it round, D dots it, Enter puts words on it.
 //
+// Comments: M on a box selected (or, with the picture's comment tool, a
+// click on a picture) writes one there; the app keeps them with the note's
+// other comments and gives them back (setComments) to show as bubbles on
+// the pictures, presenting too.
+//
 // Pictures are the preview's own elements, drawn by public/diagrams.js; each
 // diagram reports where its boxes are ('diagram-shown'), and a transparent
 // layer of hit boxes goes over it.
@@ -111,6 +116,8 @@ export class FigureCanvas {
     this.keep = null; // the box selected before the pictures were made again
     this.edgeAt = null; // the arrow selected: { pre, from, to } (box ids)
     this.edgeSoon = null; // an arrow to select once its picture is drawn again
+    this.comments = []; // the comments on the pictures (setComments)
+    this.opened = new Set(); // the ids of those clicked open
     // A change written, its picture not drawn again yet: keys for the
     // selection wait for it ({ line, until }, the keys).
     this.busy = null;
@@ -1044,6 +1051,7 @@ export class FigureCanvas {
     const stage = this.stage;
     this.world.addEventListener('diagram-shown', (e) => {
       this.layer(e.target);
+      this.drawComments();
       this.whenLoaded(e.target, () => this.holdPin());
       this.links = null;
       this.mark();
@@ -1065,6 +1073,7 @@ export class FigureCanvas {
         else this.refocus(true, true);
       }
     });
+    this.world.addEventListener('inkdrawn', () => this.drawComments());
     stage.addEventListener('wheel', (e) => {
       e.preventDefault();
       this.editing?.remove();
@@ -1373,10 +1382,61 @@ export class FigureCanvas {
         this.h.onShapeMenu?.(at.pre, at.id, r ? { x: r.left, y: r.bottom + 6 } : null);
       },
       n: () => (fig?.flowNodes ? this.h.onAddBox?.(fig) : this.say('Look at a ```flow picture first.')),
+      m: () => (at ? this.h.onBoxComment?.(at.pre, at.id, () => this.hit(at.pre, at.id)?.getBoundingClientRect() || null) : need()),
     }[e.key];
     if (!run || e.shiftKey || (e.key === 'Tab' && !at)) return false;
     run();
     return true;
+  }
+
+  // ---- comments
+
+  // list: [{ fig, pin, id, text, who, replies, cur }] — pin as public/pins.js
+  // has it, on a figure of the canvas.
+  setComments(list) {
+    this.comments = list;
+    this.drawComments();
+  }
+
+  // Each a bubble whose corner is its spot (a box's top right corner, a
+  // picture's point), kept its size on screen. A click opens it whole and
+  // goes to its card in the margin.
+  drawComments() {
+    this.world.querySelectorAll('.cpin').forEach((x) => x.remove());
+    for (const c of this.comments) {
+      if (!c.fig.isConnected) continue;
+      let host;
+      let x;
+      let y;
+      if (c.pin.on === 'flow') {
+        host = c.fig.querySelector(':scope > .node-layer');
+        const id = c.fig.flowNodes?.find((n) => n.text === c.pin.box)?.id;
+        const b = id != null && c.fig.diagramNodes?.find((n) => n.id === id);
+        if (!host || !b) continue;
+        [x, y] = [b.x + b.w, b.y];
+      } else {
+        const img = c.fig.querySelector(':scope > img');
+        if (!img?.naturalWidth) continue;
+        host = c.fig;
+        [x, y] = [c.pin.x / img.naturalWidth, c.pin.y / img.naturalHeight];
+      }
+      const p = el('button', `cpin${c.cur ? ' cur' : ''}${this.opened.has(c.id) ? ' open' : ''}`,
+        c.who ? el('span', 'cpin-who', `@${c.who}`) : null,
+        el('span', 'cpin-text', c.text),
+        c.replies ? el('span', 'cpin-n', `\u21A9${c.replies}`) : null);
+      p.type = 'button';
+      p.dataset.id = c.id;
+      p.title = `${c.who ? `@${c.who}: ` : ''}${c.text}${c.replies ? ` (${c.replies} ${c.replies === 1 ? 'reply' : 'replies'})` : ''}`;
+      p.style.left = `${x * 100}%`;
+      p.style.top = `${y * 100}%`;
+      p.onclick = (e) => {
+        e.stopPropagation();
+        if (p.classList.toggle('open')) this.opened.add(c.id); else this.opened.delete(c.id);
+        if (!this.presenting) this.h.onCommentPin?.(c.id);
+        this.stage.focus({ preventScroll: true });
+      };
+      host.append(p);
+    }
   }
 
   renameBox(at) {
