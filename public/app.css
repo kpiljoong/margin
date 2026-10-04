@@ -1250,3 +1250,53 @@ li.callout-hot { background: color-mix(in srgb, var(--accent) 16%, transparent);
 .film-write { animation: film-write .7s ease-out both; }
 @keyframes film-write { from { clip-path: inset(0 100% 0 0); opacity: .25; } to { clip-path: inset(0 0 0 0); opacity: 1; } }
 @media (prefers-reduced-motion: reduce) { .film-write { animation: none; } }
+
+/* gather (experimental, gather.js): blocks of notes flicked through in depth, pulled into a tray */
+.gather { position: fixed; inset: 0; z-index: 9; display: flex; flex-direction: column; overflow: hidden; outline: none; opacity: 0; transition: opacity .3s ease;
+  background: radial-gradient(ellipse at 50% 34%, color-mix(in srgb, var(--accent) 8%, var(--bg)) 0%, var(--bg) 60%, color-mix(in srgb, #000 30%, var(--bg)) 100%); }
+.gather.in { opacity: 1; }
+.gather-head { display: flex; align-items: center; gap: 12px; padding: 16px 24px 0; position: relative; z-index: 2; }
+.desktop-mac .gather-head { padding-top: 40px; }
+.gather-badge { font-size: 10.5px; letter-spacing: .04em; text-transform: uppercase; color: var(--fg-faint); }
+.gather-sources { display: flex; flex-wrap: wrap; gap: 6px; }
+.gather-source { font: inherit; font-size: 12px; padding: 2px 11px; border-radius: 12px; border: 1px solid var(--border); background: var(--bg-2); color: var(--fg-dim); cursor: pointer; }
+.gather-source.on { border-color: var(--accent); color: var(--fg); background: color-mix(in srgb, var(--accent) 16%, var(--bg-2)); }
+.gather-source.add { border-style: dashed; }
+.gather-stage { position: relative; flex: 1; min-height: 0; perspective: 1300px; perspective-origin: 50% 30%; touch-action: none; user-select: none; cursor: grab; }
+.gather.dragging .gather-stage { cursor: grabbing; }
+.gather-world { position: absolute; left: 50%; top: 44%; width: 0; height: 0; transform-style: preserve-3d; }
+.gather-floor { position: absolute; left: -50%; right: -50%; bottom: -20%; height: 80%; transform: rotateX(78deg); transform-origin: 50% 100%; pointer-events: none; opacity: .3;
+  background-image: linear-gradient(color-mix(in srgb, var(--accent) 30%, transparent) 1px, transparent 1px), linear-gradient(90deg, color-mix(in srgb, var(--accent) 30%, transparent) 1px, transparent 1px);
+  background-size: 64px 64px; mask-image: linear-gradient(to top, #000 0%, transparent 80%); }
+.gather-stage.whole .gather-floor { opacity: .12; }
+.gather-card { position: absolute; left: 0; top: 0; width: min(460px, 42vw); max-height: 52vh; overflow: hidden; box-sizing: border-box; padding: 16px 22px; border-radius: 14px; transform-origin: 50% 50%;
+  border: 1px solid var(--border); background: color-mix(in srgb, var(--bg-2) 94%, transparent); box-shadow: 0 18px 50px rgb(0 0 0 / .35);
+  transition: transform .45s cubic-bezier(.2, .7, .2, 1), opacity .35s ease, border-color .2s; will-change: transform; }
+.gather.dragging .gather-card { transition: none; }
+.gather-card.cur { border-color: color-mix(in srgb, var(--accent) 55%, var(--border)); background: var(--bg-2); box-shadow: 0 24px 70px rgb(0 0 0 / .45), 0 0 0 1px color-mix(in srgb, var(--accent) 25%, transparent); }
+.gather-card::after { content: ""; position: absolute; left: 0; right: 0; bottom: 0; height: 28px; background: linear-gradient(transparent, var(--bg-2)); pointer-events: none; }
+.gather-body > :first-child { margin-top: 0; }
+.gather-body > :last-child { margin-bottom: 0; }
+.gather-got { position: absolute; top: 8px; right: 10px; font-size: 10.5px; letter-spacing: .04em; text-transform: uppercase; color: var(--ok); display: none; }
+.gather-card.got { border-color: color-mix(in srgb, var(--ok) 50%, var(--border)); }
+.gather-card.got .gather-got { display: block; }
+.gather-stage.whole .gather-card { cursor: pointer; max-height: 380px; transform-origin: 50% 0; }
+.gather-ghost { position: fixed; z-index: 5; pointer-events: none; transition: none; margin: 0; }
+.gather-bottom { position: relative; z-index: 2; padding: 8px 24px 6px; border-top: 1px solid var(--border); background: color-mix(in srgb, var(--bg) 88%, transparent); }
+.gather-tray-head { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; }
+.gather-tray-head .grow { flex: 1; }
+.gather-count { font-size: 12.5px; color: var(--fg-dim); }
+.gather-tray { display: flex; gap: 10px; overflow-x: auto; min-height: 104px; padding: 4px 2px 8px; }
+.gather-piece { position: relative; flex: 0 0 170px; height: 96px; overflow: hidden; box-sizing: border-box; padding: 16px 9px 6px; border-radius: 8px; border: 1px solid var(--border); background: var(--bg-2); cursor: grab; touch-action: none; user-select: none; }
+.gather-piece .gather-body { font-size: 10px; line-height: 1.3; }
+.gather-piece .gather-body :is(h1, h2, h3, h4) { font-size: 12px; margin: 0; }
+.gather-piece.on { border-color: var(--accent); }
+.gather-piece.dragging { cursor: grabbing; z-index: 3; box-shadow: 0 10px 30px rgb(0 0 0 / .4); opacity: .92; }
+.gather-piece.fresh { animation: gather-in .45s cubic-bezier(.3, .7, .2, 1); }
+@keyframes gather-in { from { transform: translateY(-30px) scale(.9); opacity: 0; } to { transform: none; opacity: 1; } }
+.gather-from { position: absolute; top: 3px; left: 9px; font-size: 10px; color: var(--fg-faint); }
+.gather-hint { padding: 4px 24px 10px; font-size: 11.5px; color: var(--fg-faint); }
+.gather-hint.msg { font-size: 0; }
+.gather-hint.msg::before { content: attr(data-msg); font-size: 12px; color: var(--accent); }
+.gather.still .gather-card, .gather.still { transition: none; }
+.gather.still .gather-piece.fresh { animation: none; }

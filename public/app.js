@@ -3330,6 +3330,7 @@ const COMMANDS = [
   ['Lens: places that disagree (experimental)…', () => setTimeout(() => lensRun('conflict'), 0)],
   ['Lens: decisions and open questions (experimental)…', () => setTimeout(() => lensRun('decisions'), 0)],
   ['Forks: this paragraph, other ways (experimental)…', () => setTimeout(forkRun, 0)],
+  ['Gather: pieces of notes into one (experimental)', () => setTimeout(gatherView, 0)],
   ['Describe a key…', () => describeKey()],
   ['Describe a command…', () => setTimeout(describeCommand, 0)],
   ['Dired: edit a folder as text…', () => setTimeout(pickDiredFolder, 0)],
@@ -5766,6 +5767,51 @@ async function openSpaceView(tab, path = null) {
 function spaceComments(tab) {
   const lines = Object.entries(tab.spaceNotes || {}).flatMap(([p, list]) => list.map((x) => `- ${p}, at “${x.quote}”: ${x.text}`));
   return lines.length ? `My comments on your proposal:\n${lines.join('\n')}\n` : '';
+}
+
+// ---- Gather (experimental, gather.js): pieces of notes, flicked through in
+// depth and pulled into a tray, made into a new note. Only copies: the notes
+// they come from don't change. The tray stays until a note is made of it.
+let gatherMod = null;
+const gatherPile = [];
+async function gatherView() {
+  gatherMod ||= await import('./gather.js');
+  const open = S.tabs.filter((t) => t.kind === 'file' && isNote(t.path));
+  const first = fileTab() && isNote(fileTab().path) ? fileTab() : open[0];
+  if (!first) { toast('Gather takes pieces of notes: open a note first.', 'error'); return; }
+  const textOf = async (path) => {
+    const t = S.tabs.find((x) => x.kind === 'file' && x.path === path);
+    return t ? t.content : (await api('GET', `/api/file?path=${encodeURIComponent(path)}`)).content.replace(/\r\n/g, '\n');
+  };
+  gatherMod.openGather({
+    sources: [first, ...open.filter((t) => t !== first)].map((t) => ({ path: t.path, text: t.content })),
+    pieces: gatherPile,
+    render: (text, path) => renderMarkdown(text, { image: (url) => localImage(url, path) }),
+    add: () => new Promise((resolve) => {
+      const notes = S.files.filter((f) => f.note && !isTemplate(f.path));
+      picker({
+        placeholder: 'Gather from another note…',
+        source: (q) => notes.map((f) => ({ f, m: fuzzy(q, f.path) })).filter((x) => x.m).slice(0, 60).map(({ f, m }) => ({
+          icon: '❏', label: marked(f.path, m.idx), run: () => textOf(f.path).then((text) => resolve({ path: f.path, text }), (e) => { toast(e.message, 'error'); resolve(null); }),
+        })),
+        onCancel: () => resolve(null),
+      });
+    }),
+    make: async (textFor) => {
+      const base = dirname(first.path);
+      const name = await askText({ title: 'Make a note of the pieces', label: 'Path relative to the workspace. “.md” is added if missing. The notes they come from stay as they are.', value: `${base ? `${base}/` : ''}Gathered`, okLabel: 'Create' });
+      if (!name?.trim() || name.endsWith('/')) return false;
+      try {
+        const f = await api('POST', '/api/file', { path: name.trim(), content: textFor(basename(name.trim()).replace(/\.md$/i, '')) });
+        await loadTree();
+        await openFile(f.path);
+        toast(`Made ${f.path} of the pieces.`);
+        return true;
+      } catch (e) { toast(e.message, 'error'); return false; }
+    },
+    copy: (text) => navigator.clipboard.writeText(text).then(() => toast('The pieces copied as Markdown')),
+    close: () => focusEditor(),
+  });
 }
 
 // ---- Lens (experimental, lens.js): what the agent sees in a note, on it.

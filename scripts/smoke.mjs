@@ -1680,6 +1680,52 @@ await check('forks (experimental): the paragraph at the cursor other ways, switc
   if (!good) failed = true;
 }
 
+await check('gather (experimental): blocks of two notes pulled down into the tray, moved in it, made a new note; the notes they come from as they were', `
+  const mac = navigator.platform.startsWith('Mac');
+  await openNote('sub/lens.md');
+  await sleep(200);
+  document.body.dispatchEvent(new KeyboardEvent('keydown', { code: 'KeyP', key: 'p', bubbles: true, cancelable: true, metaKey: mac, ctrlKey: !mac }));
+  const input = await until(() => !$('#overlay').hidden && $('#overlay input'));
+  input.value = '>Gather';
+  input.dispatchEvent(new Event('input'));
+  await sleep(100);
+  input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }));
+  const g = await until(() => $('.gather'));
+  await sleep(200);
+  const cards = $$('.gather-card').map((c) => c.textContent.replace('gathered', ''));
+  key('ArrowRight', {}, g); await sleep(50);
+  key('ArrowDown', {}, g); await sleep(300);
+  const got = $$('.gather-card.got').length;
+  key('+', {}, g);
+  const pick = await until(() => !$('#overlay').hidden && $('#overlay input'));
+  pick.value = 'sub/fork';
+  pick.dispatchEvent(new Event('input'));
+  await sleep(100);
+  pick.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }));
+  await until(() => $('.gather-source.on')?.textContent === 'fork');
+  await sleep(100);
+  key('End', {}, g); await sleep(50);
+  key('ArrowDown', {}, g); await sleep(100);
+  key('<', {}, g); await sleep(50);
+  const tray = $$('.gather-piece').map((p) => p.textContent);
+  key('Enter', {}, g);
+  const name = await until(() => !$('#overlay').hidden && $('#overlay input'));
+  const asked = name.value;
+  name.value = 'sub/gathered';
+  button('Create', $('#overlay')).click();
+  await until(() => !$('.gather') && $('.tab.active')?.textContent.includes('gathered.md'), 5000);
+  return { cards, got, tray, asked, closed: !$('.gather') };
+`, (v) => (v?.cards?.join('|') === 'Lens|We ship on Friday.|Everyone obviously wants a very dark theme.|The launch is on Monday.' && v.got === 1
+  && v.tray.join('|') === 'forkThe end.|lensWe ship on Friday.' && v.asked === 'sub/Gathered' && v.closed ? null : `got ${JSON.stringify(v)}`));
+{
+  const made = fs.readFileSync(path.join(ws, 'sub', 'gathered.md'), 'utf8');
+  const kept = fs.readFileSync(path.join(ws, 'sub', 'lens.md'), 'utf8') === '# Lens\n\nWe ship on Friday.\n\nEveryone obviously wants a very dark theme.\n\nThe launch is on Monday.\n'
+    && fs.readFileSync(path.join(ws, 'sub', 'fork.md'), 'utf8') === '# Fork\n\n- We ship on Friday.\n- The team is ready.\n\nThe end.\n';
+  const good = kept && made === '# gathered\n\nThe end.\n\nWe ship on Friday.\n\n---\nGathered from [[fork]], [[lens]].\n';
+  console.log(`${good ? '✓' : '✗'} the gathered note is the pieces in the tray's order, the notes as they were`);
+  if (!good) { console.log(JSON.stringify(made)); failed = true; }
+}
+
 await check('history shows the version from before the agent changes, and restores it', `
   const mac = navigator.platform.startsWith('Mac');
   await openNote('sub/messy.md');

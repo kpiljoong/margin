@@ -162,6 +162,14 @@ A review draws each note **once**. When a run has more than the red pen on a not
 
 At the right of a long review, a **minimap** has a tick for each mark — red pen, the lens in its kind's colour, forks, your comments — where it is in the whole, the part in view shaded; a click goes there.
 
+### Gather: pieces of notes, by hand (experimental)
+
+**Gather: pieces of notes into one** (M-x or the palette) lays the note in view out as cards — a paragraph, a list, a table, a code block or a heading each, exactly as written — in a row that turns in depth, the one in front sharp. You go through them with a two-finger **swipe** on the trackpad (or ← →), **pull** the one in front **down** into the tray at the bottom (or ↓ / Space), and a **pinch** (or `z`) steps back to see the whole note as a grid. The chips at the top switch to the other open notes (Tab), and **+ Note** brings in any note of the workspace, so pieces of several notes go into one tray.
+
+In the tray the pieces stay in the order you put them; drag one sideways (or `<` `>`) to move it, up out of the tray (or `x`) to take it out. **Make a note…** (Enter) asks for a name and writes a new plain Markdown note: the pieces as they were written, in the tray's order, and a line with `[[links]]` to the notes they came from. **Copy** (`c`) puts the same Markdown on the clipboard instead. The notes you gathered from don't change — Gather only copies — and nothing is written until you make the note. The tray is kept while the app is open, so you can close it, look something up and go on. Esc closes. With reduced motion on, the cards don't turn.
+
+No agent is involved: it is a way of putting your own notes together by hand. It works with the trackpad, the mouse and the keys only — there is no camera and no hand tracking (Margin doesn't ask for the camera, and a model to follow hands would be a large dependency for less precise, more tiring work than a trackpad), and no free 3D space of notes to fly through (text is read best flat and in front, so the depth only shows where a card is in the row).
+
 ### Suggesting: your own red pen, in a meeting
 
 Margin's red pen is for you too, as tracked changes are in a word processor: made for leading a meeting with the note on a shared screen and correcting it as people talk. Only you write; it is not shared editing.
