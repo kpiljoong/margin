@@ -133,7 +133,7 @@ A lens asks the agent to look at the note in view without changing it, from one 
 
 Each fills in the task dialog, so you see what is asked and shared before it runs. The agent writes what it sees to `.agent-notes/lens.json` in its copy (any task that names that file gets the format); Margin keeps it with the run, never in the note, and keeps only findings whose quotes are really in the note.
 
-The review draws them **on the note**: each place marked in the colour of its kind (no support, disagree, open, decided, together), the places of one finding **joined by an arc** in the gutter, and the finding's card in the margin. The chips at the top show or hide a kind. The current finding lights its places and its arc; a click on a marked place or an arc picks its finding, a quote in a card shows its place.
+The review draws them **on the note** — the same page as the red pen, as a layer of it (see *Layers* below): each place marked in the colour of its kind (no support, disagree, open, decided, together), the places of one finding **joined by an arc** in the gutter (short arcs inside, long ones round them; words of two findings striped with both), and the finding's card in the margin among the red pen's. The kind chips show or hide a kind. The current finding (or the one under the pointer) lights its places and its arc, with a line from each place to its card; a click on a marked place or an arc picks its finding, a quote in a card shows its place.
 
 | Key | |
 |---|---|
@@ -142,19 +142,25 @@ The review draws them **on the note**: each place marked in the colour of its ki
 | `f` (or **Fix…** on a card) | follow up: the picked findings and the current one, written as a request for a red pen fix — edit it, then run it |
 | `o` / Enter | open the note at the finding |
 
-A fix comes back as a red pen proposal on the note, with the lens below it: nothing changes until you accept a mark and apply. The lens of a run stays with its follow-ups until one looks again.
+A fix comes back as a red pen proposal on the note, with the lens on the same page: nothing changes until you accept a mark and apply. The lens of a run stays with its follow-ups until one looks again.
 
 ### Forks: one paragraph, other ways (experimental)
 
 **Forks: this paragraph, other ways** (M-x or the palette) asks the agent for two or three other ways of writing the paragraph at the cursor — or the selection — through the task dialog, with the paragraph quoted in the task. The agent writes them to `.agent-notes/forks.json`; the note doesn't change.
 
-The review shows the paragraph **as it is** and the options **side by side**, each with a few words on how it differs, and below them **the note with the one in view in its place** — what comes before and after it as it is, the paragraph lit — so you read an option where it would stand. `j` / `k` (or the mouse over a column) change the one in view.
+The review shows them **on the note, in the paragraph's place**: a tab over the paragraph (`◀ 2/4 ▶`) and a card in the margin. On the card, **← →** (`h` `l`, or the arrows on the tab) switch the paragraph between **as it is** and each option, right where it stands — what comes before and after it as it is, an option shown dashed as a preview, with a few words on how it differs. **=** (or **Compare**) shows all of them side by side under the note, and again hides them.
 
-**Enter** (or **Take**) puts that option in the proposal: it is a change of the run like any other, already accepted — `a` applies it, `n` on its mark leaves it. Another option can be taken instead, and **Keep it** on the paragraph as it is takes it back. Only one paragraph at a time, and only that paragraph: the rest of the note isn't rewritten to go with it.
+**Enter** (or **Take**) puts the one shown in the proposal: it is a change of the run like any other, already accepted — `a` applies it, `n` on its mark leaves it. Another option can be taken instead, and **Keep it** on the paragraph as it is takes it back. Only one paragraph at a time, and only that paragraph: the rest of the note isn't rewritten to go with it.
 
 ### Film: a note through the rounds of a run (experimental)
 
-`F` in a review (or **Film**, shown once a run has a follow-up round or has been applied) plays the note through the run: **as it was**, each **round**'s proposal — with what you asked for it (the task, then each follow-up) and the agent's margin notes of that round — and what was **applied**. Each frame shows its changes from the one before as the red pen does, struck through and written in. ← → (`h` `l`) step, the slider and the frames above it jump, Space plays, Esc closes. It only shows: nothing in it changes a note.
+`F` in a review (or **Film**, shown once a run has a follow-up round or has been applied) plays the note through the run: **as it was**, each **round**'s proposal — with what you asked for it (the task, then each follow-up) and the agent's margin notes of that round — and what was **applied**. Each frame shows its changes from the one before as the red pen does, struck through and written in — going to a frame, only the paragraphs that changed are written in again, one after another. Over the slider, a bar for each frame is as tall as its change (characters taken out and put in), so the rounds that changed the most stand out. ← → (`h` `l`) step, the slider, the bars and the frames above it jump, Space plays, Esc closes. It only shows: nothing in it changes a note.
+
+### Layers: one note, what is on it (experimental)
+
+A review draws each note **once**. When a run has more than the red pen on a note — the lens, forks, or comments you wrote in the space — they are **layers** of the same red pen page, and the chips at its top (**Proposal**, **Lens**, **Forks**, **My comments**, with how many) show or hide each. Hidden, a layer's marks and cards go, and `j` / `k` skip them: with every layer shown they go through all the marks in the order of the note. With the proposal hidden, the note reads as it was shared (what the lens looked at). The diff view (`v`) shows the lens and forks apart, as before.
+
+At the right of a long review, a **minimap** has a tick for each mark — red pen, the lens in its kind's colour, forks, your comments — where it is in the whole, the part in view shaded; a click goes there.
 
 ### Suggesting: your own red pen, in a meeting
 

@@ -1159,3 +1159,94 @@ li.callout-hot { background: color-mix(in srgb, var(--accent) 16%, transparent);
 .film-doc { max-width: 760px; margin: 0 auto; }
 .film-hint { font-size: 11.5px; color: var(--fg-faint); padding-top: 6px; }
 .film.playing .film-hint::after { content: " · playing"; color: var(--accent); }
+
+/* layers (experimental, layers.js): the proposal, the lens, forks and my comments on one note */
+.layer-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin: 0 0 10px 44px; }
+.layer-badge { font-size: 10.5px; letter-spacing: .04em; text-transform: uppercase; color: var(--fg-faint); margin-right: 4px; }
+.layer-chip { font: inherit; font-size: 12px; padding: 1px 9px; border-radius: 10px; border: 1px solid var(--lc); background: color-mix(in srgb, var(--lc) 14%, transparent); color: var(--fg); cursor: pointer; }
+.layer-chip.off { background: none; color: var(--fg-faint); border-style: dashed; }
+.layer-pen { --lc: var(--pen); }
+.layer-lens { --lc: var(--warn); }
+.layer-forks { --lc: var(--accent); }
+.layer-mine { --lc: var(--pen-me); }
+.layer-kinds { display: inline-flex; flex-wrap: wrap; gap: 4px; margin-left: 4px; }
+.layer-kinds .lens-chip { font-size: 11px; padding: 0 7px; }
+.layer-off-lens .layer-kinds { display: none; }
+.pen-page.layered { padding-left: 6px; }
+.layered-body { grid-template-columns: 44px minmax(0, 1fr) 244px; column-gap: 0; }
+.layered-body > .pen-doc { grid-column: 2; }
+.layered-body > .pen-margin { grid-column: 3; margin-left: 34px; }
+.layered-body > .lens-arcs { pointer-events: none; }
+.layer-card[hidden] { display: none; }
+.layered .lens-card { font-size: 12px; }
+.lens-tie { fill: none; stroke: var(--lk); stroke-width: 1.2; stroke-dasharray: 3 3; opacity: .8; }
+.lens-q.lens-multi { background-image: repeating-linear-gradient(135deg, color-mix(in srgb, var(--lk) 30%, transparent) 0 5px, color-mix(in srgb, var(--lk2) 30%, transparent) 5px 10px); }
+.layer-off-lens .lens-q { background: none; border-bottom-color: transparent; cursor: inherit; }
+.layer-off-pen .pen-doc :is(.pen-ins, .pen-insl) { display: none; }
+/* a line the proposal only put in: gone with it */
+.layer-off-pen .pen-doc :is(li, p):has(> .pen-insl):not(:has(> :not(.pen-insl))) { display: none; }
+.layer-off-pen .pen-doc .pen-del { text-decoration: none; opacity: 1; }
+.layer-off-pen .pen-doc .pen-anchor { text-decoration: none; }
+.layer-off-pen .pen-lines { display: none; }
+.mine-q { text-decoration: underline dotted var(--pen-me); text-decoration-thickness: 2px; text-underline-offset: 3px; cursor: pointer; }
+.mine-q.mine-on { background: color-mix(in srgb, var(--pen-me) 18%, transparent); border-radius: 2px; }
+.layer-off-mine .mine-q { text-decoration: none; cursor: inherit; }
+.mine-card { position: absolute; left: 0; right: 0; top: 0; padding: 3px 6px 3px 9px; border-left: 2px solid var(--pen-me); border-radius: 0 var(--radius) var(--radius) 0; background: var(--bg); font-size: 12.5px; overflow-wrap: anywhere; }
+.mine-who { font-weight: 600; font-size: 11px; color: var(--pen-me); margin-right: 6px; }
+.review .mine-card.kb-cur { box-shadow: none; background: color-mix(in srgb, var(--pen-me) 10%, var(--bg)); }
+.review:focus .mine-card.kb-cur { outline: 1px solid color-mix(in srgb, var(--pen-me) 45%, transparent); }
+.fork-tab { display: flex; align-items: center; gap: 2px; width: fit-content; margin: 8px 0 -6px -6px; padding: 1px 6px 1px 2px; font-size: 11.5px; color: var(--fg-dim); border: 1px solid var(--border); border-radius: 10px; background: var(--bg-2); cursor: pointer; }
+.fork-tab.pen-on { background: var(--bg-2); }
+.fork-tab.on { border-color: var(--accent); color: var(--fg); }
+.fork-tab.previewing .fork-tab-label { color: var(--accent); }
+.fork-step { border: 0; background: none; color: inherit; cursor: pointer; padding: 0 4px; font-size: 10px; line-height: 18px; }
+.fork-step:hover { color: var(--accent); }
+.fork-region { background: color-mix(in srgb, var(--accent) 5%, transparent); border-radius: 2px; }
+.fork-swap { outline: 1px dashed color-mix(in srgb, var(--accent) 55%, transparent); outline-offset: 4px; background: color-mix(in srgb, var(--accent) 9%, transparent); border-radius: 2px; margin: 1em 0; }
+.fork-swap > :first-child { margin-top: 0; }
+.fork-swap > :last-child { margin-bottom: 0; }
+.layer-off-forks .fork-tab { display: none; }
+.layer-off-forks .fork-region { background: none; }
+.fork-fade { animation: fork-fade .3s ease-out; }
+@keyframes fork-fade { from { opacity: 0; transform: translateY(3px); } to { opacity: 1; transform: none; } }
+.fork-card { position: absolute; left: 0; right: 0; top: 0; padding: 4px 6px 5px 9px; border-left: 3px solid var(--accent); border-radius: 0 var(--radius) var(--radius) 0; background: var(--bg); font-size: 12px; }
+.fork-card-head { display: flex; align-items: baseline; gap: 6px; }
+.fork-kind { font-size: 10.5px; font-weight: 600; letter-spacing: .03em; text-transform: uppercase; color: var(--accent); }
+.fork-card-count { font-size: 11.5px; color: var(--fg-dim); }
+.fork-card .fork-why { margin: 2px 0 0; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 3; overflow: hidden; }
+.fork-card.kb-cur .fork-why { display: block; }
+.fork-acts { display: flex; align-items: center; gap: 6px; margin-top: 4px; }
+.fork-acts .btn { padding: 0 7px; }
+.fork-state { font-size: 11px; color: var(--fg-faint); margin-right: auto; }
+.fork-card:not(.kb-cur) .fork-acts .btn:last-child { display: none; }
+.review .fork-card.kb-cur { box-shadow: none; background: color-mix(in srgb, var(--accent) 9%, var(--bg)); }
+.review:focus .fork-card.kb-cur { outline: 1px solid color-mix(in srgb, var(--accent) 50%, transparent); }
+.layer-compare { margin: 4px 0 8px; border-top: 1px dashed var(--border); }
+@media (max-width: 760px) { .layered-body { grid-template-columns: 30px minmax(0, 1fr) 168px; } .layered-body > .pen-margin { margin-left: 18px; } }
+@media (prefers-reduced-motion: reduce) { .fork-fade { animation: none; } }
+
+/* the minimap (experimental, layers.js): a tick for each mark, at the side of the review */
+.minimap { position: sticky; top: 0; height: 0; z-index: 4; }
+.minimap[hidden] { display: none; }
+.mm-bar { position: absolute; right: -23px; top: -20px; width: 12px; border-left: 1px solid var(--border); }
+.mm-view { position: absolute; left: 0; right: 0; background: color-mix(in srgb, var(--fg) 8%, transparent); border-radius: 2px; pointer-events: none; }
+.mm-tick { position: absolute; left: 2px; width: 9px; height: 3px; margin-top: -1px; padding: 0; border: 0; border-radius: 1px; background: var(--fg-faint); cursor: pointer; opacity: .85; }
+.mm-tick:hover { opacity: 1; transform: scaleY(2); }
+.mm-pen { background: var(--pen); }
+.mm-pen.mm-y { background: var(--ok); }
+.mm-pen.mm-n { opacity: .35; }
+.mm-lens { background: var(--lk); }
+.mm-fork { background: var(--accent); height: 5px; margin-top: -2px; }
+.mm-mine { background: var(--pen-me); }
+.mm-tick.mm-cur { left: -3px; width: 15px; opacity: 1; box-shadow: 0 0 0 1px var(--bg); }
+.film-scale { position: relative; width: 100%; max-width: 720px; margin-top: 8px; }
+.film-scale .film-range { margin-top: 0; }
+.film-bars { display: flex; justify-content: space-between; align-items: flex-end; height: 26px; }
+.film-bar { width: 14px; min-height: 2px; padding: 0; border: 0; border-radius: 2px 2px 0 0; background: color-mix(in srgb, var(--pen) 45%, transparent); cursor: pointer; }
+.film-bar.film-original { background: var(--border); }
+.film-bar.film-applied { background: color-mix(in srgb, var(--ok) 50%, transparent); }
+.film-bar.on { background: var(--pen); }
+.film-bar.film-applied.on { background: var(--ok); }
+.film-write { animation: film-write .7s ease-out both; }
+@keyframes film-write { from { clip-path: inset(0 100% 0 0); opacity: .25; } to { clip-path: inset(0 0 0 0); opacity: 1; } }
+@media (prefers-reduced-motion: reduce) { .film-write { animation: none; } }

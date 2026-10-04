@@ -25,6 +25,10 @@ export function frameCaption(f) {
   return lines;
 }
 
+// How much a frame changes from the one before: the characters taken out
+// and put in.
+export const changeAmount = (f) => (f.hunks || []).reduce((n, hk) => n + hk.removed.join('\n').length + hk.added.join('\n').length, 0);
+
 function el(tag, cls, ...kids) {
   const e = document.createElement(tag);
   if (cls) e.className = cls;
@@ -49,18 +53,31 @@ export function openFilm(opts) {
   const range = el('input', 'film-range');
   Object.assign(range, { type: 'range', min: 0, max: frames.length - 1, step: 1 });
   range.addEventListener('input', () => { stop(); show(Number(range.value)); });
+  // Over the slider, a bar for each frame as tall as its change.
+  const most = Math.max(1, ...frames.map(changeAmount));
+  const bars = el('div', 'film-bars', frames.map((f, k) => {
+    const b = el('button', `film-bar film-${f.kind}`);
+    const n = changeAmount(f);
+    b.style.height = `${n ? Math.max(12, Math.round((n / most) * 100)) : 4}%`;
+    b.title = `${frameLabel(f)}: ${n ? `${n} character${n === 1 ? '' : 's'} changed` : 'no change'}`;
+    b.tabIndex = -1;
+    b.addEventListener('click', () => { stop(); show(k); root.focus({ preventScroll: true }); });
+    return b;
+  }));
   const caption = el('div', 'film-caption');
   const doc = el('div', 'film-doc md');
   const hint = el('div', 'film-hint', '← → (h l) a frame · Space plays · Esc closes');
   const root = el('div', 'film',
     el('div', 'film-head', el('span', 'film-badge', 'Film · experimental'), el('span', 'film-path', opts.path)),
-    strip, range, caption, el('div', 'film-page', doc), hint);
+    strip, el('div', 'film-scale', bars, range), caption, el('div', 'film-page', doc), hint);
   root.tabIndex = 0;
 
   function show(k) {
+    const step = k !== cur;
     cur = k;
     range.value = String(k);
     [...strip.children].forEach((b, i) => b.classList.toggle('on', i === k));
+    [...bars.children].forEach((b, i) => b.classList.toggle('on', i === k));
     const f = frames[k];
     caption.replaceChildren(...frameCaption(f).map((t) => el('div', 'film-said', t)),
       ...(f.notes?.length ? [el('ul', 'film-notes', f.notes.map((t) => el('li', null, t)))] : []));
@@ -69,8 +86,15 @@ export function openFilm(opts) {
     const marked = prev && f.hunks?.length ? pen.penSource(prev.text, f.hunks, []).text : f.text;
     doc.innerHTML = opts.render(marked);
     pen.decorate(doc);
+    // Only what changed is written in again, one block after another.
+    if (step) {
+      [...doc.children].filter((b) => b.querySelector('[data-mark]')).forEach((b, i) => {
+        b.style.animationDelay = `${i * 90}ms`;
+        b.classList.add('film-write');
+      });
+    }
     const first = doc.querySelector('[data-mark]');
-    if (first) doc.parentElement.scrollTop = Math.max(0, first.offsetTop - doc.parentElement.clientHeight / 3);
+    if (first) doc.parentElement.scrollTo({ top: Math.max(0, first.offsetTop - doc.parentElement.clientHeight / 3), behavior: timer ? 'smooth' : 'auto' });
   }
   function stop() { clearInterval(timer); timer = null; root.classList.remove('playing'); }
   function play() {

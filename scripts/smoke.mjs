@@ -1603,13 +1603,20 @@ await check('the lens (experimental): a command asks where the note disagrees; t
   await sleep(300);
   const pen = $$('.pen-card').map((c) => c.textContent);
   const still = $$('.lens-card').length;
+  // One note, the proposal and the lens on it as layers: the lens hidden, its cards are no stops.
+  const chips = $$('.layer-chip').map((x) => x.textContent.replace(/ \\d+$/, ''));
+  const pages = $$('.review .pen-page').length;
+  $('.layer-chip.layer-lens').click();
+  await sleep(100);
+  const hidden = $$('.lens-card').every((c) => c.hidden && !c.classList.contains('kb-item')) && !$('.lens-arc');
+  $('.layer-chip.layer-lens').click();
   button('Discard', $('#main')).click();
   button('Discard', await until(() => $('.dialog.confirm'))).click();
   await until(() => /Discarded/.test($('.review')?.textContent || ''), 5000);
-  return { asked, kinds, arcs, changes, lit, picked, said, pen, still };
+  return { asked, kinds, arcs, changes, lit, picked, said, pen, still, chips, hidden, pages };
 `, (v) => (/lens\.json/.test(v?.asked) && v.kinds.join() === 'Disagree,No support' && v.arcs === 1 && /no changes/.test(v.changes)
   && v.lit.join('|') === 'We ship on Friday.|The launch is on Monday.' && v.picked && /^Fix this with the red pen/.test(v.said) && /Friday here, Monday there/.test(v.said)
-  && v.pen.some((t) => /very/.test(t)) && v.still === 2 ? null : `got ${JSON.stringify(v)}`));
+  && v.pen.some((t) => /very/.test(t)) && v.still === 2 && v.chips.join() === 'Proposal,Lens' && v.hidden && v.pages === 1 ? null : `got ${JSON.stringify(v)}`));
 {
   const t = fs.readFileSync(path.join(ws, 'sub', 'lens.md'), 'utf8');
   const good = t === '# Lens\n\nWe ship on Friday.\n\nEveryone obviously wants a very dark theme.\n\nThe launch is on Monday.\n';
@@ -1617,7 +1624,7 @@ await check('the lens (experimental): a command asks where the note disagrees; t
   if (!good) failed = true;
 }
 
-await check('forks (experimental): the paragraph at the cursor other ways, side by side, the one in view in the note; Enter takes it, accepted; applied, the film (F) shows the note through it', `
+await check('forks (experimental): the paragraph at the cursor other ways, switched in its place on the note (= side by side); Enter takes it, accepted; applied, the film (F) shows the note through it', `
   const mac = navigator.platform.startsWith('Mac');
   const ta = await openNote('sub/fork.md');
   ta.focus();
@@ -1631,17 +1638,24 @@ await check('forks (experimental): the paragraph at the cursor other ways, side 
   const task = await until(() => !$('#overlay').hidden && $('#overlay textarea'));
   const asked = task.value;
   button('Run on staged copy', $('#overlay')).click();
-  await until(() => $$('.review .fork-col').length === 4, 20000);
+  const card = await until(() => $('.review .fork-card'), 20000);
   await sleep(300);
-  const titles = $$('.fork-title').map((x) => x.textContent);
-  const list = $('.fork-col[data-opt="1"]');
-  list.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }));
+  card.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }));
   $('.review').focus();
+  const ways = [];
+  for (let k = 0; k < 4; k++) { ways.push($('.fork-tab-label').textContent); key('ArrowRight'); await sleep(50); }
+  key('ArrowRight'); key('ArrowRight');
   await sleep(100);
-  const shown = $$('.forks-doc .fork-here').map((x) => x.textContent);
+  const shown = $$('.layered .fork-swap li').map((x) => x.textContent);
+  key('=');
+  await until(() => $$('.fork-col').length === 4);
+  const titles = $$('.fork-title').map((x) => x.textContent);
+  key('=');
+  await until(() => !$('.fork-col'));
   key('Enter');
-  await until(() => $('.fork-col.fork-in[data-opt="1"]') && $('.review .pen-card'), 10000);
+  await until(() => /taken/.test($('.fork-tab-label')?.textContent) && $('.review .pen-card'), 10000);
   await sleep(200);
+  const taken = $('.fork-tab-label').textContent;
   const marks = $$('.pen-card').map((c) => c.classList.contains('pen-y'));
   const apply = button('Apply', $('#main')).textContent;
   key('a');
@@ -1650,12 +1664,14 @@ await check('forks (experimental): the paragraph at the cursor other ways, side 
   key('F');
   const film = await until(() => $('.film'));
   const frames = $$('.film-frame').map((x) => x.textContent);
+  const bars = $$('.film-bar').map((x) => x.style.height);
   key('h'); await sleep(100);
   const round = { on: $('.film-frame.on')?.textContent, ins: $$('.film-doc .pen-insl').length, del: $$('.film-doc .pen-del').length, said: $('.film-caption').textContent };
   key('Escape'); await sleep(100);
-  return { asked, titles, shown, marks, apply, frames, round, closed: !$('.film') && !!document.activeElement.closest('.review') };
+  return { asked, ways, titles, shown, taken, marks, apply, frames, bars, round, closed: !$('.film') && !!document.activeElement.closest('.review') };
 `, (v) => (/forks\.json/.test(v?.asked) && /<<<\nWe ship on Friday\. The team is ready\.\n>>>/.test(v.asked) && v.titles.join() === 'As it is,Option 1,Option 2,Option 3'
-  && v.shown.join('|') === 'We ship on Friday.|The team is ready.' && v.marks.length && v.marks.every(Boolean) && v.apply === `Apply ${v.marks.length} accepted`
+  && v.ways.join('|') === '1/4 \u00b7 As it is \u00b7 in the note|2/4 \u00b7 Option 1 \u00b7 preview|3/4 \u00b7 Option 2 \u00b7 preview|4/4 \u00b7 Option 3 \u00b7 preview'
+  && v.shown.join('|') === 'We ship on Friday.|The team is ready.' && v.taken === '3/4 \u00b7 Option 2 \u00b7 taken' && v.bars.length === 3 && v.bars[1] === '100%' && v.marks.length && v.marks.every(Boolean) && v.apply === `Apply ${v.marks.length} accepted`
   && v.frames.join() === 'As it was,Round 1,Applied' && v.round.on === 'Round 1' && v.round.ins === 2 && v.round.del === 1 && v.round.said === 'The agent\u2019s proposal' && v.closed ? null : `got ${JSON.stringify(v)}`));
 {
   const t = fs.readFileSync(path.join(ws, 'sub', 'fork.md'), 'utf8');

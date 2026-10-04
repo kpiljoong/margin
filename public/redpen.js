@@ -39,8 +39,9 @@ export { wordOps };
 // suggest, made, n } — n their number in the run).
 // A hunk with `picture` (a number, public/penpic.js) is drawn on its picture:
 // only its mark is made, no lines.
-// → { text, marks: [{ key, kind: 'hunk' | 'note', i?, line, notes: [comment], picture? }], general: [comment] }
-// marks in the order of the note.
+// → { text, marks: [{ key, kind: 'hunk' | 'note', i?, line, notes: [comment], picture? }], general: [comment],
+// rows: [{ line, i }] } — marks in the order of the note; rows: for each line
+// of text, the line of base it comes from (and its hunk, or -1).
 export function penSource(base, hunks = [], comments = []) {
   const lines = base.split('\n');
   const starts = [];
@@ -88,6 +89,8 @@ export function penSource(base, hunks = [], comments = []) {
 
   const marks = [...notes];
   const out = [];
+  const rows = [];
+  const push = (s, line, i = -1) => { if (s != null) { out.push(s); rows.push({ line, i }); } };
   let pos = 0;
   const plain = (ln) => {
     const list = anchors.get(ln);
@@ -97,7 +100,7 @@ export function penSource(base, hunks = [], comments = []) {
     return l;
   };
   hunks.forEach((hk, i) => {
-    for (; pos < hk.baseStart; pos++) out.push(plain(pos));
+    for (; pos < hk.baseStart; pos++) push(plain(pos), pos);
     const key = `h${i}`;
     // A change drawn on its picture (public/penpic.js): only its mark here.
     if (hk.picture != null) { marks.push({ key, kind: 'hunk', i, line: hk.baseStart, notes: byHunk.get(i) || [], picture: hk.picture }); return; }
@@ -110,24 +113,25 @@ export function penSource(base, hunks = [], comments = []) {
     const R = hk.removed;
     const A = hk.added;
     const pair = R.length === A.length && R.length <= 20;
-    const rows = [];
+    const made = [];
+    const at = (k) => hk.baseStart + Math.max(0, Math.min(k, hk.baseEnd - hk.baseStart - 1));
     if (pair) {
       R.forEach((r, k) => {
         const a = A[k];
         const [pr, rr] = split(r);
         const [pa, ra] = split(a);
-        if (structural(r) || structural(a) || pr !== pa) { rows.push(del(r), ins(a)); return; }
-        rows.push(pa + wordOps(rr, ra).map(([op, s]) => (op === '=' ? s : wrap(op === '-' ? DEL : INS, s))).join(''));
+        if (structural(r) || structural(a) || pr !== pa) { made.push([del(r), at(k)], [ins(a), at(k)]); return; }
+        made.push([pa + wordOps(rr, ra).map(([op, s]) => (op === '=' ? s : wrap(op === '-' ? DEL : INS, s))).join(''), at(k)]);
       });
-    } else rows.push(...R.map(del), ...A.map(ins));
+    } else made.push(...R.map((r, k) => [del(r), at(k)]), ...A.map((a, k) => [ins(a), at(k)]));
     // Only spaces or empty lines changed: a pilcrow to show where.
-    if (!seen) rows.push((A.join('\n').length >= R.join('\n').length ? INSL : DEL) + id + '¶' + END);
-    out.push(...rows.filter((r) => r != null));
+    if (!seen) made.push([(A.join('\n').length >= R.join('\n').length ? INSL : DEL) + id + '¶' + END, at(0)]);
+    for (const [s, line] of made) push(s, line, i);
     marks.push({ key, kind: 'hunk', i, line: hk.baseStart, notes: byHunk.get(i) || [] });
   });
-  for (; pos < lines.length; pos++) out.push(plain(pos));
+  for (; pos < lines.length; pos++) push(plain(pos), pos);
   marks.sort((a, b) => a.line - b.line || (a.at ?? -1) - (b.at ?? -1));
-  return { text: out.join('\n'), marks, general };
+  return { text: out.join('\n'), marks, general, rows };
 }
 
 // The rendered note: the marks as elements (span.pen-del / pen-ins /
@@ -171,7 +175,8 @@ export function decorate(root) {
 
 // The margin notes beside their marks: each at the height of its first
 // mark, none over another, with a line from the mark to it. page holds
-// .pen-doc, .pen-margin (the .pen-card[data-mark] in order) and svg.pen-lines.
+// .pen-doc, .pen-margin (the .pen-card[data-mark] in order, and the cards
+// of other layers, .layer-card[data-mark], among them) and svg.pen-lines.
 export function layoutMargin(page) {
   const doc = page.querySelector('.pen-doc');
   const margin = page.querySelector('.pen-margin');
@@ -187,7 +192,8 @@ export function layoutMargin(page) {
   // Lines start past the end of the text, so they never read as a strike.
   const dx = doc.getBoundingClientRect().right - box.left + 6;
   let next = 0;
-  for (const card of margin.querySelectorAll('.pen-card')) {
+  for (const card of margin.querySelectorAll('.pen-card, .layer-card')) {
+    if (card.hidden) continue;
     const mark = doc.querySelector(`[data-mark="${card.dataset.mark}"]`);
     const r = (mark?.getClientRects()[0]) || mark?.getBoundingClientRect();
     const y = r ? r.top - box.top : next;

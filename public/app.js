@@ -5468,10 +5468,11 @@ async function refreshReview(tab) {
   try { tab.run = await api('GET', `/api/runs/${tab.runId}`); }
   catch (e) { toast(e.message, 'error'); return; }
   const run = tab.run;
-  const marked = penFirst() || run.comments?.length || run.lens?.length;
+  const marked = penFirst() || run.comments?.length || run.lens?.length || run.forks?.length;
   if (marked && run.status !== 'running') await loadPen();
   if (run.lens?.length) lensMod ||= await import('./lens.js');
   if (run.forks?.length) forksMod ||= await import('./forks.js');
+  if (pen) layersMod ||= await import('./layers.js');
   // Default: everything that can be applied is selected.
   // Applied/undone runs show what was actually applied.
   const appliedBy = new Map((run.applied?.files || []).map((f) => [f.path, f]));
@@ -5615,7 +5616,7 @@ function fileCard(c, tab, locked) {
     body.push(h('div', { class: 'review-note warn' },
       `You edited this file while the agent worked. ${c.hunks.length - conflicts.size} of ${c.hunks.length} changes merge cleanly with your edits and can be applied; overlapping ones are locked.`));
   }
-  if (view === 'pen' && pen) body.push(penPage(c, tab, lock));
+  if (view === 'pen' && pen) body.push(notePage(c, tab, lock));
   else if (view === 'result') {
     // Render the note as it would read with exactly the selected changes.
     const text = c.status === 'added' ? c.lines.join('\n') : applySelected(c.base, c.hunks, dec.hunks);
@@ -5656,36 +5657,43 @@ function markState(tab, path, m, lock) {
   return on ? 'y' : lock || said === 'n' ? 'n' : 'open';
 }
 
-function penPage(c, tab, lock) {
-  const notes = (tab.run.comments || []).map((x, n) => ({ ...x, n })).filter((x) => x.file === c.path);
+// extra: the places of other layers (layers.js layerNotes), marked on the
+// note with the agent's notes but without cards of their own.
+function penPage(c, tab, lock, extra = []) {
+  const notes = [...(tab.run.comments || []).map((x, n) => ({ ...x, n })).filter((x) => x.file === c.path), ...extra];
   // Changes inside a ```flow or ```ink block are drawn on its picture
   // (public/penpic.js); the rest of the note is marked as text.
   const hunks = c.hunks || [];
   const pics = pictureHunks(c.base, hunks);
   const placed = penPlaces(c.base, hunks, pics);
-  const { text, marks, general } = pen.penSource(placed.base, placed.hunks, notes);
+  const { text, marks, general, rows } = pen.penSource(placed.base, placed.hunks, notes);
   for (const m of marks) m.line = m.kind === 'hunk' ? hunks[m.i].baseStart : placed.back[m.line] ?? m.line;
   const doc = pen.decorate(h('div', { class: 'pen-doc md', html: renderMarkdown(text, { image: (url) => localImage(url, c.path) }) }));
   const conflicts = new Set(lock ? [] : c.conflicts || []);
-  const cards = marks.map((m) => {
+  const own = (m) => m.notes.filter((x) => !x.layer);
+  // Only another layer's place: no mark of the red pen.
+  const theirs = (m) => m.kind === 'note' && !own(m).length;
+  for (const m of marks.filter(theirs)) for (const el of doc.querySelectorAll(`[data-mark="${m.key}"]`)) el.classList.remove('pen-anchor');
+  const cards = marks.filter((m) => !theirs(m)).map((m) => {
     const st = markState(tab, c.path, m, lock);
     for (const el of doc.querySelectorAll(`[data-mark="${m.key}"]`)) el.classList.add(`pen-${st}`);
     const stuck = lock || conflicts.has(m.i);
     const what = m.kind === 'note' ? ['Noted', 'Dismiss'] : tab.kind === 'outside' ? ['Keep', 'Undo'] : ['Accept', 'Reject'];
     const drawn = m.picture != null;
     m.what = drawn ? pictureSummary(pics[m.picture], m.i) : null;
-    return h('div', { class: `pen-card kb-item pen-${st}${m.notes.length || drawn ? ' noted' : ''}`, 'data-path': c.path, 'data-hunk': m.key, 'data-mark': m.key, 'data-line': m.line + 1 },
+    return h('div', { class: `pen-card kb-item pen-${st}${own(m).length || drawn ? ' noted' : ''}`, 'data-path': c.path, 'data-hunk': m.key, 'data-mark': m.key, 'data-line': m.line + 1 },
       stuck ? null : h('div', { class: 'pen-acts' },
         h('button', { class: 'pen-yes', title: `${what[0]} (y)`, onclick: () => penDecide(tab, c.path, m.key, 'y', false) }, '✓'),
         h('button', { class: 'pen-no', title: `${what[1]} (n)`, onclick: () => penDecide(tab, c.path, m.key, 'n', false) }, '✗')),
       drawn ? h('div', { class: 'pen-note pen-pic-what' }, pictureSummary(pics[m.picture], m.i)) : null,
-      m.notes.map((x) => h('div', { class: 'pen-note', title: x.comment || x.suggest },
+      own(m).map((x) => h('div', { class: 'pen-note', title: x.comment || x.suggest },
         x.speaker ? h('span', { class: 'pen-who' }, `@${x.speaker}`) : null, x.time ? h('span', { class: 'pen-when' }, hhmm(x.time)) : null,
         x.comment || `→ ${x.suggest}`, x.replies?.length ? h('span', { class: 'pen-when' }, ` +${x.replies.length}`) : null)),
       conflicts.has(m.i) ? h('div', { class: 'pen-stuck' }, c.problems?.[m.i] || 'overlaps your edit') : null);
   });
+  const said = general.filter((x) => !x.layer);
   const page = h('div', { class: 'pen-page' },
-    general.length ? h('div', { class: 'pen-general' }, general.map((x) => h('div', { class: 'pen-note' }, x.comment || x.suggest))) : null,
+    said.length ? h('div', { class: 'pen-general' }, said.map((x) => h('div', { class: 'pen-note' }, x.comment || x.suggest))) : null,
     h('div', { class: 'pen-body' }, doc, h('div', { class: 'pen-margin' }, cards)));
   const svg = document.createElementNS(SVG_NS, 'svg');
   svg.classList.add('pen-lines');
@@ -5705,7 +5713,7 @@ function penPage(c, tab, lock) {
     if (k != null && pics[k]) showPicture(p, pics[k], { state, render: renderDiagrams, drawn: () => pen.layoutMargin(body) });
   }
   pen.watchMargin(body);
-  page.penInfo = { marks, conflicts, lock };
+  page.penInfo = { marks, conflicts, lock, rows: rows.map((r) => ({ ...r, line: placed.back[r.line] ?? r.line })) };
   return page;
 }
 
@@ -5833,6 +5841,7 @@ async function takeFork(tab, n, pick) {
   delete tab.decisions[f.file];
   if (tab.pen) delete tab.pen[f.file];
   tab.cur = `${f.file}#F${n}.${pick == null ? 'o' : pick}`;
+  (tab.forkShown ||= {})[n] = pick == null ? 'o' : String(pick);
   await refreshReview(tab);
   // Taken is accepted: the marks on the paragraph's lines.
   const c = tab.run.changes.find((x) => x.path === f.file);
@@ -5849,8 +5858,12 @@ async function takeFork(tab, n, pick) {
     });
     renderContent(tab.group);
   }
+  // On the note, the fork's card stays the current one.
+  const wrap = bufferEl(tab);
+  const card = wrap && !reviewItems(wrap).some((el) => itemKey(el) === tab.cur) && wrap.querySelector(`.fork-card[data-fork="${n}"]`);
+  if (card) setReviewCur(tab, card);
   toast(pick == null ? 'The paragraph is back as it is.' : `Option ${pick + 1} is in the proposal, accepted: a applies it.`);
-  bufferEl(tab)?.focus({ preventScroll: true });
+  wrap?.focus({ preventScroll: true });
 }
 
 // ---- Film (experimental, film.js): a note through the rounds of this run.
@@ -5870,14 +5883,55 @@ async function openFilmView(tab) {
 }
 const filmable = (run) => run.kind !== 'proof' && (run.round > 1 || !!run.applied);
 
-// A note the agent only wrote margin notes on (no change to it).
-function remarksCard(path, base, tab) {
+// A note the agent only wrote margin notes on (no change to it), or only
+// looked at (the lens) or wrote a paragraph of other ways (forks).
+function remarksCard(path, base, tab, badge = 'notes') {
   return h('div', { class: 'file-card', 'data-path': path },
     h('div', { class: 'file-card-head' },
-      h('span', { class: 'badge st-review' }, 'notes'),
+      h('span', { class: 'badge st-review' }, badge),
       h('span', { class: 'path' }, path),
       h('button', { class: 'btn small', onclick: () => openFile(path) }, 'Open')),
-    pen ? penPage({ path, base, hunks: [] }, tab, false) : null);
+    pen ? notePage({ path, base, hunks: [] }, tab, false) : null);
+}
+
+// ---- Layers (experimental, layers.js): the lens, forks and my comments
+// drawn on the red pen page of their note, each a layer shown or hidden.
+let layersMod = null;
+function layersOf(tab, path) {
+  const run = tab.run;
+  return {
+    lens: (run.lens || []).map((f, i) => ({ ...f, i })).filter((f) => f.file === path),
+    forks: (run.forks || []).map((f, n) => ({ ...f, n })).filter((f) => f.file === path && run.lensBases?.[path] != null),
+    mine: tab.spaceNotes?.[path] || [],
+  };
+}
+const hasLayers = (l) => !!(l && (l.lens.length || l.forks.length || l.mine.length));
+// The red pen page of a note, with the layers on it; a fork compared (=)
+// below it, its ways side by side.
+function notePage(c, tab, lock) {
+  const l = layersMod && layersOf(tab, c.path);
+  if (!hasLayers(l)) return penPage(c, tab, lock);
+  const reviewable = tab.kind === 'review' && ['review', 'failed', 'cancelled'].includes(tab.run.status);
+  const render = (text) => renderMarkdown(text, { image: (url) => localImage(url, c.path) });
+  const page = layersMod.layerPage(penPage(c, tab, lock, layersMod.layerNotes(l)), {
+    path: c.path, base: c.base, hunks: c.hunks || [], pen, render, ...l,
+    off: (tab.layersOff ||= new Set()),
+    hidden: ((tab.lensHidden ||= {})[c.path] ||= new Set()),
+    shown: (tab.forkShown ||= {}),
+    picks: tab.lensPicks || new Set(),
+    pick: (el) => { if (el) setReviewCur(tab, el, false); },
+    fix: reviewable ? (i) => lensFix(tab, i) : null,
+    take: reviewable ? (n, pick) => takeFork(tab, n, pick) : null,
+    compare: (n) => forkCompare(tab, n),
+  });
+  const compared = forksMod ? l.forks.filter((f) => tab.forkCompare?.has(f.n)) : [];
+  return compared.length ? [page, compared.map((f) => h('div', { class: 'layer-compare' },
+    forksMod.forksPage({ path: f.file, n: f.n, fork: f, base: tab.run.lensBases[f.file], render, take: reviewable ? (pick) => takeFork(tab, f.n, pick) : null })))] : page;
+}
+function forkCompare(tab, n) {
+  tab.forkCompare ||= new Set();
+  if (!tab.forkCompare.delete(n)) tab.forkCompare.add(n);
+  renderContent(tab.group);
 }
 
 // y / n on a mark: a change taken or left (as x in the diff), a margin note
@@ -5914,6 +5968,8 @@ function markCur(el) {
   // The margin note in view shows all of itself: the ones below make room.
   const body = el.closest('.pen-body');
   if (pen && body && wrap) for (const b of wrap.querySelectorAll('.pen-body')) pen.layoutMargin(b);
+  for (const p of wrap?.querySelectorAll('.layered') || []) p.layerSelect(el);
+  wrap?.querySelector(':scope > .minimap')?.redraw();
 }
 
 // A run's new notes aren't in the workspace yet; notes deleted outside are gone.
@@ -6456,7 +6512,7 @@ const SPECIAL = {
 };
 // Each one's own keys, for M-x and the hint in its head.
 const BUFFER_KEYS = {
-  review: [['y', 'Red pen: accept the change'], ['n', 'Red pen: reject the change'], ['v', 'Red pen / diff'], ['s', 'Space: the red pen in depth (experimental)'], ['F', 'Film: the note through the rounds (experimental)'], ['x', 'Pick / unpick the change'], ['X', 'Pick / unpick the whole note'], ['A', 'Pick all'], ['U', 'Pick none'], ['a', 'Apply the picked changes'], ['d', 'Discard the run'], ['f', 'Follow up…'], ['u', 'Revert the applied run'], ['=', 'Diff / result'], ['l', 'Show / hide the log'], ['J', 'Next note'], ['K', 'Previous note']],
+  review: [['y', 'Red pen: accept the change'], ['n', 'Red pen: reject the change'], ['v', 'Red pen / diff'], ['s', 'Space: the red pen in depth (experimental)'], ['F', 'Film: the note through the rounds (experimental)'], ['← →', 'Fork on the note: its other ways in place (experimental)'], ['x', 'Pick / unpick the change'], ['X', 'Pick / unpick the whole note'], ['A', 'Pick all'], ['U', 'Pick none'], ['a', 'Apply the picked changes'], ['d', 'Discard the run'], ['f', 'Follow up…'], ['u', 'Revert the applied run'], ['=', 'Diff / result (on a fork: its ways side by side)'], ['l', 'Show / hide the log'], ['J', 'Next note'], ['K', 'Previous note']],
   outside: [['y', 'Red pen: keep the change'], ['n', 'Red pen: undo the change'], ['v', 'Red pen / diff'], ['s', 'Space: the red pen in depth (experimental)'], ['x', 'Keep / undo the change'], ['X', 'Keep / undo the whole note'], ['A', 'Keep all'], ['U', 'Keep none'], ['a', 'Done: undo the ones not kept'], ['=', 'Diff / result'], ['J', 'Next note'], ['K', 'Previous note']],
   tasks: [['x', 'Check off / again'], ['a', 'Ask the agent to do it'], ['h', 'Show / hide done ones']],
   search: [['/', 'Search for…']],
@@ -6491,6 +6547,8 @@ function showSpecial(c, tab) {
   c.replaceChildren(wrap);
   if (pen) wrap.querySelectorAll('.pen-body').forEach(pen.layoutMargin);
   wrap.querySelectorAll('.lens-page').forEach((p) => p.lensLayout());
+  wrap.querySelectorAll('.layered').forEach((p) => p.layerLayout());
+  if (tab.kind === 'review' && layersMod) layersMod.minimap(wrap, (el) => setReviewCur(tab, el));
   if (same) wrap.scrollTop = top;
   const cur = reviewItems(wrap).find((el) => itemKey(el) === tab.cur);
   if (cur) { cur.classList.add('kb-cur'); markCur(cur); }
@@ -6568,6 +6626,29 @@ function reviewOwnKeys(e, tab, { wrap, items, cur }) {
     if (e.key === 'f') { if (reviewable && !own) lensFix(tab, i); return true; }
     if (e.key === 'Enter' || e.key === 'o') { openFile(cur.dataset.path, { line: Number(cur.dataset.line) || undefined }); return true; }
     if (e.key === 'y' || e.key === 'n') return true;
+  }
+  // On a fork on the note: ← → switch its ways in place, Enter (y, x)
+  // takes the one shown into the proposal, = compares them side by side.
+  if (cur?.classList.contains('fork-card')) {
+    const n = Number(cur.dataset.fork);
+    const page = cur.closest('.layered');
+    if (['ArrowLeft', 'ArrowRight', 'h', 'l'].includes(e.key)) { page?.forkStep(n, e.key === 'ArrowLeft' || e.key === 'h' ? -1 : 1); return true; }
+    if (['Enter', 'y', 'x', ' '].includes(e.key)) {
+      const k = page?.forkShown(n);
+      const f = tab.run?.forks?.[n];
+      if (!f || !reviewable || own) return true;
+      if (k === (f.pick == null ? 'o' : String(f.pick))) toast('This one is in the note: ← → shows the other ways in its place.');
+      else takeFork(tab, n, k === 'o' ? null : Number(k));
+      return true;
+    }
+    if (e.key === '=') { forkCompare(tab, n); return true; }
+    if (e.key === 'o') { openFile(cur.dataset.path, { line: Number(cur.dataset.line) || undefined }); return true; }
+    if (e.key === 'n') return true;
+  }
+  // On a comment of mine: Enter opens the note there.
+  if (cur?.classList.contains('mine-card')) {
+    if (e.key === 'Enter' || e.key === 'o') { openFile(cur.dataset.path, { line: Number(cur.dataset.line) || undefined }); return true; }
+    if (e.key === 'y' || e.key === 'n' || e.key === 'x' || e.key === ' ') return true;
   }
   // On a fork: Enter (y, x) takes it into the proposal.
   if (cur?.classList.contains('fork-col')) {
@@ -6833,7 +6914,7 @@ function reviewView(tab) {
 
   if (run.status !== 'running') {
     const remarks = Object.entries(run.commentBases || {});
-    if (!run.changes.length) wrap.append(h('div', { class: 'review-note' }, run.kind === 'proof' ? 'No suggestions (yet).' : run.forks?.length ? 'The agent made no changes: its other ways of writing the paragraph are below. Enter takes one into the proposal.' : run.lens?.length ? 'The agent made no changes: what it sees is on the note below (the lens). x picks a finding, f asks for a fix as a red pen proposal.' : remarks.length ? 'The agent made no changes, only notes in the margin.' : 'The agent made no changes.'));
+    if (!run.changes.length) wrap.append(h('div', { class: 'review-note' }, run.kind === 'proof' ? 'No suggestions (yet).' : run.forks?.length ? 'The agent made no changes: its other ways of writing the paragraph are on the note below. ← → switches them in place, Enter takes one into the proposal.' : run.lens?.length ? 'The agent made no changes: what it sees is on the note below (the lens). x picks a finding, f asks for a fix as a red pen proposal.' : remarks.length ? 'The agent made no changes, only notes in the margin.' : 'The agent made no changes.'));
     const checked = reviewable && commandNotesCheck(run);
     if (checked) wrap.append(checked);
     if (reviewable && run.changes.length) {
@@ -6857,8 +6938,16 @@ function reviewView(tab) {
     const locked = !reviewable;
     for (const c of run.changes) wrap.append(fileCard(c, tab, locked));
     for (const [p, base] of remarks) wrap.append(remarksCard(p, base, tab));
-    for (const [n, f] of (run.forks || []).entries()) wrap.append(forkCard(tab, n, f));
-    for (const [p, base] of Object.entries(run.lensBases || {})) if (run.lens?.some((f) => f.file === p)) wrap.append(lensCard(p, base, tab));
+    // The lens and forks: layers on their note's page — one of its own when
+    // the agent did not change it; apart, when its diff is in view.
+    const layered = new Set([...wrap.querySelectorAll('.file-card .layered')].map((x) => x.closest('.file-card').dataset.path));
+    for (const [p, base] of Object.entries(run.lensBases || {})) {
+      const l = layersOf(tab, p);
+      if (layered.has(p) || !hasLayers(l)) continue;
+      if (pen && layersMod && !run.changes.some((c) => c.path === p) && !(p in (run.commentBases || {}))) { wrap.append(remarksCard(p, base, tab, l.lens.length ? 'lens' : 'forks')); continue; }
+      for (const [n, f] of (run.forks || []).entries()) if (f.file === p) wrap.append(forkCard(tab, n, f));
+      if (run.lens?.some((f) => f.file === p)) wrap.append(lensCard(p, base, tab));
+    }
   }
   return wrap;
 }
