@@ -152,7 +152,21 @@ function marks(f, text) {
   return out;
 }
 
+// "Make or change a command…": whatever was asked, the demo adds one macro,
+// "Make it a task", on ⌥X o t (and a step Margin can't read when asked for
+// a broken one, to see the review say so).
+function commandNotes() {
+  const read = (f) => (fs.existsSync(f) ? fs.readFileSync(f, 'utf8') : '');
+  const macros = read('MACROS.md');
+  const steps = ['move line-start', 'type "- [ ] "', 'move down', ...(task.includes('broken') ? ['fly away'] : [])];
+  if (!/^## Make it a task$/m.test(macros)) fs.writeFileSync('MACROS.md', `${macros.trim() ? `${macros.trimEnd()}\n\n` : '# Macros\n\n'}## Make it a task\nTurns the line into a task and goes to the next one.\n\n\`\`\`macro\n${steps.join('\n')}\n\`\`\`\n`);
+  const leader = read('LEADER.md');
+  if (!/`o t`/.test(leader)) fs.writeFileSync('LEADER.md', `${leader.trim() ? `${leader.trimEnd()}\n` : '# Leader keys\n\n'}- \`o t\` Macro: Make it a task\n`);
+  console.log("[demo-agent] I'm the offline demo agent: whatever you asked, I add the macro “Make it a task” (MACROS.md) on ⌥X o t (LEADER.md).");
+}
+
 setTimeout(() => {
+  if (process.env.AGENT_NOTES_SCOPE === 'commands') { commandNotes(); return; }
   if (!understood) {
     console.log([
       "I'm the offline demo agent, not an AI, so I can't do this task.",

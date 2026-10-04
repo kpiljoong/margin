@@ -44,21 +44,38 @@ test('the commands scope: only the notes of commands, and a new one comes back t
   };
 
   assert.deepEqual((await api('GET', '/api/scope?scope=commands')).included, ['LEADER.md']);
-  let run = await api('POST', '/api/runs', { task: 'A macro that quotes the line', scope: 'commands', commands: ['Save', 'Open today’s journal note', 42, 'x'.repeat(500)] });
+  let run = await api('POST', '/api/runs', { task: 'A macro that quotes the line', scope: 'commands', commands: ['Save', 'Open today’s journal note', 42, 'x'.repeat(500)], keymap: ['- `n` +narrow', '- `n w` Widen: show the whole note'] });
   for (let i = 0; i < 100 && run.status === 'running'; i++) { await sleep(100); run = await api('GET', `/api/runs/${run.id}`); }
   assert.equal(run.status, 'review');
   const seen = run.changes.find((c) => c.path === 'seen.txt').lines.join('\n');
-  assert.match(seen, /MACROS\.md: each `## Name` is a macro/);
+  assert.match(seen, /MACROS\.md — editing steps/);
   assert.match(seen, /- Save\n- Open today’s journal note\n- x{120}\n/);
+  assert.match(seen, /written as LEADER\.md would[^]*\n- `n` \+narrow\n- `n w` Widen/);
   assert.match(seen, /Task: A macro that quotes the line/);
   assert.doesNotMatch(seen, /Diagrams render|a\.md/);
   assert.match(seen, /---\nLEADER\.md$/, 'it saw LEADER.md alone');
   const macros = run.changes.find((c) => c.path === 'MACROS.md');
   assert.ok(macros, 'the new MACROS.md is a change to review');
+  assert.match(macros.after, /## Quote\n/, 'with its text as it would be, for the review to check');
   assert.ok(!fs.existsSync(path.join(ws, 'MACROS.md')), 'nothing changed before the review');
 
   // A follow-up keeps the notation and the names.
   let r2 = await api('POST', `/api/runs/${run.id}/followup`, { task: 'On o q too' });
   for (let i = 0; i < 100 && r2.status === 'running'; i++) { await sleep(100); r2 = await api('GET', `/api/runs/${r2.id}`); }
-  assert.match(r2.changes.find((c) => c.path === 'seen.txt').lines.join('\n'), /The commands there are now[^]*- Save\n[^]*The reviewer's follow-up: On o q too/);
+  assert.match(r2.changes.find((c) => c.path === 'seen.txt').lines.join('\n'), /Every command by name[^]*- Save\n[^]*The reviewer's follow-up: On o q too/);
+
+  // Another task gets the notation when it is about these notes (Korean too),
+  // and the ```flow one when it asks for a flow chart in Korean.
+  const ask = async (task) => {
+    let r = await api('POST', '/api/runs', { task, scope: 'file', focus: 'a.md' });
+    for (let i = 0; i < 100 && r.status === 'running'; i++) { await sleep(100); r = await api('GET', `/api/runs/${r.id}`); }
+    return r.changes.find((c) => c.path === 'seen.txt').lines.join('\n');
+  };
+  const macro = await ask('\uB9E4\uD06C\uB85C \uD558\uB098 \uB9CC\uB4E4\uC5B4\uC918');
+  assert.match(macro, /MACROS\.md — editing steps/);
+  assert.match(macro, /---\nLEADER\.md\na\.md$/, 'and it sees LEADER.md with the note');
+  const flow = await ask('\uC774 \uACFC\uC815\uC744 \uD750\uB984\uB3C4\uB85C \uADF8\uB824\uC918');
+  assert.match(flow, /The ```flow notation/);
+  assert.doesNotMatch(flow, /MACROS\.md — editing steps/);
+  assert.match(flow, /---\na\.md$/);
 });

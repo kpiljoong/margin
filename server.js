@@ -1138,6 +1138,10 @@ function resolveScope(scope, focus, task = '') {
   } else if (scope !== 'workspace') {
     throw httpError(400, 'Unknown scope');
   }
+  // A task about Margin's notes of commands sees them too.
+  if (scope !== 'commands' && COMMANDS_TASK.test(task)) {
+    for (const f of COMMAND_NOTES) if (all.includes(f) && !files.includes(f)) files.push(f);
+  }
   const included = [];
   const excluded = [];
   for (const f of files) {
@@ -1189,7 +1193,8 @@ function agentInstructions() {
 // The ```flow notation, for tasks that mention it or notes that have one
 // (lib/flow-notation.md).
 let flowNotation = null;
-const flowGuide = (text, note) => (/\bflow\b/i.test(text) || /^\s*```flow\s*$/m.test(note)
+const FLOW_TASK = /\bflow(chart)?s?\b|\uD750\uB984\uB3C4|\uD50C\uB85C\uC6B0|\uC21C\uC11C\uB3C4|\uD504\uB85C\uC138\uC2A4 ?(\uADF8\uB9BC|\uB3C4\uC2DD|\uB2E4\uC774\uC5B4\uADF8\uB7A8)/i;
+const flowGuide = (text, note) => (FLOW_TASK.test(text) || /^\s*```flow\s*$/m.test(note)
   ? (flowNotation ??= fs.readFileSync(path.join(APP_DIR, 'lib', 'flow-notation.md'), 'utf8').replace(/\r\n/g, '\n').trim())
   : '');
 
@@ -1228,21 +1233,26 @@ const commentsGuide = (text) => (text.includes(COMMENTS_FILE) || /\b(red pen|mar
 // names a key or a macro can run. The app asks for it ("Make or change a
 // command…"); what comes back is reviewed as any run.
 const COMMAND_NOTES = ['LEADER.md', 'RECIPES.md', 'MACROS.md'];
+// Other tasks get the notation when they are about these notes (by name, or
+// macros, recipes, leader keys — in Korean too) or the note in view is one.
+const COMMANDS_TASK = /\b(macros?|recipes?|leader ?keys?|key ?bindings?)\b|(LEADER|RECIPES|MACROS)\.md|\uB9E4\uD06C\uB85C|\uB808\uC2DC\uD53C|\uB9AC\uB354 ?\uD0A4|\uB2E8\uCD95\uD0A4/i;
 let marginConfig = null;
-const commandsGuide = (commands) => {
-  marginConfig ??= fs.readFileSync(path.join(APP_DIR, 'lib', 'margin-config.md'), 'utf8').replace(/\r\n/g, '\n').trim();
-  return `${marginConfig}\n\nThe commands there are now, by name (for LEADER.md and \`run\`):\n${commands.map((c) => `- ${c}`).join('\n')}`;
-};
-const commandNames = (list) => (Array.isArray(list) ? list : [])
-  .filter((c) => typeof c === 'string').map((c) => c.replace(/\s+/g, ' ').trim().slice(0, 120)).filter(Boolean).slice(0, 2000);
+const commandsNotation = () => (marginConfig ??= fs.readFileSync(path.join(APP_DIR, 'lib', 'margin-config.md'), 'utf8').replace(/\r\n/g, '\n').trim());
+const commandsGuide = ({ commands = [], keymap = [] }) => [
+  commandsNotation(),
+  keymap.length ? `\nThe keys after the leader now, written as LEADER.md would (Margin's own and the user's):\n${keymap.join('\n')}` : '',
+  commands.length ? `\nEvery command by name, for LEADER.md and \`run\`:\n${commands.map((c) => `- ${c}`).join('\n')}` : '',
+].join('\n');
+const cleanList = (list, max, len) => (Array.isArray(list) ? list : [])
+  .filter((c) => typeof c === 'string').map((c) => c.replace(/\s+/g, ' ').trim().slice(0, len)).filter(Boolean).slice(0, max);
 
 function buildPrompt(task, focus, followUp = '', pictures = [], commands = null) {
   if (commands) {
     return [
-      'You are changing how a notes app works for its user, by editing its notes of commands.',
-      'The current directory is a staged copy of those notes (some may not be there yet).',
-      'A human will review your changes as a diff before anything is applied.',
-      'Work without asking questions: nobody can answer them. If the task is unclear, make the most reasonable change.',
+      'You are changing how Margin, the notes app the user is in, works for them, by editing its notes of commands.',
+      `The current directory is a staged copy of those notes, ${COMMAND_NOTES.join(', ')} (the ones there are yet; make one if needed). Write only these three.`,
+      'A human will review your changes as a diff before anything is applied; Margin checks that it can read every line, and shows what changes on the keys.',
+      'Work without asking questions: nobody can answer them. If the task is unclear, make the most reasonable change. End with a line or two on what you did, in the user\'s language.',
       '',
       commandsGuide(commands),
       '',
@@ -1253,6 +1263,7 @@ function buildPrompt(task, focus, followUp = '', pictures = [], commands = null)
   const flow = flowGuide(`${task}\n${followUp}`, note);
   const ink = inkGuide(`${task}\n${followUp}`, note);
   const margin = commentsGuide(`${task}\n${followUp}`);
+  const config = COMMANDS_TASK.test(`${task}\n${followUp}`) || COMMAND_NOTES.includes(focus) ? commandsNotation() : '';
   const own = agentInstructions();
   return [
     'You are helping with a folder of plain Markdown notes.',
@@ -1265,6 +1276,7 @@ function buildPrompt(task, focus, followUp = '', pictures = [], commands = null)
     ink ? `\n${ink}\n` : '',
     pictures.length ? picturesLine(pictures) : '',
     margin ? `\n${margin}\n` : '',
+    config ? `\n${config}\n` : '',
     own ? `\nInstructions for this notes folder (from ${INSTRUCTIONS}):\n${own}\n` : '',
     focus ? `The note the user is looking at: ${focus}` : '',
     '',
@@ -1299,7 +1311,7 @@ function coverPictures(pictures, hidden, masked, excluded) {
   return covered;
 }
 
-function startRun({ task, scope, focus, selection, agentId, model, recipe, masked, commands }) {
+function startRun({ task, scope, focus, selection, agentId, model, recipe, masked, commands, keymap }) {
   if (!AGENT) throw httpError(400, 'No agent configured. Restart with --agent demo or --agent "<command>".');
   const agent = agentById(agentId);
   const command = agentCommand(agent, typeof model === 'string' ? model : '');
@@ -1332,7 +1344,7 @@ function startRun({ task, scope, focus, selection, agentId, model, recipe, maske
     agent: agent.label, agentId: agent.id, command, model: (command === agent.command ? agent.model : model) || '',
     status: 'running', startedAt: new Date().toISOString(), finishedAt: null,
     exitCode: null, files: included, pictures, excluded, applied: null, selection: sel ? sel.length : 0,
-    ...(scope === 'commands' ? { commands: commandNames(commands) } : {}),
+    ...(scope === 'commands' ? { commands: { commands: cleanList(commands, 2000, 120), keymap: cleanList(keymap, 800, 200) } } : {}),
   };
   let prompt = buildPrompt(task, focusShared, '', pictures, meta.commands);
   if (covered.size) prompt += `\n\nParts of ${[...covered.keys()].join(', ')} are covered in gray: the user hid them. Leave their \`hide\` lines as they are, and don't guess what is under them.`;
@@ -1544,6 +1556,8 @@ function computeChanges(id) {
         if (b.length < 512 * 1024) change.base = b.toString('utf8'); // for the rendered "result" preview
       }
       else change.lines = (w || b).toString('utf8').split('\n').slice(0, 800);
+      // Margin's notes of commands: as they would be, for the review to check.
+      if (COMMAND_NOTES.includes(rel) && w && w.length < 256 * 1024) change.after = w.toString('utf8');
     }
     // Stale but still mergeable: the user edited other parts of the file.
     if (stale && status === 'modified' && !binary && current && !current.includes(0)) {

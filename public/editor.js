@@ -114,10 +114,11 @@ const commandOf = (e) => commandKeys.get(eventKeys(e, isMac));
 export const editorWatch = { key: null, edit: null, find: null, replaceAll: null };
 
 // What a find looks for, as a RegExp (null: nothing, or a broken pattern).
+// ^ and $ are a line's start and end, as in other editors.
 export function findPattern({ query, caseSensitive, regex }) {
   if (!query) return null;
   try {
-    return new RegExp(regex ? query : query.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), caseSensitive ? 'gu' : 'giu');
+    return new RegExp(regex ? query : query.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), caseSensitive ? 'gmu' : 'gimu');
   } catch { return null; }
 }
 

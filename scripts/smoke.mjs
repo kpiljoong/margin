@@ -1567,5 +1567,23 @@ await check('describe a key (⌥X h k): a shortcut and a leader path; every comm
   `, (v) => (v?.menu && v.text === '> one\n> two\n' && fs.readFileSync(path.join(ws, 'kept.md'), 'utf8') === '> one\n> two\n' ? null : `the kept macro did not play: ${JSON.stringify(v)}`));
 }
 
+await check('make a command by asking (\u2325X h m): the run writes MACROS.md and LEADER.md; the review says what Margin can\u2019t read and what changes on the keys', `
+  const ta = await openNote('kept.md');
+  ta.focus();
+  const press = (code, key, opts = {}) => document.activeElement.dispatchEvent(new KeyboardEvent('keydown', { code, key, bubbles: true, cancelable: true, ...opts }));
+  press('KeyX', '\u2248', { altKey: true });
+  await until(() => $('.leader'));
+  press('KeyH', 'h');
+  press('KeyM', 'm');
+  const d = await until(() => $('.dialog'));
+  const input = d.querySelector('textarea, input');
+  input.value = 'a broken one';
+  button('Ask the agent', d).click();
+  await until(() => !$('#toast').hidden && /done/.test($('#toast').textContent), 20000);
+  $('#toast .toast-action')?.click();
+  const box = await until(() => $('.review .cmd-check'), 8000);
+  return { text: box?.textContent || '', fix: !!box && !!button('Ask the agent to fix these', box) };
+`, (v) => (/MACROS\.md line \d+: .*fly/.test(v?.text) && /o t\s*Macro: Make it a task/.test(v.text) && v.fix ? null : `the review did not check the notes of commands: ${JSON.stringify(v)}`));
+
 console.log(failed ? `\nSmoke test failed (${results.filter((r) => !r.ok).length} of ${results.length + 4}).` : `\nAll ${results.length + 4} checks passed.`);
 done(failed ? 1 : 0);

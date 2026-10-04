@@ -205,7 +205,8 @@ export function stepLine(s) {
   }
 }
 
-// MACROS.md → { macros: [{ name, steps, doc, line }], errors: [{ line, msg }] }.
+// MACROS.md → { macros: [{ name, steps, lines, doc, line }], errors: [{ line, msg }] }
+// (lines: each step's line).
 // A macro with a step that can't be read is left out (with the error).
 export function parseMacros(text) {
   const macros = [];
@@ -216,7 +217,7 @@ export function parseMacros(text) {
     if (!cur) return;
     if (cur.bad) { /* its error is said */ } else if (!cur.block) errors.push({ line: cur.line, msg: `“${cur.name}” has no \`\`\`macro block with its steps` });
     else if (!cur.steps.length) errors.push({ line: cur.line, msg: `“${cur.name}” has no steps` });
-    else macros.push({ name: cur.name, steps: cur.steps, doc: cur.doc.join(' ').trim(), line: cur.line });
+    else macros.push({ name: cur.name, steps: cur.steps, lines: cur.lines, doc: cur.doc.join(' ').trim(), line: cur.line });
     cur = null;
   };
   String(text || '').replace(/\r\n?/g, '\n').split('\n').forEach((l, i) => {
@@ -231,13 +232,13 @@ export function parseMacros(text) {
       if (!fence.macro || cur.bad) return;
       const t = l.trim();
       if (!t || t.startsWith('#') || t.startsWith('//')) return;
-      try { cur.steps.push(parseStep(t)); } catch (e) { cur.bad = true; errors.push({ line: i + 1, msg: `“${cur.name}”: ${e.message}` }); }
+      try { cur.steps.push(parseStep(t)); cur.lines.push(i + 1); } catch (e) { cur.bad = true; errors.push({ line: i + 1, msg: `“${cur.name}”: ${e.message}` }); }
       return;
     }
     const head = /^##\s+(.+?)\s*#*\s*$/.exec(l);
     if (head) {
       finish();
-      cur = { name: head[1].slice(0, 80), line: i + 1, steps: [], doc: [], block: false, bad: false };
+      cur = { name: head[1].slice(0, 80), line: i + 1, steps: [], lines: [], doc: [], block: false, bad: false };
       return;
     }
     if (/^#\s/.test(l)) { finish(); return; }

@@ -5,6 +5,7 @@ import { PreviewFind } from './previewfind.js';
 import { openLeader, linkHints, pickHint } from './leader.js';
 import { Macros, Stop as MacroStop, describe as describeMacro } from './macro.js';
 import { parseMacros, withMacro, MACROS_FILE, MACROS_STARTER } from './macrotext.js';
+import { checkCommandNotes, COMMAND_NOTES } from './commandcheck.js';
 import { fillTemplate, isTemplate, TEMPLATE_DIR } from './templates.js';
 import { MarkdownEditor, setEditorKeys } from './editor.js';
 import { emacs, occurLines, occurPattern, keyName as emacsKeyName, commandOf as emacsCommandOf, COMMAND_DOCS, PREFIXES as EMACS_PREFIXES, emacsName, keysOf as emacsKeysOf, emacsCommands } from './emacs.js';
@@ -4970,12 +4971,62 @@ async function changeByAgent(topic = null) {
     const where = [...(topic.leaders || []).map((p) => `${L} ${p.keys.join(' ')}`), topic.shortcut && kbd(topic.shortcut), topic.emacsKey && `${topic.emacsKey} (Emacs keys)`].filter(Boolean);
     task = `About “${topic.name}” (${topic.unbound ? 'a key with no command on it' : 'a command'}${where.length ? `, on ${where.join(', ')}` : ''}): ${what}`;
   }
-  // The names a key or a macro can run.
+  // The names a key or a macro can run, and the keys as they are.
   const commands = [...new Set(allCommands().filter((c) => !c.emacsOnly && !c.inBuffer).map((c) => c.name))];
   try {
-    const run = await api('POST', '/api/runs', { task, scope: 'commands', commands, ...agentNow() });
+    const run = await api('POST', '/api/runs', { task, scope: 'commands', commands, keymap: keymapLines(), ...agentNow() });
     await loadRuns();
     toast(`The agent is on it (a staged copy of ${LEADER_FILE}, ${RECIPES_FILE} and ${MACROS_FILE})`, '', { label: 'Watch', run: () => openReview(run.id) });
+  } catch (e) { toast(e.message, 'error'); }
+}
+
+// The leader's keys as LEADER.md would write them: `n w` Widen: show the whole note.
+function keymapLines() {
+  const out = [];
+  const walk = (items, path, group) => {
+    for (const it of items) {
+      const keys = [...path, it.key];
+      const at = keys.includes('`') ? `- \`\` ${keys.join(' ')} \`\`` : `- \`${keys.join(' ')}\``;
+      if (it.items) { out.push(`${at} +${it.label}`); walk(it.items, keys, it.label); }
+      else if (it.recipe) out.push(`${at} Recipe: ${it.recipe.name}`);
+      else if (it.mx !== false) out.push(`${at} ${leafName(it, group)}`);
+      else out.push(`${at} (${it.label})`);
+    }
+  };
+  walk(leaderTree(), [], '');
+  return out;
+}
+
+// A run's changes to LEADER.md, RECIPES.md or MACROS.md, checked as Margin
+// will read them (commandcheck.js): lines it would leave out, and the keys.
+function commandNotesCheck(run) {
+  const after = Object.fromEntries((run.changes || []).filter((c) => COMMAND_NOTES.includes(c.path) && (c.after != null || c.status === 'deleted')).map((c) => [c.path, c.after ?? '']));
+  if (!Object.keys(after).length) return null;
+  const before = { [LEADER_FILE]: leaderKeys.text || '', [RECIPES_FILE]: recipes.text || '', [MACROS_FILE]: kept.text || '' };
+  const known = (name) => !/^(recipe|macro):/i.test(name) && !!commandRun(name);
+  const { problems, keys } = checkCommandNotes({ after, before, tree: defaultLeaderTree(), known });
+  const L = kbd('leader') || '⌥X';
+  const items = [
+    ...problems.map((p) => h('li', { class: 'bad' }, `${p.file} line ${p.line}: ${p.msg} — Margin would leave it out.`)),
+    ...keys.map((k) => h('li', { class: k.rename || k.was || k.off ? 'warn' : '' }, h('kbd', {}, `${L} ${k.keys.join(' ')}`), ' ',
+      k.off ? `taken away${k.was ? ` (was ${k.was})` : ''}`
+        : k.rename ? `renames Margin’s group “${k.rename}” to “${k.what.slice(1)}”`
+          : `${k.what}${k.was ? ` — replaces ${k.was}` : ''}`)),
+  ];
+  const ok = !problems.length;
+  return h('div', { class: `review-note${ok ? '' : ' warn'} cmd-check` },
+    h('div', {}, ok ? `Margin can read every line of ${Object.keys(after).join(', ')}${keys.length ? '; on the keys:' : '.'}` : `Margin checked ${Object.keys(after).join(', ')}:`),
+    items.length ? h('ul', {}, items) : null,
+    !ok && run.status === 'review' ? h('button', { class: 'btn small', onclick: () => fixCommandNotes(run, problems) }, 'Ask the agent to fix these') : null);
+}
+async function fixCommandNotes(run, problems) {
+  const task = `Margin can't read these lines and would leave them out:\n${problems.map((p) => `- ${p.file} line ${p.line}: ${p.msg}`).join('\n')}\nFix them.`;
+  try {
+    const next = await api('POST', `/api/runs/${run.id}/followup`, { task });
+    await loadRuns();
+    const tab = S.tabs.find((t) => t.kind === 'review' && t.runId === run.id);
+    if (tab) closeTab(tab.id);
+    openReview(next.id);
   } catch (e) { toast(e.message, 'error'); }
 }
 
@@ -6338,6 +6389,8 @@ function reviewView(tab) {
   if (run.status !== 'running') {
     const remarks = Object.entries(run.commentBases || {});
     if (!run.changes.length) wrap.append(h('div', { class: 'review-note' }, run.kind === 'proof' ? 'No suggestions (yet).' : remarks.length ? 'The agent made no changes, only notes in the margin.' : 'The agent made no changes.'));
+    const checked = reviewable && commandNotesCheck(run);
+    if (checked) wrap.append(checked);
     if (reviewable && run.changes.length) {
       const n = selectedCount(tab);
       wrap.append(h('div', { class: 'review-actions' },
