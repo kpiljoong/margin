@@ -1,11 +1,11 @@
 // node --test (npm test): Emacs keys in the editor (public/emacs.js) — the
 // text commands as plain functions, the kill ring, and key names.
-import test from 'node:test';
+import test, { mock } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   killLineRange, recase, transposeChars, transposeWords, transposeLines, joinLine, spaceAround, deleteBlankLines,
   zapRange, paragraphEdge, displayWidth, fillParagraph, sortLines, trimTrailing, occurLines, occurPattern, expansions,
-  KillRing, keyName, commandOf, emacsCommands, emacsName, keysOf,
+  KillRing, keyName, commandOf, emacsCommands, emacsName, keysOf, prefixKeys, EmacsKeys, emacs, PREFIX_HELP_DELAY,
 } from '../public/emacs.js';
 
 // Apply an edit { from, to, text, caret } to v.
@@ -129,4 +129,48 @@ test('M-x: the commands by Emacs’s names, with their keys', () => {
   assert.ok(!list.some((c) => ['universal-argument', 'ctl-x', 'keyboard-quit', 'meta-prefix'].includes(c.cmd)), 'prefixes are keys only');
   assert.deepEqual(keysOf('point-to-register'), ['C-x r SPC', 'C-x r C-SPC', 'C-x r C-@']);
   assert.equal(emacsName('redo'), 'undo-redo');
+});
+
+test('the keys after a prefix, as the help shows them: a command\'s keys together, a prefix in it "+its name"', () => {
+  const x = prefixKeys('C-x');
+  assert.deepEqual(x.find((k) => k.cmd === 'save-buffer'), { keys: ['C-s'], cmd: 'save-buffer', doc: 'Save' });
+  assert.deepEqual(x.find((k) => k.cmd === 'split-window').keys, ['2', '3']);
+  assert.equal(x.find((k) => k.keys[0] === 'r').doc, '+registers');
+  assert.equal(x.find((k) => k.keys[0] === 'n').doc, '+narrow');
+  assert.deepEqual(prefixKeys('C-x n').map((k) => k.keys[0]), ['n', 'w']);
+  assert.deepEqual(prefixKeys('nope'), []);
+});
+
+test('C-x and a pause: its keys show (? or C-h: at once); the next key hides them, C-x r after them shows its own at once', (t) => {
+  mock.timers.enable({ apis: ['setTimeout'] });
+  t.after(() => { mock.timers.reset(); emacs.on = false; emacs.hooks = {}; });
+  emacs.on = true;
+  const shown = [];
+  emacs.hooks = { prefixHelp: (map) => shown.push(map), echo: () => {} };
+  const ed = { extra: [], find: { open: false }, ta: { selectionStart: 0, selectionEnd: 0, value: '' } };
+  const keys = new EmacsKeys(ed);
+  const press = (code, ctrlKey = false, key = code.slice(-1).toLowerCase()) => keys.key({ code, key, ctrlKey, altKey: false, shiftKey: false, metaKey: false, preventDefault() {} });
+  // Typed on at once: nothing shows.
+  press('KeyX', true);
+  mock.timers.tick(PREFIX_HELP_DELAY - 100);
+  press('KeyG', true);
+  mock.timers.tick(1000);
+  assert.deepEqual(shown, []);
+  // A pause: shown; the next key hides them.
+  press('KeyX', true);
+  mock.timers.tick(PREFIX_HELP_DELAY);
+  assert.deepEqual(shown, ['C-x']);
+  press('KeyR');
+  assert.deepEqual(shown, ['C-x', null, 'C-x r'], 'r, a prefix: its keys at once');
+  press('KeyG', true);
+  assert.deepEqual(shown.at(-1), null);
+  // ? right after C-x: at once, and C-x still waits.
+  shown.length = 0;
+  press('KeyX', true);
+  keys.key({ code: 'Slash', key: '?', ctrlKey: false, altKey: false, shiftKey: true, metaKey: false, preventDefault() {} });
+  assert.deepEqual(shown, ['C-x']);
+  assert.deepEqual(keys.pending, { map: 'C-x' });
+  press('KeyG', true);
+  assert.deepEqual(shown, ['C-x', null]);
+  assert.equal(keys.pending, null);
 });

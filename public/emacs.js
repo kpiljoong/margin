@@ -412,6 +412,10 @@ const MAPS = {
   'M-s': { o: 'occur' },
 };
 export const PREFIXES = { 'ctl-x': 'C-x', 'ctl-x-r': 'C-x r', 'narrow-map': 'C-x n', 'goto-map': 'M-g', 'search-map': 'M-s' };
+const PREFIX_LABELS = { 'C-x r': 'registers', 'C-x n': 'narrow', 'M-g': 'go to', 'M-s': 'search' };
+// A prefix typed and this long without the next key: the keys that can
+// follow, shown (as which-key does); ? or C-h shows them at once.
+export const PREFIX_HELP_DELAY = 800;
 // Plain keys, while the mark is active: they move the point, as these.
 const ARROWS = { ArrowLeft: 'backward-char', ArrowRight: 'forward-char', ArrowUp: 'previous-line', ArrowDown: 'next-line', Home: 'beginning-of-line', End: 'end-of-line', PageDown: 'scroll-up', PageUp: 'scroll-down' };
 
@@ -491,6 +495,22 @@ export function commandOf(keys) {
   return null;
 }
 
+// The keys after a prefix ("C-x"), as the help shows them: [{ keys, cmd,
+// doc }] — the keys of one command together; a prefix's doc is "+its name".
+// (In key order: the maps' own order puts digits first.)
+export function prefixKeys(map) {
+  const out = [];
+  for (const [k, cmd] of Object.entries(MAPS[map] || {})) {
+    const had = out.find((x) => x.cmd === cmd);
+    if (had) { had.keys.push(k); continue; }
+    const sub = PREFIXES[cmd];
+    out.push({ keys: [k], cmd, doc: sub ? `+${PREFIX_LABELS[sub] || sub}` : COMMAND_DOCS[cmd] || emacsName(cmd) });
+  }
+  // By their letter (a plain key before its C- one), prefixes last.
+  const rank = (x) => [x.doc.startsWith('+') ? 1 : 0, x.keys[0].replace(/^C-/, '').toLowerCase(), x.keys[0].startsWith('C-') ? 1 : 0];
+  return out.sort((a, b) => { const [p, q] = [rank(a), rank(b)]; return p[0] - q[0] || (p[1] < q[1] ? -1 : p[1] > q[1] ? 1 : 0) || p[2] - q[2]; });
+}
+
 // Shared by every editor: the setting, the kill ring, registers, the
 // fill column, and the app's commands (hooks).
 export const emacs = {
@@ -522,6 +542,9 @@ export class EmacsKeys {
     this.editing = false;
     this.sticky = false;
     this.recentered = 0;
+    this.helping = null; // the prefix whose keys show (which-key)
+    this.helpTimer = null;
+    this.helpOn = false; // they showed for the prefix before: at once for the next
   }
 
   get ta() { return this.ed.ta; }
@@ -612,7 +635,25 @@ export class EmacsKeys {
     this.arg = null;
     this.pending = null;
     this.transient = null;
+    this.hideKeys();
     this.unsay();
+  }
+
+  // The keys after a prefix: shown after a pause (at once: now), hidden.
+  showKeys(map, now = false) {
+    this.hideKeys();
+    const show = () => {
+      this.helpTimer = null;
+      if (this.pending?.map !== map) return;
+      this.helping = map;
+      emacs.hooks.prefixHelp?.(map, prefixKeys(map));
+    };
+    if (now) show(); else this.helpTimer = setTimeout(show, PREFIX_HELP_DELAY);
+  }
+  hideKeys() {
+    clearTimeout(this.helpTimer);
+    this.helpTimer = null;
+    if (this.helping) { this.helping = null; emacs.hooks.prefixHelp?.(null); }
   }
 
   // ---------------------------------------------------------------- keydown
@@ -661,7 +702,11 @@ export class EmacsKeys {
   pendingKey(e, name) {
     const p = this.pending;
     this.pending = null;
+    const shown = !!this.helping;
+    this.hideKeys();
     if (name === 'C-g') { this.run('keyboard-quit'); return; }
+    // ? or C-h after a prefix: its keys, now (the prefix still waits).
+    if (p.map && (name === '?' || name === 'C-h')) { this.pending = p; this.showKeys(p.map, true); return; }
     if (p.read) {
       this.unsay();
       const ch = !e.ctrlKey && !e.altKey && name?.length === 1 ? name : null;
@@ -679,7 +724,9 @@ export class EmacsKeys {
     const cmd = MAPS[p.map][name] || (name?.length === 1 && MAPS[p.map][name.toLowerCase()]);
     this.unsay();
     if (!cmd) { this.arg = null; this.say(`${p.map} ${name} is undefined`); return; }
-    this.run(cmd);
+    // A prefix in it: its keys at once, when this one's showed.
+    this.helpOn = shown;
+    try { this.run(cmd); } finally { this.helpOn = false; }
   }
 
   // Run a command by name (also from the leader menu, app.js).
@@ -705,6 +752,7 @@ export class EmacsKeys {
   prefix(map) {
     this.pending = { map };
     this.say(`${this.arg ? `${this.argText()} ` : ''}${map}-`, true);
+    this.showKeys(map, this.helpOn);
   }
   argText() { const a = this.arg; return a.digits || a.neg ? `C-u ${a.neg ? '-' : ''}${a.digits}` : 'C-u'; }
 

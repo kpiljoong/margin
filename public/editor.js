@@ -190,6 +190,7 @@ export class MarkdownEditor {
     this.ta.addEventListener('blur', () => setTimeout(() => {
       if (document.activeElement === this.ta) return;
       this._closePopup();
+      this.emacs.hideKeys();
       if (this.query) this._queryDone();
     }, 150));
     this.ta.addEventListener('paste', (e) => this._paste(e));

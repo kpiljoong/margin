@@ -333,6 +333,7 @@ Each `##` with a ```` ```macro ```` block is a command, "Macro: Make it a task" 
 | Registers | ⌃X R Space then a letter keeps the place, ⌃X R J goes back to it (in any note); ⌃X R S copies the region into one, ⌃X R I puts it in. For the session; ⌥X x l lists them |
 
 - **By name (M-x).** ⌥X : (or Space) finds commands by their Emacs names too: `save-buffer` is Save, `query-replace`, `fill-paragraph`, `upcase-word`, `sort-lines`, `point-to-register`, `org-agenda` (Tasks)… — the name you typed shows first, Margin's beside it. With Emacs keys on, the editor commands that are only Emacs's (`kill-line`, `transpose-chars`, `delete-trailing-whitespace`, `capitalize-region`…) are there too, each with its key.
+- After ⌃X (or ⌃X R, ⌃X N, ⌥G, ⌥S), a pause of under a second shows the keys that can follow in a panel above the status bar, as Emacs's which-key does; ? or ⌃H shows them at once. Typed on without stopping, nothing shows. The next key goes on as usual (⌃G quits).
 - ⌥X h k describes these too: press ⌥X h k, then ⌃X ⌃S (a prefix waits for the rest).
 - Keys the app also uses are the editor's while it has the cursor: on Windows and Linux Ctrl+S searches, Ctrl+W kills, Ctrl+X starts a ⌃X key, Ctrl+A goes to the line's start, Ctrl+N and Ctrl+P move — use ⌃X ⌃S to save and the menus or ⌥X for the rest. Ctrl+C, Ctrl+V and Ctrl+Z still copy, paste and undo.
 - ⌃Y puts back what was killed or copied in Margin; something copied in another app is pasted with ⌘V (Ctrl+V). Margin doesn't read the clipboard on its own.

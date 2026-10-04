@@ -7844,9 +7844,23 @@ function pasteFromHistory() {
   });
 }
 
+// After ⌃X (or another prefix) and a pause: the keys that can follow, in a
+// panel above the status bar (as which-key). It takes no focus: the next
+// key still goes to the editor. null: hidden.
+function showPrefixKeys(map, list) {
+  $('#prefix-keys')?.remove();
+  if (!map) return;
+  document.body.append(h('div', { id: 'prefix-keys', class: 'leader which-key', role: 'status' },
+    h('div', { class: 'leader-head' }, `${map}-`, h('span', { class: 'leader-hint' }, 'C-g quit')),
+    // Keys on one command: one letters all (2 3), else the first (C-SPC, not C-@ too).
+    h('div', { class: 'leader-grid' }, ...list.map((x) => h('div', { class: `leader-item${x.doc.startsWith('+') ? ' group' : ''}` },
+      h('kbd', {}, x.keys.every((k) => k.length === 1) ? x.keys.join(' ') : x.keys[0]), h('span', {}, x.doc))))));
+}
+
 // Emacs keys (emacs.js): what they do in the app.
 Object.assign(emacs.hooks, {
   echo: showEcho,
+  prefixHelp: showPrefixKeys,
   save: () => runCommand('save'),
   findFile: () => openPalette(),
   buffers: pickTab,

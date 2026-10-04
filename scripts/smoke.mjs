@@ -1242,6 +1242,12 @@ await check('F8 / ⇧F8 step through the search results from the note; ⌥. repe
     got.query = await state();
     await keys('!');
     got.queryAll = await state();
+    // C-x and a pause: the keys after it show; C-g hides them.
+    await keys('C-x');
+    await sleep(1100);
+    got.help = await inPage(`return $('#prefix-keys')?.textContent || '';`);
+    await keys('C-g');
+    got.helpGone = await inPage(`return !$('#prefix-keys');`);
     // C-x C-s saves.
     await keys('C-x C-s');
     await sleep(400);
@@ -1274,12 +1280,13 @@ await check('F8 / ⇧F8 step through the search results from the note; ⌥. repe
     else if (got.yankPop?.v !== 'one two three\n fiveone two three\n\nsix\n') problem = 'M-y did not swap in the kill before';
     else if (got.arg?.v !== 'xxxcat dog cat\nbird cat\n' || got.arg.s !== 6) problem = 'C-u 3 x or ESC f did not work';
     else if (got.query?.v !== 'xxxCAT dog cat\nbird cat\n' || got.queryAll?.v !== 'xxxCAT dog cat\nbird CAT\n') problem = 'query replace did not work';
+    else if (!got.help.startsWith('C-x-') || !got.help.includes('C-sSave') || !got.helpGone) problem = `C-x and a pause did not show the keys after it (or C-g did not hide them): ${JSON.stringify(got.help)}`;
     else if (got.saved !== got.queryAll.v) problem = 'C-x C-s did not save';
     else if (got.occur?.length !== 2 || got.occurAt !== 2) problem = 'occur did not list the lines or go to one';
     else if (!got.mx?.[0]?.startsWith('kill-lineC-k') || !got.mx[1]?.startsWith('save-bufferSave')) problem = 'M-x did not find the commands by their Emacs names';
   } catch (e) { problem = e.message; }
   await setting(false).catch(() => {});
-  const name = 'Emacs keys: kill and yank, the region, C-u, ESC, query replace, C-x C-s, occur, M-x by Emacs names';
+  const name = 'Emacs keys: kill and yank, the region, C-u, ESC, query replace, C-x and a pause shows its keys, C-x C-s, occur, M-x by Emacs names';
   results.push({ name, ok: !problem });
   console.log(`${problem ? '✗' : '✓'} ${name}${problem ? `\n    ${problem}\n    got: ${JSON.stringify(got)}` : ''}`);
   if (problem) failed = true;

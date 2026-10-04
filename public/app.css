@@ -845,6 +845,8 @@ iframe.mermaid-frame { position: fixed; left: -10000px; top: 0; width: 1600px; h
 .leader-item kbd { min-width: 26px; text-align: center; color: var(--accent); }
 .leader-item.group span { color: var(--accent-2); }
 .leader.nope { animation: nope .25s; }
+/* The keys after an Emacs prefix (⌃X …), shown after a pause; no focus, no clicks. */
+.leader.which-key { pointer-events: none; }
 @keyframes nope { 25% { transform: translateX(calc(-50% - 6px)); } 75% { transform: translateX(calc(-50% + 6px)); } }
 
 /* Link hints (leader l f, or f in a focused preview). */
