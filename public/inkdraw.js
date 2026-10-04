@@ -57,6 +57,25 @@ const KEYS = { d: 'pen', a: 'arrow', r: 'box', t: 'text', n: 'num', h: 'hide', e
 
 const isBoard = (fig) => fig?.dataset.board != null;
 
+// A mark written: what was drawn for it stays (the marks it changes still
+// hidden) until the picture is drawn again from the note, which takes them
+// all away — else it blinks out, or back to where it was, meanwhile. This
+// long at most, should the picture not be drawn again.
+const LINGER = 2000;
+const linger = (els, hidden = []) => {
+  // Only to be seen: no mark to pick, erase or count.
+  for (const e of els) {
+    for (const x of e ? [e, ...e.querySelectorAll('*')] : []) {
+      if (x.classList.contains('ink-hit')) x.remove();
+      else x.classList.remove('ink-mark');
+    }
+  }
+  setTimeout(() => {
+    for (const e of els) e?.remove();
+    for (const g of hidden) g.classList.remove('ink-moving');
+  }, LINGER);
+};
+
 // An arrow's kinds, as the tool shows them.
 export const ARROW_KINDS = { straight: ['↗', 'Straight'], curved: ['\u2934', 'Curved'], elbow: ['\u21B1', 'Elbow'] };
 
@@ -230,8 +249,10 @@ export class InkTools {
     const d = this.draft;
     if (!d) return false;
     this.draft = null;
-    d.el?.remove();
     const moved = Math.hypot(e.clientX - d.x, e.clientY - d.y) > 4;
+    const mark = moved && d.pts.length >= 2 && !['text', 'note', 'num'].includes(d.kind) && this.markOf(d);
+    if (mark) linger([d.el]);
+    else d.el?.remove();
     // An arrow clicked, not dragged: drawn point by point from there.
     if (d.kind === 'arrow' && !moved) { this.path = { fig: d.fig, scale: d.scale, pts: [d.pts[0]], cursor: null, el: null }; return true; }
     if (d.kind === 'text') { if (!moved) this.words(d); return true; }
@@ -249,8 +270,6 @@ export class InkTools {
       if (!moved) this.c.h.onInk?.(d.fig, { add: inkLine({ kind: 'num', color: this.color, x: Math.round(d.pts[0][0]), y: Math.round(d.pts[0][1]), text: String(n) }) });
       return true;
     }
-    if (!moved || d.pts.length < 2) return true;
-    const mark = this.markOf(d);
     if (mark) this.c.h.onInk?.(d.fig, { add: inkLine(mark) });
     return true;
   }
@@ -460,12 +479,18 @@ export class InkTools {
   // → whether it was a drag (a click goes on to pick: a dot's item, say).
   drop() {
     const ed = this.edit;
+    const olds = ed.group || [ed.mark];
+    const nexts = ed.nexts || [];
+    const changed = ed.moved && nexts.some((m, i) => inkLine(m) !== inkLine(olds[i]));
+    if (changed) {
+      const svg = ed.fig.querySelector(':scope > .ink-marks');
+      linger([ed.el], [...(svg?.querySelectorAll(':scope > .ink-mark.ink-moving') || [])]);
+      this.edit = null;
+    }
     this.cancel();
     if (!ed.moved) { this.select(ed.fig, ed.mark.line); return false; }
-    const olds = ed.group || [ed.mark];
     this.sel = { pic: ed.fig.dataset.line, lines: ed.keep };
-    const nexts = ed.nexts || [];
-    if (nexts.some((m, i) => inkLine(m) !== inkLine(olds[i]))) {
+    if (changed) {
       if (nexts.length > 1 || ed.follow?.length) this.c.h.onInk?.(ed.fig, { sets: [...olds.map((m, i) => [m.line, nexts[i]]), ...ed.follow] });
       else this.c.h.onInk?.(ed.fig, { set: [ed.mark.line, nexts[0]] });
     }
@@ -622,8 +647,10 @@ export class InkTools {
   // The arrow drawn point by point, written.
   endPath() {
     const P = this.path;
+    const ok = P && P.pts.length >= 2 && P.fig.isConnected;
+    if (ok) { linger([P.el]); P.el = null; }
     this.cancel();
-    if (!P || P.pts.length < 2 || !P.fig.isConnected) return;
+    if (!ok) return;
     this.c.h.onInk?.(P.fig, { add: inkLine(this.arrowOf(P.fig, P.pts, P.scale)) });
   }
 
