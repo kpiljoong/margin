@@ -162,6 +162,9 @@ const DOCS = {
   'Macro: Play until it can’t go on': 'Plays the last macro again and again until it fails (the end of the note, nothing more to find).',
   'Macro: Play at every search result': 'Plays the last macro at each match of the workspace search.',
   'Macro: Show the macro': 'Says what the last macro does, key by key.',
+  'Macro: save the last one (MACROS.md)…': 'Keeps the last macro under a name, as lines in MACROS.md (a note you can read and edit): M-x plays it as “Macro: <name>”, and LEADER.md can put it on keys.',
+  'Macro: play a kept one…': 'Picks one of the macros kept in MACROS.md and plays it.',
+  'Macros: edit (MACROS.md)': 'Opens MACROS.md (made if it isn’t there): your kept macros, each a ## heading and its steps in a ```macro block, a line each. Saved, they are commands.',
 
   // Git
   'Git: show changes': 'The git panel: what changed since the last commit.',
@@ -172,6 +175,7 @@ const DOCS = {
   'Settings': 'Margin’s settings.',
   'Keyboard shortcuts…': 'Every shortcut, to see and change (Settings › Keyboard shortcuts).',
   'Edit leader keys': 'Opens LEADER.md (made if it isn’t there): your own keys after ⌥X, a line each — added, changed, taken away. Saved, the menu follows it.',
+  'Make or change a command… (ask the agent)': 'Say what a command should do (or how one should change, its keys too): the agent writes it in LEADER.md, RECIPES.md or MACROS.md, and you review it as any run. Applied, it works at once.',
   'Describe a key…': 'Press a key (⌥X and a path for the leader’s): what it does, where else it is, and how to change it.',
   'Describe a command…': 'A command by name (M-x’s list): what it does and its keys.',
 

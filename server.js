@@ -1133,6 +1133,8 @@ function resolveScope(scope, focus, task = '') {
   } else if (scope === 'folder') {
     const dir = focus ? path.posix.dirname(focus) : '.';
     if (dir !== '.') files = files.filter((f) => f.startsWith(`${dir}/`));
+  } else if (scope === 'commands') {
+    files = files.filter((f) => COMMAND_NOTES.includes(f));
   } else if (scope !== 'workspace') {
     throw httpError(400, 'Unknown scope');
   }
@@ -1220,7 +1222,33 @@ const COMMENTS_GUIDE = `To write in the margin instead of in the text, put a JSO
 Quote the note exactly as it is, and as little as is needed to find the place. Write comments in the language of the note. Each comment is shown in the margin next to the quote; the user accepts or rejects each suggestion.`;
 const commentsGuide = (text) => (text.includes(COMMENTS_FILE) || /\b(red pen|margin (notes|comments))\b/i.test(text) ? COMMENTS_GUIDE : '');
 
-function buildPrompt(task, focus, followUp = '', pictures = []) {
+// Margin's own commands, keys and macros, as notes at the top of the folder
+// (public/leaderkeys.js, recipes.js, macrotext.js): the "commands" scope
+// shares these alone, with their notation (lib/margin-config.md) and the
+// names a key or a macro can run. The app asks for it ("Make or change a
+// command…"); what comes back is reviewed as any run.
+const COMMAND_NOTES = ['LEADER.md', 'RECIPES.md', 'MACROS.md'];
+let marginConfig = null;
+const commandsGuide = (commands) => {
+  marginConfig ??= fs.readFileSync(path.join(APP_DIR, 'lib', 'margin-config.md'), 'utf8').replace(/\r\n/g, '\n').trim();
+  return `${marginConfig}\n\nThe commands there are now, by name (for LEADER.md and \`run\`):\n${commands.map((c) => `- ${c}`).join('\n')}`;
+};
+const commandNames = (list) => (Array.isArray(list) ? list : [])
+  .filter((c) => typeof c === 'string').map((c) => c.replace(/\s+/g, ' ').trim().slice(0, 120)).filter(Boolean).slice(0, 2000);
+
+function buildPrompt(task, focus, followUp = '', pictures = [], commands = null) {
+  if (commands) {
+    return [
+      'You are changing how a notes app works for its user, by editing its notes of commands.',
+      'The current directory is a staged copy of those notes (some may not be there yet).',
+      'A human will review your changes as a diff before anything is applied.',
+      'Work without asking questions: nobody can answer them. If the task is unclear, make the most reasonable change.',
+      '',
+      commandsGuide(commands),
+      '',
+      `Task: ${task}`,
+    ].join('\n');
+  }
   const note = noteText(focus);
   const flow = flowGuide(`${task}\n${followUp}`, note);
   const ink = inkGuide(`${task}\n${followUp}`, note);
@@ -1271,14 +1299,14 @@ function coverPictures(pictures, hidden, masked, excluded) {
   return covered;
 }
 
-function startRun({ task, scope, focus, selection, agentId, model, recipe, masked }) {
+function startRun({ task, scope, focus, selection, agentId, model, recipe, masked, commands }) {
   if (!AGENT) throw httpError(400, 'No agent configured. Restart with --agent demo or --agent "<command>".');
   const agent = agentById(agentId);
   const command = agentCommand(agent, typeof model === 'string' ? model : '');
   task = String(task || '').trim();
   if (!task) throw httpError(400, 'Describe the task for the agent');
   const { included, excluded, pictures, hidden } = resolveScope(scope, focus, task);
-  if (!included.length) throw httpError(400, 'Nothing to share: every note in scope is excluded by privacy rules');
+  if (!included.length && scope !== 'commands') throw httpError(400, 'Nothing to share: every note in scope is excluded by privacy rules');
   if (included.length > 5000) throw httpError(400, 'Scope is too large (over 5000 notes); pick a folder');
   const covered = coverPictures(pictures, hidden, masked, excluded);
 
@@ -1293,6 +1321,7 @@ function startRun({ task, scope, focus, selection, agentId, model, recipe, maske
       else fs.copyFileSync(path.join(ROOT, f), dst);
     }
   }
+  for (const sub of ['base', 'work']) fs.mkdirSync(path.join(dir, sub), { recursive: true }); // (commands: maybe none yet)
   const focusShared = focus && included.includes(focus) ? focus : null;
   // A selection is only context from the focused note; never send it if that
   // note is withheld by privacy rules.
@@ -1303,8 +1332,9 @@ function startRun({ task, scope, focus, selection, agentId, model, recipe, maske
     agent: agent.label, agentId: agent.id, command, model: (command === agent.command ? agent.model : model) || '',
     status: 'running', startedAt: new Date().toISOString(), finishedAt: null,
     exitCode: null, files: included, pictures, excluded, applied: null, selection: sel ? sel.length : 0,
+    ...(scope === 'commands' ? { commands: commandNames(commands) } : {}),
   };
-  let prompt = buildPrompt(task, focusShared, '', pictures);
+  let prompt = buildPrompt(task, focusShared, '', pictures, meta.commands);
   if (covered.size) prompt += `\n\nParts of ${[...covered.keys()].join(', ')} are covered in gray: the user hid them. Leave their \`hide\` lines as they are, and don't guess what is under them.`;
   const mine = focusShared ? commentsForAgent(focusShared) : '';
   if (mine) prompt += `\n\n${mine}`;
@@ -1338,7 +1368,7 @@ function followUpRun(prevId, { task }) {
     exitCode: null, signal: null, usage: undefined, resolvedModel: undefined, cancelReason: undefined, applied: null, child: undefined,
   };
   const prompt = [
-    buildPrompt(meta.originalTask, meta.focus, task, meta.pictures),
+    buildPrompt(meta.originalTask, meta.focus, task, meta.pictures, meta.commands),
     '',
     `This is round ${round}. Your earlier edits are already in this directory and are still pending human review.`,
     `The reviewer's follow-up: ${task}`,

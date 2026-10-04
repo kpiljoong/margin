@@ -14,7 +14,7 @@ Whatever would change your notes comes through the same review, change by change
 
 What shapes Margin is plain Markdown in the folder, readable and editable anywhere, kept with git: recipes (your commands, `RECIPES.md`), the instructions for agents (`AGENTS.md`), tasks (`- [ ]` in any note), and the record of what agents did. Extending Margin means writing text and handing it to an agent — the agent takes the place Emacs gives to elisp. No plugins, no code that runs.
 
-*Today:* recipes, `AGENTS.md`, your own leader keys (`LEADER.md`), tasks, drawings of flows (drawn on the canvas, written as a ` ```flow ` block) and marks on pictures (a ` ```ink ` block under the picture) are notes. Settings live in the app's config file and runs in `.agent-notes/runs/` (text and JSON); making them notes is the direction.
+*Today:* recipes, `AGENTS.md`, your own leader keys (`LEADER.md`), kept keyboard macros (`MACROS.md`), tasks, drawings of flows (drawn on the canvas, written as a ` ```flow ` block) and marks on pictures (a ` ```ink ` block under the picture) are notes. "Make or change a command…" (⌥X h m) is the loop in a line: say what you want, the agent writes it into `LEADER.md`, `RECIPES.md` or `MACROS.md`, you review it, and it works at once. Settings live in the app's config file and runs in `.agent-notes/runs/` (text and JSON); making them notes is the direction.
 
 ### Principle 3 — Agent proposes, you decide
 

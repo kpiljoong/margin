@@ -265,15 +265,15 @@ The shortcuts above (except typing behaviours like Tab, Enter, and bracket pairi
 | `a` agent | `a` delegate a task · `1`–`6` a recipe (Tidy, Summarize…) · `v` review the next run · `o` changes from outside · `i` instructions for agents (AGENTS.md) · `r` agent runs |
 | `r` recipes | `1`–`6` Margin's recipes · your own by their `key:` · `e` edit `RECIPES.md` |
 | `t` toggles | `f` tree follows the tab · `s` sidebar · `t` theme · `z` focus mode |
-| `q` macro | `q` start/stop recording · `r` play · `n` play N times · `e` play until it can't go on · `s` play at every search result · `v` show it |
+| `q` macro | `q` start/stop recording · `r` play · `n` play N times · `e` play until it can't go on · `s` play at every search result · `v` show it · `k` keep it in MACROS.md · `m` play a kept one · `E` edit MACROS.md |
 | `d` | This note's folder as text (dired) |
-| `h` help | `k` describe a key · `c` describe a command · `l` edit your leader keys (LEADER.md) · `s` keyboard shortcuts |
+| `h` help | `k` describe a key · `c` describe a command · `l` edit your leader keys (LEADER.md) · `m` make or change a command (ask the agent) · `s` keyboard shortcuts |
 | `.` | Repeat the last command (it shows which) |
 | `,` / `k` | Settings / keyboard shortcuts |
 
 **M-x: every command by name.** ⌘⇧P, ⌥X : (or ⌥X Space, ⌥X ⌥X) lists every command — the palette's, every leader key, the recipes, and the keys of the buffer in view — found by a few letters of its name (fuzzy). Each shows its shortcut and its ⌥X keys, so M-x also teaches them. Commands Emacs has are found by Emacs's name as well (`save-buffer`, `query-replace`; see Emacs keys). With nothing typed, the commands of the buffer you are in come first (◆, with their key), then the ones you ran lately, then the rest; when typing, recent and fitting ones are lifted. Commands for the note (Editor:, View:, Find…) count as fitting when a note is in view. Commands that can't run here (no note open…) are left out.
 
-**Describe a key (⌥X h k), describe a command (⌥X h c).** As Emacs's C-h k: press ⌥X h k, then any key — a shortcut (⌘S), the leader and a path (⌥X n n: the menu opens as usual, titled "Describe"), or a buffer's own key (`g` in dired) — and a help buffer says which command it is, what it does in a line, every key it is on (shortcut, leader paths, yours from LEADER.md with the line, the buffer key, M-x), and how to change them, with a line to copy into LEADER.md. A key with nothing on it says so. ⌥X h c finds a command by name from M-x's list, each with its line. In the help buffer `o` runs the command, `k`/`c`/`l` describe another key, command, or open LEADER.md, `q` closes.
+**Describe a key (⌥X h k), describe a command (⌥X h c).** As Emacs's C-h k: press ⌥X h k, then any key — a shortcut (⌘S), the leader and a path (⌥X n n: the menu opens as usual, titled "Describe"), or a buffer's own key (`g` in dired) — and a help buffer says which command it is, what it does in a line, every key it is on (shortcut, leader paths, yours from LEADER.md with the line, the buffer key, M-x), and how to change them, with a line to copy into LEADER.md. A key with nothing on it says so. ⌥X h c finds a command by name from M-x's list, each with its line. In the help buffer `o` runs the command, `a` asks the agent to change it (below), `k`/`c`/`l` describe another key, command, or open LEADER.md, `q` closes.
 
 **Keys of your own after ⌥X (LEADER.md).** ⌥X h l (M-x "Edit leader keys", or Settings → Keyboard shortcuts → Edit leader keys) opens `LEADER.md` at the top of the workspace, made with a few examples the first time. It is a note: each list item with keys in backticks is a rule —
 
@@ -298,7 +298,24 @@ Keys are a letter (`A` is Shift+a), a digit, `SPC`, or one of `` ` / . , ; ' [ ]
 **Keyboard macros (as in Emacs).** F3 starts recording (the status bar shows ● Recording), F4 stops; F4 again plays it where the cursor is now. What is kept is what the keys did: text typed (Korean too, as composed), deletions, cursor moves (characters, words with ⌥, line ends with ⌘←/→ or ⌃A/⌃E, up/down, pages, ⌘A), a find (⌘F, Enter, Esc: "the next match of …", counted from the cursor), Replace and Replace all in the find bar, cut/copy/paste (the macro's own clipboard: what this run cut), the editor's own keys (Enter continuing a list, Tab, ⌘B, ⌥↑…) and commands (⌥X, the palette, shortcuts like F8). Deleting a word or to the line's end is done again from where the cursor is then. Mouse clicks aren't recorded (you're told once).
 - **Play until it can't go on** (⌥X q e): again and again, until a move hits the start or end of the note, a find finds nothing more, or a run changes nothing.
 - **Play at every search result** (⌥X q s): searches again (open notes as they are, saved or not), then at each result selects the match and plays the macro once; in each note from the bottom up, so line numbers stay right. Record it starting from a selected match (F8 to the first one, F3, edit, F4); the result you edited while recording isn't found again if the edit removed the match.
-- Only the last macro is kept, for this session. On a Mac, F3/F4 may need fn (or use ⌥X q q / q r). With Emacs keys on, ⌃X ( ⌃X ) ⌃X e do the same (e again plays it once more; ⌃U 0 ⌃X e until it can't go on).
+- The last macro is kept for this session; **⌥X q k** keeps it for good under a name (below). On a Mac, F3/F4 may need fn (or use ⌥X q q / q r). With Emacs keys on, ⌃X ( ⌃X ) ⌃X e do the same (e again plays it once more; ⌃U 0 ⌃X e until it can't go on).
+
+**Macros kept as a note (MACROS.md).** ⌥X q k (M-x "Macro: save the last one", Emacs's kmacro-name-last-macro) asks for a name and writes the last macro into `MACROS.md` at the top of the workspace, as lines you can read and change:
+
+````
+## Make it a task
+Turns the line into a task and goes to the next one.
+
+```macro
+move line-start
+type "- [ ] "
+move down
+```
+````
+
+Each `##` with a ```` ```macro ```` block is a command, "Macro: Make it a task" in M-x (⌥X q m picks one), and LEADER.md can put it on keys (`` - `o t` Macro: Make it a task ``). Played, it becomes the last macro too, so ⌥X q e plays it to the end of a list. The steps: `type "text"`, `backspace 2`, `delete 1`, `erase`; `move` / `select` with `left` `right` `up` `down` `word-left` `word-right` `line-start` `line-end` `start` `end` `page-up` `page-down` (`select all`); `delete-to line-end`; `find "TODO"` (`case`, `regex`, `2`, `at-start` / `at-end`) and `replace-all "old" "new"`; `copy` `cut` `paste` `undo` `redo`; `key Ctrl-k` for a key the editor takes; `run <name>` for a command by its M-x name (another macro too). The file opened with ⌥X q E explains them. Saved, it is read again; a step that can't be read leaves that macro out, with a warning naming its line.
+
+**Make or change a command by asking (⌥X h m, or `a` in a help buffer).** Say what a command should do, or how one should change — "a command that turns the line into a task, on ⌥X o t", "put Widen on ⌥X n SPC", "a recipe that writes the week's summary" — and the agent writes it where Margin keeps your own: keys in `LEADER.md`, tasks for the agent in `RECIPES.md`, editing steps in `MACROS.md`. It sees those three notes only (with how they are written and the names of every command), and its change comes back as a run to review like any other; applied, the notes are read again and the command works at once. From a command's help buffer (⌥X h c, ⌥X h k) the ask is about that command. Everything it can write is text: no code runs.
 
 **Emacs keys (Settings → Editor → "Emacs keys in the editor", off until turned on).** In the editor, ⌃ and ⌥ keys (Ctrl and Alt on Windows and Linux) work as in Emacs. ⌘ keys stay the app's on a Mac. ESC then a key is ⌥ and the key (M-), for keyboard layouts where ⌥ types accents; with the setting on, ⌥ and a key bound below no longer types its special character.
 

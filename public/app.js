@@ -3,7 +3,8 @@ import { store } from './store.js';
 import { linkAt } from './links.js';
 import { PreviewFind } from './previewfind.js';
 import { openLeader, linkHints, pickHint } from './leader.js';
-import { Macros, describe as describeMacro } from './macro.js';
+import { Macros, Stop as MacroStop, describe as describeMacro } from './macro.js';
+import { parseMacros, withMacro, MACROS_FILE, MACROS_STARTER } from './macrotext.js';
 import { fillTemplate, isTemplate, TEMPLATE_DIR } from './templates.js';
 import { MarkdownEditor, setEditorKeys } from './editor.js';
 import { emacs, occurLines, occurPattern, keyName as emacsKeyName, commandOf as emacsCommandOf, COMMAND_DOCS, PREFIXES as EMACS_PREFIXES, emacsName, keysOf as emacsKeysOf, emacsCommands } from './emacs.js';
@@ -825,6 +826,7 @@ async function saveTab(tab = fileTab(), { force = false } = {}) {
   renderTabs(); renderStatus(); renderBanner();
   if (tab.path === RECIPES_FILE) loadRecipes();
   if (tab.path === LEADER_FILE) loadLeaderKeys();
+  if (tab.path === MACROS_FILE) loadMacros();
   if (tab.saveAgain) { tab.saveAgain = false; if (tab.content !== tab.saved && !tab.conflict) await saveTab(tab); }
 }
 
@@ -3080,6 +3082,9 @@ const COMMANDS = [
   ['Search results (as a buffer)', () => openSearchBuffer()],
   ['Recipes: edit (RECIPES.md)', () => editRecipes()],
   ['Edit leader keys', () => editLeaderKeys()],
+  ['Macro: save the last one (MACROS.md)…', () => setTimeout(saveLastMacro, 0)],
+  ['Macros: edit (MACROS.md)', () => editMacros()],
+  ['Make or change a command… (ask the agent)', () => setTimeout(() => changeByAgent(), 0)],
   ['Describe a key…', () => describeKey()],
   ['Describe a command…', () => setTimeout(describeCommand, 0)],
   ['Dired: edit a folder as text…', () => setTimeout(pickDiredFolder, 0)],
@@ -3193,6 +3198,7 @@ function allCommands() {
   }
   for (const [name, run, opt] of COMMANDS) add({ name, run, shortcut: opt?.key || null, prefix: typeof opt === 'string' ? opt : null, ctx: NOTE_COMMAND.test(name) ? ['file'] : null });
   for (const r of recipes.list) add({ name: `Recipe: ${r.name}`, run: () => runRecipe(r), leader: r.key ? ['r', r.key] : null, ctx: r.scope === 'file' ? ['file'] : null, recipe: true });
+  for (const m of kept.list) add({ name: `Macro: ${m.name}`, run: () => playKept(m), doc: keptDoc(m), ctx: ['file'], macro: m });
   // The leader's keys: on the command they run, or a command of their own.
   const walk = (items, path, group) => {
     for (const it of items) {
@@ -4925,16 +4931,51 @@ async function runRecipe(r) {
   if (!(await savedForAgent(tab))) return;
   const ed = focus && tab.editor;
   const selection = ed ? ed.value.slice(ed.selectionStart, ed.selectionEnd) : '';
+  const { agentId, model } = agentNow();
+  try {
+    const masked = await maskedPictures((await scopeFor(r.scope || 'file', focus, r.prompt)).hidden);
+    const run = await api('POST', '/api/runs', { task: r.prompt, scope: r.scope || 'file', focus, selection, agentId, model, recipe: r.name, masked });
+    await loadRuns();
+    toast(`${r.name}: the agent is on it (a staged copy of ${r.scope === 'file' ? stem(focus) : r.scope === 'folder' ? 'this folder' : 'the workspace'})`, '', { label: 'Watch', run: () => openReview(run.id) });
+  } catch (e) { toast(e.message, 'error'); }
+}
+
+// The agent (and model) last chosen in the task dialog.
+function agentNow() {
   const agents = S.info.agents || [];
   const last = store.getItem('an.lastAgent');
   const agent = agents.find((a) => a.id === last) || agents.find((a) => a.id === S.info.agent.id);
   const saved = store.getItem(`an.model.${agent?.label || ''}`) || '';
-  const model = agent?.models?.some((m) => m.id === saved) ? saved : '';
+  return { agentId: agent?.id, model: agent?.models?.some((m) => m.id === saved) ? saved : '' };
+}
+
+// Margin changed by asking: what a command should do, or how one should
+// change, said in words; the agent writes it where Margin keeps your own —
+// LEADER.md (keys), RECIPES.md (tasks for the agent), MACROS.md (editing
+// steps) — and it comes back as a run to review like any other. Applied,
+// the notes are read again and it works at once. Text only: no code runs.
+async function changeByAgent(topic = null) {
+  if (!S.info?.agent?.configured) { showView('agent'); toast('No agent configured — see the Agent panel.', 'error'); return; }
+  const L = kbd('leader') || '⌥X';
+  const what = (await askText({
+    title: topic ? `Change “${topic.name}”` : 'Make or change a command',
+    label: topic ? 'How should it change? Its keys, what it does, a version of your own…'
+      : `What should it do, and on which keys? The agent writes it in ${LEADER_FILE}, ${RECIPES_FILE} or ${MACROS_FILE}, and you review it before anything changes.`,
+    placeholder: topic ? `Put it on ${L} o s` : `Turn the line into a task and go to the next one, on ${L} o t`,
+    multiline: true, okLabel: 'Ask the agent',
+  }))?.trim();
+  if (!what) return;
+  let task = what;
+  if (topic) {
+    const where = [...(topic.leaders || []).map((p) => `${L} ${p.keys.join(' ')}`), topic.shortcut && kbd(topic.shortcut), topic.emacsKey && `${topic.emacsKey} (Emacs keys)`].filter(Boolean);
+    task = `About “${topic.name}” (${topic.unbound ? 'a key with no command on it' : 'a command'}${where.length ? `, on ${where.join(', ')}` : ''}): ${what}`;
+  }
+  // The names a key or a macro can run.
+  const commands = [...new Set(allCommands().filter((c) => !c.emacsOnly && !c.inBuffer).map((c) => c.name))];
   try {
-    const masked = await maskedPictures((await scopeFor(r.scope || 'file', focus, r.prompt)).hidden);
-    const run = await api('POST', '/api/runs', { task: r.prompt, scope: r.scope || 'file', focus, selection, agentId: agent?.id, model, recipe: r.name, masked });
+    const run = await api('POST', '/api/runs', { task, scope: 'commands', commands, ...agentNow() });
     await loadRuns();
-    toast(`${r.name}: the agent is on it (a staged copy of ${r.scope === 'file' ? stem(focus) : r.scope === 'folder' ? 'this folder' : 'the workspace'})`, '', { label: 'Watch', run: () => openReview(run.id) });
+    toast(`The agent is on it (a staged copy of ${LEADER_FILE}, ${RECIPES_FILE} and ${MACROS_FILE})`, '', { label: 'Watch', run: () => openReview(run.id) });
   } catch (e) { toast(e.message, 'error'); }
 }
 
@@ -5718,6 +5759,7 @@ function topicOf(cmd) {
     leaders: leaderPaths(cmd.name, cmd.recipe ? cmd.name.replace(/^Recipe: /, '') : null),
     inBuffer: kind ? { kind, key: cmd.inBuffer } : null,
     recipe: !!cmd.recipe,
+    macro: !!cmd.macro,
     alias: cmd.alias || null,
     emacsKey: cmd.emacsKey || null,
     emacsOnly: !!cmd.emacsOnly,
@@ -5880,9 +5922,9 @@ function helpView(tab) {
   const L = kbd('leader') || '⌥X';
   const wrap = h('div', { class: 'review help' });
   wrap.append(h('div', { class: 'review-head' },
-    h('span', { class: 'badge st-review' }, t.unbound ? 'key' : t.recipe ? 'recipe' : 'command'),
+    h('span', { class: 'badge st-review' }, t.unbound ? 'key' : t.recipe ? 'recipe' : t.macro ? 'macro' : 'command'),
     h('div', { class: 'task' }, t.name),
-    h('div', { class: 'meta' }, h('span', { class: 'review-keys', title: keysHint('help') }, `${t.run ? 'o run it · ' : ''}k a key · c a command · l leader keys · q`))));
+    h('div', { class: 'meta' }, h('span', { class: 'review-keys', title: keysHint('help') }, `${t.run ? 'o run it · ' : ''}a change it · k a key · c a command · l leader keys · q`))));
   wrap.append(h('p', { class: 'help-doc' }, t.doc || 'No description yet.'));
   const keys = [];
   if (t.shortcut && kbd(t.shortcut)) keys.push(h('li', {}, h('kbd', {}, kbd(t.shortcut)), t.where ? ` ${t.where}` : '', ' — a shortcut: change it in Settings › Keyboard shortcuts.'));
@@ -5904,6 +5946,7 @@ function helpView(tab) {
     ...(t.unbound || t.emacsOnly ? [] : [h('pre', { class: 'help-example' }, example)]),
     h('div', { class: 'help-actions' },
       t.run ? h('button', { class: 'btn primary', onclick: () => runTopic(t) }, 'Run it') : null,
+      h('button', { class: 'btn', title: `Say how, and the agent writes it in ${LEADER_FILE}, ${RECIPES_FILE} or ${MACROS_FILE}: you review it first`, onclick: () => changeByAgent(t) }, 'Change it… (ask the agent)'),
       h('button', { class: 'btn', onclick: editLeaderKeys }, `Edit leader keys (${LEADER_FILE})`),
       h('button', { class: 'btn', onclick: () => openSettings({ keys: true }) }, 'Keyboard shortcuts…'),
       h('button', { class: 'btn', onclick: describeKey }, 'Describe a key…'),
@@ -5911,10 +5954,11 @@ function helpView(tab) {
   return wrap;
 }
 
-function helpOwnKeys(e) {
+function helpOwnKeys(e, tab) {
   if (e.key === 'k') { describeKey(); return true; }
   if (e.key === 'c') { describeCommand(); return true; }
   if (e.key === 'l') { editLeaderKeys(); return true; }
+  if (e.key === 'a') { changeByAgent(tab?.topic); return true; }
   return false;
 }
 
@@ -5951,7 +5995,7 @@ const BUFFER_KEYS = {
   history: [['R', 'Restore this version…']],
   gitdiff: [],
   dired: [['^', 'Up a folder'], ['e', 'Edit the names as text (wdired)'], ['R', 'Rename this one (edit, its name picked)'], ['y', 'Plan: take the change'], ['n', 'Plan: leave the change'], ['A', 'Plan: take all'], ['a', 'Plan: apply what is taken']],
-  help: [['k', 'Describe a key…'], ['c', 'Describe a command…'], ['l', 'Edit leader keys']],
+  help: [['a', 'Change it… (ask the agent)'], ['k', 'Describe a key…'], ['c', 'Describe a command…'], ['l', 'Edit leader keys']],
   occur: [],
 };
 const COMMON_KEYS = [['o', 'Open'], ['g', 'Refresh'], ['q', 'Close']];
@@ -6434,8 +6478,9 @@ function connectEvents() {
     const { paths = [], structural } = JSON.parse(ev.data || '{}');
     if (structural) await loadTree();
     const changed = new Set(paths);
-    if (structural || changed.has(RECIPES_FILE)) loadRecipes();
-    if (structural || changed.has(LEADER_FILE)) loadLeaderKeys();
+    // The leader's keys may name recipes and macros: those first.
+    const named = [(structural || changed.has(RECIPES_FILE)) && loadRecipes(), (structural || changed.has(MACROS_FILE)) && loadMacros()];
+    if (structural || changed.has(LEADER_FILE)) Promise.all(named).then(loadLeaderKeys);
     const affected = S.tabs.filter((t) => isDoc(t) && (!paths.length || changed.has(t.path)));
     if (affected.length) await syncTabs(affected);
     for (const p of paths) if (isDrawing(p) || isMermaidFile(p) || isNote(p)) refreshEmbeds(p);
@@ -6973,6 +7018,9 @@ function defaultLeaderTree() {
       { key: 'e', label: 'Play until it can’t go on', when: () => !!macros.last, run: () => playMacro(Infinity) },
       { key: 's', label: 'Play at every search result', when: () => !!macros.last && !!S.searchQuery.trim(), run: playAtResults },
       { key: 'v', label: 'Show the macro', when: () => !!macros.last, run: () => toast(describeMacro(macros.last)) },
+      { key: 'k', label: `Keep it: save to ${MACROS_FILE}…`, cmd: 'Macro: save the last one (MACROS.md)…', when: () => !!macros.last, run: saveLastMacro, emacs: 'kmacro-name-last-macro' },
+      { key: 'm', label: 'Play a kept one…', cmd: 'Macro: play a kept one…', when: () => kept.list.length > 0, run: pickKeptMacro },
+      { key: 'E', label: `Edit macros (${MACROS_FILE})`, cmd: 'Macros: edit (MACROS.md)', run: editMacros },
     ] },
     { key: 'j', label: 'Jump to a word in view…', when: () => editorShown(tab), run: jumpInNote },
     { key: 'v', label: 'Expand the selection', when: () => editorShown(tab), run: () => tab.editor.expandSelection() },
@@ -6983,6 +7031,7 @@ function defaultLeaderTree() {
       { key: 'k', label: 'Describe a key…', cmd: 'Describe a key…', run: describeKey },
       { key: 'c', label: 'Describe a command…', cmd: 'Describe a command…', run: describeCommand },
       { key: 'l', label: `Edit leader keys (${LEADER_FILE})`, cmd: 'Edit leader keys', run: editLeaderKeys },
+      { key: 'm', label: 'Make or change a command… (ask the agent)', cmd: 'Make or change a command… (ask the agent)', run: () => changeByAgent() },
       { key: 's', label: 'Keyboard shortcuts…', cmd: 'Keyboard shortcuts…', run: () => openSettings({ keys: true }) },
     ] },
     { key: ',', label: 'Settings', run: () => openSettings() },
@@ -7005,6 +7054,8 @@ function resolveCommand(name, tree = defaultLeaderTree()) {
   if (c) return { cmd: c[0], run: c[1] };
   const r = recipes.list.find((x) => norm(`Recipe: ${x.name}`) === n || norm(x.name) === n);
   if (r) return { cmd: `Recipe: ${r.name}`, label: recipeLabel(r), recipe: r, run: () => runRecipe(r) };
+  const k = kept.list.find((x) => norm(`Macro: ${x.name}`) === n);
+  if (k) return { cmd: `Macro: ${k.name}`, label: k.name, run: () => playKept(k) };
   let hit = null;
   const walk = (items, group) => {
     for (const it of items) {
@@ -7054,7 +7105,7 @@ function openLeaderMenu() {
       if (['.', 'SPC', ':', 'q'].includes(keys[0])) return;
       const run = () => runLeaderKeys(keys);
       remember(it.label, run);
-      macros.note(it.label, run);
+      macros.note(leaderCmdName(keys) || it.label, run);
     },
     isLeader: (e) => !!KEYS.leader && eventKeys(e, isMac) === KEYS.leader,
     onLeader: () => openPalette('>'),
@@ -7119,6 +7170,119 @@ async function playAtResults() {
     n++;
   }
   toast(`The macro ran at ${n} of ${hits.length} result${hits.length === 1 ? '' : 's'}`);
+}
+
+// Macros kept as a note (macrotext.js): MACROS.md, each a command —
+// "Macro: <name>" in M-x, on keys of your own in LEADER.md. Their `run`
+// steps find the command by name when they play.
+const kept = { list: [], errors: [], text: null };
+async function loadMacros({ quiet = false } = {}) {
+  let text = '';
+  if (S.files.some((f) => f.path === MACROS_FILE)) {
+    try { text = (await api('GET', `/api/file?path=${encodeURIComponent(MACROS_FILE)}`)).content; } catch { text = ''; }
+  }
+  if (text === kept.text) return;
+  const first = kept.text == null;
+  kept.text = text;
+  const parsed = parseMacros(text);
+  kept.list = parsed.macros;
+  kept.errors = parsed.errors;
+  if (quiet || (first && !parsed.errors.length)) return;
+  const e = parsed.errors[0];
+  const more = parsed.errors.length > 1 ? ` (and ${parsed.errors.length - 1} more)` : '';
+  if (e) toast(`${MACROS_FILE} line ${e.line}: ${e.msg}${more} — left out`, 'error', { label: 'Open', run: () => openFile(MACROS_FILE, { line: e.line }) });
+  else toast(`${parsed.macros.length} macro${parsed.macros.length === 1 ? '' : 's'} from ${MACROS_FILE} — by name with M-x (Macro: …)`);
+}
+
+const keptDoc = (m) => `${m.doc ? `${m.doc} ` : ''}A keyboard macro kept in ${MACROS_FILE} (line ${m.line}): ${describeMacro(m.steps)}.`;
+
+// A command by its name (M-x's, Emacs's, the leader menu's or a shortcut's)
+// → what runs it, or null.
+function commandRun(name) {
+  const n = norm(name);
+  const c = allCommands().find((x) => norm(x.name) === n || (x.alias && norm(x.alias) === n));
+  if (c) return c.run;
+  const r = resolveCommand(name);
+  if (r) return r.run;
+  const d = keyDefs().find((x) => norm(x.label || '') === n || x.id === name);
+  return d && ACTIONS[d.id] ? () => ACTIONS[d.id]() : null;
+}
+
+function keptSteps(m) {
+  const steps = [];
+  for (const s of m.steps) {
+    if (s.t !== 'cmd') { steps.push(s); continue; }
+    const run = commandRun(s.label);
+    if (!run) { toast(`“${m.name}” runs “${s.label}”, and no command has that name (M-x lists them)`, 'error', { label: 'Open', run: () => openFile(MACROS_FILE, { line: m.line }) }); return null; }
+    steps.push({ ...s, run });
+  }
+  return steps;
+}
+
+// Played as the last macro is (and it becomes the last one: ⌥X q n plays it
+// again). From another macro, or while recording: its steps, in that run.
+let keptDepth = 0;
+async function playKept(m) {
+  const steps = keptSteps(m);
+  if (!steps) return;
+  if (!macros.playing && !macros.recording) { macros.last = steps; await macros.play(1, steps); return; }
+  if (keptDepth >= 8) throw new MacroStop(`macros running each other, too deep (${m.name})`);
+  const outer = macros.playing;
+  keptDepth++;
+  macros.playing = true; // a recording keeps "Macro: name", not what it does
+  try { await macros.once(steps); } catch (e) {
+    if (outer || !(e instanceof MacroStop)) throw e;
+    toast(`Macro stopped: ${e.message}`, 'error');
+  } finally { keptDepth--; macros.playing = outer; }
+}
+
+function pickKeptMacro() {
+  picker({
+    placeholder: `Play a kept macro…  (${MACROS_FILE})`,
+    source: (q) => kept.list.map((m) => ({ m, f: fuzzy(q, m.name) })).filter((x) => x.f)
+      .sort((a, b) => (q ? b.f.score - a.f.score : 0))
+      .map(({ m }) => ({ label: m.name, hint: m.doc || describeMacro(m.steps), run: () => playKept(m) })),
+  });
+}
+
+// The last macro, kept under a name (one of the same name is replaced).
+async function saveLastMacro() {
+  if (!macros.last) { toast(`No macro yet: ${kbd('macro-record') || '⌥X q q'} starts recording`); return; }
+  const name = (await askText({ title: 'Keep the macro', label: `A name for it: M-x lists it as “Macro: <name>”. Kept in ${MACROS_FILE}, a note you can edit.`, placeholder: 'Make it a task', okLabel: 'Keep' }))?.replace(/\s+/g, ' ').trim().slice(0, 80);
+  if (!name) return;
+  const open = S.tabs.find((t) => t.kind === 'file' && t.path === MACROS_FILE);
+  if (open && open.content !== open.saved) { toast(`${MACROS_FILE} has changes not saved yet: save it first.`, 'error'); return; }
+  if (kept.list.some((m) => m.name.toLowerCase() === name.toLowerCase()) && !(await askConfirm(`Replace the macro “${name}” in ${MACROS_FILE}?`, { okLabel: 'Replace' }))) return;
+  try {
+    const f = S.files.some((x) => x.path === MACROS_FILE) ? await api('GET', `/api/file?path=${encodeURIComponent(MACROS_FILE)}`) : null;
+    const content = withMacro(f?.content || '', name, macros.last);
+    if (f) await api('PUT', '/api/file', { path: MACROS_FILE, content, baseHash: f.hash });
+    else { await api('POST', '/api/file', { path: MACROS_FILE, content }); await loadTree(); }
+    await loadMacros({ quiet: true });
+    const line = kept.list.find((m) => m.name === name)?.line;
+    toast(`Kept as “Macro: ${name}”: M-x plays it, and ${LEADER_FILE} can put it on keys`, '', { label: 'Open', run: () => openFile(MACROS_FILE, line ? { line } : undefined) });
+  } catch (e) { toast(e.message, 'error'); }
+}
+
+async function editMacros() {
+  if (!S.files.some((f) => f.path === MACROS_FILE)) {
+    try { await api('POST', '/api/file', { path: MACROS_FILE, content: MACROS_STARTER }); await loadTree(); await loadMacros(); } catch (e) { toast(e.message, 'error'); return; }
+  }
+  openFile(MACROS_FILE);
+}
+
+// The name a recorded leader key keeps: the command's, so a kept macro finds
+// it again (keys can move).
+function leaderCmdName(keys) {
+  let items = leaderTree();
+  let group = '';
+  let it = null;
+  for (const k of keys) {
+    it = items.find((x) => x.key === k && (!x.when || x.when()));
+    if (!it) return null;
+    if (it.items) { group = it.label; items = it.items; }
+  }
+  return it && !it.items ? leafName(it, group) : null;
 }
 
 function runLeaderKeys(keys) {
@@ -7523,7 +7687,7 @@ async function boot() {
   S.recent = JSON.parse(store.getItem(`an.recent.${S.info.root}`) || '[]');
   try { S.bookmarks = JSON.parse(store.getItem(`an.bookmarks.${S.info.root}`) || '[]').filter((p) => typeof p === 'string'); } catch { S.bookmarks = []; }
   await Promise.all([loadTree(), loadRuns(), loadTags(), loadGit(), loadOutside()]);
-  loadRecipes().then(loadLeaderKeys);
+  loadRecipes().then(() => loadMacros()).then(loadLeaderKeys);
   const saved = JSON.parse(store.getItem(`an.tabs.${S.info.root}`) || 'null');
   // v0.2 format was { open, active }; v0.3 stores one entry per pane.
   const groups = saved?.groups || (saved ? [{ open: saved.open, active: saved.active }] : []);

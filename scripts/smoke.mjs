@@ -39,6 +39,7 @@ fs.writeFileSync(path.join(ws, 'shot.md'), '# Shot\n\n![Screen](assets/screen.sv
 // Lines for a keyboard macro, and notes to run one at every search result.
 fs.writeFileSync(path.join(ws, 'macro.md'), 'apple\nbanana\ncherry');
 fs.writeFileSync(path.join(ws, 'emacs.md'), 'one two three\nfour five\nsix\n');
+fs.writeFileSync(path.join(ws, 'kept.md'), 'one\ntwo\n');
 fs.writeFileSync(path.join(ws, 'ime.md'), 'a\nb\n');
 fs.writeFileSync(path.join(ws, 'outside.md'), Array.from({ length: 20 }, (_, i) => `line ${i + 1}`).join('\n') + '\n');
 fs.writeFileSync(path.join(ws, 'expand.md'), '# Expand\n\nFirst one. A **bold** word here.\n\n## Part\n\nalpha beta gamma\n');
@@ -1537,6 +1538,33 @@ await check('describe a key (⌥X h k): a shortcut and a leader path; every comm
     press('Escape', 'Escape');
     return { warned, hasO: top.includes('o'), hasK: top.includes('k'), hasZ: top.includes('z'), mine };
   `, (v) => (v?.warned && v.hasO && !v.hasK && !v.hasZ && /w.*Widen/.test(v.mine) ? null : 'the leader keys of LEADER.md were not followed'));
+}
+
+{
+  // MACROS.md: a macro kept as lines is a command, on keys of LEADER.md too;
+  // run steps find commands by name (Save) and other macros.
+  fs.writeFileSync(path.join(ws, 'MACROS.md'), '# Macros\n\n## Quote\nQuotes the line.\n\n```macro\nmove line-start\ntype "> "\nmove down\n```\n\n## Quote two\n\n```macro\nrun Macro: Quote\nrun Macro: Quote\nrun Save\n```\n');
+  fs.writeFileSync(path.join(ws, 'LEADER.md'), '# Leader keys\n\n- `o` +mine\n- `o q` Macro: Quote two\n');
+  await check('a macro kept in MACROS.md: on keys of LEADER.md, it plays (and another, and Save, by name)', `
+    const ta = await openNote('kept.md');
+    ta.focus();
+    ta.setSelectionRange(0, 0);
+    const press = (code, key, opts = {}) => document.activeElement.dispatchEvent(new KeyboardEvent('keydown', { code, key, bubbles: true, cancelable: true, ...opts }));
+    let menu = null;
+    for (let i = 0; i < 40 && !menu; i++) {
+      press('KeyX', '\u2248', { altKey: true });
+      const m = await until(() => $('.leader'), 1000);
+      press('KeyO', 'o');
+      await sleep(50);
+      if ($$('.leader-item', m).some((b) => b.dataset.key === 'q')) menu = m;
+      else { press('Escape', 'Escape'); ta.focus(); await sleep(200); }
+    }
+    if (!menu) return { menu: false };
+    press('KeyQ', 'q');
+    await until(() => ta.value.startsWith('> one\\n> two'));
+    await sleep(800); // run Save: on disk
+    return { menu: true, text: ta.value };
+  `, (v) => (v?.menu && v.text === '> one\n> two\n' && fs.readFileSync(path.join(ws, 'kept.md'), 'utf8') === '> one\n> two\n' ? null : `the kept macro did not play: ${JSON.stringify(v)}`));
 }
 
 console.log(failed ? `\nSmoke test failed (${results.filter((r) => !r.ok).length} of ${results.length + 4}).` : `\nAll ${results.length + 4} checks passed.`);
