@@ -104,6 +104,25 @@ Two recipes ask the agent to write **in the margin only**, not in the note:
 
 The agent writes these notes to `.agent-notes/comments.json` in its copy (any task that mentions that file, "red pen" or "margin notes" gets the format). Margin keeps them with the run, never in the note: a suggested text becomes a change on the proof, to accept like any other; a remark is a wavy underline with its note, which `y` marks as seen and `n` dismisses. A run with remarks only shows the note with them (and **Discard** closes it). A follow-up round keeps the notes of the rounds before.
 
+**Space (experimental).** `s` in a review, or the **Space** button, shows the same red pen paragraph by paragraph, as cards in depth: the one you are on is in front and sharp, the paragraphs waiting for a decision stand forward, the decided ones settle back (taken: green, left: grey). The agent's reasons are on the right of a card, your comments on the left. Decisions are the review's own — what you decide in the space is what the review shows when you leave it.
+
+| Key | |
+|---|---|
+| `j` / `k` (↓ / ↑) | next / previous paragraph |
+| `J` / `K` (`l` / `h`) | next / previous change |
+| `g` / `G` | first / last paragraph |
+| `y` / `n` | accept / reject (and go on to the next open change) |
+| `x` / Space | accept ↔ reject |
+| `c` | a comment for the agent on this paragraph (Enter keeps it, Esc drops it) |
+| `f` | follow up: your comments, with what they are on, start the request |
+| `z` | the whole note at a glance (`z`, Enter or Esc goes back to the paragraph) |
+| `o` / Enter | open the note at the paragraph |
+| `]` / `[` | the next / previous note of the run |
+| `a` | apply the accepted ones |
+| Esc / `q` | back to the review |
+
+The comments are for the agent, not the note: they stay with the review (until it closes) and go out only when you follow up. The wheel moves along; a click on a card or a mark picks it. With reduced motion on, the cards don't float.
+
 ### Suggesting: your own red pen, in a meeting
 
 Margin's red pen is for you too, as tracked changes are in a word processor: made for leading a meeting with the note on a shared screen and correcting it as people talk. Only you write; it is not shared editing.

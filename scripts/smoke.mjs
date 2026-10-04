@@ -1489,7 +1489,7 @@ const changed = applied.split('\n').filter((l) => /^(#+ |- )/.test(l)).length;
 console.log(`${changed === 1 ? '✓' : '✗'} exactly the picked change reached the file`);
 if (changed !== 1) failed = true;
 
-await check('red pen: the marks on the note, the reasons in the margin; y takes one, a applies it', `
+await check('red pen: the marks on the note, the reasons in the margin; y takes one, s shows it in depth with a comment for the follow-up, a applies it', `
   const ta = await openNote('sub/proof.md');
   ta.focus();
   document.dispatchEvent(new KeyboardEvent('keydown', { key: 'k', code: 'KeyK', metaKey: navigator.platform.startsWith('Mac'), ctrlKey: !navigator.platform.startsWith('Mac'), bubbles: true }));
@@ -1509,10 +1509,28 @@ await check('red pen: the marks on the note, the reasons in the margin; y takes 
   key('j'); await sleep(50); key('y'); await sleep(200);
   const one = button('Apply', $('#main')).textContent;
   const taken = $('.pen-card').classList.contains('pen-y') && $$('.pen-doc .pen-del.pen-y').length === struck.length;
+  // s: the same proposal as cards in depth; a comment there starts a follow-up.
+  key('s');
+  const space = await until(() => $('.space .space-card.cur'));
+  const count = $('.space-count').textContent;
+  const marks = $$('.space-card [data-mark]').length;
+  key('c', {}, space.closest('.space'));
+  const input = await until(() => $('.space-input'));
+  input.value = 'Keep the tone';
+  key('Enter', {}, input); await sleep(100);
+  const mine = $$('.space-comment').map((x) => x.textContent);
+  key('Escape', {}, $('.space')); await sleep(200);
+  const back = !$('.space') && !!$('.pen-card') && !!document.activeElement.closest('.review');
+  const followUp = button('Follow up', $('#main'));
+  followUp.click();
+  const asked = await until(() => !$('#overlay').hidden && $('#overlay textarea'));
+  const said = asked.value;
+  key('Escape', {}, asked); await sleep(150);
   key('a');
   await until(() => /Applied/.test($('.review')?.textContent || ''), 10000);
-  return { struck, notes, none, one, taken, applied: /Applied/.test($('.review').textContent) };
-`, (v) => (v?.struck?.join() === 'very,the' && v.notes.includes('Repeated word.') && v.none === 'Apply 0 accepted' && v.one === 'Apply 1 accepted' && v.taken && v.applied ? null : 'the red pen did not work'));
+  return { struck, notes, none, one, taken, count, marks, mine, back, said, applied: /Applied/.test($('.review').textContent) };
+`, (v) => (v?.struck?.join() === 'very,the' && v.notes.includes('Repeated word.') && v.none === 'Apply 0 accepted' && v.one === 'Apply 1 accepted' && v.taken && v.applied ? null : 'the red pen did not work')
+  || (v.count === '1 of 1 decided' && v.marks >= 2 && v.mine.join() === 'Keep the tone' && v.back && /proof\.md, at .+: Keep the tone/.test(v.said) ? null : `the space did not work: ${JSON.stringify(v)}`));
 {
   const t = fs.readFileSync(path.join(ws, 'sub', 'proof.md'), 'utf8');
   const good = t === '# Proof\n\nThis is a good plan for the team.\n\nWe ship on Friday.\n';

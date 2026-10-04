@@ -5667,6 +5667,7 @@ function penPage(c, tab, lock) {
     const stuck = lock || conflicts.has(m.i);
     const what = m.kind === 'note' ? ['Noted', 'Dismiss'] : tab.kind === 'outside' ? ['Keep', 'Undo'] : ['Accept', 'Reject'];
     const drawn = m.picture != null;
+    m.what = drawn ? pictureSummary(pics[m.picture], m.i) : null;
     return h('div', { class: `pen-card kb-item pen-${st}${m.notes.length || drawn ? ' noted' : ''}`, 'data-path': c.path, 'data-hunk': m.key, 'data-mark': m.key, 'data-line': m.line + 1 },
       stuck ? null : h('div', { class: 'pen-acts' },
         h('button', { class: 'pen-yes', title: `${what[0]} (y)`, onclick: () => penDecide(tab, c.path, m.key, 'y', false) }, '✓'),
@@ -5698,7 +5699,59 @@ function penPage(c, tab, lock) {
     if (k != null && pics[k]) showPicture(p, pics[k], { state, render: renderDiagrams, drawn: () => pen.layoutMargin(body) });
   }
   pen.watchMargin(body);
+  page.penInfo = { marks, conflicts, lock };
   return page;
+}
+
+// ---- Space (experimental, space.js): a note's red pen as cards in depth.
+// The same marks and the same decisions (penDecide); comments written there
+// are for the agent: f follows up with them.
+let spaceMod = null;
+async function openSpaceView(tab, path = null) {
+  await loadPen();
+  spaceMod ||= await import('./space.js');
+  const changes = (tab.run?.changes || []).filter(penable);
+  if (!changes.length) { toast('Space shows the red pen: no note with changes here'); return; }
+  const c = changes.find((x) => x.path === (path || tab.cur?.split('#')[0])) || changes[0];
+  const reviewable = tab.kind !== 'review' || ['review', 'failed', 'cancelled'].includes(tab.run?.status);
+  const lock = !reviewable || isBlocked(c);
+  const page = penPage(c, tab, lock);
+  const { marks, conflicts } = page.penInfo;
+  const blocks = [...page.querySelector('.pen-doc').children];
+  const byKey = new Map(marks.map((m) => [m.key, m]));
+  const notes = ((tab.spaceNotes ||= {})[c.path] ||= []);
+  const at = tab.cur?.startsWith(`${c.path}#`) ? tab.cur.slice(c.path.length + 1) : null;
+  const other = (dir) => changes[(changes.indexOf(c) + dir + changes.length) % changes.length];
+  spaceMod.openSpace({
+    title: c.path,
+    mine: tab.run?.kind === 'proof',
+    blocks,
+    marks: marks.map((m) => ({ key: m.key, line: m.line,
+      notes: [...(m.what ? [{ text: m.what }] : []), ...m.notes.map((x) => ({ text: x.comment || `→ ${x.suggest}`, who: x.speaker }))],
+      stuck: !lock && conflicts.has(m.i) ? c.problems?.[m.i] || 'overlaps your edit' : null })),
+    stateOf: (key) => (byKey.has(key) ? markState(tab, c.path, byKey.get(key), lock) : 'open'),
+    decide: (key, said) => { if (lock) { toast('This review is closed: nothing to decide.'); return false; } penDecide(tab, c.path, key, said, false); return true; },
+    comments: notes,
+    comment: (x) => notes.push(x),
+    start: at,
+    followUp: () => followUp(tab, spaceComments(tab)),
+    apply: () => pressBufferKey(tab, 'a'),
+    open: (i, key) => { if (canOpen(c, tab)) openFile(c.path, { line: key ? byKey.get(key).line + 1 : (Number(blocks[i]?.dataset.line) || 0) + 1 }); },
+    file: (dir) => { if (changes.length > 1) openSpaceView(tab, other(dir).path); else toast('One note in this review'); },
+    close: ({ key }) => {
+      if (key) tab.cur = `${c.path}#${key}`;
+      renderContent(tab.group);
+      const wrap = bufferEl(tab);
+      const cur = wrap && reviewItems(wrap).find((el) => itemKey(el) === tab.cur);
+      if (cur) setReviewCur(tab, cur);
+      wrap?.focus({ preventScroll: true });
+    },
+  });
+}
+// The comments written in the space, as the start of a follow-up.
+function spaceComments(tab) {
+  const lines = Object.entries(tab.spaceNotes || {}).flatMap(([p, list]) => list.map((x) => `- ${p}, at “${x.quote}”: ${x.text}`));
+  return lines.length ? `My comments on your proposal:\n${lines.join('\n')}\n` : '';
 }
 
 // A note the agent only wrote margin notes on (no change to it).
@@ -6285,8 +6338,8 @@ const SPECIAL = {
 };
 // Each one's own keys, for M-x and the hint in its head.
 const BUFFER_KEYS = {
-  review: [['y', 'Red pen: accept the change'], ['n', 'Red pen: reject the change'], ['v', 'Red pen / diff'], ['x', 'Pick / unpick the change'], ['X', 'Pick / unpick the whole note'], ['A', 'Pick all'], ['U', 'Pick none'], ['a', 'Apply the picked changes'], ['d', 'Discard the run'], ['f', 'Follow up…'], ['u', 'Revert the applied run'], ['=', 'Diff / result'], ['l', 'Show / hide the log'], ['J', 'Next note'], ['K', 'Previous note']],
-  outside: [['y', 'Red pen: keep the change'], ['n', 'Red pen: undo the change'], ['v', 'Red pen / diff'], ['x', 'Keep / undo the change'], ['X', 'Keep / undo the whole note'], ['A', 'Keep all'], ['U', 'Keep none'], ['a', 'Done: undo the ones not kept'], ['=', 'Diff / result'], ['J', 'Next note'], ['K', 'Previous note']],
+  review: [['y', 'Red pen: accept the change'], ['n', 'Red pen: reject the change'], ['v', 'Red pen / diff'], ['s', 'Space: the red pen in depth (experimental)'], ['x', 'Pick / unpick the change'], ['X', 'Pick / unpick the whole note'], ['A', 'Pick all'], ['U', 'Pick none'], ['a', 'Apply the picked changes'], ['d', 'Discard the run'], ['f', 'Follow up…'], ['u', 'Revert the applied run'], ['=', 'Diff / result'], ['l', 'Show / hide the log'], ['J', 'Next note'], ['K', 'Previous note']],
+  outside: [['y', 'Red pen: keep the change'], ['n', 'Red pen: undo the change'], ['v', 'Red pen / diff'], ['s', 'Space: the red pen in depth (experimental)'], ['x', 'Keep / undo the change'], ['X', 'Keep / undo the whole note'], ['A', 'Keep all'], ['U', 'Keep none'], ['a', 'Done: undo the ones not kept'], ['=', 'Diff / result'], ['J', 'Next note'], ['K', 'Previous note']],
   tasks: [['x', 'Check off / again'], ['a', 'Ask the agent to do it'], ['h', 'Show / hide done ones']],
   search: [['/', 'Search for…']],
   runs: [['t', 'New task…'], ['v', 'Review the next run']],
@@ -6389,6 +6442,7 @@ function reviewOwnKeys(e, tab, { wrap, items, cur }) {
       if (!onPen) return e.key === 'y';
       penDecide(tab, cur.dataset.path, cur.dataset.mark, e.key);
       return true;
+    case 's': if (tab.kind !== 'dired') openSpaceView(tab); return true;
     case 'v':
       store.setItem('an.reviewView', penFirst() ? 'diff' : 'pen');
       tab.views = {};
@@ -6643,10 +6697,11 @@ function reviewView(tab) {
       const n = selectedCount(tab);
       wrap.append(h('div', { class: 'review-actions' },
         h('span', { class: 'grow' }, `${run.changes.length} file${run.changes.length === 1 ? '' : 's'} changed · ${n} change${n === 1 ? '' : 's'} ${penFirst() ? 'accepted' : 'selected'}`,
-          h('span', { class: 'review-keys', title: keysHint('review') }, penFirst() ? 'j k · y n · A all · a apply · v diff' : 'j k · x · a apply · v red pen')),
+          h('span', { class: 'review-keys', title: keysHint('review') }, penFirst() ? 'j k · y n · A all · a apply · v diff · s space' : 'j k · x · a apply · v red pen')),
         S.git?.repo && run.kind !== 'proof' ? h('label', { class: 'commit-toggle', title: 'Commit the applied files to git, authored by the agent (local only)' },
           h('input', { type: 'checkbox', checked: store.getItem('an.commitOnApply') !== 'false', onchange: (e) => store.setItem('an.commitOnApply', String(e.target.checked)) }), 'Commit to git') : null,
-        h('button', { class: 'btn', onclick: () => followUp(tab) }, 'Follow up…'),
+        run.changes.some(penable) ? h('button', { class: 'btn', title: 'The red pen in depth: paragraph by paragraph (s) — experimental', onclick: () => openSpaceView(tab) }, 'Space') : null,
+        h('button', { class: 'btn', onclick: () => followUp(tab, spaceComments(tab)) }, 'Follow up…'),
         h('button', { class: 'btn danger', onclick: () => discardRun(tab) }, 'Discard'),
         h('button', { class: 'btn primary', disabled: !n, onclick: () => applyRun(tab) }, `Apply ${n} ${penFirst() ? 'accepted' : 'selected'}`)));
     } else if (reviewable) {
@@ -6694,9 +6749,9 @@ async function revertRun(tab) {
   await afterRunChange(tab);
 }
 
-async function followUp(tab) {
-  const text = await askText({ title: 'Follow up', label: 'The agent continues from its current proposal, not from scratch. You will review the combined result.', placeholder: 'e.g. Make the TL;DR shorter and keep my headings', multiline: true, okLabel: 'Run follow-up' });
-  if (!text || !text.trim()) return;
+async function followUp(tab, value = '') {
+  const text = await askText({ title: 'Follow up', label: 'The agent continues from its current proposal, not from scratch. You will review the combined result.', value, placeholder: 'e.g. Make the TL;DR shorter and keep my headings', multiline: true, okLabel: 'Run follow-up' });
+  if (!text || !text.trim()) { bufferEl(tab)?.focus({ preventScroll: true }); return; }
   try {
     const run = await api('POST', `/api/runs/${tab.runId}/followup`, { task: text });
     await loadRuns();
