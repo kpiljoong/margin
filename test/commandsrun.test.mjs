@@ -62,7 +62,7 @@ test('the commands scope: only the notes of commands, and a new one comes back t
   // A follow-up keeps the notation and the names.
   let r2 = await api('POST', `/api/runs/${run.id}/followup`, { task: 'On o q too' });
   for (let i = 0; i < 100 && r2.status === 'running'; i++) { await sleep(100); r2 = await api('GET', `/api/runs/${r2.id}`); }
-  assert.match(r2.changes.find((c) => c.path === 'seen.txt').lines.join('\n'), /Every command by name[^]*- Save\n[^]*The reviewer's follow-up: On o q too/);
+  assert.match(r2.changes.find((c) => c.path === 'seen.txt').lines.join('\n'), /The other commands, on no key[^]*- Save\n[^]*The reviewer's follow-up: On o q too/);
 
   // Another task gets the notation when it is about these notes (Korean too),
   // and the ```flow one when it asks for a flow chart in Korean.
@@ -74,6 +74,10 @@ test('the commands scope: only the notes of commands, and a new one comes back t
   const macro = await ask('\uB9E4\uD06C\uB85C \uD558\uB098 \uB9CC\uB4E4\uC5B4\uC918');
   assert.match(macro, /MACROS\.md — editing steps/);
   assert.match(macro, /---\nLEADER\.md\na\.md$/, 'and it sees LEADER.md with the note');
+  // A note of cooking recipes is not about Margin's.
+  const cooking = await ask('\uC774 \uB808\uC2DC\uD53C \uC694\uC57D\uD574\uC918 (summarize the recipes)');
+  assert.doesNotMatch(cooking, /MACROS\.md — editing steps/);
+  assert.match(cooking, /---\na\.md$/, 'it sees the note alone');
   const flow = await ask('\uC774 \uACFC\uC815\uC744 \uD750\uB984\uB3C4\uB85C \uADF8\uB824\uC918');
   assert.match(flow, /The ```flow notation/);
   assert.doesNotMatch(flow, /MACROS\.md — editing steps/);

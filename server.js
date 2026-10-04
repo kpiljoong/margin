@@ -1233,15 +1233,17 @@ const commentsGuide = (text) => (text.includes(COMMENTS_FILE) || /\b(red pen|mar
 // names a key or a macro can run. The app asks for it ("Make or change a
 // command…"); what comes back is reviewed as any run.
 const COMMAND_NOTES = ['LEADER.md', 'RECIPES.md', 'MACROS.md'];
-// Other tasks get the notation when they are about these notes (by name, or
-// macros, recipes, leader keys — in Korean too) or the note in view is one.
-const COMMANDS_TASK = /\b(macros?|recipes?|leader ?keys?|key ?bindings?)\b|(LEADER|RECIPES|MACROS)\.md|\uB9E4\uD06C\uB85C|\uB808\uC2DC\uD53C|\uB9AC\uB354 ?\uD0A4|\uB2E8\uCD95\uD0A4/i;
+// Other tasks get the notation, and see these notes, only when they are
+// plainly about them: by name, a (keyboard) macro, leader keys — in Korean
+// too — or the note in view is one. Not "recipe" or "shortcut" alone: a note
+// of cooking recipes isn't Margin's.
+const COMMANDS_TASK = /(LEADER|RECIPES|MACROS)\.md|\b(a|an|the|my|this|that|new|keyboard) macros?\b|\bleader keys?\b|\uB9E4\uD06C\uB85C|\uB9AC\uB354 ?\uD0A4/i;
 let marginConfig = null;
 const commandsNotation = () => (marginConfig ??= fs.readFileSync(path.join(APP_DIR, 'lib', 'margin-config.md'), 'utf8').replace(/\r\n/g, '\n').trim());
 const commandsGuide = ({ commands = [], keymap = [] }) => [
   commandsNotation(),
   keymap.length ? `\nThe keys after the leader now, written as LEADER.md would (Margin's own and the user's):\n${keymap.join('\n')}` : '',
-  commands.length ? `\nEvery command by name, for LEADER.md and \`run\`:\n${commands.map((c) => `- ${c}`).join('\n')}` : '',
+  commands.length ? `\nThe other commands, on no key after the leader, by name (for LEADER.md and \`run\`, as the ones in the key map):\n${commands.map((c) => `- ${c}`).join('\n')}` : '',
 ].join('\n');
 const cleanList = (list, max, len) => (Array.isArray(list) ? list : [])
   .filter((c) => typeof c === 'string').map((c) => c.replace(/\s+/g, ' ').trim().slice(0, len)).filter(Boolean).slice(0, max);

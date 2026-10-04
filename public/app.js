@@ -4971,10 +4971,13 @@ async function changeByAgent(topic = null) {
     const where = [...(topic.leaders || []).map((p) => `${L} ${p.keys.join(' ')}`), topic.shortcut && kbd(topic.shortcut), topic.emacsKey && `${topic.emacsKey} (Emacs keys)`].filter(Boolean);
     task = `About “${topic.name}” (${topic.unbound ? 'a key with no command on it' : 'a command'}${where.length ? `, on ${where.join(', ')}` : ''}): ${what}`;
   }
-  // The names a key or a macro can run, and the keys as they are.
-  const commands = [...new Set(allCommands().filter((c) => !c.emacsOnly && !c.inBuffer).map((c) => c.name))];
+  // The keys as they are, and the names a key or a macro can run besides
+  // the ones the key map shows already.
+  const keymap = keymapLines();
+  const shown = new Set(keymap.map((l) => norm(l.replace(/^- (``.*?``|`[^`]*`) /, ''))));
+  const commands = [...new Set(allCommands().filter((c) => !c.emacsOnly && !c.inBuffer && !shown.has(norm(c.name))).map((c) => c.name))];
   try {
-    const run = await api('POST', '/api/runs', { task, scope: 'commands', commands, keymap: keymapLines(), ...agentNow() });
+    const run = await api('POST', '/api/runs', { task, scope: 'commands', commands, keymap, ...agentNow() });
     await loadRuns();
     toast(`The agent is on it (a staged copy of ${LEADER_FILE}, ${RECIPES_FILE} and ${MACROS_FILE})`, '', { label: 'Watch', run: () => openReview(run.id) });
   } catch (e) { toast(e.message, 'error'); }
@@ -4983,13 +4986,15 @@ async function changeByAgent(topic = null) {
 // The leader's keys as LEADER.md would write them: `n w` Widen: show the whole note.
 function keymapLines() {
   const out = [];
+  // Each by its name in M-x (where that is not the menu's own).
+  const named = new Map(allCommands().filter((c) => c.leader).map((c) => [c.leader.join(' '), c.name]));
   const walk = (items, path, group) => {
     for (const it of items) {
       const keys = [...path, it.key];
       const at = keys.includes('`') ? `- \`\` ${keys.join(' ')} \`\`` : `- \`${keys.join(' ')}\``;
       if (it.items) { out.push(`${at} +${it.label}`); walk(it.items, keys, it.label); }
       else if (it.recipe) out.push(`${at} Recipe: ${it.recipe.name}`);
-      else if (it.mx !== false) out.push(`${at} ${leafName(it, group)}`);
+      else if (it.mx !== false) out.push(`${at} ${named.get(keys.join(' ')) || leafName(it, group)}`);
       else out.push(`${at} (${it.label})`);
     }
   };
