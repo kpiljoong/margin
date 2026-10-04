@@ -1,6 +1,6 @@
 // A sketch read as a flow: its boxes and the words in them are steps, its
-// arrows join the steps they start and end at (the words beside an arrow's
-// middle are its label), words on their own are steps too — written as a
+// arrows join the steps they start and end at (an arrow's own words, else
+// the words beside its middle, are its label), words on their own are steps too — written as a
 // ```flow block (public/flow.js). What can't be read so — pen strokes,
 // numbered dots, an arrow joining nothing — is counted, left to the user
 // (or an agent). Plain logic, tested without a page (test/sketchflow.test.mjs).
@@ -51,7 +51,7 @@ export function sketchToFlow(src) {
     const from = endAt(a.from, null);
     const to = from && endAt(a.to, from);
     if (!from || !to) { looseArrows++; continue; }
-    edges.push({ from, to, pts: [a.from, ...a.via, a.to], label: [] });
+    edges.push({ from, to, pts: [a.from, ...a.via, a.to], label: [], own: a.label || '' });
   }
   // Words joined by no arrow: an arrow's label when beside its middle part
   // (away from its ends), else a step of their own.
@@ -61,6 +61,7 @@ export function sketchToFlow(src) {
     const c = [w.rect.x + w.rect.w / 2, w.rect.y + w.rect.h / 2];
     let best = null;
     for (const e of edges) {
+      if (e.own) continue;
       const d = Math.min(...e.pts.slice(1).map((p, i) => toLine(c, e.pts[i], p)));
       const ends = Math.min(toRect(e.pts[0], w.rect), toRect(e.pts.at(-1), w.rect));
       if (d <= near && ends > size / 2 && (!best || d < best.d)) best = { e, d };
@@ -106,7 +107,7 @@ export function sketchToFlow(src) {
   for (const e of edges) ins.set(e.to, (ins.get(e.to) || 0) + 1);
   const done = new Set();
   const arrow = (e) => {
-    const label = stepName(read(e.label)).replace(/[()]/g, '');
+    const label = stepName(e.own || read(e.label)).replace(/[()]/g, '');
     return label ? ` -(${label})-> ` : ' -> ';
   };
   const lines = [];

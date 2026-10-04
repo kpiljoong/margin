@@ -9,6 +9,8 @@
 //   arrow red: 410,220 -> 300,160
 //   arrow blue curved: 100,300 -> 180,240 -> 300,260
 //   arrow elbow: 500,100 -> 700,300
+//   arrow blue: 480,160 -> 640,160 "sends"
+//   box green round filled: 640,120 160x90
 //   text red: 420,230 The button is hidden
 //   pen blue: 100,100 120,104 140,112
 //   num red: 300,110 1
@@ -19,14 +21,18 @@
 //   straight (corners at the points), curved (one curve through them: a
 //   point between is a lever) or elbow (across and down, out of the sides
 //   of the boxes it joins and round the others in its way; points between
-//   are its corners, a way set by hand, kept at right angles) · box: corner and
-//   size · text: where it starts, then the words · num: a numbered dot, its
+//   are its corners, a way set by hand, kept at right angles); words in
+//   quotes after the points are drawn halfway along it · box: corner and
+//   size; round: an ellipse in that rectangle, filled: a light tint of its
+//   colour in it (words in a box are drawn broken to fit its width) ·
+//   text: where it starts, then the words · num: a numbered dot, its
 //   centre and number — item 1 of the numbered list in the picture's section
 //   says what it is (linkCallouts) · hide: a part covered, corner and size
 //   (gray unless a colour is given); covered on screen, in a copy, and in the
 //   copy an agent gets (server.js masks the pictures it shares).
 // - The colour is optional (red, the pen's), any of the flow colours or black;
-//   so is an arrow's kind (straight when not said), before or after it.
+//   so is an arrow's kind (straight when not said) and a box's looks, before
+//   or after it (Korean words too).
 // - Other apps show the picture and the lines as code; Margin draws them on
 //   the picture. `#` or `//` starts a comment. Plain logic, tested without a
 //   page (test/ink.test.mjs), but for inkSvg.
@@ -42,6 +48,10 @@ const LINE = /^(\S+?)((?:\s+[^\s:]+)*)\s*:\s*(.*)$/;
 // An arrow's kinds (also in Korean: straight, curved, elbow).
 const STYLES = { straight: 'straight', line: 'straight', curved: 'curved', curve: 'curved', elbow: 'elbow', '\uC9C1\uC120': 'straight', '\uACE1\uC120': 'curved', '\uAEBE\uC740\uC120': 'elbow' };
 export const ARROW_STYLES = ['straight', 'curved', 'elbow'];
+// A box's looks (also in Korean): an ellipse in it; a light tint of its colour in it.
+const LOOKS = { round: 'round', ellipse: 'round', oval: 'round', circle: 'round', '\uC6D0': 'round', filled: 'filled', fill: 'filled', '\uCC44\uC6C0': 'filled' };
+// An arrow's words, after its points: "in quotes".
+const QUOTED = /^(.*?)\s*"([^"]*)"$/;
 const NUM = '(-?\\d+(?:\\.\\d+)?)';
 const POINT = new RegExp(`^${NUM},${NUM}$`);
 const BOX = new RegExp(`^${NUM},${NUM}\\s+${NUM}\\s*[x×]\\s*${NUM}$`);
@@ -70,16 +80,19 @@ export function parseInk(src) {
     const kind = m && KINDS[m[1].toLowerCase()];
     let color = null;
     let style = null;
+    const looks = {};
     let ok = !!kind;
     for (const w of ok ? m[2].trim().split(/\s+/).filter(Boolean) : []) {
       const s = kind === 'arrow' && STYLES[w.toLowerCase()];
+      const look = kind === 'box' && LOOKS[w.toLowerCase()];
       if (s && !style) style = s;
+      else if (look && !looks[look]) looks[look] = true;
       else if (!color && inkColor(w)) color = inkColor(w);
       else ok = false;
     }
     if (!ok) { bad.push(line); return; }
     color ||= kind === 'hide' ? 'gray' : 'red';
-    const rest = m[3].trim();
+    let rest = m[3].trim();
     const n = (v) => Number(v);
     let mark = null;
     if (kind === 'board') {
@@ -92,14 +105,17 @@ export function parseInk(src) {
       const pts = rest.split(/\s+/).map((p) => POINT.exec(p)).filter(Boolean).map((p) => [n(p[1]), n(p[2])]);
       if (pts.length >= 2 && pts.length === rest.split(/\s+/).length) mark = { pts };
     } else if (kind === 'arrow') {
+      const q = QUOTED.exec(rest);
+      const label = q?.[2].replace(/\s+/g, ' ').trim();
+      if (q) rest = q[1];
       const ps = rest.split(/\s*(?:->|→)\s*/).map((p) => POINT.exec(p));
       if (ps.length >= 2 && ps.every(Boolean)) {
         const at = ps.map((p) => [n(p[1]), n(p[2])]);
-        mark = { from: at[0], to: at[at.length - 1], via: at.slice(1, -1), style: style || 'straight' };
+        mark = { from: at[0], to: at[at.length - 1], via: at.slice(1, -1), style: style || 'straight', ...(label ? { label } : {}) };
       }
     } else if (kind === 'box' || kind === 'hide') {
       const b = BOX.exec(rest);
-      if (b) mark = { x: n(b[1]), y: n(b[2]), w: n(b[3]), h: n(b[4]) };
+      if (b) mark = { x: n(b[1]), y: n(b[2]), w: n(b[3]), h: n(b[4]), ...looks };
     } else if (kind === 'num') {
       const t = LABEL.exec(rest);
       if (t) mark = { x: n(t[1]), y: n(t[2]), text: t[3] };
@@ -131,7 +147,7 @@ export function fitBoard(src, margin = 80) {
     if (m.kind === 'pen') m.pts.forEach((p) => reach(...p));
     else if (m.kind === 'arrow') [m.from, ...(m.via || []), m.to].forEach((p) => reach(...p));
     else if (m.kind === 'box' || m.kind === 'hide') reach(m.x + m.w, m.y + m.h);
-    else if (m.kind === 'text') reach(m.x + m.text.length * sw * 5, m.y + sw * 12);
+    else if (m.kind === 'text') { const b = markBounds(m, board.w, board.h, marks); reach(b.x + b.w, b.y + b.h); }
     else reach(m.x + sw * 7, m.y + sw * 7);
   }
   const grow = (has, far) => (far + margin > has ? Math.min(BOARD_MAX, Math.ceil((far + margin) / 100) * 100) : has);
@@ -147,13 +163,18 @@ const pt = ([x, y]) => `${r(x)},${r(y)}`;
 
 // A mark as its line.
 export function inkLine(mark) {
-  const kind = mark.kind === 'arrow' && mark.style && mark.style !== 'straight' ? ` ${mark.style}` : '';
-  const head = `${mark.kind} ${mark.color || 'red'}${kind}: `;
+  const head = `${[mark.kind, mark.color || 'red', ...headWords(mark)].join(' ')}: `;
   if (mark.kind === 'pen') return head + mark.pts.map(pt).join(' ');
-  if (mark.kind === 'arrow') return head + [mark.from, ...(mark.via || []), mark.to].map(pt).join(' -> ');
+  if (mark.kind === 'arrow') return head + [mark.from, ...(mark.via || []), mark.to].map(pt).join(' -> ') + (mark.label ? ` "${labelText(mark.label)}"` : '');
   if (mark.kind === 'box' || mark.kind === 'hide') return `${head}${pt([mark.x, mark.y])} ${r(mark.w)}x${r(mark.h)}`;
   return `${head}${pt([mark.x, mark.y])} ${String(mark.text).replace(/\s+/g, ' ').trim()}`;
 }
+
+// The words after the colour: an arrow's kind (but straight), a box's looks.
+const headWords = (m) => (m.kind === 'arrow' ? (m.style && m.style !== 'straight' ? [m.style] : [])
+  : m.kind === 'box' ? ['round', 'filled'].filter((k) => m[k]) : []);
+// An arrow's words, as they go in quotes: one line, no quotes in them.
+const labelText = (t) => String(t).replace(/\s+/g, ' ').replace(/"/g, "'").trim();
 
 // A drawn line, fewer points (Ramer–Douglas–Peucker, within eps).
 export function simplify(pts, eps) {
@@ -428,6 +449,27 @@ export function arrowMids(m) {
   return pts.slice(1).map((p, i) => [(pts[i][0] + p[0]) / 2, (pts[i][1] + p[1]) / 2]);
 }
 
+// Halfway along an arrow as it is drawn: where its words go.
+export function arrowMiddle(m, sw, marks = []) {
+  const pts = [m.from, ...(m.via || []), m.to];
+  let way = pts;
+  if (m.style === 'elbow') way = elbowPoints(m, marks, sw * 8);
+  else if (m.style === 'curved' && pts.length > 2) {
+    const at = ([p, a, b, q], t) => [0, 1].map((k) => (1 - t) ** 3 * p[k] + 3 * (1 - t) ** 2 * t * a[k] + 3 * (1 - t) * t * t * b[k] + t ** 3 * q[k]);
+    way = [pts[0], ...curveParts(pts).flatMap((c) => Array.from({ length: 16 }, (_, i) => at(c, (i + 1) / 16)))];
+  }
+  const lens = way.slice(1).map((p, i) => Math.hypot(p[0] - way[i][0], p[1] - way[i][1]));
+  let left = lens.reduce((a, b) => a + b, 0) / 2;
+  for (let i = 0; i < lens.length; i++) {
+    if (left <= lens[i] && lens[i]) {
+      const t = left / lens[i];
+      return [way[i][0] + (way[i + 1][0] - way[i][0]) * t, way[i][1] + (way[i + 1][1] - way[i][1]) * t];
+    }
+    left -= lens[i];
+  }
+  return [...way[0]];
+}
+
 // ---- changing a mark (the canvas: inkdraw.js)
 
 // A mark moved by dx, dy.
@@ -463,18 +505,30 @@ export function reshapedMark(m, i, [x, y], { mid = false, straight = 0 } = {}) {
 }
 
 // The block with line n made `mark`, its kind and colour words as they were
-// (an arrow's kind changed, its word).
+// written (Korean, say) while they still hold; one changed (its colour, an
+// arrow's kind, a box's looks), its word.
 export function setMark(src, n, mark) {
   const ls = String(src).split('\n');
-  let head = /^\s*[^:]*:/.exec(ls[n] ?? '')?.[0];
-  if (head && mark.kind === 'arrow') {
-    const words = head.slice(0, -1).trim().split(/\s+/);
-    const was = words.slice(1).map((w) => STYLES[w.toLowerCase()]).find(Boolean) || 'straight';
-    const now = mark.style || 'straight';
-    if (was !== now) head = `${/^\s*/.exec(head)[0]}${[words[0], ...words.slice(1).filter((w) => !STYLES[w.toLowerCase()]), ...(now === 'straight' ? [] : [now])].join(' ')}:`;
-  }
+  const was = /^(\s*)([^:]*):/.exec(ls[n] ?? '');
   const line = inkLine(mark);
-  ls[n] = head ? `${head} ${line.slice(line.indexOf(':') + 1).trim()}` : line;
+  const body = line.slice(line.indexOf(':') + 1).trim();
+  if (!was) { ls[n] = line; return ls.join('\n'); }
+  const [kind, ...words] = was[2].trim().split(/\s+/);
+  const want = new Set(headWords(mark));
+  const color = mark.color || 'red';
+  let colored = false;
+  const kept = [];
+  for (const w of words) {
+    const k = w.toLowerCase();
+    const said = (mark.kind === 'arrow' && STYLES[k]) || (mark.kind === 'box' && LOOKS[k]);
+    if (said) { if (want.delete(said) || (said === 'straight' && !want.size && (mark.style || 'straight') === 'straight')) kept.push(w); } else if (inkColor(w)) {
+      kept.push(inkColor(w) === color ? w : color);
+      colored = true;
+    } else kept.push(w);
+  }
+  const plain = mark.kind === 'hide' ? 'gray' : 'red';
+  if (!colored && color !== plain) kept.unshift(color);
+  ls[n] = `${was[1]}${[kind, ...kept, ...want].join(' ')}: ${body}`;
   return ls.join('\n');
 }
 
@@ -550,7 +604,7 @@ export const followBox = (marks, before, after) => followBoxes(marks, [[before, 
 export const textWidth = (t, size) => [...t].reduce((w, ch) => w + (/[\u1100-\u11ff\u2e80-\ua4cf\uac00-\ud7af\uf900-\ufaff\uff00-\uffef]/.test(ch) ? size : size * 0.55), 0);
 
 // The rectangle a mark takes on a picture w × h: { x, y, w, h }.
-export function markBounds(m, w, h) {
+export function markBounds(m, w, h, marks = []) {
   const sw = strokeOf(w, h);
   const of = (pts) => {
     const xs = pts.map((p) => p[0]);
@@ -562,16 +616,63 @@ export function markBounds(m, w, h) {
   if (m.kind === 'box' || m.kind === 'hide') return { x: m.x, y: m.y, w: m.w, h: m.h };
   if (m.kind === 'num') return { x: m.x - sw * 7, y: m.y - sw * 7, w: sw * 14, h: sw * 14 };
   const size = textSize(w, h);
-  return { x: m.x, y: m.y, w: textWidth(m.text, size), h: size * 1.2 };
+  const lines = textLines(m, marks, size);
+  const wide = measurer(size);
+  return { x: m.x, y: m.y, w: Math.max(...lines.map(wide)), h: size * (1.2 + LEADING * (lines.length - 1)) };
 }
 
+// Words starting in a box (or just at its edge).
+const startsIn = (m, b, size) => toBox([m.x + 2, m.y + size / 2], b) <= size / 3;
 // The words written in a box (starting in it), top to bottom.
-export const wordsIn = (marks, b, size) => marks.filter((m) => m.kind === 'text' && toBox([m.x + 2, m.y + size / 2], b) <= size / 3).sort((p, q) => p.y - q.y || p.x - q.x);
+export const wordsIn = (marks, b, size) => marks.filter((m) => m.kind === 'text' && startsIn(m, b, size)).sort((p, q) => p.y - q.y || p.x - q.x);
+// The box words are written in: the smallest they start in, or null.
+export const boxOf = (marks, m, size) => marks.filter((b) => b.kind === 'box' && startsIn(m, b, size)).sort((p, q) => p.w * p.h - q.w * q.h)[0] || null;
+// The room for words in a box: all of it; a round one, the rectangle in its ellipse.
+export const roomIn = (b) => (b.round ? { x: b.x + b.w * 0.146, y: b.y + b.h * 0.146, w: b.w * 0.707, h: b.h * 0.707 } : { x: b.x, y: b.y, w: b.w, h: b.h });
+
+// The lines words are drawn on, a size apart.
+export const LEADING = 1.25;
+// How wide words are drawn at `size`: measured on a page, else about.
+let ruler = null;
+const measurer = (size) => {
+  ruler ??= (typeof document !== 'undefined' && document.createElement('canvas').getContext('2d')) || false;
+  if (!ruler) return (t) => textWidth(t, size);
+  return (t) => { ruler.font = `600 ${size}px system-ui, sans-serif`; return ruler.measureText(t).width; };
+};
+
+// Words broken into lines `room` wide (a word longer than that, broken
+// between its letters).
+export function fitWords(text, room, wide) {
+  const out = [];
+  let cur = '';
+  for (const word of String(text).split(/\s+/).filter(Boolean)) {
+    const next = cur ? `${cur} ${word}` : word;
+    if (wide(next) <= room) { cur = next; continue; }
+    if (cur) out.push(cur);
+    cur = '';
+    for (const ch of word) {
+      if (cur && wide(cur + ch) > room) { out.push(cur); cur = ''; }
+      cur += ch;
+    }
+  }
+  if (cur) out.push(cur);
+  return out.length ? out : [String(text)];
+}
+
+// Words as they are drawn: in a box of `marks`, broken to fit its width
+// (anew as it is reshaped; the line stays one); elsewhere one line.
+export function textLines(m, marks, size, wide = measurer(size)) {
+  const b = m.kind === 'text' && boxOf(marks, m, size);
+  if (!b) return [m.text];
+  const r = roomIn(b);
+  return fitWords(m.text, Math.max(size * 2, r.x + r.w - size * 0.4 - m.x), wide);
+}
 
 // ---- drawing (needs a page)
 
 const SVG = 'http://www.w3.org/2000/svg';
 const stroke = (color) => (INK[color] || INK.red)[1];
+const fill = (color) => (INK[color] || INK.red)[0];
 
 // The marks as SVG over a picture of w × h pixels: <svg class="ink-marks">,
 // each mark a <g class="ink-mark" data-line>.
@@ -586,8 +687,9 @@ export function inkSvg(marks, w, h) {
     for (const [k, v] of Object.entries(attrs)) e.setAttribute(k, String(v));
     return e;
   };
-  // What is hidden first, under the rest.
-  for (const m of [...marks.filter((x) => x.kind === 'hide'), ...marks.filter((x) => x.kind !== 'hide')]) svg.append(markEl(m, sw, make, marks));
+  // What is hidden first, under the rest; then the boxes filled, under what is on them.
+  const under = (x) => (x.kind === 'hide' ? 0 : x.filled ? 1 : 2);
+  for (const m of [...marks].sort((a, b) => under(a) - under(b))) svg.append(markEl(m, sw, make, marks));
   return svg;
 }
 
@@ -597,7 +699,11 @@ export function markEl(m, sw, make, marks = []) {
   const g = make('g', { class: 'ink-mark', 'data-line': m.line ?? '' });
   const line = { fill: 'none', stroke: c, 'stroke-width': sw, 'stroke-linecap': 'round', 'stroke-linejoin': 'round' };
   if (m.kind === 'pen') g.append(make('polyline', { ...line, points: m.pts.map(([x, y]) => `${x},${y}`).join(' ') }));
-  else if (m.kind === 'box') g.append(make('rect', { ...line, x: m.x, y: m.y, width: Math.max(1, m.w), height: Math.max(1, m.h), rx: sw * 2 }));
+  else if (m.kind === 'box') {
+    const look = { ...line, fill: m.filled ? fill(m.color) : 'none' };
+    g.append(m.round ? make('ellipse', { ...look, cx: m.x + m.w / 2, cy: m.y + m.h / 2, rx: Math.max(1, m.w / 2), ry: Math.max(1, m.h / 2) })
+      : make('rect', { ...look, x: m.x, y: m.y, width: Math.max(1, m.w), height: Math.max(1, m.h), rx: sw * 2 }));
+  }
   else if (m.kind === 'hide') {
     g.dataset.hide = '';
     g.append(make('rect', { x: m.x, y: m.y, width: Math.max(1, m.w), height: Math.max(1, m.h), fill: c, stroke: 'none' }));
@@ -616,10 +722,27 @@ export function markEl(m, sw, make, marks = []) {
     const wing = (s) => `${x2 - head * Math.cos(a + s)},${y2 - head * Math.sin(a + s)}`;
     g.append(make('path', { ...line, d }));
     g.append(make('polyline', { ...line, points: `${wing(0.5)} ${x2},${y2} ${wing(-0.5)}` }));
+    // Its words, halfway along, on a white halo.
+    if (m.label) {
+      const [x, y] = arrowMiddle(m, sw, marks);
+      const t = make('text', { x, y, fill: c, 'font-size': sw * 8, 'font-weight': 600, 'font-family': 'system-ui, sans-serif', stroke: '#fff', 'stroke-width': sw * 2.5, 'paint-order': 'stroke', 'stroke-linejoin': 'round', 'text-anchor': 'middle', 'dominant-baseline': 'central' });
+      t.textContent = m.label;
+      g.append(t);
+    }
   } else {
     const size = sw * 9;
-    const t = make('text', { x: m.x, y: m.y + size, fill: c, 'font-size': size, 'font-weight': 600, 'font-family': 'system-ui, sans-serif', stroke: '#fff', 'stroke-width': sw, 'paint-order': 'stroke', 'stroke-linejoin': 'round' });
-    t.textContent = m.text;
+    // In a box, broken to fit it; the halo, the box's tint when it is filled.
+    const box = boxOf(marks, m, size);
+    const t = make('text', { x: m.x, y: m.y + size, fill: c, 'font-size': size, 'font-weight': 600, 'font-family': 'system-ui, sans-serif', stroke: box?.filled ? fill(box.color) : '#fff', 'stroke-width': sw, 'paint-order': 'stroke', 'stroke-linejoin': 'round' });
+    const lines = textLines(m, marks, size);
+    if (lines.length === 1) t.textContent = m.text;
+    else {
+      lines.forEach((l, i) => {
+        const s = make('tspan', { x: m.x, dy: i ? size * LEADING : 0 });
+        s.textContent = l;
+        t.append(s);
+      });
+    }
     g.append(t);
   }
   // A wide clear line to point at (to erase it).
@@ -628,7 +751,7 @@ export function markEl(m, sw, make, marks = []) {
     hit.setAttribute('class', 'ink-hit');
     hit.setAttribute('stroke', 'transparent');
     hit.setAttribute('stroke-width', sw * 6);
-    if (m.kind === 'num' || m.kind === 'hide') hit.setAttribute('fill', 'transparent');
+    if (m.kind === 'num' || m.kind === 'hide' || m.filled) hit.setAttribute('fill', 'transparent');
     g.append(hit);
   }
   return g;

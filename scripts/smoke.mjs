@@ -38,6 +38,7 @@ fs.writeFileSync(path.join(ws, 'dots.md'), '# Dots\n\n![Screen](assets/screen.sv
 fs.writeFileSync(path.join(ws, 'shot.md'), '# Shot\n\n![Screen](assets/screen.svg)\n\nAfter.\n');
 fs.writeFileSync(path.join(ws, 'sketch.md'), '# Sketch\n\nTalk.\n');
 fs.writeFileSync(path.join(ws, 'elbow.md'), '# Route\n\n```ink\nboard: 1600x900\nbox: 100,300 300x150\ntext: 150,350 Start\nbox: 600,280 200x190\ntext: 640,350 Middle\nbox: 1100,300 300x150\ntext: 1150,350 End\narrow elbow: 400,375 -> 1100,375\n```\n');
+fs.writeFileSync(path.join(ws, 'looks.md'), '# Looks\n\n```ink\nboard: 1600x900\nbox: 100,100 400x200\ntext: 130,140 A long line of words that wraps in its box\narrow: 500,200 -> 900,200\n```\n\nAfter.\n');
 fs.writeFileSync(path.join(ws, 'sketchflow.md'), '# Board\n\n```ink\nboard: 1600x900\nbox: 100,100 300x120\ntext: 130,140 Idea\nbox: 100,500 300x120\ntext: 130,540 Try it\narrow: 250,230 -> 250,490\n```\n\nAfter.\n');
 // Lines for a keyboard macro, and notes to run one at every search result.
 fs.writeFileSync(path.join(ws, 'macro.md'), 'apple\nbanana\ncherry');
@@ -615,7 +616,7 @@ await check('on a sketch: a double-click in a box changes its words; an arrow dr
   $$('.ctx-menu .ctx-item').find((b) => b.textContent.startsWith('Elbow'))?.click();
   await until(() => / elbow: 250,220 -> 250,500/.test(ed.value), 5000);
   return { was, kinds, text: ed.value.split('\x60\x60\x60')[1] };
-`, (v) => (v?.was === 'Idea' && /text: 130,140 Big idea\n/.test(v.text) && /\narrow[^\n]* elbow: 250,220 -> 250,500\n/.test(v.text) && v.kinds.join('|') === 'Straight ✓|Curved|Elbow|Delete' ? null : `got ${JSON.stringify(v)}`));
+`, (v) => (v?.was === 'Idea' && /text: 130,140 Big idea\n/.test(v.text) && /\narrow[^\n]* elbow: 250,220 -> 250,500\n/.test(v.text) && v.kinds.join('|') === 'Straight ✓|Curved|Elbow|Words on it…|Colour…C|Delete' ? null : `got ${JSON.stringify(v)}`));
 
 await check('on a sketch: Shift and a drag picks marks; a drag moves them all (an arrow on a box goes along); copied, pasted aside, and taken out', `
   const ed = $$('.editor-wrap textarea').find((t) => t.offsetParent);
@@ -715,6 +716,66 @@ await check('on a sketch: the arrow tool shows the anchor a press takes; an elbo
   && / elbow: 400,375 -> 560,375 -> 560,700 -> 840,700 -> 840,375 -> 1100,375\n/.test(v.own)
   && / elbow: 400,375 -> 1100,375\n/.test(v.again)
   && /\nbox: 600,130 200x190\ntext: 640,200 Middle\n/.test(v.moved) ? null : `got ${JSON.stringify(v)}`));
+
+await check('on a sketch: words in a box wrap to it; C recolours the marks picked; a box made an ellipse, filled; an arrow given words; the sketch picked whole, deleted, back with \u2318Z', `
+  const ed = await openNote('looks.md');
+  if (!$('.canvas-pane')?.offsetParent) button('Canvas').click();
+  const pic = () => $('.canvas-stage .ink-board img');
+  const fig = () => $('.canvas-stage .ink-board');
+  await until(() => pic()?.naturalWidth, 15000);
+  const at = (x, y) => { const img = pic(); const r = img.getBoundingClientRect(); return { clientX: r.left + x * r.width / img.naturalWidth, clientY: r.top + y * r.height / img.naturalHeight }; };
+  const stage = $('.canvas-stage');
+  const ptr = (type, el, p) => el.dispatchEvent(new PointerEvent(type, { bubbles: true, cancelable: true, button: 0, pointerId: 1, ...p }));
+  const hitOf = (kind) => { const m = fig().inkMarks.find((x) => x.kind === kind); return fig().querySelector(\`.ink-mark[data-line="\${m.line}"] .ink-hit\`); };
+  const ink = () => ed.value.split('\x60\x60\x60')[1];
+  const drawn = (s) => until(() => fig()?.dataset.source.includes(s) && pic()?.naturalWidth, 5000).then(() => sleep(300));
+  const out = {};
+  // A click beside the marks: looked at, and picked whole.
+  pic().dispatchEvent(new MouseEvent('click', { bubbles: true, ...at(1300, 700) }));
+  await until(() => $('.canvas-stage .ink-figure.ink-editable'), 5000);
+  await sleep(500);
+  out.whole = !!$('.canvas-stage .ink-board.ink-whole');
+  out.lines = fig().querySelectorAll('text tspan').length;
+  key('Escape', {}, stage);
+  out.unpicked = !$('.canvas-stage .ink-whole');
+  // The box picked, C: green.
+  ptr('pointerdown', hitOf('box'), at(100, 200)); ptr('pointerup', stage, at(100, 200));
+  key('\u314A', { code: 'KeyC' }, stage);
+  $$('.ctx-menu .ctx-item').find((b) => b.textContent.startsWith('Green'))?.click();
+  await until(() => ed.value.includes('box green: 100,100'), 5000);
+  // A right-click on it: an ellipse (its words moved into it), then filled.
+  await drawn('box green');
+  hitOf('box').dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true, button: 2, ...at(100, 200) }));
+  out.menu = $$('.ctx-menu .ctx-item').map((b) => b.textContent).join('|');
+  $$('.ctx-menu .ctx-item').find((b) => b.textContent.startsWith('Ellipse'))?.click();
+  await until(() => ed.value.includes('box green round:'), 5000);
+  await drawn('round');
+  hitOf('box').dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true, button: 2, ...at(100, 200) }));
+  $$('.ctx-menu .ctx-item').find((b) => b.textContent.startsWith('Filled'))?.click();
+  await until(() => ed.value.includes('box green round filled:'), 5000);
+  await drawn('filled');
+  out.ellipse = !!fig().querySelector('.ink-mark ellipse');
+  // A double-click on the arrow: its words.
+  hitOf('arrow').dispatchEvent(new MouseEvent('dblclick', { bubbles: true, cancelable: true, ...at(700, 200) }));
+  const input = await until(() => $('.canvas-rename'), 3000);
+  if (!input) return out;
+  input.value = 'sends';
+  key('Enter', {}, input);
+  await until(() => ed.value.includes('"sends"'), 5000);
+  out.looks = ink();
+  await drawn('"sends"');
+  out.label = [...fig().querySelectorAll('.ink-mark text')].some((t) => t.textContent === 'sends');
+  // Picked whole: Backspace takes the block out; \u2318Z brings it back.
+  pic().dispatchEvent(new MouseEvent('click', { bubbles: true, ...at(1300, 700) }));
+  await until(() => $('.canvas-stage .ink-whole'), 3000);
+  key('Backspace', {}, stage);
+  out.gone = await until(() => ed.value === '# Looks\\n\\nAfter.\\n', 5000) && $('#toast')?.textContent;
+  key('z', { metaKey: navigator.platform.startsWith('Mac'), ctrlKey: !navigator.platform.startsWith('Mac') }, $('.canvas-stage'));
+  out.back = await until(() => ed.value.includes('"sends"'), 5000);
+  return out;
+`, (v) => (v?.whole && v.lines >= 3 && v.unpicked && v.menu === 'Rectangle ✓|Ellipse|Filled|Colour…C|Delete' && v.ellipse
+  && /\nbox green round filled: 100,100 400x200\ntext: 180,157 A long line/.test(v.looks) && /\narrow: 500,200 -> 900,200 "sends"\n/.test(v.looks)
+  && v.label && /^Sketch deleted\./.test(v.gone || '') && v.back ? null : `got ${JSON.stringify(v)}`));
 
 await check('Settings shows Labs', `
   document.dispatchEvent(new KeyboardEvent('keydown', { key: ',', metaKey: navigator.platform.startsWith('Mac'), ctrlKey: !navigator.platform.startsWith('Mac'), bubbles: true }));

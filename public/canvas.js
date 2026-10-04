@@ -98,6 +98,7 @@ export class FigureCanvas {
   // dotted, label (arg: the words) or menu (arg: the event) ·
   // onArrowStep(pre, from, to): put the cursor on an arrow · onShapeMenu(pre, id, at) ·
   // pictures: onInk(fig, { add: line } | { remove: lineNo }) · onInkColor(at, color, pick)
+  // · onInkDelete(fig): a sketch taken out, whole
   // · onInkHover(fig, num) (null, null when it leaves) · onInkDot(fig, num): a numbered dot clicked
   // · onPastePictures(files) (⌘V of a picture here)
   constructor(handlers) {
@@ -1262,10 +1263,10 @@ export class FigureCanvas {
       if (!fig) return;
       const b = e.target.closest('.node-hit');
       const edge = e.target.closest('.edge');
-      // An arrow drawn on a picture: its kind.
+      // An arrow or a box drawn on a picture: its kind, its looks.
       const g = fig.matches('.ink-figure.ink-editable') && e.target.closest('.ink-mark');
-      const arrow = g && fig.inkMarks?.find((m) => m.kind === 'arrow' && String(m.line) === g.dataset.line);
-      if (arrow && this.h.onInkMenu) { this.ink.select(fig, arrow.line); this.h.onInkMenu(e, fig, arrow); return; }
+      const mark = g && fig.inkMarks?.find((m) => (m.kind === 'arrow' || m.kind === 'box') && String(m.line) === g.dataset.line);
+      if (mark && this.h.onInkMenu) { this.ink.select(fig, mark.line); this.h.onInkMenu(e, fig, mark); return; }
       const gh = e.target.closest('.group-hit');
       if (gh && this.h.onGroupMenu) { this.h.onGroupMenu(e, fig, gh.dataset.id); return; }
       if (edge && !b) {
@@ -1419,9 +1420,12 @@ export class FigureCanvas {
     if (b && fig.flowNodes) this.walkAt = { pre: fig, id: b.dataset.id };
     const dot = !this.ink?.tool && target.closest('.ink-mark[data-num]');
     const pick = () => (dot ? this.h.onInkDot?.(fig, dot.dataset.num) : b ? this.h.onNode?.(fig, b.dataset.id) : this.h.onFigure?.(fig));
+    // A sketch clicked beside its marks: picked whole (Delete takes it out).
+    const whole = !dot && !b && target.closest('.ink-figure') === fig && !target.closest('.ink-mark, .ink-grips');
     if (looking) {
       this.picking = true;
       try { pick(); } finally { this.picking = false; }
+      if (whole) this.ink.pickWhole(fig);
       return;
     }
     // Another picture (or seen from "all"): look at it.
@@ -1429,6 +1433,7 @@ export class FigureCanvas {
     const before = this.sig;
     pick();
     if (this.sig === before) this.refocus(true);
+    if (whole) this.ink.pickWhole(fig);
   }
 
   // ---- drawing

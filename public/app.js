@@ -12,7 +12,7 @@ import { emacs, occurLines, occurPattern, keyName as emacsKeyName, commandOf as 
 import { hunksOf } from './track.js';
 import { renderDiagrams } from './diagrams.js';
 import { flowToMermaid, flowsAsMermaid, parseFlow, isStepText, flowStepNames, nameKey, flowTour, flowLineAt, COLORS } from './flow.js';
-import { pairInk, parseInk, addMark, removeMark, setMark, fitBoard, boardLine, INK, INK_COLORS, ARROW_STYLES } from './ink.js';
+import { pairInk, parseInk, addMark, removeMark, setMark, fitBoard, boardLine, wordsIn, roomIn, textSize, INK, INK_COLORS, ARROW_STYLES } from './ink.js';
 import { pictureHunks, penPlaces, pictureSummary, showPicture, PLACE } from './penpic.js';
 import { connect, addBox, freshName, nextAnswer, setColor, setDirection, removeBox, removeArrow, setArrowKind, setArrowLabel, reverseArrow, setShape, arrowSpot, groupBoxes, renameGroup, ungroup } from './flowedit.js';
 import { FigureCanvas } from './canvas.js';
@@ -2050,7 +2050,8 @@ function canvasFor(tab) {
     onArrowStep: (pre, from, to) => gotoArrow(tab, pre, from, to),
     onShapeMenu: (pre, id, at) => shapeMenu(tab, pre, id, at),
     onInk: (fig, change) => inkEdit(tab, fig, change),
-    onInkMenu: (e, fig, mark) => inkArrowMenu(tab, e, fig, mark),
+    onInkMenu: (e, fig, mark) => inkMarkMenu(tab, e, fig, mark),
+    onInkDelete: (fig) => deleteSketch(tab, fig),
     onGroup: (pre, names) => groupHere(tab, pre, names),
     onUngroup: (pre, id) => ungroupHere(tab, pre, id),
     onRenameGroup: (pre, id, title) => { const line = pre.flowGroups?.find((g) => g.id === id)?.line; if (line != null) editFlow(tab, pre, (src) => ({ text: renameGroup(src, line, title) })); },
@@ -2634,6 +2635,7 @@ function cardMenu(tab, e, pre) {
     flow ? { label: 'Move to a note of its own…', run: () => moveFlowOut(tab, pre) } : null,
     from ? { label: `Open ${stem(from)}`, run: () => openFile(from) } : null,
     pre.dataset.board != null ? { label: 'Read it as a flow (below it)', run: () => sketchToFlowHere(tab, pre) } : null,
+    pre.dataset.board != null ? { label: 'Delete the sketch', danger: true, run: () => deleteSketch(tab, pre) } : null,
     flow || from || pre.dataset.board != null ? '-' : null,
     ...(pre.matches('.ink-figure') ? pictureItems(() => inkPicture(pre, tab.path))
       : img ? pictureItems(() => diagramPicture(img, from || tab.path, `${stem(from || tab.path)}-diagram`)) : []),
@@ -2656,12 +2658,38 @@ function ungroupHere(tab, pre, id) {
   if (line != null) editFlow(tab, pre, (src) => ({ text: ungroup(src, line) }));
 }
 
-// An arrow drawn on a picture: its kind (straight, curved, elbow), or out.
-function inkArrowMenu(tab, e, fig, mark) {
+// An arrow drawn on a picture: its kind (straight, curved, elbow), its
+// words; a box: a rectangle or an ellipse, filled or not. Their colour, or out.
+function inkMarkMenu(tab, e, fig, mark) {
+  const set = (next) => inkEdit(tab, fig, { set: [mark.line, next] });
+  const tick = (on) => (on ? ' ✓' : '');
   const now = mark.style || 'straight';
+  // On a sketch, the words in the box go along, into the room it has now
+  // (where they were in the room it had, as near as they can be).
+  const shape = (round) => {
+    if (!mark.round === !round) return;
+    const next = { ...mark, round };
+    const img = fig.querySelector(':scope > img');
+    const [a, b] = [roomIn(mark), roomIn(next)];
+    const to = (v, k) => Math.max(b[k], Math.round(b[k] + ((v - a[k]) * b[k === 'x' ? 'w' : 'h']) / (a[k === 'x' ? 'w' : 'h'] || 1)));
+    const words = fig.dataset.board != null && img ? wordsIn(fig.inkMarks || [], mark, textSize(img.naturalWidth, img.naturalHeight)) : [];
+    if (!words.length) { set(next); return; }
+    inkEdit(tab, fig, { sets: [[mark.line, next], ...words.map((w) => [w.line, { ...w, x: to(w.x, 'x'), y: to(w.y, 'y') }])] });
+  };
+  const items = mark.kind === 'box' ? [
+    { label: `Rectangle${tick(!mark.round)}`, run: () => shape(false) },
+    { label: `Ellipse${tick(mark.round)}`, run: () => shape(true) },
+    '-',
+    { label: `Filled${tick(mark.filled)}`, run: () => set({ ...mark, filled: !mark.filled }) },
+  ] : [
+    ...ARROW_STYLES.map((style) => ({ label: `${ARROW_KINDS[style][1]}${tick(style === now)}`, run: () => { if (style !== now) set({ ...mark, style, via: style === 'elbow' ? [] : mark.via }); } })),
+    ...(now === 'elbow' && mark.via?.length ? [{ label: 'Route it again', run: () => set({ ...mark, via: [] }) }] : []),
+    '-',
+    { label: mark.label ? 'Change its words…' : 'Words on it…', run: () => tab.canvas?.ink.label(fig, mark) },
+  ];
   contextMenu(e, [
-    ...ARROW_STYLES.map((style) => ({ label: `${ARROW_KINDS[style][1]}${style === now ? ' ✓' : ''}`, run: () => { if (style !== now) inkEdit(tab, fig, { set: [mark.line, { ...mark, style, via: style === 'elbow' ? [] : mark.via }] }); } })),
-    ...(now === 'elbow' && mark.via?.length ? [{ label: 'Route it again', run: () => inkEdit(tab, fig, { set: [mark.line, { ...mark, via: [] }] }) }] : []),
+    ...items,
+    { label: 'Colour…', key: 'C', run: () => tab.canvas?.ink.pickColor({ left: e.clientX, bottom: e.clientY }) },
     '-',
     { label: 'Delete', danger: true, run: () => inkEdit(tab, fig, { remove: mark.line }) },
   ]);
@@ -2816,6 +2844,26 @@ function sketchBlocks(v) {
     i = j;
   }
   return out;
+}
+
+// A sketch taken out of the note: its ```ink block, and a blank line
+// around it (one ⌘Z).
+function deleteSketch(tab, fig) {
+  if (suggestingNow(tab)) return;
+  const v = tab.editor.value;
+  const s = sketchBlocks(v).find((b) => b.line === Number(fig.dataset.line));
+  if (!s || s.source.trim() !== (fig.dataset.source ?? '').trim()) { toast('The note changed — try again.', 'error'); return; }
+  let from = lineOffset(v, s.line);
+  let to = Math.min(v.length, lineOffset(v, s.close) + (v.split('\n')[s.close] ?? '').length + 1);
+  while (v[to] === '\n' && (from === 0 || v.slice(from - 2, from) === '\n\n')) to++;
+  if (to >= v.length) while (from > 1 && v.slice(from - 2, from) === '\n\n') from--;
+  const keys = tab.canvas?.el.contains(document.activeElement);
+  tab.editor.closeStep();
+  tab.editor.replace(from, to, '', Math.min(from, v.length - (to - from)));
+  tab.editor.closeStep();
+  if (keys) tab.canvas.stage.focus({ preventScroll: true });
+  renderStatus();
+  toast('Sketch deleted.', '', { label: 'Undo', run: () => drawUndo(tab) });
 }
 
 // A sketch read as a flow (public/sketchflow.js): its boxes, words and

@@ -58,3 +58,15 @@ test('names a flow can hold; the same words twice are two steps; nothing to read
   assert.equal(r.text, 'A B: later -> Check -> Check 2');
   assert.equal(sketchToFlow(sketch('pen: 1,1 5,5', 'arrow: 10,10 -> 50,50')), null);
 });
+
+test('an arrow\'s own words are its label; a round box is a step as any', () => {
+  const r = sketchToFlow(sketch(
+    'box round: 100,100 260x120',
+    'text: 140,140 Start',
+    'box filled: 600,100 260x120',
+    'text: 640,140 End',
+    'arrow: 370,160 -> 590,160 "on time"',
+    'text: 450,175 late',
+  ));
+  assert.equal(r.text, ['direction: right', 'Start -(on time)-> End', 'late'].join('\n'));
+});

@@ -956,6 +956,9 @@ iframe.mermaid-frame { position: fixed; left: -10000px; top: 0; width: 1600px; h
 .canvas-pane:not(.presenting) .canvas-stage:not(.inking) .ink-figure.ink-editable .ink-mark text { pointer-events: bounding-box; cursor: move; }
 .ink-mark.ink-picked { filter: drop-shadow(0 0 2px var(--accent)) drop-shadow(0 0 2px var(--accent)); }
 .ink-mark.ink-moving { opacity: 0; }
+/* A sketch picked whole (a click beside its marks): Delete takes it out. */
+.ink-figure.ink-whole { outline: 2px dashed var(--accent); outline-offset: 6px; }
+.canvas-pane.presenting .ink-figure.ink-whole { outline: none; }
 .ink-selbox { fill: none; stroke: var(--accent); pointer-events: none; }
 .ink-band { fill: var(--accent); fill-opacity: .08; stroke: var(--accent); pointer-events: none; }
 .ink-anchor { fill: #fff; stroke: var(--accent); }

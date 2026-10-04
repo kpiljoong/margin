@@ -1,7 +1,7 @@
 // node --test (npm test): marks drawn on a picture, as lines (public/ink.js).
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { parseInk, inkLine, simplify, addMark, removeMark, bentPath, movedMark, grips, reshapedMark, setMark, fitBoard, boardLine, anchors, snapEnd, snapArrow, followBox, wordsIn, textSize, elbowRoute, sideOf, arrowPath, arrowMids, curveParts, followBoxes, markBounds, elbowPoints, movedPart } from '../public/ink.js';
+import { parseInk, inkLine, simplify, addMark, removeMark, bentPath, movedMark, grips, reshapedMark, setMark, fitBoard, boardLine, anchors, snapEnd, snapArrow, followBox, wordsIn, textSize, elbowRoute, sideOf, arrowPath, arrowMids, curveParts, followBoxes, markBounds, elbowPoints, movedPart, arrowMiddle, fitWords, textLines, boxOf, roomIn } from '../public/ink.js';
 
 test('ink lines: read, written back the same', () => {
   const src = ['box red: 280,120 200x80', '# a comment', 'arrow: 410,220 -> 300,160', 'text blue: 420,230 The button is hidden', 'pen 초록: 100,100 120,104 140,112', '상자 빨강: 1,2 3×4', 'nonsense', 'pen red: 1,2', 'arrow purple: 1,2 -> x'].join('\n');
@@ -152,7 +152,7 @@ test('a mark moved, reshaped by its grips, and written back in its place', () =>
   assert.equal(inkLine(reshapedMark(arrow, 0, [50, -40], { mid: true })), 'arrow red: 0,0 -> 50,-40 -> 100,0 -> 100,100');
   assert.equal(inkLine(reshapedMark(arrow, 1, [52, 48], { straight: 3 })), 'arrow red: 0,0 -> 100,100');
   // Its own words for the kind and colour stay.
-  assert.equal(setMark('# note\n\uC0C1\uC790 \uD30C\uB791: 1,2 3x4\npen: 1,1 2,2', 1, movedMark(parseInk('box: 1,2 3x4').marks[0], 10, 0)), '# note\n\uC0C1\uC790 \uD30C\uB791: 11,2 3x4\npen: 1,1 2,2');
+  assert.equal(setMark('# note\n\uC0C1\uC790 \uD30C\uB791: 1,2 3x4\npen: 1,1 2,2', 1, movedMark(parseInk('box blue: 1,2 3x4').marks[0], 10, 0)), '# note\n\uC0C1\uC790 \uD30C\uB791: 11,2 3x4\npen: 1,1 2,2');
 });
 
 test('a sketch: a board line is the page, not a mark; it grows to hold what is drawn past it', () => {
@@ -205,4 +205,58 @@ test('several marks at once: boxes moved together take the arrows between them, 
   assert.deepEqual(markBounds({ kind: 'num', x: 100, y: 100, text: '1' }, 1600, 900), { x: 65, y: 65, w: 70, h: 70 });
   const t = markBounds({ kind: 'text', x: 10, y: 20, text: 'ab\uAC00' }, 1600, 900);
   assert.deepEqual([t.x, t.y, Math.round(t.w), Math.round(t.h)], [10, 20, 95, 54]);
+});
+
+test('a box\'s looks: round (an ellipse) and filled, in English or Korean; kept or changed in its line', () => {
+  const { marks, bad } = parseInk(['box blue round filled: 10,20 100x50', '\uC0C1\uC790 \uC6D0 \uCC44\uC6C0 \uD30C\uB791: 0,0 10x10', 'box filled: 1,2 3x4', 'pen round: 1,1 2,2', 'box round round: 1,1 2x2'].join('\n'));
+  assert.deepEqual(bad, [3, 4]);
+  assert.deepEqual([marks[0].round, marks[0].filled, marks[1].round, marks[1].filled, marks[2].round], [true, true, true, true, undefined]);
+  assert.equal(inkLine(marks[0]), 'box blue round filled: 10,20 100x50');
+  assert.equal(inkLine(marks[2]), 'box red filled: 1,2 3x4');
+  const src = '\uC0C1\uC790 \uC6D0 \uD30C\uB791: 0,0 10x10\nbox: 1,2 3x4';
+  const [k, plain] = parseInk(src).marks;
+  // As written while it holds; a look or a colour changed, its word.
+  assert.equal(setMark(src, 0, movedMark(k, 1, 1)).split('\n')[0], '\uC0C1\uC790 \uC6D0 \uD30C\uB791: 1,1 10x10');
+  assert.equal(setMark(src, 0, { ...k, round: false, filled: true }).split('\n')[0], '\uC0C1\uC790 \uD30C\uB791 filled: 0,0 10x10');
+  assert.equal(setMark(src, 0, { ...k, color: 'green' }).split('\n')[0], '\uC0C1\uC790 \uC6D0 green: 0,0 10x10');
+  assert.equal(setMark(src, 1, { ...plain, color: 'blue', round: true }).split('\n')[1], 'box blue round: 1,2 3x4');
+  assert.equal(setMark(src, 1, { ...plain, color: 'red' }).split('\n')[1], 'box: 1,2 3x4');
+});
+
+test('an arrow\'s words: in quotes after its points, halfway along it as it is drawn', () => {
+  const { marks, bad } = parseInk(['arrow blue: 0,0 -> 100,0 "sends it"', 'arrow elbow: 0,0 -> 100,100 "\uC608"', 'arrow: 0,0 -> 10,10 ""', 'arrow: 0,0 -> 10,10 "half'].join('\n'));
+  assert.deepEqual(bad, [3]);
+  assert.equal(marks[0].label, 'sends it');
+  assert.equal(marks[1].label, '\uC608');
+  assert.equal(marks[2].label, undefined);
+  assert.equal(inkLine(marks[0]), 'arrow blue: 0,0 -> 100,0 "sends it"');
+  assert.equal(inkLine({ ...marks[0], label: 'a "b"\nc' }), 'arrow blue: 0,0 -> 100,0 "a \'b\' c"');
+  assert.equal(setMark('\uD654\uC0B4\uD45C: 0,0 -> 9,9', 0, { ...marks[2], label: 'go' }), '\uD654\uC0B4\uD45C: 0,0 -> 10,10 "go"');
+  assert.deepEqual(arrowMiddle(marks[0], 2), [50, 0]);
+  assert.deepEqual(arrowMiddle({ kind: 'arrow', from: [0, 0], via: [[100, 0]], to: [100, 100], style: 'straight' }, 2), [100, 0]);
+  const mid = arrowMiddle({ kind: 'arrow', from: [0, 0], via: [[50, 50]], to: [100, 0], style: 'curved' }, 2);
+  assert.ok(Math.abs(mid[0] - 50) < 1 && mid[1] > 30 && mid[1] <= 50, String(mid));
+  // Moved with the arrow, kept.
+  assert.equal(movedMark(marks[0], 1, 1).label, 'sends it');
+});
+
+test('words in a box: broken to fit its width as drawn, anew when it is reshaped; one line elsewhere', () => {
+  const wide = (t) => t.length * 10;
+  assert.deepEqual(fitWords('one two three four', 85, wide), ['one two', 'three', 'four']);
+  assert.deepEqual(fitWords('abcdefghij', 40, wide), ['abcd', 'efgh', 'ij']);
+  assert.deepEqual(fitWords('', 40, wide), ['']);
+  const size = 45;
+  const box = { kind: 'box', x: 0, y: 0, w: 300, h: 200, line: 0 };
+  const words = { kind: 'text', x: 18, y: 18, text: 'one two three four five six', line: 1 };
+  assert.equal(boxOf([box, words], words, size), box);
+  const room = 300 - size * 0.4 - 18;
+  assert.deepEqual(textLines(words, [box, words], size, wide), fitWords(words.text, room, wide));
+  assert.equal(textLines(words, [box, words], size, wide).length, 2);
+  assert.equal(textLines(words, [{ ...box, w: 600 }, words], size, wide).length, 1);
+  assert.deepEqual(textLines(words, [words], size, wide), [words.text]);
+  // A round box: the room in its ellipse.
+  assert.deepEqual(roomIn({ ...box, round: true }), { x: 300 * 0.146, y: 200 * 0.146, w: 300 * 0.707, h: 200 * 0.707 });
+  // Its bounds: as tall as its lines.
+  const b = markBounds(words, 1600, 900, [box, words]);
+  assert.ok(b.h > size * 2, String(b.h));
 });
