@@ -959,6 +959,11 @@ iframe.mermaid-frame { position: fixed; left: -10000px; top: 0; width: 1600px; h
 .ink-anchor.on { fill: var(--accent); }
 .ink-grip { fill: #fff; stroke: var(--accent); pointer-events: all; cursor: grab; }
 .ink-grip[data-mid] { fill: var(--accent); stroke: #fff; opacity: .8; cursor: copy; }
+.ink-grip.ink-part { fill: var(--accent); stroke: #fff; }
+.ink-grip.ink-part.across { cursor: ns-resize; }
+.ink-grip.ink-part.down { cursor: ew-resize; }
+.ink-hover { pointer-events: none; }
+.ink-target { fill: none; stroke: var(--accent); opacity: .7; }
 .canvas-pane.presenting .ink-grips { display: none; }
 .ink-mark.unseen { opacity: 0; }
 .ink-mark[data-hide].unseen { opacity: 1; }

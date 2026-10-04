@@ -2661,6 +2661,7 @@ function inkArrowMenu(tab, e, fig, mark) {
   const now = mark.style || 'straight';
   contextMenu(e, [
     ...ARROW_STYLES.map((style) => ({ label: `${ARROW_KINDS[style][1]}${style === now ? ' ✓' : ''}`, run: () => { if (style !== now) inkEdit(tab, fig, { set: [mark.line, { ...mark, style, via: style === 'elbow' ? [] : mark.via }] }); } })),
+    ...(now === 'elbow' && mark.via?.length ? [{ label: 'Route it again', run: () => inkEdit(tab, fig, { set: [mark.line, { ...mark, via: [] }] }) }] : []),
     '-',
     { label: 'Delete', danger: true, run: () => inkEdit(tab, fig, { remove: mark.line }) },
   ]);

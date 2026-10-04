@@ -17,8 +17,9 @@
 //
 // - pen: a line through the points · arrow: from → to, any points between;
 //   straight (corners at the points), curved (one curve through them: a
-//   point between is a lever) or elbow (across and down, round any boxes it
-//   joins; points between don't count) · box: corner and
+//   point between is a lever) or elbow (across and down, out of the sides
+//   of the boxes it joins and round the others in its way; points between
+//   are its corners, a way set by hand, kept at right angles) · box: corner and
 //   size · text: where it starts, then the words · num: a numbered dot, its
 //   centre and number — item 1 of the numbered list in the picture's section
 //   says what it is (linkCallouts) · hide: a part covered, corner and size
@@ -94,7 +95,7 @@ export function parseInk(src) {
       const ps = rest.split(/\s*(?:->|→)\s*/).map((p) => POINT.exec(p));
       if (ps.length >= 2 && ps.every(Boolean)) {
         const at = ps.map((p) => [n(p[1]), n(p[2])]);
-        mark = { from: at[0], to: at[at.length - 1], via: style === 'elbow' ? [] : at.slice(1, -1), style: style || 'straight' };
+        mark = { from: at[0], to: at[at.length - 1], via: at.slice(1, -1), style: style || 'straight' };
       }
     } else if (kind === 'box' || kind === 'hide') {
       const b = BOX.exec(rest);
@@ -149,7 +150,7 @@ export function inkLine(mark) {
   const kind = mark.kind === 'arrow' && mark.style && mark.style !== 'straight' ? ` ${mark.style}` : '';
   const head = `${mark.kind} ${mark.color || 'red'}${kind}: `;
   if (mark.kind === 'pen') return head + mark.pts.map(pt).join(' ');
-  if (mark.kind === 'arrow') return head + [mark.from, ...(mark.style === 'elbow' ? [] : mark.via || []), mark.to].map(pt).join(' -> ');
+  if (mark.kind === 'arrow') return head + [mark.from, ...(mark.via || []), mark.to].map(pt).join(' -> ');
   if (mark.kind === 'box' || mark.kind === 'hide') return `${head}${pt([mark.x, mark.y])} ${r(mark.w)}x${r(mark.h)}`;
   return `${head}${pt([mark.x, mark.y])} ${String(mark.text).replace(/\s+/g, ' ').trim()}`;
 }
@@ -204,11 +205,33 @@ export function curveParts(pts) {
 // The ways out of a box's sides, as anchors() has them: top, right, bottom, left.
 const SIDES = [[0, -1], [1, 0], [0, 1], [-1, 0]];
 
+// Corners tidied: no point twice, none in the middle of a straight run.
+function tidy(list) {
+  const pts = [];
+  for (const x of list) {
+    const l = pts[pts.length - 1];
+    if (l && l[0] === x[0] && l[1] === x[1]) continue;
+    const o = pts[pts.length - 2];
+    if (o && ((o[0] === l[0] && l[0] === x[0]) || (o[1] === l[1] && l[1] === x[1]))) pts.pop();
+    pts.push(x);
+  }
+  return pts;
+}
+
+const inRect = ([x, y], r) => x > r.x && x < r.x + r.w && y > r.y && y < r.y + r.h;
+
+// Whether the part u → v (across or down) goes through the inside of r.
+function crosses(u, v, r) {
+  if (u[1] === v[1]) return u[1] > r.y && u[1] < r.y + r.h && Math.max(u[0], v[0]) > r.x && Math.min(u[0], v[0]) < r.x + r.w;
+  return u[0] > r.x && u[0] < r.x + r.w && Math.max(u[1], v[1]) > r.y && Math.min(u[1], v[1]) < r.y + r.h;
+}
+
 // An elbow arrow's corners from a to b, going out of the sides of the boxes
 // they are on (sa, sb: 0 top … 3 left, as anchors(); -1: on none, then the
-// way it mostly goes), `gap` off a box before it turns. → the points, a
-// and b with them.
-export function elbowRoute(a, b, sa = -1, sb = -1, gap = 0) {
+// way it mostly goes), `gap` off a box before it turns, and round the
+// `boxes` in its way (`gap` off them; a box holding an end isn't in its
+// way). → the points, a and b with them.
+export function elbowRoute(a, b, sa = -1, sb = -1, gap = 0, boxes = []) {
   const across = (s) => s === 1 || s === 3;
   const [dx, dy] = [b[0] - a[0], b[1] - a[1]];
   const way = (h) => (h ? (dx >= 0 ? 1 : 3) : dy >= 0 ? 2 : 0);
@@ -234,16 +257,137 @@ export function elbowRoute(a, b, sa = -1, sb = -1, gap = 0) {
     const c = across(sa) ? [q[0], p[1]] : [p[0], q[1]];
     mid = [ahead(sa, p, c) >= 0 && ahead(sb, q, c) >= 0 ? c : across(sa) ? [p[0], q[1]] : [q[0], p[1]]];
   }
-  // No point twice, none in the middle of a straight run.
+  const walls = boxes.map((r) => ({ x: r.x - gap / 2, y: r.y - gap / 2, w: r.w + gap, h: r.h + gap })).filter((r) => !inRect(p, r) && !inRect(q, r));
+  const core = tidy([p, ...mid, q]);
+  const blocked = core.slice(1).some((v, i) => walls.some((r) => crosses(core[i], v, r)));
+  const round = blocked && detour(p, q, sa, (sb + 2) % 4, walls, gap);
+  return tidy([a, ...(round || core), b]);
+}
+
+// The shortest way from p (going out the way s0) to q (coming in the way
+// s1) across and down, on lines `gap` off the walls, not through them, a
+// turn counting as a long way. → its points, or null.
+function detour(p, q, s0, s1, walls, gap) {
+  const xs = new Set([p[0], q[0], (p[0] + q[0]) / 2]);
+  const ys = new Set([p[1], q[1], (p[1] + q[1]) / 2]);
+  for (const r of walls) {
+    xs.add(r.x - gap / 2); xs.add(r.x + r.w + gap / 2);
+    ys.add(r.y - gap / 2); ys.add(r.y + r.h + gap / 2);
+  }
+  const X = [...xs].sort((u, v) => u - v);
+  const Y = [...ys].sort((u, v) => u - v);
+  const [W, H] = [X.length, Y.length];
+  const turn = gap * 4 + Math.max(X[W - 1] - X[0], Y[H - 1] - Y[0]) / 20;
+  const id = (i, j, d) => (j * W + i) * 4 + d;
+  const cost = new Map();
+  const back = new Map();
+  // A heap of [cost, state].
+  const heap = [];
+  const push = (c, st) => {
+    heap.push([c, st]);
+    for (let i = heap.length - 1; i > 0;) { const u = (i - 1) >> 1; if (heap[u][0] <= heap[i][0]) break; [heap[u], heap[i]] = [heap[i], heap[u]]; i = u; }
+  };
+  const pop = () => {
+    const top = heap[0];
+    const last = heap.pop();
+    if (heap.length) {
+      heap[0] = last;
+      for (let i = 0; ;) {
+        const [l, r] = [i * 2 + 1, i * 2 + 2];
+        let m = i;
+        if (l < heap.length && heap[l][0] < heap[m][0]) m = l;
+        if (r < heap.length && heap[r][0] < heap[m][0]) m = r;
+        if (m === i) break;
+        [heap[m], heap[i]] = [heap[i], heap[m]]; i = m;
+      }
+    }
+    return top;
+  };
+  const [pi, pj, qi, qj] = [X.indexOf(p[0]), Y.indexOf(p[1]), X.indexOf(q[0]), Y.indexOf(q[1])];
+  const start = id(pi, pj, s0);
+  cost.set(start, 0);
+  push(0, start);
+  const steps = [[0, -1], [1, 0], [0, 1], [-1, 0]];
+  let end = null;
+  while (heap.length) {
+    const [c, st] = pop();
+    if (c > cost.get(st)) continue;
+    const d = st % 4;
+    const cell = (st - d) / 4;
+    const [i, j] = [cell % W, Math.floor(cell / W)];
+    if (i === qi && j === qj) {
+      if (d === s1) { end = st; break; }
+      const k = id(i, j, s1);
+      if (!cost.has(k) || c + turn < cost.get(k)) { cost.set(k, c + turn); back.set(k, st); push(c + turn, k); }
+      continue;
+    }
+    for (let e = 0; e < 4; e++) {
+      if (e === (d + 2) % 4) continue;
+      const [ni, nj] = [i + steps[e][0], j + steps[e][1]];
+      if (ni < 0 || nj < 0 || ni >= W || nj >= H) continue;
+      const [u, v] = [[X[i], Y[j]], [X[ni], Y[nj]]];
+      if (walls.some((r) => inRect(v, r) || crosses(u, v, r))) continue;
+      const k = id(ni, nj, e);
+      const nc = c + Math.abs(v[0] - u[0]) + Math.abs(v[1] - u[1]) + (e === d ? 0 : turn);
+      if (!cost.has(k) || nc < cost.get(k)) { cost.set(k, nc); back.set(k, st); push(nc, k); }
+    }
+  }
+  if (end == null) return null;
   const pts = [];
-  for (const x of [a, p, ...mid, q, b]) {
-    const l = pts[pts.length - 1];
-    if (l && l[0] === x[0] && l[1] === x[1]) continue;
-    const o = pts[pts.length - 2];
-    if (o && ((o[0] === l[0] && l[0] === x[0]) || (o[1] === l[1] && l[1] === x[1]))) pts.pop();
-    pts.push(x);
+  for (let st = end; st != null; st = back.get(st)) {
+    const cell = (st - (st % 4)) / 4;
+    pts.unshift([X[cell % W], Y[Math.floor(cell / W)]]);
   }
   return pts;
+}
+
+// An elbow arrow's own corners (its points between), kept at right angles:
+// the corner next to an end on a box in line with it out of its side, and a
+// corner more where two points are not in line.
+function ownRoute(m, sa, sb) {
+  const pts = [m.from, ...m.via, m.to].map((q) => [...q]);
+  const n = pts.length - 1;
+  const fit = (e, c, s) => { if (s >= 0) c[s % 2 === 0 ? 0 : 1] = e[s % 2 === 0 ? 0 : 1]; };
+  fit(pts[0], pts[1], sa);
+  fit(pts[n], pts[n - 1], sb);
+  const out = [pts[0]];
+  let across = sa < 0 ? null : sa % 2 === 1; // the way the last part went
+  for (let i = 1; i <= n; i++) {
+    const [u, w] = [out[out.length - 1], pts[i]];
+    if (u[0] !== w[0] && u[1] !== w[1]) {
+      // Down first or across: into an end on a box, out of its side last;
+      // else turning from the way it went (or as it mostly goes).
+      const down = i === n && sb >= 0 ? sb % 2 === 1 : across == null ? Math.abs(w[1] - u[1]) > Math.abs(w[0] - u[0]) : across;
+      out.push(down ? [u[0], w[1]] : [w[0], u[1]]);
+      across = down;
+    } else if (u[0] !== w[0] || u[1] !== w[1]) across = u[1] === w[1];
+    out.push(w);
+  }
+  return tidy(out);
+}
+
+// How an elbow arrow goes (the boxes of `marks` turn it, and are gone
+// round; its own corners, when it has them). → its points.
+export function elbowPoints(m, marks = [], gap = 0) {
+  const [sa, sb] = [sideOf(m.from, marks), sideOf(m.to, marks)];
+  if (m.via?.length) return ownRoute(m, sa, sb);
+  return elbowRoute(m.from, m.to, sa, sb, gap, marks.filter((b) => b.kind === 'box'));
+}
+
+// An elbow route with its part k (point k to k + 1) moved across to where
+// p is; a part at an end keeps the end, going `gap` out of it first. → the points.
+export function movedPart(route, k, p, gap) {
+  const n = route.length - 1;
+  const [A, B] = [route[k], route[k + 1]];
+  if (!A || !B) return route;
+  const c = A[1] === B[1] ? 1 : 0; // what moves: y of a part across, x of one down
+  const len = B[1 - c] - A[1 - c];
+  const step = Math.sign(len) * Math.min(gap, Math.abs(len) / 3);
+  const set = (q, v, w) => { const r = [...q]; r[c] = v; if (w != null) r[1 - c] = w; return r; };
+  const v = Math.round(p[c]);
+  const head = k === 0 ? [A, set(A, A[c], A[1 - c] + step), set(A, v, A[1 - c] + step)] : [set(A, v)];
+  const tail = k === n - 1 ? [set(B, v, B[1 - c] - step), set(B, B[c], B[1 - c] - step), B] : [set(B, v)];
+  return tidy([...route.slice(0, k), ...head, ...tail, ...route.slice(k + 2)].map(([x, y]) => [Math.round(x), Math.round(y)]));
 }
 
 // The side of a box of `marks` an arrow's end at p is on (its anchor):
@@ -264,7 +408,7 @@ const fx = (q) => `${Math.round(q[0] * 10) / 10},${Math.round(q[1] * 10) / 10}`;
 export function arrowPath(m, sw, marks = []) {
   const pts = [m.from, ...(m.via || []), m.to];
   if (m.style === 'elbow') {
-    const route = elbowRoute(m.from, m.to, sideOf(m.from, marks), sideOf(m.to, marks), sw * 8);
+    const route = elbowPoints(m, marks, sw * 8);
     return { d: bentPath(route, sw * 4), back: route[route.length - 2] || m.from };
   }
   if (m.style === 'curved' && pts.length > 2) {
@@ -310,7 +454,7 @@ export function reshapedMark(m, i, [x, y], { mid = false, straight = 0 } = {}) {
     const pts = grips(m);
     if (mid) pts.splice(i + 1, 0, [x, y]); else pts[i] = [x, y];
     const off = (a, p, b) => { const l = Math.hypot(b[0] - a[0], b[1] - a[1]); return l ? Math.abs((b[0] - a[0]) * (a[1] - p[1]) - (a[0] - p[0]) * (b[1] - a[1])) / l : Math.hypot(p[0] - a[0], p[1] - a[1]); };
-    for (let k = pts.length - 2; k > 0; k--) if (off(pts[k - 1], pts[k], pts[k + 1]) <= straight) pts.splice(k, 1);
+    for (let k = pts.length - 2; k > 0 && m.style !== 'elbow'; k--) if (off(pts[k - 1], pts[k], pts[k + 1]) <= straight) pts.splice(k, 1);
     return { ...m, from: pts[0], to: pts[pts.length - 1], via: pts.slice(1, -1) };
   }
   if (m.kind !== 'box' && m.kind !== 'hide') return m;

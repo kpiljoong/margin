@@ -16,10 +16,11 @@
 // number; with E a click on a mark takes it out.
 //
 // With no tool on, the marks of the picture looked at can be changed: a
-// click picks one (its grips show), a drag moves it, a grip reshapes it (a
-// box's corners, an arrow's ends and points; the dot in the middle of an
-// arrow's part makes a new point, a point dragged straight goes); Delete takes
-// the picked one out, Esc lets go. Each change rewrites its line, one ⌘Z.
+// click picks one (its grips show), a drag moves it (a box on a sketch with
+// the words in it), a grip reshapes it (a box's corners, an arrow's ends and
+// points; the dot in the middle of an arrow's part makes a new point, a
+// point dragged straight goes); Delete takes the picked one out, Esc lets
+// go. Each change rewrites its line, one ⌘Z.
 //
 // Several at once: Shift and a click picks one more (or one less), Shift and
 // a drag picks the marks inside the band. A drag on one of them moves them
@@ -31,10 +32,15 @@
 // a box, its words (or new ones at its top left); elsewhere, new ones there.
 //
 // On a sketch, an arrow drawn to a box ends on the middle of the box's side
-// nearest it (its anchors show), and a box moved or reshaped takes the
-// arrow ends on its anchors along (public/ink.js: snapArrow, followBoxes).
+// nearest it (with the arrow tool on, the anchors of the box a press would
+// take show before it), and a box moved or reshaped takes the arrow ends on
+// its anchors along (public/ink.js: snapArrow, followBoxes).
+//
+// An elbow arrow finds its own way round the boxes; the dot in the middle of
+// each of its parts moves that part across, and the way is then its own
+// (its corners written; "Route it again" lets it find its way anew).
 
-import { INK, inkLine, parseInk, simplify, markEl, movedMark, grips, reshapedMark, textSize, anchors, snapEnd, snapArrow, followBoxes, wordsIn, arrowMids, markBounds, ARROW_STYLES } from './ink.js';
+import { INK, inkLine, parseInk, simplify, markEl, movedMark, grips, reshapedMark, textSize, anchors, snapEnd, snapArrow, followBoxes, wordsIn, arrowMids, markBounds, elbowPoints, movedPart, ARROW_STYLES } from './ink.js';
 
 const SVG = 'http://www.w3.org/2000/svg';
 export const TOOLS = [
@@ -194,6 +200,7 @@ export class InkTools {
       if (m && m.dataset.line !== '') this.c.h.onInk?.(hit.fig, { remove: Number(m.dataset.line) });
       return true;
     }
+    this.hover?.remove();
     this.draft = { fig: hit.fig, kind: this.tool, scale: hit.scale, pts: [hit.p], x: e.clientX, y: e.clientY, el: null };
     try { this.c.stage.setPointerCapture(e.pointerId); } catch { /* a pointer no longer down */ }
     return true;
@@ -208,7 +215,7 @@ export class InkTools {
       return true;
     }
     const d = this.draft;
-    if (!d) return false;
+    if (!d) { this.hoverAnchor(e); return false; }
     const hit = this.at(e, d.fig);
     if (!hit || d.kind === 'text' || d.kind === 'num' || d.kind === 'note') return true;
     if (d.kind === 'pen') d.pts.push(hit.p); else d.pts[1] = hit.p;
@@ -249,6 +256,8 @@ export class InkTools {
   }
 
   cancel() {
+    this.hover?.remove();
+    this.hover = null;
     this.draft?.el?.remove();
     this.draft = null;
     this.path?.el?.remove();
@@ -286,11 +295,23 @@ export class InkTools {
       if (this.sel && !e.target.closest?.('.ink-bar')) this.select(null);
       return false;
     }
-    const grip = t.classList.contains('ink-grip') ? { i: Number(t.dataset.i), mid: t.dataset.mid != null } : null;
+    const grip = t.classList.contains('ink-grip') ? { i: Number(t.dataset.i), mid: t.dataset.mid != null, part: t.dataset.part != null ? Number(t.dataset.part) : null } : null;
     // One of several picked: they all go.
     const sel = this.sel?.pic === fig.dataset.line ? this.sel.lines : [];
-    const group = !grip && sel.length > 1 && sel.includes(mark.line) ? fig.inkMarks.filter((m) => sel.includes(m.line)) : null;
-    this.edit = { fig, g, mark, grip, group, from: hit.p, scale: hit.scale, x: e.clientX, y: e.clientY, id: e.pointerId, moved: false, next: null, el: null };
+    let group = !grip && sel.length > 1 && sel.includes(mark.line) ? fig.inkMarks.filter((m) => sel.includes(m.line)) : null;
+    const keep = (group || [mark]).map((m) => m.line); // picked after
+    // On a sketch, a box moved takes its words along.
+    if (!grip && isBoard(fig)) {
+      const img = fig.querySelector(':scope > img');
+      const size = textSize(img.naturalWidth, img.naturalHeight);
+      const moving = group || [mark];
+      const words = [...new Set(moving.filter((m) => m.kind === 'box').flatMap((b) => wordsIn(fig.inkMarks, b, size)))].filter((w) => !moving.includes(w));
+      if (words.length) group = [...moving, ...words];
+    }
+    // An elbow arrow's part: moved across from where it goes now.
+    const gap = this.width(fig.querySelector(':scope > .ink-marks')) * 8;
+    const route = grip?.part != null ? elbowPoints(mark, fig.inkMarks || [], gap) : null;
+    this.edit = { fig, g, mark, grip, group, keep, route, gap, from: hit.p, scale: hit.scale, x: e.clientX, y: e.clientY, id: e.pointerId, moved: false, next: null, el: null };
     return true;
   }
 
@@ -358,7 +379,7 @@ export class InkTools {
     let p = hit.p;
     let snap = null;
     // A sketch's arrow end dragged near a box: onto its anchor.
-    if (isBoard(ed.fig) && ed.mark.kind === 'arrow' && ed.grip && !ed.grip.mid) {
+    if (isBoard(ed.fig) && ed.mark.kind === 'arrow' && ed.grip && !ed.grip.mid && ed.grip.part == null) {
       const last = grips(ed.mark).length - 1;
       if (ed.grip.i === 0 || ed.grip.i === last) {
         const other = snapEnd(ed.grip.i === 0 ? ed.mark.to : ed.mark.from, marks, 1);
@@ -369,9 +390,16 @@ export class InkTools {
     const olds = ed.group || [ed.mark];
     if (ed.group) ed.nexts = ed.group.map((m) => movedMark(m, dx, dy));
     else {
-      ed.next = ed.grip
-        ? reshapedMark(ed.mark, ed.grip.i, p, { mid: ed.grip.mid, straight: 6 * ed.scale })
-        : movedMark(ed.mark, dx, dy);
+      const part = ed.grip?.part;
+      if (part != null) {
+        const [u, v] = [ed.route[part], ed.route[part + 1]];
+        const way = movedPart(ed.route, part, [(u[0] + v[0]) / 2 + dx, (u[1] + v[1]) / 2 + dy], ed.gap);
+        ed.next = { ...ed.mark, via: way.slice(1, -1) };
+      } else {
+        ed.next = ed.grip
+          ? reshapedMark(ed.mark, ed.grip.i, p, { mid: ed.grip.mid, straight: 6 * ed.scale })
+          : movedMark(ed.mark, dx, dy);
+      }
       ed.nexts = [ed.next];
     }
     const svg = ed.fig.querySelector(':scope > .ink-marks');
@@ -391,6 +419,28 @@ export class InkTools {
       ed.el.append(markEl(m, sw, make, after));
     }
     svg.append(ed.el);
+  }
+
+  // With the arrow tool on, over a sketch: the box an arrow pressed here
+  // would start on (or a click end on), ringed, its anchors shown and the
+  // one it takes filled.
+  hoverAnchor(e) {
+    this.hover?.remove();
+    this.hover = null;
+    if (this.tool !== 'arrow') return;
+    const fig = e.target.closest?.('.ink-figure');
+    const hit = fig && isBoard(fig) && this.at(e, fig);
+    const s = hit && snapEnd(hit.p, fig.inkMarks || [], this.reach(fig, hit.scale));
+    const svg = s && fig.querySelector(':scope > .ink-marks');
+    if (!svg) return;
+    const sw = this.width(svg);
+    const make = this.maker();
+    const b = s.box;
+    const pad = sw * 1.5;
+    this.hover = make('g', { class: 'ink-hover' });
+    this.hover.append(make('rect', { class: 'ink-target', x: b.x - pad, y: b.y - pad, width: b.w + pad * 2, height: b.h + pad * 2, rx: sw * 3, 'stroke-width': sw * 0.8 }));
+    this.anchorDots(this.hover, b, s.at, sw, make);
+    svg.append(this.hover);
   }
 
   // How near a box an arrow's end snaps to it (picture pixels).
@@ -413,7 +463,7 @@ export class InkTools {
     this.cancel();
     if (!ed.moved) { this.select(ed.fig, ed.mark.line); return false; }
     const olds = ed.group || [ed.mark];
-    this.sel = { pic: ed.fig.dataset.line, lines: olds.map((m) => m.line) };
+    this.sel = { pic: ed.fig.dataset.line, lines: ed.keep };
     const nexts = ed.nexts || [];
     if (nexts.some((m, i) => inkLine(m) !== inkLine(olds[i]))) {
       if (nexts.length > 1 || ed.follow?.length) this.c.h.onInk?.(ed.fig, { sets: [...olds.map((m, i) => [m.line, nexts[i]]), ...ed.follow] });
@@ -503,6 +553,20 @@ export class InkTools {
       if (mid) c.dataset.mid = '';
       g.append(c);
     };
+    if (mark.style === 'elbow') {
+      // Its ends, and a dot in the middle of each part (long enough) to move it across.
+      const way = elbowPoints(mark, fig.inkMarks || [], sw * 8);
+      way.slice(1).forEach((q, k) => {
+        const u = way[k];
+        if (Math.abs(q[0] - u[0]) + Math.abs(q[1] - u[1]) < sw * 6) return;
+        const c = make('circle', { class: `ink-grip ink-part ${u[1] === q[1] ? 'across' : 'down'}`, cx: (u[0] + q[0]) / 2, cy: (u[1] + q[1]) / 2, r: sw * 1.8, 'stroke-width': sw * 0.8, 'data-line': mark.line, 'data-part': k });
+        g.append(c);
+      });
+      dot(pts[0], 0, false);
+      dot(pts[pts.length - 1], pts.length - 1, false);
+      svg.append(g);
+      return;
+    }
     if (mark.kind === 'arrow') arrowMids(mark).forEach((p, i) => dot(p, i, true));
     pts.forEach((p, i) => dot(p, i, false));
     svg.append(g);

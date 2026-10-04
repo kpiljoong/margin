@@ -1,7 +1,7 @@
 // node --test (npm test): marks drawn on a picture, as lines (public/ink.js).
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { parseInk, inkLine, simplify, addMark, removeMark, bentPath, movedMark, grips, reshapedMark, setMark, fitBoard, boardLine, anchors, snapEnd, snapArrow, followBox, wordsIn, textSize, elbowRoute, sideOf, arrowPath, arrowMids, curveParts, followBoxes, markBounds } from '../public/ink.js';
+import { parseInk, inkLine, simplify, addMark, removeMark, bentPath, movedMark, grips, reshapedMark, setMark, fitBoard, boardLine, anchors, snapEnd, snapArrow, followBox, wordsIn, textSize, elbowRoute, sideOf, arrowPath, arrowMids, curveParts, followBoxes, markBounds, elbowPoints, movedPart } from '../public/ink.js';
 
 test('ink lines: read, written back the same', () => {
   const src = ['box red: 280,120 200x80', '# a comment', 'arrow: 410,220 -> 300,160', 'text blue: 420,230 The button is hidden', 'pen 초록: 100,100 120,104 140,112', '상자 빨강: 1,2 3×4', 'nonsense', 'pen red: 1,2', 'arrow purple: 1,2 -> x'].join('\n');
@@ -65,9 +65,9 @@ test('an arrow\'s kind: straight (not said), curved or elbow, a word before or a
   ].join('\n'));
   assert.deepEqual(marks.map((m) => [m.style, m.color]), [['curved', 'red'], ['curved', 'blue'], ['elbow', 'red'], ['curved', 'red'], ['straight', 'red']]);
   assert.deepEqual(bad, [5, 6, 7]);
-  assert.deepEqual(marks[2].via, [], 'an elbow arrow finds its own way: points between don\'t count');
+  assert.deepEqual(marks[2].via, [[50, 50]], 'an elbow arrow\'s points between: its corners, set by hand');
   assert.equal(inkLine(marks[0]), 'arrow red curved: 0,0 -> 50,50 -> 100,0');
-  assert.equal(inkLine(marks[2]), 'arrow red elbow: 0,0 -> 100,0');
+  assert.equal(inkLine(marks[2]), 'arrow red elbow: 0,0 -> 50,50 -> 100,0');
   assert.equal(inkLine(marks[4]), 'arrow red: 1,2 -> 3,4');
   // Its kind changed in place: the other words as they were.
   const src = 'arrow blue: 0,0 -> 10,10\n\uD654\uC0B4\uD45C \uACE1\uC120 \uD30C\uB791: 1,2 -> 3,4';
@@ -108,6 +108,32 @@ test('drawing an arrow: straight corners, a curve through its points, an elbow r
   assert.equal(sideOf([601, 150], marks), -1);
   assert.deepEqual(arrowMids(marks[2]), [], 'no points to add to an elbow arrow');
   assert.deepEqual(arrowPath(marks[2], 2, marks).back, [300, 150]);
+});
+
+test('an elbow arrow goes round the boxes in its way; a part moved across, the way is its own', () => {
+  const { marks } = parseInk(['box: 100,100 200x100', 'box: 450,80 100x140', 'box: 700,100 200x100', 'arrow elbow: 300,150 -> 700,150'].join('\n'));
+  const arrow = marks[3];
+  // The box between: over it, gap (16) off it.
+  const way = elbowPoints(arrow, marks, 16);
+  assert.deepEqual(way, [[300, 150], [434, 150], [434, 64], [566, 64], [566, 150], [700, 150]]);
+  assert.deepEqual(elbowPoints(arrow, [marks[0], marks[2]], 16), [[300, 150], [700, 150]], 'nothing in the way: straight across');
+  // A box holding an end (a frame round them all) is not in its way.
+  assert.deepEqual(elbowPoints(arrow, [...marks, { kind: 'box', x: 0, y: 0, w: 1000, h: 400 }], 16), way);
+  // The part over the box moved down below it: the corners written.
+  const below = movedPart(way, 2, [500, 300], 16);
+  assert.deepEqual(below, [[300, 150], [434, 150], [434, 300], [566, 300], [566, 150], [700, 150]]);
+  const own = { ...arrow, via: below.slice(1, -1) };
+  assert.equal(inkLine(own), 'arrow red elbow: 300,150 -> 434,150 -> 434,300 -> 566,300 -> 566,150 -> 700,150');
+  assert.deepEqual(elbowPoints(own, marks, 16), below, 'its own way, as written');
+  // Its box moved down: the end goes along, the corner by it stays in line.
+  const moved = [marks[0], marks[1], { ...marks[2], y: 150 }];
+  assert.deepEqual(elbowPoints({ ...own, to: [700, 200] }, moved, 16), [[300, 150], [434, 150], [434, 300], [566, 300], [566, 200], [700, 200]]);
+  // A part at an end: the end stays, a short way out of it first.
+  assert.deepEqual(movedPart([[300, 150], [700, 150]], 0, [0, 300], 16), [[300, 150], [316, 150], [316, 300], [684, 300], [684, 150], [700, 150]]);
+  // Corners not in line, written by hand: put at right angles.
+  assert.deepEqual(elbowPoints({ kind: 'arrow', style: 'elbow', from: [0, 0], via: [[50, 80]], to: [100, 100] }), [[0, 0], [0, 80], [50, 80], [50, 100], [100, 100]]);
+  // Reshaping an end keeps the corners.
+  assert.deepEqual(reshapedMark(own, 5, [700, 160]).via, own.via);
 });
 
 test('a mark moved, reshaped by its grips, and written back in its place', () => {

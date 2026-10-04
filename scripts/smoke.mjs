@@ -37,6 +37,7 @@ fs.writeFileSync(path.join(ws, 'assets', 'screen.svg'), '<svg xmlns="http://www.
 fs.writeFileSync(path.join(ws, 'dots.md'), '# Dots\n\n![Screen](assets/screen.svg)\n\n1. First thing\n2. Second thing\n');
 fs.writeFileSync(path.join(ws, 'shot.md'), '# Shot\n\n![Screen](assets/screen.svg)\n\nAfter.\n');
 fs.writeFileSync(path.join(ws, 'sketch.md'), '# Sketch\n\nTalk.\n');
+fs.writeFileSync(path.join(ws, 'elbow.md'), '# Route\n\n```ink\nboard: 1600x900\nbox: 100,300 300x150\ntext: 150,350 Start\nbox: 600,280 200x190\ntext: 640,350 Middle\nbox: 1100,300 300x150\ntext: 1150,350 End\narrow elbow: 400,375 -> 1100,375\n```\n');
 fs.writeFileSync(path.join(ws, 'sketchflow.md'), '# Board\n\n```ink\nboard: 1600x900\nbox: 100,100 300x120\ntext: 130,140 Idea\nbox: 100,500 300x120\ntext: 130,540 Try it\narrow: 250,230 -> 250,490\n```\n\nAfter.\n');
 // Lines for a keyboard macro, and notes to run one at every search result.
 fs.writeFileSync(path.join(ws, 'macro.md'), 'apple\nbanana\ncherry');
@@ -654,6 +655,65 @@ await check('on a sketch: Shift and a drag picks marks; a drag moves them all (a
   return out;
 `, (v) => (v?.picked === 2 && v.frame && /\nbox: 200,500 300x120\ntext: 230,540 Try it\n/.test(v.moved) && / elbow: 250,220 -> 350,500\n/.test(v.moved) && /\narrow: 250,230 -> 250,490\n/.test(v.moved)
   && v.still && v.copied === 'box: 200,500 300x120\ntext: 230,540 Try it' && v.pasted && v.after === v.moved ? null : `got ${JSON.stringify(v)}`));
+
+await check('on a sketch: the arrow tool shows the anchor a press takes; an elbow arrow goes round a box, a part of it dragged, routed again; a box moved takes its words', `
+  const ed = await openNote('elbow.md');
+  if (!$('.canvas-pane')?.offsetParent) button('Canvas').click();
+  const pic = () => $('.canvas-stage .ink-board img');
+  const fig = () => $('.canvas-stage .ink-board');
+  await until(() => pic()?.naturalWidth, 15000);
+  pic().dispatchEvent(new MouseEvent('click', { bubbles: true, ...(() => { const r = pic().getBoundingClientRect(); return { clientX: r.left + 5, clientY: r.top + 5 }; })() }));
+  await until(() => $('.canvas-stage .ink-figure.ink-editable'), 5000);
+  await sleep(500);
+  const at = (x, y) => { const img = pic(); const r = img.getBoundingClientRect(); return { clientX: r.left + x * r.width / img.naturalWidth, clientY: r.top + y * r.height / img.naturalHeight }; };
+  const stage = $('.canvas-stage');
+  const ptr = (type, el, p, more = {}) => el.dispatchEvent(new PointerEvent(type, { bubbles: true, cancelable: true, button: 0, pointerId: 1, ...p, ...more }));
+  const ink = () => ed.value.split('\x60\x60\x60')[1];
+  const out = {};
+  // The arrow tool over a box: its anchors, the top one taken.
+  $$('.ink-bar .ink-tool').find((b) => b.title.startsWith('Arrow')).click();
+  ptr('pointermove', pic(), at(700, 260));
+  const on = $('.canvas-stage .ink-hover .ink-anchor.on');
+  out.hover = on ? [Number(on.getAttribute('cx')), Number(on.getAttribute('cy'))] : null;
+  key('Escape', {}, stage);
+  out.gone = !$('.canvas-stage .ink-hover');
+  // The arrow picked: a dot on each of its parts (round the box: five).
+  const arrow = fig().inkMarks.find((m) => m.kind === 'arrow');
+  const hit = fig().querySelector(\`.ink-mark[data-line="\${arrow.line}"] .ink-hit\`);
+  ptr('pointerdown', hit, at(700, 490)); ptr('pointerup', stage, at(700, 490));
+  const parts = await until(() => $$('.canvas-stage .ink-part').length, 3000);
+  out.parts = parts;
+  const below = $('.canvas-stage .ink-part[data-part="2"]');
+  if (!below) return out;
+  ptr('pointerdown', below, at(700, 490));
+  for (let i = 1; i <= 5; i++) ptr('pointermove', stage, at(700, 490 + 42 * i));
+  ptr('pointerup', stage, at(700, 700));
+  await until(() => ed.value.includes('560,700'), 5000);
+  out.own = ink();
+  // Right-click: routed again.
+  await until(() => fig()?.dataset.source.includes('560,700'), 5000);
+  await sleep(300);
+  const line = fig().inkMarks.find((m) => m.kind === 'arrow').line;
+  fig().querySelector(\`.ink-mark[data-line="\${line}"] .ink-hit\`).dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true, button: 2, ...at(700, 700) }));
+  $$('.ctx-menu .ctx-item').find((b) => b.textContent.startsWith('Route it again'))?.click();
+  await until(() => ed.value.includes('elbow: 400,375 -> 1100,375'), 5000);
+  out.again = ink();
+  // The middle box moved up: its words go along.
+  await until(() => !fig()?.dataset.source.includes('560,700'), 5000);
+  await sleep(300);
+  key('Escape', {}, stage);
+  const box = fig().inkMarks.find((m) => m.kind === 'box' && m.x === 600);
+  const edge = fig().querySelector(\`.ink-mark[data-line="\${box.line}"] .ink-hit\`);
+  ptr('pointerdown', edge, at(700, 280));
+  for (let i = 1; i <= 5; i++) ptr('pointermove', stage, at(700, 280 - 30 * i));
+  ptr('pointerup', stage, at(700, 130));
+  await until(() => ed.value.includes('box: 600,130 200x190'), 5000);
+  out.moved = ink();
+  return out;
+`, (v) => (v?.hover?.join() === '700,280' && v.gone && v.parts === 5
+  && / elbow: 400,375 -> 560,375 -> 560,700 -> 840,700 -> 840,375 -> 1100,375\n/.test(v.own)
+  && / elbow: 400,375 -> 1100,375\n/.test(v.again)
+  && /\nbox: 600,130 200x190\ntext: 640,200 Middle\n/.test(v.moved) ? null : `got ${JSON.stringify(v)}`));
 
 await check('Settings shows Labs', `
   document.dispatchEvent(new KeyboardEvent('keydown', { key: ',', metaKey: navigator.platform.startsWith('Mac'), ctrlKey: !navigator.platform.startsWith('Mac'), bubbles: true }));
