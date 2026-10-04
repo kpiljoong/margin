@@ -8,7 +8,7 @@ import { eventKeys } from './keys.js';
 import { UndoHistory } from './undo.js';
 import { expandRange } from './expand.js';
 import { combine, original, proposed, reconcile, provisional, strike, overlay } from './track.js';
-import { EmacsKeys, emacs, keyName } from './emacs.js';
+import { EmacsKeys, emacs, keyName, wordEdge } from './emacs.js';
 
 const esc = (s) => s.replace(/[&<>]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c]));
 const MAX_HIGHLIGHT = 300_000; // chars; beyond this we fall back to plain text
@@ -400,10 +400,11 @@ export class MarkdownEditor {
     this.onNarrow();
   }
 
-  // query: what to find (else the selection, else the last one).
-  openFind({ replace = false, query = null } = {}) {
+  // query: what to find (else the selection, else the last one; empty: nothing yet).
+  openFind({ replace = false, query = null, empty = false } = {}) {
     const sel = this.ta.value.slice(this.ta.selectionStart, this.ta.selectionEnd);
-    if (query) this.find.query = query;
+    if (empty) this.find.query = '';
+    else if (query) this.find.query = query;
     else if (sel && !sel.includes('\n')) this.find.query = sel;
     if (!this.find.open) this.findFrom = this.ta.selectionEnd;
     this.find.open = true;
@@ -421,6 +422,9 @@ export class MarkdownEditor {
       editorWatch.find(this, { query, caseSensitive, regex, matches, from: this.findFrom ?? 0, sel: [this.ta.selectionStart, this.ta.selectionEnd], collapse: this._findEnd || null });
     }
     this._findEnd = null;
+    // A search left with nothing typed: the one before stays the last.
+    if (this._isearch && !this.find.query) this.find.query = this._isearch.last;
+    this.findInput.placeholder = 'Find';
     this._isearch = null;
     this._qr = null;
     if (this.query) { this.query = null; this.ta.readOnly = false; }
@@ -1409,6 +1413,7 @@ export class MarkdownEditor {
       }
       if (em === 'C-s' || em === 'C-r') { e.preventDefault(); this.isearch(em === 'C-s' ? 1 : -1); return; }
       if (em === 'C-g') { e.preventDefault(); this._isearchQuit(); return; }
+      if (em === 'C-w' && e.target === input) { e.preventDefault(); this._isearchYankWord(); return; }
       if (em === 'M-%' || em === 'C-M-%') { e.preventDefault(); this.queryReplace({ regex: em === 'C-M-%', query: input.value }); return; }
       if (this._isearch && e.key === 'Enter' && e.target === input && !e.shiftKey && !e.isComposing) { e.preventDefault(); this._isearchEnd(); return; }
       if (e.key === 'Escape') { e.preventDefault(); this.closeFind(); }
@@ -1425,14 +1430,22 @@ export class MarkdownEditor {
   }
 
   // ---------------- Emacs's searches (emacs.js)
-  // ⌃S / ⌃R: the find bar, or the next (previous) match in it. Enter stays
-  // at the match, the mark where the search began; ⌃G goes back there.
+  // ⌃S / ⌃R: the find bar, empty, or the next (previous) match in it — with
+  // nothing typed yet, the last search again. Enter stays at the match, the
+  // mark where the search began; ⌃G goes back there.
   isearch(dir) {
     const ta = this.ta;
-    if (!this._isearch) this._isearch = { from: [ta.selectionStart, ta.selectionEnd], dir };
+    if (!this._isearch) this._isearch = { from: [ta.selectionStart, ta.selectionEnd], dir, last: this.find.query };
     this._isearch.dir = dir;
-    if (this.find.open && document.activeElement === this.findInput) { this._step(dir); return; }
-    this.openFind();
+    if (this.find.open && document.activeElement === this.findInput) {
+      if (this.findInput.value || !this._isearch.last) { this._step(dir); return; }
+      this.findInput.value = this.find.query = this._isearch.last;
+      this._runFind(true);
+    } else {
+      const fresh = !this.find.open;
+      this.openFind({ empty: fresh });
+      if (fresh && this._isearch.last) this.findInput.placeholder = `${dir > 0 ? 'C-s' : 'C-r'} again: ${this._isearch.last}`;
+    }
     const m = this.find.matches;
     if (dir < 0 && m.length) {
       let i = m.length - 1;
@@ -1454,6 +1467,26 @@ export class MarkdownEditor {
     this.ta.setSelectionRange(p, p);
     this.emacs.pushMark(s.from[0], { quiet: true });
     emacs.hooks.echo?.('Mark saved where search started');
+  }
+
+  // ⌃W in the search: the word after the match (after the caret, with
+  // nothing typed yet) added to what is searched.
+  _isearchYankWord() {
+    const v = this.ta.value;
+    const m = this.find.query ? this.find.matches[this.find.index] : null;
+    if (this.find.query && !m) return;
+    const at = m ? m[1] : (this._isearch?.from[1] ?? this.ta.selectionEnd);
+    const end = wordEdge(v, at, 1);
+    if (end === at) return;
+    const add = v.slice(at, end);
+    this.findInput.value += this.find.regex ? add.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') : add;
+    this.find.query = this.findInput.value;
+    this._runFind(false);
+    const all = this.find.matches;
+    let i = all.findIndex(([a]) => a >= (m ? m[0] : at));
+    if (i < 0) i = all.length ? 0 : -1;
+    this.find.index = i;
+    if (i >= 0) { this.findCount.textContent = `${i + 1}/${all.length}`; this._renderFind(); this._reveal(i, false); }
   }
 
   _isearchQuit() {

@@ -5,6 +5,7 @@ import assert from 'node:assert/strict';
 import {
   killLineRange, recase, transposeChars, transposeWords, transposeLines, joinLine, spaceAround, deleteBlankLines,
   zapRange, paragraphEdge, displayWidth, fillParagraph, sortLines, trimTrailing, occurLines, occurPattern, expansions,
+  sentenceEdge, countText, indentLines, cursorInfo,
   KillRing, keyName, commandOf, emacsCommands, emacsName, keysOf, prefixKeys, EmacsKeys, emacs, PREFIX_HELP_DELAY,
 } from '../public/emacs.js';
 
@@ -63,6 +64,35 @@ test('paragraphs: their edges, filling and unfilling', () => {
   assert.equal(displayWidth('\uD55C\uAE00ab'), 6);
 });
 
+test('sentences: M-e to their ends, M-a to their starts (a heading, a list item, a blank line end one too)', () => {
+  const v = 'One two. Three? "Four!" Five\n\n# Head\n- item a\n1. num one. More\n\n\uC624\uB298\uC740 \uBE44. \uB0B4\uC77C\uC740 \uB9D1\uB2E4.\n**Done.** End';
+  const ends = [];
+  for (let p = 0, q; (q = sentenceEdge(v, p, 1)) !== p; p = q) ends.push(v.slice(0, q).split(/\s/).at(-1));
+  assert.deepEqual(ends, ['two.', 'Three?', '"Four!"', 'Five', 'Head', 'a', 'one.', 'More', '\uBE44.', '\uB9D1\uB2E4.', '**Done.**', 'End']);
+  const starts = [];
+  for (let p = v.length, q; (q = sentenceEdge(v, p, -1)) !== p; p = q) starts.push(v.slice(q).split(/\s/)[0]);
+  assert.deepEqual(starts, ['End', '**Done.**', '\uB0B4\uC77C\uC740', '\uC624\uB298\uC740', 'More', 'num', 'item', 'Head', 'Five', '"Four!"', 'Three?', 'One']);
+  assert.equal(sentenceEdge('a.b c', 0, 1), 5, 'no space after: not an end');
+  assert.equal(sentenceEdge('\uAC00。\uB098', 0, 1), 2, 'a full-width stop needs no space');
+  assert.equal(sentenceEdge('One. Two', 4, -1), 0, 'in the spaces after an end: back to that sentence');
+  assert.equal(sentenceEdge('One. Two', 5, -1), 0, 'at a start: the one before');
+});
+
+test('M-= counts; C-x TAB indents lines, keeping places; C-x = says where', () => {
+  assert.deepEqual(countText('one two\n\uC138 \uB2E8\uC5B4\n'), { lines: 2, words: 4, chars: 13 });
+  assert.deepEqual(countText(''), { lines: 0, words: 0, chars: 0 });
+  const v = 'a\n  b\n\n\tc\nd';
+  const x = indentLines(v, 0, 9, 2);
+  assert.equal(apply(v, x).v, '  a\n    b\n\n\t  c\nd', 'the blank line stays empty; d is not in it');
+  assert.equal(x.map(4), 8, 'b is still b');
+  assert.equal(x.map(10), 16);
+  assert.equal(apply(v, indentLines(v, 2, 6, -4)).v, 'a\nb\n\n\tc\nd', 'not past the margin; b ends at a line start: not that line');
+  assert.equal(apply(v, indentLines(v, 8, 8, -1)).v, 'a\n  b\n\n c\nd', 'a tab is two columns');
+  assert.equal(cursorInfo('ab\n\uD55Cc', 3), 'Char: \uD55C (54620, U+D55C) point=4 of 5 (60%) line=2 column=0');
+  assert.equal(cursorInfo('ab\nc', 2), 'Char: C-j (10, U+000A) point=3 of 4 (50%) line=1 column=2');
+  assert.match(cursorInfo('ab', 2), /end of note/);
+});
+
 test('sorting lines, trailing spaces (a Markdown line break stays)', () => {
   assert.equal(sortLines('b\nA\nc'), 'A\nb\nc');
   assert.equal(sortLines('b\nA\nc', true), 'c\nb\nA');
@@ -117,6 +147,10 @@ test('key names, and the commands on them', () => {
   assert.equal(commandOf('M-s o'), 'occur');
   assert.equal(commandOf('C-k'), 'kill-line');
   assert.equal(commandOf('C-x q'), null);
+  assert.equal(keyName(ev({ key: '@', code: 'Digit2', altKey: true, shiftKey: true }), true), 'M-@');
+  assert.equal(keyName(ev({ key: '=', code: 'Equal', altKey: true }), true), 'M-=');
+  assert.deepEqual(['M-a', 'M-e', 'M-k', 'M-=', 'M-@', 'C-x DEL', 'C-x TAB', 'C-x ='].map(commandOf),
+    ['backward-sentence', 'forward-sentence', 'kill-sentence', 'count-words-region', 'mark-word', 'backward-kill-sentence', 'indent-rigidly', 'what-cursor-position']);
 });
 
 test('M-x: the commands by Emacs’s names, with their keys', () => {

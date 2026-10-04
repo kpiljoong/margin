@@ -189,6 +189,109 @@ export function paragraphEdge(v, pos, dir) {
   return j >= 0 ? starts[j] : 0;
 }
 
+// Where sentences end: after . ? ! … (and the quotes, brackets and ** that
+// close them) with a space or the end after; after full-width ones at once; and at
+// the ends of lines that end a block (a blank line, a heading, a list item
+// or a table row after). A list's "1." ends nothing.
+const SENTENCE_END = /[.?!…‽][\]"'”’)}»›*_~`]*(?=\s|$)|[\u3002\uFF0E\uFF1F\uFF01]+[\]"'”’)}\u300D\u300F*_]*/gu;
+const BLOCK_START = /^[ \t]*(?:$|#{1,6}\s|(?:[-*+]|\d+[.)])[ \t]|\||`{3,}|~{3,})/;
+const BLOCK_LINE = /^[ \t]*(?:$|#{1,6}\s|\||`{3,}|~{3,})/;
+const MARKER = /^[ \t]*(?:#{1,6}[ \t]+|(?:>[ \t]?)+|(?:[-*+]|\d+[.)])[ \t]+(?:\[[ xX]\][ \t]+)?)?/;
+function sentenceMarks(v) {
+  const ends = [];
+  const starts = [];
+  // A sentence starts at the first character after an end: past spaces, and
+  // past a heading's or a list's marker on a new line.
+  const startAfter = (e) => {
+    let s = e;
+    while (s < v.length && /\s/.test(v[s])) s++;
+    if (s < v.length && (s === 0 || s > e || v[s - 1] === '\n') && /^[ \t]*$/.test(v.slice(lineStartOf(v, s), s))) {
+      const ls = lineStartOf(v, s);
+      s = Math.max(s, ls + MARKER.exec(v.slice(ls, lineEndOf(v, ls)))[0].length);
+    }
+    return s;
+  };
+  starts.push(startAfter(0));
+  for (const m of v.matchAll(SENTENCE_END)) {
+    if (/^[ \t]*\d+$/.test(v.slice(lineStartOf(v, m.index), m.index))) continue;
+    const e = m.index + m[0].length;
+    ends.push(e);
+    starts.push(startAfter(e));
+  }
+  for (let i = v.indexOf('\n'); i >= 0; i = v.indexOf('\n', i + 1)) {
+    const before = v.slice(lineStartOf(v, i), i);
+    const after = v.slice(i + 1, lineEndOf(v, i + 1));
+    if (!BLOCK_LINE.test(before) && !BLOCK_START.test(after) && !(/^\s*>/.test(after) && !/^\s*>/.test(before))) continue;
+    ends.push(i - /\s*$/.exec(before)[0].length);
+    starts.push(startAfter(i + 1));
+  }
+  ends.push(v.length - /\s*$/.exec(v)[0].length);
+  return { ends, starts };
+}
+
+// M-e and M-a: the end of the sentence at pos, or the next (its start, or
+// the one before, dir < 0).
+export function sentenceEdge(v, pos, dir) {
+  const { ends, starts } = sentenceMarks(v);
+  const text = (a, b) => /\S/.test(v.slice(a, b));
+  if (dir > 0) {
+    let best = v.length;
+    for (const e of ends) if (e > pos && e < best && text(pos, e)) best = e;
+    return best;
+  }
+  let best = 0;
+  for (const s of starts) if (s < pos && s > best && text(s, pos)) best = s;
+  return best;
+}
+
+// M-=: the lines, words and characters in text.
+export function countText(s) {
+  const lines = s ? s.split('\n').length - (s.endsWith('\n') ? 1 : 0) : 0;
+  return { lines, words: (s.match(/[\p{L}\p{N}_]+/gu) || []).length, chars: [...s].length };
+}
+
+// ⌃X TAB: the lines from a to b (b at a line's start: not that line) n
+// columns in (out, n < 0); blank lines lose their spaces. → an edit, with
+// map(p): where a place in the text goes.
+export function indentLines(v, a, b, n, tab = 2) {
+  const from = lineStartOf(v, a);
+  const to = b > a && v[b - 1] === '\n' ? b - 1 : lineEndOf(v, b);
+  const width = (lead) => { let c = 0; for (const ch of lead) c = ch === '\t' ? c + tab - (c % tab) : c + 1; return c; };
+  const moves = []; // [line start (old), old lead, new lead]
+  let o = from;
+  const out = v.slice(from, to).split('\n').map((line) => {
+    const lead = /^[ \t]*/.exec(line)[0];
+    const next = lead.length === line.length ? '' : n > 0 && lead.includes('\t') ? lead + ' '.repeat(n) : ' '.repeat(Math.max(0, width(lead) + n));
+    moves.push([o, lead.length, next.length]);
+    o += line.length + 1;
+    return next + line.slice(lead.length);
+  }).join('\n');
+  const map = (p) => {
+    if (p < from) return p;
+    if (p > to) return p + out.length - (to - from);
+    let shift = 0;
+    for (const [s, old, now] of moves) {
+      if (p < s) break;
+      if (p < s + old || p === s) return s + shift + Math.min(p - s, now);
+      shift += now - old;
+      if (p <= lineEndOf(v, s)) return p + shift;
+    }
+    return p + shift;
+  };
+  return { from, to, text: out, caret: map(a), map };
+}
+
+// ⌃X =: the character after pos and where pos is.
+export function cursorInfo(v, pos) {
+  const ls = lineStartOf(v, pos);
+  const line = v.slice(0, pos).split('\n').length;
+  const where = `point=${pos + 1} of ${v.length} (${v.length ? Math.round((pos / v.length) * 100) : 0}%) line=${line} column=${displayWidth(v.slice(ls, pos))}`;
+  if (pos >= v.length) return `${where} (end of note)`;
+  const c = v.codePointAt(pos);
+  const ch = { 10: 'C-j', 9: 'TAB', 32: 'SPC' }[c] || (c < 32 ? `C-${String.fromCharCode(c + 96)}` : String.fromCodePoint(c));
+  return `Char: ${ch} (${c}, U+${c.toString(16).toUpperCase().padStart(4, '0')}) ${where}`;
+}
+
 // How wide text is on the screen, in columns: Korean, Chinese, Japanese and
 // emoji take two.
 const WIDE = /[\u1100-\u115F\u2E80-\uA4CF\uAC00-\uD7A3\uF900-\uFAFF\uFE30-\uFE4F\uFF00-\uFF60\uFFE0-\uFFE6\u{1F300}-\u{1FAFF}\u{20000}-\u{3FFFD}]/u;
@@ -387,14 +490,15 @@ const KEYS = {
   'C-f': 'forward-char', 'C-b': 'backward-char', 'C-n': 'next-line', 'C-p': 'previous-line',
   'C-a': 'beginning-of-line', 'C-e': 'end-of-line', 'M-f': 'forward-word', 'M-b': 'backward-word',
   'M-<': 'beginning-of-buffer', 'M->': 'end-of-buffer', 'C-v': 'scroll-up', 'M-v': 'scroll-down',
+  'M-a': 'backward-sentence', 'M-e': 'forward-sentence',
   'M-{': 'backward-paragraph', 'M-}': 'forward-paragraph', 'M-m': 'back-to-indentation', 'C-l': 'recenter',
-  'C-SPC': 'set-mark', 'C-@': 'set-mark', 'C-g': 'keyboard-quit', 'M-h': 'mark-paragraph',
-  'C-k': 'kill-line', 'C-w': 'kill-region', 'M-w': 'copy-region', 'M-d': 'kill-word', 'M-DEL': 'backward-kill-word',
+  'C-SPC': 'set-mark', 'C-@': 'set-mark', 'C-g': 'keyboard-quit', 'M-h': 'mark-paragraph', 'M-@': 'mark-word',
+  'C-k': 'kill-line', 'C-w': 'kill-region', 'M-w': 'copy-region', 'M-d': 'kill-word', 'M-DEL': 'backward-kill-word', 'M-k': 'kill-sentence',
   'C-y': 'yank', 'M-y': 'yank-pop', 'C-d': 'delete-char', 'M-z': 'zap-to-char',
   'C-s': 'isearch-forward', 'C-r': 'isearch-backward', 'M-%': 'query-replace', 'C-M-%': 'query-replace-regexp',
   'M-u': 'upcase-word', 'M-l': 'downcase-word', 'M-c': 'capitalize-word', 'M-q': 'fill-paragraph',
   'C-t': 'transpose-chars', 'M-t': 'transpose-words', 'M-^': 'join-line', 'M-SPC': 'just-one-space', 'M-\\': 'delete-horizontal-space',
-  'C-o': 'open-line', 'C-/': 'undo', 'C-_': 'undo', 'C-?': 'redo', 'C-M-_': 'redo', 'M-/': 'dabbrev-expand',
+  'C-o': 'open-line', 'C-/': 'undo', 'C-_': 'undo', 'C-?': 'redo', 'C-M-_': 'redo', 'M-/': 'dabbrev-expand', 'M-=': 'count-words-region',
   'C-x': 'ctl-x', 'M-g': 'goto-map', 'M-s': 'search-map', 'C-u': 'universal-argument', 'M--': 'negative-argument', ESC: 'meta-prefix',
   ...Object.fromEntries([...'0123456789'].map((d) => [`M-${d}`, 'digit-argument'])),
 };
@@ -404,7 +508,7 @@ const MAPS = {
     o: 'other-window', 2: 'split-window', 3: 'split-window', d: 'dired', u: 'undo', 'C-u': 'upcase-region', 'C-l': 'downcase-region',
     'C-t': 'transpose-lines', 'C-o': 'delete-blank-lines', h: 'mark-whole-buffer', 'C-x': 'exchange-point-and-mark',
     z: 'repeat', '(': 'kmacro-start', ')': 'kmacro-end', e: 'kmacro-play', 'C-SPC': 'pop-global-mark', 'C-@': 'pop-global-mark',
-    f: 'set-fill-column', r: 'ctl-x-r', n: 'narrow-map',
+    f: 'set-fill-column', DEL: 'backward-kill-sentence', TAB: 'indent-rigidly', '=': 'what-cursor-position', r: 'ctl-x-r', n: 'narrow-map',
   },
   'C-x r': { SPC: 'point-to-register', 'C-SPC': 'point-to-register', 'C-@': 'point-to-register', j: 'jump-to-register', s: 'copy-to-register', x: 'copy-to-register', i: 'insert-register', g: 'insert-register' },
   'C-x n': { n: 'narrow', w: 'widen' },
@@ -419,7 +523,7 @@ export const PREFIX_HELP_DELAY = 800;
 // Plain keys, while the mark is active: they move the point, as these.
 const ARROWS = { ArrowLeft: 'backward-char', ArrowRight: 'forward-char', ArrowUp: 'previous-line', ArrowDown: 'next-line', Home: 'beginning-of-line', End: 'end-of-line', PageDown: 'scroll-up', PageUp: 'scroll-down' };
 
-const KILLS = new Set(['kill-line', 'kill-word', 'backward-kill-word', 'kill-region', 'zap-to-char']);
+const KILLS = new Set(['kill-line', 'kill-word', 'backward-kill-word', 'kill-region', 'zap-to-char', 'kill-sentence', 'backward-kill-sentence']);
 const VERTICAL = new Set(['next-line', 'previous-line']);
 // Commands that take no part in "the last command" (a run of kills, yank then M-y).
 const ARGS = new Set(['universal-argument', 'digit-argument', 'negative-argument', 'meta-prefix', ...Object.keys(PREFIXES)]);
@@ -452,6 +556,10 @@ export const COMMAND_DOCS = {
   'goto-line': 'Go to line', 'next-error': 'The next occur (or search) result', 'previous-error': 'The occur (or search) result before', occur: 'Lines that match, as a buffer',
   'capitalize-region': 'Capitalize the words in the region', 'unfill-paragraph': 'Join the paragraph’s lines into one', 'sort-lines': 'Sort the lines of the region (⌃U first: reversed)',
   'delete-trailing-whitespace': 'Delete spaces at the ends of lines (the region’s, else the note’s)',
+  'forward-sentence': 'To the end of the sentence', 'backward-sentence': 'To the start of the sentence',
+  'kill-sentence': 'Kill to the end of the sentence', 'backward-kill-sentence': 'Kill back to the sentence’s start',
+  'mark-word': 'Select to the end of the word (again: one more word)', 'count-words-region': 'Count the lines, words and characters (the region’s, else the note’s)',
+  'indent-rigidly': 'Indent the lines: ← → (⇧: two columns), or ⌃U n first', 'what-cursor-position': 'The character at the caret, and where it is',
 };
 
 // Emacs's own names, where ours are shorter: M-x and describe-key show these.
@@ -545,6 +653,7 @@ export class EmacsKeys {
     this.helping = null; // the prefix whose keys show (which-key)
     this.helpTimer = null;
     this.helpOn = false; // they showed for the prefix before: at once for the next
+    this.indenting = false; // after ⌃X TAB: ← and → indent the lines
   }
 
   get ta() { return this.ed.ta; }
@@ -635,6 +744,7 @@ export class EmacsKeys {
     this.arg = null;
     this.pending = null;
     this.transient = null;
+    this.indenting = false;
     this.hideKeys();
     this.unsay();
   }
@@ -664,6 +774,12 @@ export class EmacsKeys {
     this.keyDigit = /^Digit\d$/.test(e.code || '') ? e.code[5] : /^\d$/.test(e.key) ? e.key : '';
     const name = keyName(e);
     if (this.pending) { e.preventDefault(); this.pendingKey(e, name); return true; }
+    if (this.indenting) {
+      const step = { ArrowLeft: -1, ArrowRight: 1 }[e.key];
+      if (step && !e.ctrlKey && !e.altKey && !e.metaKey) { e.preventDefault(); this.indentBy(step * (e.shiftKey ? 2 : 1)); return true; }
+      this.indenting = false;
+      this.unsay();
+    }
     if (!emacs.on || this.ed.extra.length) return false;
     if (this.transient && name === this.transient.key) { e.preventDefault(); this.run(this.transient.cmd, true); return true; }
     this.transient = null;
@@ -796,6 +912,12 @@ export class EmacsKeys {
     this.moveTo(p, n > 0 ? 'End of note' : 'Start of note');
   }
   _backward_paragraph({ n }) { this._forward_paragraph({ n: -n }); }
+  _forward_sentence({ n }) {
+    let p = this.point();
+    for (let i = 0; i < Math.abs(n); i++) p = sentenceEdge(this.ta.value, p, n);
+    this.moveTo(p, n > 0 ? 'End of note' : 'Start of note');
+  }
+  _backward_sentence({ n }) { this._forward_sentence({ n: -n }); }
   _back_to_indentation() {
     const v = this.ta.value;
     const s = lineStartOf(v, this.point());
@@ -852,6 +974,15 @@ export class EmacsKeys {
     this.pushMark(b, { activate: true, quiet: true });
     this.goto(paragraphEdge(v, Math.min(b, Math.max(p, lineEndOf(v, p))), -1));
   }
+  // The mark n words on (while it is active: n more words on from it).
+  _mark_word({ n }) {
+    const v = this.ta.value;
+    const p = this.point();
+    const m = this.active ? this.markV() : null;
+    if (m != null) this.mark = wordEdge(v, m, n) + this.ed._off;
+    else this.pushMark(wordEdge(v, p, n), { activate: true, quiet: true });
+    this.goto(p);
+  }
   _pop_global_mark() { emacs.hooks.navBack?.(); }
   _keyboard_quit() {
     this.deactivate();
@@ -897,6 +1028,14 @@ export class EmacsKeys {
     this.kill(Math.min(p, q), Math.max(p, q), n < 0 ? -1 : 1);
   }
   _backward_kill_word({ n }) { this._kill_word({ n: -n }); }
+  _kill_sentence({ n }) {
+    const p = this.point();
+    let q = p;
+    for (let i = 0; i < Math.abs(n); i++) q = sentenceEdge(this.ta.value, q, n);
+    if (p === q) { this.fail(n > 0 ? 'End of note' : 'Start of note'); return; }
+    this.kill(Math.min(p, q), Math.max(p, q), n < 0 ? -1 : 1);
+  }
+  _backward_kill_sentence({ n }) { this._kill_sentence({ n: -n }); }
   _zap_to_char({ n }) {
     this.read('Zap to char: ', (ch) => {
       const r = zapRange(this.ta.value, this.point(), ch, n);
@@ -1036,6 +1175,32 @@ export class EmacsKeys {
     const text = sortLines(v.slice(a, b), raw);
     this.edit(a, b, text, a, a + text.length);
     this.active = false;
+  }
+  _count_words_region() {
+    const r = this.shownRegion();
+    const c = countText(r ? this.ta.value.slice(r[0], r[1]) : this.ta.value);
+    const of = (k, what) => `${k} ${what}${k === 1 ? '' : 's'}`;
+    this.say(`${r ? 'Region' : 'Note'} has ${of(c.lines, 'line')}, ${of(c.words, 'word')}, and ${of(c.chars, 'character')}`);
+  }
+  _what_cursor_position() { this.say(cursorInfo(this.ta.value, this.point())); }
+  // ⌃U n first: n columns at once; else ← → (⇧: two) until another key.
+  _indent_rigidly({ n, has }) {
+    if (has) { this.indentBy(n); this.deactivate(); return; }
+    this.indenting = true;
+    this.say('Indent with ← → (⇧← ⇧→ two columns); any other key ends', true);
+  }
+  // The selected lines (else this one) n columns in, the selection and the
+  // mark kept by their text.
+  indentBy(n) {
+    const ta = this.ta;
+    const v = ta.value;
+    const [a, b, back] = [ta.selectionStart, ta.selectionEnd, ta.selectionDirection === 'backward'];
+    const x = indentLines(v, a, b, n);
+    if (x.text === v.slice(x.from, x.to)) return;
+    const m = this.markV();
+    this.edit(x.from, x.to, x.text, x.map(a), x.map(b));
+    if (back) ta.setSelectionRange(ta.selectionStart, ta.selectionEnd, 'backward');
+    if (m != null) this.mark = x.map(m) + this.ed._off;
   }
   _delete_trailing_whitespace() {
     const r = this.shownRegion();

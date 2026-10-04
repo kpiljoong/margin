@@ -1190,15 +1190,15 @@ await check('F8 / ⇧F8 step through the search results from the note; ⌥. repe
 // Emacs keys (Settings), with real keys: on Windows and Linux too, where
 // Ctrl+W, Ctrl+X and Ctrl+S are the app's menu keys when the setting is off.
 {
-  const CODE = { ' ': ['Space', 32], '%': ['Digit5', 53], '<': ['Comma', 188], '>': ['Period', 190], '/': ['Slash', 191] };
+  const CODE = { ' ': ['Space', 32], '%': ['Digit5', 53], '<': ['Comma', 188], '>': ['Period', 190], '/': ['Slash', 191], '=': ['Equal', 187], '@': ['Digit2', 50] };
   // "C-x", "M-%", "C-SPC", "RET", "ESC", a letter.
   const press = async (combo) => {
     let mods = 0;
     let k = combo;
     for (let m; (m = /^([CMS])-(.+)$/.exec(k)); k = m[2]) mods |= { C: 2, M: 1, S: 8 }[m[1]];
-    k = { SPC: ' ', RET: 'Enter', ESC: 'Escape' }[k] || k;
-    if ('%<>'.includes(k)) mods |= 8;
-    const [code, vk] = CODE[k] || (k.length === 1 ? [`Key${k.toUpperCase()}`, k.toUpperCase().charCodeAt(0)] : [k, { Enter: 13, Escape: 27 }[k]]);
+    k = { SPC: ' ', RET: 'Enter', ESC: 'Escape', TAB: 'Tab' }[k] || k;
+    if ('%<>@'.includes(k)) mods |= 8;
+    const [code, vk] = CODE[k] || (k.length === 1 ? [`Key${k.toUpperCase()}`, k.toUpperCase().charCodeAt(0)] : [k, { Enter: 13, Escape: 27, Tab: 9, ArrowRight: 39 }[k]]);
     const text = !(mods & 7) && k.length === 1 ? k : undefined;
     await send('Input.dispatchKeyEvent', { type: text ? 'keyDown' : 'rawKeyDown', key: k, code, windowsVirtualKeyCode: vk, modifiers: mods, text });
     await send('Input.dispatchKeyEvent', { type: 'keyUp', key: k, code, windowsVirtualKeyCode: vk, modifiers: mods });
@@ -1275,6 +1275,31 @@ await check('F8 / ⇧F8 step through the search results from the note; ⌥. repe
       };
       return [await ask('kill-line'), await ask('save-buffer')];
     `);
+    // Sentences (M-e, M-a, M-k), M-=, M-@, C-x TAB, C-x =, and the search again (C-s C-s) and C-w in it.
+    const text = (t) => inPage(`const ta = $$('.editor-wrap textarea').find((t) => t.offsetParent); ta.focus(); ta.select(); document.execCommand('insertText', false, ${JSON.stringify(t)}); ta.setSelectionRange(0, 0);`);
+    await text('One two. Three four? Five.\n- a two\n- b\n');
+    await keys('M-e M-e');
+    got.sentEnd = (await state()).s;
+    await keys('M-a');
+    got.sentStart = (await state()).s;
+    await keys('M-k');
+    got.killSent = (await state()).v;
+    await keys('M-=');
+    got.count = (await state()).echo;
+    await keys('M-< M-@ M-@');
+    got.markWord = await state();
+    await keys('C-g C-n C-a C-x TAB ArrowRight ArrowRight C-g');
+    got.indent = (await state()).v;
+    await keys('C-x =');
+    got.where = (await state()).echo;
+    await keys('M-< C-s');
+    await send('Input.insertText', { text: 'two' });
+    await keys('RET');
+    got.search1 = (await state()).s;
+    await keys('C-s C-s RET');
+    got.search2 = (await state()).s;
+    await keys('M-< C-s C-w C-w RET');
+    got.yankWord = (await state()).s;
     if (got.yank?.v !== 'four fiveone two three\n\nsix\n') problem = 'C-k C-k then C-y did not kill and yank the line';
     else if (got.region?.v !== ' fiveone two three\n\nsix\n' || !got.region.tab?.includes('emacs.md')) problem = 'C-SPC … C-w did not kill the region (or closed the tab)';
     else if (got.yankPop?.v !== 'one two three\n fiveone two three\n\nsix\n') problem = 'M-y did not swap in the kill before';
@@ -1284,9 +1309,15 @@ await check('F8 / ⇧F8 step through the search results from the note; ⌥. repe
     else if (got.saved !== got.queryAll.v) problem = 'C-x C-s did not save';
     else if (got.occur?.length !== 2 || got.occurAt !== 2) problem = 'occur did not list the lines or go to one';
     else if (!got.mx?.[0]?.startsWith('kill-lineC-k') || !got.mx[1]?.startsWith('save-bufferSave')) problem = 'M-x did not find the commands by their Emacs names';
+    else if (got.sentEnd !== 20 || got.sentStart !== 9 || got.killSent !== 'One two.  Five.\n- a two\n- b\n') problem = 'M-e, M-a or M-k did not go by sentences';
+    else if (!got.count?.startsWith('Note has 3 lines, 6 words')) problem = 'M-= did not count the note';
+    else if (got.markWord?.s !== 0 || got.markWord.e !== 7) problem = 'M-@ M-@ did not select two words';
+    else if (got.indent !== 'One two.  Five.\n  - a two\n- b\n') problem = 'C-x TAB and the arrows did not indent the line';
+    else if (!got.where?.startsWith('Char: SPC (32')) problem = 'C-x = did not tell the character at the caret';
+    else if (got.search1 !== 7 || got.search2 !== 25 || got.yankWord !== 7) problem = 'C-s C-s did not search for the last again, or C-w did not add the word after';
   } catch (e) { problem = e.message; }
   await setting(false).catch(() => {});
-  const name = 'Emacs keys: kill and yank, the region, C-u, ESC, query replace, C-x and a pause shows its keys, C-x C-s, occur, M-x by Emacs names';
+  const name = 'Emacs keys: kill and yank, the region, C-u, ESC, query replace, C-x and a pause shows its keys, C-x C-s, occur, M-x by Emacs names, sentences, M-=, M-@, C-x TAB, C-x =, C-s C-s, C-w in a search';
   results.push({ name, ok: !problem });
   console.log(`${problem ? '✗' : '✓'} ${name}${problem ? `\n    ${problem}\n    got: ${JSON.stringify(got)}` : ''}`);
   if (problem) failed = true;
