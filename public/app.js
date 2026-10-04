@@ -17,6 +17,7 @@ import { pictureHunks, penPlaces, pictureSummary, showPicture, PLACE } from './p
 import { connect, addBox, freshName, nextAnswer, setColor, setDirection, removeBox, removeArrow, setArrowKind, setArrowLabel, reverseArrow, setShape, arrowSpot } from './flowedit.js';
 import { FigureCanvas } from './canvas.js';
 import { pinnedFigure, pinLabel } from './pins.js';
+import { sketchToFlow } from './sketchflow.js';
 import { goalAt, boxAt, mentionRanges, definitionLines, leadLines, numberedItems } from './figure-goal.js';
 import { isDrawing, drawingFormat, DrawingFrame, renderDrawingEmbeds, cachedEmbed, forgetEmbed, drawingImageUrl } from './drawing.js';
 import { copyPng, copySvg, svgFromDataUrl, imageToPng } from './clip.js';
@@ -2611,7 +2612,8 @@ function cardMenu(tab, e, pre) {
     ...(flow ? ['down', 'right', 'left', 'up'].map((d) => ({ label: `Runs ${d}${d === way ? ' ✓' : ''}`, run: () => editFlow(tab, pre, (src) => ({ text: setDirection(src, d) })) })) : []),
     flow ? { label: 'Move to a note of its own…', run: () => moveFlowOut(tab, pre) } : null,
     from ? { label: `Open ${stem(from)}`, run: () => openFile(from) } : null,
-    flow || from ? '-' : null,
+    pre.dataset.board != null ? { label: 'Read it as a flow (below it)', run: () => sketchToFlowHere(tab, pre) } : null,
+    flow || from || pre.dataset.board != null ? '-' : null,
     ...(pre.matches('.ink-figure') ? pictureItems(() => inkPicture(pre, tab.path))
       : img ? pictureItems(() => diagramPicture(img, from || tab.path, `${stem(from || tab.path)}-diagram`)) : []),
   ]);
@@ -2745,6 +2747,78 @@ function newSketchHere(tab = fileTab()) {
   requestAnimationFrame(() => { if (cv.el.isConnected && cv.goal?.fig?.dataset.board != null) cv.refocus(false); });
   cv.ink.use('pen');
   cv.stage.focus({ preventScroll: true });
+}
+
+// The sketches of a note: [{ line, close, source }] (the lines of their
+// fences, 0-based) — ```ink blocks with a board and no picture above.
+function sketchBlocks(v) {
+  const lines = v.split('\n');
+  const out = [];
+  for (let i = 0; i < lines.length; i++) {
+    const m = /^\s*(`{3,}|~{3,})\s*ink\s*$/i.exec(lines[i]);
+    if (!m) continue;
+    const fence = m[1];
+    let j = i + 1;
+    while (j < lines.length && !(lines[j].trim().startsWith(fence) && /^(`+|~+)$/.test(lines[j].trim()))) j++;
+    const source = lines.slice(i + 1, j).join('\n');
+    let k = i - 1;
+    while (k >= 0 && !lines[k].trim()) k--;
+    const picture = k >= 0 && /^\s*!\[[^\]]*\]\([^)]*\)\s*$/.test(lines[k]);
+    if (!picture && parseInk(source).board) out.push({ line: i, close: j, source });
+    i = j;
+  }
+  return out;
+}
+
+// A sketch read as a flow (public/sketchflow.js): its boxes, words and
+// arrows written as a ```flow block below it, one ⌘Z; the sketch stays.
+// What can't be read so (pen strokes, say) can go to an agent, whose flow
+// comes back to review. The sketch: fig's, else the one looked at on the
+// canvas, the one at the cursor, or the note's only one.
+function sketchToFlowHere(tab = fileTab(), fig = null) {
+  if (!tab?.editor || !isNote(tab.path)) { toast('Open a note with a sketch first.', 'error'); return; }
+  if (suggestingNow(tab)) return;
+  const v = tab.editor.value;
+  const all = sketchBlocks(v);
+  const looked = fig || (tab.canvas?.el.isConnected ? canvasGoal(tab)?.fig : null);
+  const want = looked?.dataset?.board != null ? Number(looked.dataset.line) : null;
+  const cur = v.slice(0, tab.editor.selectionStart).split('\n').length - 1;
+  const s = all.find((b) => b.line === want) || all.find((b) => b.line <= cur && cur <= b.close) || (all.length === 1 ? all[0] : null);
+  if (!s) { toast(all.length ? 'Put the cursor in the sketch to read as a flow.' : 'No sketch here: make one with ⌥X p s.'); return; }
+  const r = sketchToFlow(s.source);
+  const ask = { label: 'Ask an agent', run: () => sketchAgent(tab, s, !!r) };
+  if (!r) { toast('Nothing in this sketch reads as a step yet: boxes, words and arrows do; pen strokes don’t.', '', ask); return; }
+  const end = lineOffset(v, s.close) + (v.split('\n')[s.close] ?? '').length;
+  const after = v.slice(end);
+  const block = `\n\n\`\`\`flow\n${r.text}\n\`\`\``;
+  const text = block + (!after || after.startsWith('\n\n') ? '' : after.startsWith('\n') ? '\n' : '\n\n');
+  const first = parseFlow(r.text).nodes[0]?.text;
+  tab.editor.closeStep();
+  tab.editor.replace(end, end, text, end + 10);
+  tab.editor.closeStep();
+  if (tab.canvas?.el.isConnected) {
+    if (first) tab.canvas.selectSoon(s.close + 2, first);
+    tab.canvas.stage.focus({ preventScroll: true });
+  }
+  const plural = (n, one, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
+  const left = [
+    r.left.pen && plural(r.left.pen, 'pen stroke'),
+    r.left.num && plural(r.left.num, 'numbered dot'),
+    r.left.arrows && `${plural(r.left.arrows, 'arrow')} joining no step`,
+  ].filter(Boolean);
+  const said = [`A flow of ${plural(r.steps, 'step')} and ${plural(r.arrows, 'arrow')}, below the sketch.`,
+    r.unnamed ? `${plural(r.unnamed, 'box', 'boxes')} without words: named Box 1${r.unnamed > 1 ? '…' : ''}.` : '',
+    left.length ? `Not read: ${left.join(', ')}.` : ''].filter(Boolean).join(' ');
+  toast(said, '', r.unnamed || r.left.pen || r.left.arrows ? ask : { label: 'Undo', run: () => drawUndo(tab) });
+}
+
+// An agent reads the sketch, pen strokes too, and writes (or mends) the
+// flow below it: a run, to review.
+function sketchAgent(tab, s, made) {
+  const where = `the sketch (the \`\`\`ink block with a "board:" line, line ${s.line + 1} of ${tab.path})`;
+  openTaskDialog(made
+    ? `Read ${where} as a flow chart — its pen strokes too (a closed stroke may be a box, a line with a hook at its end an arrow) — and mend the \`\`\`flow block right below it, made from its boxes, words and arrows only: name the "Box 1"… steps from what the sketch says, add what the strokes show. Leave the sketch as it is.`
+    : `Read ${where} as a flow chart — its pen strokes too (a closed stroke may be a box, a line with a hook at its end an arrow) — and write it as a \`\`\`flow block right below it. Leave the sketch as it is.`, { scope: 'file' });
 }
 
 // Pictures pasted on the canvas: kept in ./assets/ (as the editor does), each
@@ -3200,6 +3274,7 @@ const COMMANDS = [
   ['Canvas: present the flows (full screen, one box at a time)', () => presentFlows()],
   ['Flow: new flow to draw on', () => newFlowHere()],
   ['Sketch: a blank board to draw on, below the cursor', () => newSketchHere()],
+  ['Sketch: read it as a flow (below it)', () => sketchToFlowHere()],
   ['Flow: move the flow at the cursor to a note of its own', () => moveFlowAtCursor()],
   ['Canvas: copy the whole canvas as an image', () => canvasExport((p) => copyPicture(p))],
   ['Canvas: save the whole canvas as PNG', () => canvasExport((p) => savePicture(p))],
@@ -7219,6 +7294,7 @@ function defaultLeaderTree() {
       { key: 'h', label: tab?.showResolved ? 'Hide resolved comments' : 'Show resolved comments', cmd: 'Pen: show / hide resolved comments', when: () => note && !!tab.comments?.some((c) => c.resolved), run: () => { tab.showResolved = !tab.showResolved; drawNotes(tab); } },
       { key: 'v', label: 'Review my suggestions (y n A a)', cmd: 'Review your suggestions on this note', when: () => note && !!(tab.proof || proofRun(tab)), run: () => reviewSuggestions(tab) },
       { key: 's', label: 'Sketch: a board to draw on', cmd: 'Sketch: a blank board to draw on, below the cursor', when: () => note, run: () => newSketchHere(tab) },
+      { key: 'f', label: 'Sketch → flow', cmd: 'Sketch: read it as a flow (below it)', when: () => note, run: () => sketchToFlowHere(tab) },
       { key: 'm', label: S.meeting ? 'Leave meeting mode' : 'Meeting mode', cmd: 'Meeting mode (large text, for sharing the screen)', run: toggleMeeting },
     ] },
     { key: 'q', label: 'macro', items: [

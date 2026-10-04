@@ -37,6 +37,7 @@ fs.writeFileSync(path.join(ws, 'assets', 'screen.svg'), '<svg xmlns="http://www.
 fs.writeFileSync(path.join(ws, 'dots.md'), '# Dots\n\n![Screen](assets/screen.svg)\n\n1. First thing\n2. Second thing\n');
 fs.writeFileSync(path.join(ws, 'shot.md'), '# Shot\n\n![Screen](assets/screen.svg)\n\nAfter.\n');
 fs.writeFileSync(path.join(ws, 'sketch.md'), '# Sketch\n\nTalk.\n');
+fs.writeFileSync(path.join(ws, 'sketchflow.md'), '# Board\n\n```ink\nboard: 1600x900\nbox: 100,100 300x120\ntext: 130,140 Idea\nbox: 100,500 300x120\ntext: 130,540 Try it\narrow: 250,230 -> 250,490\n```\n\nAfter.\n');
 // Lines for a keyboard macro, and notes to run one at every search result.
 fs.writeFileSync(path.join(ws, 'macro.md'), 'apple\nbanana\ncherry');
 fs.writeFileSync(path.join(ws, 'emacs.md'), 'one two three\nfour five\nsix\n');
@@ -528,6 +529,18 @@ await check('a comment on the sketch: M, a click, the words; a bubble on it and 
   const card = await until(() => $$('.mnote').find((c) => c.textContent.includes('on the sketch')), 4000);
   return { tool, pin: pin?.textContent, left: pin?.style.left, card: !!card };
 `, (v) => (v?.tool?.startsWith('Comment') && v.pin === '@Mina\uC5EC\uAE30 \uB2E4\uC2DC' && Math.abs(parseFloat(v.left) - 50) < 1 && v.card ? null : `got ${JSON.stringify(v)}`));
+
+await check('a sketch read as a flow: its boxes, words and arrows as a ```flow block below it, drawn on the canvas', `
+  const ed = await openNote('sketchflow.md');
+  if (!$('.canvas-pane')?.offsetParent) button('Canvas').click();
+  const board = await until(() => $('.canvas-stage .ink-board img')?.naturalWidth && $('.canvas-stage .ink-board'), 15000);
+  if (!board) return { none: true };
+  board.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: 400, clientY: 300 }));
+  (await until(() => button('Read it as a flow'), 3000))?.click();
+  await until(() => ed.value.includes('\\x60\\x60\\x60flow'), 5000);
+  const boxes = await until(() => $$('.canvas-stage pre[data-lang="flow"] .node-hit').length, 15000);
+  return { text: ed.value, boxes, toast: $('#toast')?.textContent };
+`, (v) => (v?.text === '# Board\n\n```ink\nboard: 1600x900\nbox: 100,100 300x120\ntext: 130,140 Idea\nbox: 100,500 300x120\ntext: 130,540 Try it\narrow: 250,230 -> 250,490\n```\n\n```flow\nIdea -> Try it\n```\n\nAfter.\n' && v.boxes === 2 && /A flow of 2 steps and 1 arrow/.test(v.toast) ? null : `got ${JSON.stringify(v)}`));
 
 await check('Settings shows Labs', `
   document.dispatchEvent(new KeyboardEvent('keydown', { key: ',', metaKey: navigator.platform.startsWith('Mac'), ctrlKey: !navigator.platform.startsWith('Mac'), bubbles: true }));

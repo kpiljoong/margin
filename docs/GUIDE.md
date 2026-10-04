@@ -121,6 +121,7 @@ Quick keys for a meeting:
 | ⌥X p x | resolve the comment you're on (Undo in the message); ⌥X p h shows the resolved ones |
 | ⌥X p v | review your suggestions |
 | ⌥X p s | a sketch: a blank board below the cursor, on the canvas with the pen up (see "A sketch" below) |
+| ⌥X p f | the sketch at the cursor (or looked at) as a flow block below it (see "A sketch as a flow" below) |
 | ⌘⇧M (⌥X p m, ⌥X t m) | meeting mode on / off |
 
 A comment may start with who said it, `@Mina …` (Tab completes a name used before), and 🕑 adds the time (remembered). Comments are kept beside the note, in `.agent-notes/comments/<note>.json`, never in its text; they go with a renamed note, have replies, and are resolved, not deleted. An agent asked about the note reads the open ones.
@@ -505,6 +506,7 @@ Login request -> Auth server -> Success?
     ```
     ````
 
+  - **A sketch as a flow**: right-click the sketch → **Read it as a flow (below it)**, ⌥X p f, or the palette's **Sketch: read it as a flow (below it)** writes a ` ```flow ` block below the sketch (which stays): its boxes, with the words in them, are steps; its arrows join the steps they start and end near (words beside an arrow's middle are its label); words on their own are steps too; it runs the way the arrows mostly go. A box without words is named `Box 1`…, and pen strokes, numbered dots and arrows joining nothing aren't read — the message says so, and **Ask an agent** opens the task dialog with a task to read the sketch, strokes too, and mend the flow (its changes come back to review). One ⌘Z takes the flow out.
   - **Comments on drawings**: `M` on a selected flow box, or the 💬 tool (`M`) on a picture or a sketch and a click where it goes, then the comment (`@name` first for who said it) and Enter. It is a comment of the note like the others — in the margin beside the box's name, the picture's line or the sketch's `board:` line, with replies, resolved, read by an agent ("on the box "Pay" of the flow chart", "on the sketch at x 1500, y 800") — and shows as a bubble on the picture, presenting too. A click on the bubble opens it whole and goes to its card. Renaming the box, or a sketch growing, takes its comments along.
   - **Not while suggesting**: drawing on the canvas (a sketch, a picture's marks, a flow) writes the note's text straight away, so it waits until you stop suggesting (⌘⇧T).
   - **An agent marks it up too**: a task about pictures ("mark the problems on the screenshot", "스크린샷에 표시해줘" — words like picture, screenshot, image, ink, annotate) gets the ` ```ink ` notation and the sizes of the pictures, and the pictures the shared notes show are shared with it (the task dialog lists them). Its marks come back as red pen on the picture, each block's change to take or leave.
