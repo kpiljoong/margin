@@ -91,14 +91,14 @@ function currentTheme() {
 
 async function renderOne(source, config) {
   const r = await renderInFrame(source, config);
-  if (r.svg) return { url: `data:image/svg+xml;charset=utf-8,${encodeURIComponent(r.svg)}`, nodes: Array.isArray(r.nodes) ? r.nodes : [], edges: Array.isArray(r.edges) ? r.edges : [] };
+  if (r.svg) return { url: `data:image/svg+xml;charset=utf-8,${encodeURIComponent(r.svg)}`, nodes: Array.isArray(r.nodes) ? r.nodes : [], edges: Array.isArray(r.edges) ? r.edges : [], groups: Array.isArray(r.groups) ? r.groups : [] };
   return { error: String(r.error || '').split('\n').filter(Boolean).slice(0, 3).join('\n') || 'Invalid diagram' };
 }
 
 // Pictures drawn before are kept on disk (IndexedDB) too, so after a restart a
 // note full of diagrams shows at once instead of being drawn one by one. Only
 // pictures, not errors; the oldest go once there are more than DISK_MAX.
-const DISK_VERSION = 2; // bump when the pictures would come out differently
+const DISK_VERSION = 4; // bump when the pictures would come out differently (or more is kept)
 const DISK_MAX = 600;
 let disk = null;
 function openDisk() {
@@ -139,7 +139,7 @@ async function diskPut(key, result) {
   if (!db || !result.url) return;
   try {
     const st = db.transaction('pictures', 'readwrite').objectStore('pictures');
-    st.put({ url: result.url, nodes: result.nodes, edges: result.edges, t: Date.now() }, key);
+    st.put({ url: result.url, nodes: result.nodes, edges: result.edges, groups: result.groups, t: Date.now() }, key);
     if (pruned) return;
     pruned = true;
     // Once a session: drop the oldest beyond DISK_MAX.
@@ -187,6 +187,7 @@ function show(pre, result, source) {
   // Where its boxes are (fractions of the picture), for the canvas view.
   pre.diagramNodes = result.nodes || [];
   pre.diagramEdges = result.edges || []; // and its arrows' lines
+  pre.diagramGroups = result.groups || []; // and its groups' frames
   pre.dispatchEvent(new CustomEvent('diagram-shown', { bubbles: true }));
 }
 
@@ -219,6 +220,7 @@ function drawDiagrams(container) {
         pre.flowNodes = flow.nodes; // which lines wrote each box
         pre.flowEdges = flow.edges; // for following the flow on the canvas
         pre.flowDirection = flow.direction; // where a box's + goes
+        pre.flowGroups = flow.groups; // the "Name:" lines
       } catch (e) { show(pre, { error: e.message }, raw); return; }
     }
     const hit = cache.get(themeKey + '\n' + source);
@@ -244,7 +246,7 @@ function drawDiagrams(container) {
     ordered.forEach((t, n) => {
       const hit = kept[n];
       if (!hit?.url) { left.push(t); return; }
-      const result = { url: hit.url, nodes: Array.isArray(hit.nodes) ? hit.nodes : [], edges: Array.isArray(hit.edges) ? hit.edges : [] };
+      const result = { url: hit.url, nodes: Array.isArray(hit.nodes) ? hit.nodes : [], edges: Array.isArray(hit.edges) ? hit.edges : [], groups: Array.isArray(hit.groups) ? hit.groups : [] };
       remember(key + '\n' + t.source, result);
       show(t.pre, result, t.raw);
       shown[t.i] = result.url;

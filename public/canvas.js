@@ -955,8 +955,78 @@ export class FigureCanvas {
       }
       layer.append(b);
     }
+    // A group's title: a double-click renames it, a right-click ungroups.
+    for (const g of edit ? pre.diagramGroups || [] : []) {
+      const t = g.title;
+      if (!t || !pre.flowGroups?.some((x) => x.id === g.id)) continue;
+      const b = el('div', 'group-hit');
+      b.dataset.id = g.id;
+      b.title = 'Double-click: rename the group · Right-click: rename, ungroup';
+      b.style.left = `${t.x * 100}%`;
+      b.style.top = `${t.y * 100}%`;
+      b.style.width = `${t.w * 100}%`;
+      b.style.height = `${t.h * 100}%`;
+      layer.append(b);
+    }
     pre.append(layer);
     if (this.edgeAt?.pre === pre) this.markEdge();
+    this.paintPicks();
+  }
+
+  // ---- several boxes (Shift-click), put in a group (⌘G)
+
+  // A Shift-click on a box of a flow you can draw on: one more picked (or
+  // one less; the box selected is the first). → whether it was such a box.
+  pickMore(target) {
+    const b = target.closest('.node-hit');
+    const pre = b?.closest('pre');
+    if (!pre?.flowNodes || this.presenting || !this.h.canEdit?.(pre)) return false;
+    if (this.picks?.pre !== pre) this.picks = { pre, ids: new Set(this.walkAt?.pre === pre ? [this.walkAt.id] : []) };
+    const ids = this.picks.ids;
+    if (ids.has(b.dataset.id)) ids.delete(b.dataset.id); else ids.add(b.dataset.id);
+    this.paintPicks();
+    if (ids.size > 1) this.say(`${ids.size} boxes picked: ${navigator.platform.startsWith('Mac') ? '⌘' : 'Ctrl+'}G puts them in a group.`);
+    return true;
+  }
+
+  clearPicks() {
+    this.picks = null;
+    this.paintPicks();
+  }
+
+  paintPicks() {
+    this.world.querySelectorAll('.node-hit.picked').forEach((b) => b.classList.remove('picked'));
+    if (this.picks && !this.picks.pre.isConnected) this.picks = null;
+    for (const id of this.picks?.ids || []) this.hit(this.picks.pre, id)?.classList.add('picked');
+  }
+
+  // ⌘G: the boxes picked (or the one selected) in a group; ⌘⇧G (un): the
+  // selected box's group taken away. → whether there was a box for it.
+  groupKey(un) {
+    const at = this.walkAt;
+    const picks = this.picks?.ids.size ? this.picks : null;
+    const pre = picks?.pre || at?.pre;
+    if (!pre?.flowNodes) return false;
+    const name = (id) => pre.flowNodes.find((n) => n.id === id)?.text;
+    if (un) {
+      const id = at?.pre === pre ? at.id : [...picks.ids][0];
+      const g = pre.flowNodes.find((n) => n.id === id)?.group;
+      if (g) this.h.onUngroup?.(pre, g); else this.say('That box is in no group.');
+      return true;
+    }
+    const names = (picks ? [...picks.ids] : [at.id]).map(name).filter(Boolean);
+    if (names.length) this.h.onGroup?.(pre, names);
+    return true;
+  }
+
+  // A group's name typed over its title.
+  renameGroup(pre, id) {
+    const hit = pre.querySelector(`:scope > .node-layer > .group-hit[data-id="${id}"]`);
+    const g = pre.flowGroups?.find((x) => x.id === id);
+    if (!hit || !g) return;
+    this.typeOver(() => (hit.isConnected ? hit.getBoundingClientRect() : null), g.title, (title) => {
+      if (title && title !== g.title) this.h.onRenameGroup?.(pre, id, title);
+    }, 'Group name');
   }
 
   // ---- camera
@@ -1156,6 +1226,8 @@ export class FigureCanvas {
     // have moved since the first, so it could land on something else.
     stage.addEventListener('click', (e) => {
       if (this.dragged || e.detail > 1 || e.target.closest('input, button, .box-handle')) return;
+      if (e.shiftKey && this.pickMore(e.target)) return;
+      if (this.picks) this.clearPicks();
       this.click(e.target);
     });
     stage.addEventListener('dblclick', (e) => {
@@ -1163,6 +1235,8 @@ export class FigureCanvas {
       const n = this.clicked;
       if (this.presenting) return;
       if (e.target.closest('.box-handle')) return;
+      const gh = e.target.closest('.group-hit');
+      if (gh) { this.renameGroup(gh.closest('pre'), gh.dataset.id); return; }
       if (n && performance.now() - n.at < 800 && this.h.canRename?.(n.pre)) {
         setTimeout(() => { const b = this.hit(n.pre, n.id); if (b) this.rename(n.pre, b); }, Math.max(0, this.animEnd - performance.now()) + 20);
         return;
@@ -1191,6 +1265,8 @@ export class FigureCanvas {
       const g = fig.matches('.ink-figure.ink-editable') && e.target.closest('.ink-mark');
       const arrow = g && fig.inkMarks?.find((m) => m.kind === 'arrow' && String(m.line) === g.dataset.line);
       if (arrow && this.h.onInkMenu) { this.ink.select(fig, arrow.line); this.h.onInkMenu(e, fig, arrow); return; }
+      const gh = e.target.closest('.group-hit');
+      if (gh && this.h.onGroupMenu) { this.h.onGroupMenu(e, fig, gh.dataset.id); return; }
       if (edge && !b) {
         this.selectEdge(fig, edge.dataset.from, edge.dataset.to);
         this.h.onArrow?.(fig, this.edgeAt, 'menu', e);
@@ -1222,6 +1298,12 @@ export class FigureCanvas {
         e.preventDefault();
         e.stopPropagation();
         this.h.onUndo(e.key.toLowerCase() === 'y' || e.shiftKey);
+        return;
+      }
+      // ⌘G / ⌘⇧G: boxes into a group, a box's group away.
+      if ((e.metaKey || e.ctrlKey) && !e.altKey && e.key.toLowerCase() === 'g' && !this.presenting && !e.target.closest('input') && this.groupKey(e.shiftKey)) {
+        e.preventDefault();
+        e.stopPropagation();
         return;
       }
       if (e.metaKey || e.ctrlKey || e.altKey || e.target.closest('input')) return;
@@ -1276,7 +1358,7 @@ export class FigureCanvas {
       }
       if (this.editKey(e)) { e.preventDefault(); e.stopPropagation(); return; }
       const act = {
-        Escape: () => this.h.onEscape?.(), '+': () => this.zoomBy(1.25), '=': () => this.zoomBy(1.25), '-': () => this.zoomBy(1 / 1.25),
+        Escape: () => (this.picks ? this.clearPicks() : this.h.onEscape?.()), '+': () => this.zoomBy(1.25), '=': () => this.zoomBy(1.25), '-': () => this.zoomBy(1 / 1.25),
         0: () => this.toggleAll(), l: () => this.toggleLinks(), 1: () => { const r = stage.getBoundingClientRect(); this.zoomAt(1, r.width / 2, r.height / 2); },
       }[e.key];
       if (!act) return;

@@ -4,12 +4,14 @@
 // style the elements it measures, which the app's page does not allow.
 //
 // parent → frame  render {id, source, config}
-// frame → parent  ready · done {id, svg, nodes, edges} | {id, error}
+// frame → parent  ready · done {id, svg, nodes, edges, groups} | {id, error}
 //
 // nodes: where each flowchart box sits in the picture, as fractions of its
 // width and height: [{id, x, y, w, h}] (id as written in the source).
 // edges: each arrow's line, points as the same fractions:
 // [{from, to, k, pts: [[x, y], …]}] (k: the k-th arrow between those two).
+// groups: each subgraph's frame and its title, as nodes are:
+// [{id, x, y, w, h, title: {x, y, w, h}}].
 
 let configured = '';
 
@@ -27,15 +29,17 @@ function sized(svg) {
   return new XMLSerializer().serializeToString(root);
 }
 
-// Lay the finished SVG out here for a moment and measure its boxes.
-function measure(svgText) {
+// Lay the finished SVG out here for a moment and measure its boxes
+// (`prefix`: what Mermaid put before the ids of the groups).
+function measure(svgText, prefix) {
   const box = document.createElement('div');
   box.innerHTML = svgText;
   document.body.append(box);
   try {
     const svg = box.querySelector('svg');
     const r = svg?.getBoundingClientRect();
-    if (!r?.width || !r.height) return { nodes: [], edges: [] };
+    if (!r?.width || !r.height) return { nodes: [], edges: [], groups: [] };
+    const at = (b) => ({ x: (b.left - r.left) / r.width, y: (b.top - r.top) / r.height, w: b.width / r.width, h: b.height / r.height });
     const out = [];
     for (const g of svg.querySelectorAll('g.node')) {
       const id = g.dataset.id || /flowchart-(.+)-\d+$/.exec(g.id)?.[1];
@@ -58,7 +62,15 @@ function measure(svgText) {
       }
       edges.push({ from: m[1], to: m[2], k: Number(m[3]), pts });
     }
-    return { nodes: out, edges };
+    const groups = [];
+    for (const g of svg.querySelectorAll('g.cluster')) {
+      const frame = g.querySelector(':scope > rect');
+      const title = g.querySelector(':scope > .cluster-label');
+      if (!g.id || !frame) continue;
+      const gid = g.id.startsWith(prefix) ? g.id.slice(prefix.length) : g.id;
+      groups.push({ id: gid, ...at(frame.getBoundingClientRect()), title: title ? at(title.getBoundingClientRect()) : null });
+    }
+    return { nodes: out, edges, groups };
   } finally { box.remove(); }
 }
 
@@ -77,8 +89,8 @@ window.addEventListener('message', async (e) => {
     }
     const { svg } = await window.mermaid.render(id, String(m.source));
     const out = sized(svg);
-    let found = { nodes: [], edges: [] };
-    try { found = measure(out); } catch { /* the picture still works without them */ }
+    let found = { nodes: [], edges: [], groups: [] };
+    try { found = measure(out, `${id}-`); } catch { /* the picture still works without them */ }
     reply({ svg: out, ...found });
   } catch (err) {
     reply({ error: String(err?.message || err) });

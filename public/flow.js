@@ -108,12 +108,13 @@ function spotOf(piece, at) {
 
 // The Mermaid source, each step with the block lines it appears on
 // (0-based), where its text is written, its note, problem mark and shape:
-// { id, text, lines, spots, note, flag, shape }, and
-// the arrows between steps: { from, to, kind, label, line } (ids, Mermaid
-// kind, the block line that drew it).
+// { id, text, lines, spots, note, flag, shape, color, group }, the arrows
+// between steps: { from, to, kind, label, line } (ids, Mermaid kind, the
+// block line that drew it), and the groups ("Name:" lines, Mermaid
+// subgraphs): { id, title, line, parent }.
 export function parseFlow(src) {
   const nodes = new Map(); // text -> { id, text, shape, note, group, lines, spots }
-  const groups = []; // { id, title, parent }
+  const groups = []; // { id, title, parent, line }
   const edges = []; // { from, to, kind, label }
   const notes = []; // { node, note, edge } — edge: the arrow its line drew into it
   const colors = []; // { color, list } — read once every step is known
@@ -149,7 +150,7 @@ export function parseFlow(src) {
 
     const header = /^([^:]+?)\s*:$/.exec(body);
     if (header && !ARROW_RE.test(header[1])) {
-      const g = { id: `g${groups.length + 1}`, title: header[1].trim(), parent: group };
+      const g = { id: `g${groups.length + 1}`, title: header[1].trim(), parent: group, line: lineNo };
       groups.push(g);
       stack.push({ indent, last: null, group: g });
       continue;
@@ -240,7 +241,8 @@ export function parseFlow(src) {
   return {
     mermaid: out.join('\n'),
     direction,
-    nodes: [...nodes.values()].map(({ id, text, lines, spots, note, flag, shape, color }) => ({ id, text, lines, spots, note, flag, shape, color: color || null })),
+    nodes: [...nodes.values()].map(({ id, text, lines, spots, note, flag, shape, color, group }) => ({ id, text, lines, spots, note, flag, shape, color: color || null, group: group?.id || null })),
+    groups: groups.map((g) => ({ id: g.id, title: g.title, line: g.line, parent: g.parent?.id || null })),
     edges: edges.map((e) => ({ from: e.from.id, to: e.to.id, kind: e.kind, label: e.label, line: e.line })),
   };
 }

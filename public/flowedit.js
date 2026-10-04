@@ -499,3 +499,126 @@ export function arrowSpot(src, from, to) {
   const start = raw.lastIndexOf(e.token, at);
   return start >= 0 ? { line: L.lineNo, start, end: start + e.token.length } : { line: L.lineNo, start: at, end: at };
 }
+
+// ---- groups: a "Name:" line, the steps indented under it
+
+const isHeader = (body) => { const m = /^([^:]+?)\s*:$/.exec(body); return !!(m && !ARROW_RE.test(m[1])); };
+const isBlank = (l) => { const b = l.trim(); return !b || b.startsWith('#') || b.startsWith('//'); };
+
+// Where the lines indented under line i end (the line after the last).
+function blockEnd(ls, i) {
+  const ind = widthOf(ls[i]);
+  let last = i;
+  for (let j = i + 1; j < ls.length; j++) {
+    if (isBlank(ls[j])) continue;
+    if (widthOf(ls[j]) <= ind) break;
+    last = j;
+  }
+  return last + 1;
+}
+
+// The line a line goes on from (the one above it, less indented), or -1.
+function parentLine(ls, i) {
+  for (let j = i - 1; j >= 0; j--) if (!isBlank(ls[j]) && widthOf(ls[j]) < widthOf(ls[i])) return j;
+  return -1;
+}
+
+// A group's name as written: one line, no ":" in it; one that would read as
+// something else (a colour or direction line, a comment, arrows) is refused.
+function titleOf(title) {
+  const t = String(title).replace(/\s*:\s*/g, ' - ').replace(/\s+/g, ' ').replace(/^[\s-]+|[\s-]+$/g, '').trim();
+  if (t && (!isHeader(`${t}:`) || isColorLine(`${t}:`) || DIRECTION_LINE.test(`${t}:`) || /^(#|\/\/)/.test(t))) throw new Error(`“${t}” can’t name a group.`);
+  return t;
+}
+
+// Its arrows, by the names of their steps: what a change of groups keeps.
+const arrowsOf = (f) => {
+  const name = new Map(f.nodes.map((n) => [n.id, n.text]));
+  return f.edges.map((e) => `${name.get(e.from)}|${e.kind}|${e.label}|${name.get(e.to)}`).sort().join('\n');
+};
+
+// The text changed, checked: the same steps and arrows, and `ok` of it.
+function checked(src, text, ok) {
+  const [a, b] = [tryParse(src), tryParse(text)];
+  if (!b || arrowsOf(a) !== arrowsOf(b) || a.nodes.length !== b.nodes.length || !ok(b)) throw new Error('That would change more than the groups — change the text instead.');
+  return text;
+}
+
+// Steps put in a group of their own: a "Title:" line and the steps under
+// it, written before the (outermost) line where the first of them is, so
+// that they are the group's wherever else they are written. A line that
+// only named one of them (at the top, or in a group) goes, and so does a
+// group left empty by it.
+export function groupBoxes(src, names, title) {
+  const t = titleOf(title);
+  const f = tryParse(src);
+  const nodes = (f?.nodes || []).filter((n) => names.includes(n.text));
+  if (!nodes.length || !t) return src;
+  const ls = linesOf(src);
+  const kids = (i) => blockEnd(ls, i) > i + 1;
+  const drop = new Set();
+  const named = new Map(); // a step → the line that only named it (its shape with it)
+  for (const n of nodes) {
+    for (const l of n.lines) {
+      const body = ls[l].trim();
+      if (body.split(ARROW_RE).length > 1 || /^(.*\S)\s+:\s+(.+)$/.test(body) || parseStep(body).text !== n.text || kids(l)) continue;
+      const p = parentLine(ls, l);
+      if (p >= 0 && !isHeader(ls[p].trim())) continue;
+      drop.add(l);
+      if (!named.has(n.text)) named.set(n.text, body);
+    }
+  }
+  // Groups left with nothing in them (the innermost first).
+  for (const g of [...f.groups].sort((a, b) => b.line - a.line)) {
+    const left = ls.slice(g.line + 1, blockEnd(ls, g.line)).some((l, k) => !isBlank(l) && !drop.has(g.line + 1 + k));
+    if (!left) drop.add(g.line);
+  }
+  const base = Math.min(...ls.filter((l) => !isBlank(l)).map(widthOf));
+  let at = Math.min(...nodes.map((n) => Math.min(...n.lines)));
+  while (at > 0 && (isBlank(ls[at]) || widthOf(ls[at]) > base)) at--;
+  const lead = ' '.repeat(base);
+  const block = [`${lead}${t}:`, ...nodes.map((n) => `${lead}  ${named.get(n.text) || written(n.text)}`)];
+  const out = [];
+  ls.forEach((l, i) => {
+    if (i === at) out.push(...block);
+    if (!drop.has(i)) out.push(l);
+  });
+  return checked(src, out.join('\n'), (r) => {
+    const g = r.groups.find((x) => x.title === t && !x.parent && !f.groups.some((y) => y.id === x.id && y.title === t && y.line === x.line));
+    return !!g && nodes.every((n) => r.nodes.find((m) => m.text === n.text)?.group === g.id);
+  });
+}
+
+// The group whose "Title:" is on line `line`, named anew.
+export function renameGroup(src, line, title) {
+  const t = titleOf(title);
+  const ls = linesOf(src);
+  if (!t || !isHeader(ls[line]?.trim() || '')) return src;
+  ls[line] = `${ls[line].slice(0, ls[line].length - ls[line].trimStart().length)}${t}:`;
+  return checked(src, ls.join('\n'), (r) => r.groups.some((g) => g.line === line && g.title === t));
+}
+
+// The group on line `line` taken away: its title line goes, the lines under
+// it come out one step (its steps are where it was). A line under it that
+// only named a step written elsewhere too goes with it.
+export function ungroup(src, line) {
+  const ls = linesOf(src);
+  if (!isHeader(ls[line]?.trim() || '')) return src;
+  const end = blockEnd(ls, line);
+  const inner = ls.slice(line + 1, end).filter((l) => !isBlank(l));
+  const by = inner.length ? Math.min(...inner.map(widthOf)) - widthOf(ls[line]) : 0;
+  const out = (l) => {
+    const lead = l.slice(0, l.length - l.trimStart().length).replace(/\t/g, '  ');
+    return l.trim() ? `${lead.slice(Math.min(by, lead.length))}${l.trimStart()}` : l;
+  };
+  const f = tryParse(src);
+  const bare = (i) => {
+    const body = ls[i].trim();
+    const n = f?.nodes.find((m) => m.text === parseStep(body).text);
+    return !!n && body === written(n.text) && blockEnd(ls, i) === i + 1 && n.lines.some((l) => l < line || l >= end);
+  };
+  const kept = [];
+  for (let i = line + 1; i < end; i++) if (isBlank(ls[i]) || !bare(i)) kept.push(out(ls[i]));
+  const text = [...ls.slice(0, line), ...kept, ...ls.slice(end)].join('\n');
+  return checked(src, text, (r) => r.groups.length === tryParse(src).groups.length - 1);
+}

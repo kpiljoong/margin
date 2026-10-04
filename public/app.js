@@ -14,7 +14,7 @@ import { renderDiagrams } from './diagrams.js';
 import { flowToMermaid, flowsAsMermaid, parseFlow, isStepText, flowStepNames, nameKey, flowTour, flowLineAt, COLORS } from './flow.js';
 import { pairInk, parseInk, addMark, removeMark, setMark, fitBoard, boardLine, INK, INK_COLORS, ARROW_STYLES } from './ink.js';
 import { pictureHunks, penPlaces, pictureSummary, showPicture, PLACE } from './penpic.js';
-import { connect, addBox, freshName, nextAnswer, setColor, setDirection, removeBox, removeArrow, setArrowKind, setArrowLabel, reverseArrow, setShape, arrowSpot } from './flowedit.js';
+import { connect, addBox, freshName, nextAnswer, setColor, setDirection, removeBox, removeArrow, setArrowKind, setArrowLabel, reverseArrow, setShape, arrowSpot, groupBoxes, renameGroup, ungroup } from './flowedit.js';
 import { FigureCanvas } from './canvas.js';
 import { ARROW_KINDS } from './inkdraw.js';
 import { pinnedFigure, pinLabel } from './pins.js';
@@ -2051,6 +2051,13 @@ function canvasFor(tab) {
     onShapeMenu: (pre, id, at) => shapeMenu(tab, pre, id, at),
     onInk: (fig, change) => inkEdit(tab, fig, change),
     onInkMenu: (e, fig, mark) => inkArrowMenu(tab, e, fig, mark),
+    onGroup: (pre, names) => groupHere(tab, pre, names),
+    onUngroup: (pre, id) => ungroupHere(tab, pre, id),
+    onRenameGroup: (pre, id, title) => { const line = pre.flowGroups?.find((g) => g.id === id)?.line; if (line != null) editFlow(tab, pre, (src) => ({ text: renameGroup(src, line, title) })); },
+    onGroupMenu: (e, pre, id) => contextMenu(e, [
+      { label: 'Rename the group', run: () => tab.canvas.renameGroup(pre, id) },
+      { label: 'Ungroup', key: `${isMac ? '⇧⌘' : 'Ctrl+Shift+'}G`, run: () => ungroupHere(tab, pre, id) },
+    ]),
     onInkHint: (msg) => toast(msg),
     // Comments on the pictures (kept with the note's others).
     onBoxComment: (pre, id, rect) => drawingComment(tab, pre, { on: 'flow', box: nodeText(pre, id) }, rect),
@@ -2591,6 +2598,11 @@ function colorMenu(tab, pre, id, at) {
 
 function boxMenu(tab, e, pre, id) {
   const name = nodeText(pre, id);
+  // The boxes Shift-clicked, this one among them.
+  const picks = tab.canvas?.picks;
+  const picked = picks?.pre === pre && picks.ids.has(id) ? [...picks.ids].map((x) => nodeText(pre, x)).filter(Boolean) : [];
+  const gid = pre.flowNodes?.find((n) => n.id === id)?.group;
+  const group = gid && pre.flowGroups?.find((g) => g.id === gid);
   if (!flowEditable(pre)) {
     const from = pre.dataset.from;
     contextMenu(e, [from ? { label: `Open ${stem(from)} to draw on it`, run: () => openFile(from) } : null]);
@@ -2603,6 +2615,8 @@ function boxMenu(tab, e, pre, id) {
     { label: 'Shape…', key: 'S', run: () => shapeMenu(tab, pre, id, { x: e.clientX, y: e.clientY }) },
     { label: 'Select its text in the note', run: () => gotoBox(tab, pre, id) },
     { label: 'Comment…', key: 'M', run: () => drawingComment(tab, pre, { on: 'flow', box: name }, () => tab.canvas.hit(pre, id)?.getBoundingClientRect() || null) },
+    { label: picked.length > 1 ? `Group the ${picked.length} boxes…` : 'Put it in a group…', key: `${isMac ? '⌘' : 'Ctrl+'}G`, run: () => groupHere(tab, pre, picked.length > 1 ? picked : [name]) },
+    group ? { label: `Ungroup “${group.title}”`, key: `${isMac ? '⇧⌘' : 'Ctrl+Shift+'}G`, run: () => ungroupHere(tab, pre, group.id) } : null,
     '-',
     { label: `Delete “${name}”`, key: '⌫', danger: true, run: () => deleteBox(tab, pre, id) },
   ]);
@@ -2624,6 +2638,22 @@ function cardMenu(tab, e, pre) {
     ...(pre.matches('.ink-figure') ? pictureItems(() => inkPicture(pre, tab.path))
       : img ? pictureItems(() => diagramPicture(img, from || tab.path, `${stem(from || tab.path)}-diagram`)) : []),
   ]);
+}
+
+// Boxes of a flow put in a group, named: a "Name:" line, the boxes under it.
+async function groupHere(tab, pre, names) {
+  if (!flowEditable(pre)) { cantEdit(pre); return; }
+  const typed = await askText({ title: names.length > 1 ? `Group ${names.length} boxes` : 'Put the box in a group', label: 'The group’s name — written as “Name:” with the boxes under it:', placeholder: 'Group', okLabel: 'Group' });
+  if (typed == null) return;
+  const title = typed.trim() || 'Group';
+  tab.canvas?.clearPicks();
+  editFlow(tab, pre, (src) => ({ text: groupBoxes(src, names, title), select: names[0] }));
+}
+
+// A group taken away: its boxes stay where they are.
+function ungroupHere(tab, pre, id) {
+  const line = pre.flowGroups?.find((g) => g.id === id)?.line;
+  if (line != null) editFlow(tab, pre, (src) => ({ text: ungroup(src, line) }));
 }
 
 // An arrow drawn on a picture: its kind (straight, curved, elbow), or out.

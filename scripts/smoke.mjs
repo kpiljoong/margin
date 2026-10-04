@@ -324,6 +324,41 @@ await check('an arrow on a flow: click it, make it two-way, take it out; a boxâ€
   return out;
 `, (v) => (v?.on && v.both === 'A -> B -> C <-> A\ncolor blue: B' && v.gone === 'A -> B -> C\ncolor blue: B' && v.shape === 'A -> B -> (C)\ncolor blue: B' ? null : `got ${JSON.stringify(v)}`));
 
+await check('groups on a flow: Shift-click two boxes, \u2318G names them a group; a double-click on its title renames it, a right-click ungroups it', `
+  const stage = $('.canvas-stage');
+  const flow = () => { const v = $$('.editor-wrap textarea').find((t) => t.offsetParent).value; return v.slice(v.indexOf('\`\`\`flow') + 8, v.lastIndexOf('\`\`\`')).trim(); };
+  const box = (name) => $$('.node-hit').find((b) => b.closest('pre').flowNodes?.find((n) => n.id === b.dataset.id)?.text === name);
+  const at = (el) => { const r = el.getBoundingClientRect(); return { clientX: r.left + r.width / 2, clientY: r.top + r.height / 2 }; };
+  const mod = navigator.platform.startsWith('Mac') ? { metaKey: true } : { ctrlKey: true };
+  const out = {};
+  await until(() => box('A') && box('B'), 15000); await sleep(400);
+  box('A').click(); await sleep(200);
+  box('B').dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, detail: 1, shiftKey: true, ...at(box('B')) }));
+  out.picked = $$('.node-hit.picked').length;
+  stage.focus(); key('g', mod, stage);
+  const name = await until(() => $('#overlay:not([hidden]) input'), 4000);
+  if (!name) return { ...out, dialog: false };
+  name.value = 'Start';
+  name.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }));
+  await until(() => flow().startsWith('Start:'), 8000);
+  out.grouped = flow();
+  const title = await until(() => $('.group-hit'), 15000);
+  if (!title) return { ...out, title: false };
+  title.dispatchEvent(new MouseEvent('dblclick', { bubbles: true, cancelable: true, ...at(title) }));
+  const input = await until(() => $('.canvas-rename'), 4000);
+  if (!input) return { ...out, rename: false };
+  input.value = 'First';
+  input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }));
+  await until(() => flow().startsWith('First:'), 8000);
+  out.renamed = flow();
+  const again = await until(() => $('.group-hit') !== title && $('.group-hit'), 15000);
+  again.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true, ...at(again) }));
+  (await until(() => button('Ungroup'), 3000))?.click();
+  await until(() => !flow().startsWith('First:'), 8000);
+  out.ungrouped = flow();
+  return out;
+`, (v) => (v?.picked === 2 && v.grouped === 'Start:\n  A\n  B\nA -> B -> (C)\ncolor blue: B' && v.renamed === 'First:\n  A\n  B\nA -> B -> (C)\ncolor blue: B' && v.ungrouped === 'A -> B -> (C)\ncolor blue: B' ? null : `got ${JSON.stringify(v)}`));
+
 await check('a picture on the canvas: a box drawn on it is a line of its ```ink block; the eraser takes it out, âŒ˜Z brings it back', `
   await openNote('shot.md');
   if (!$('.canvas-pane')?.offsetParent) button('Canvas').click();

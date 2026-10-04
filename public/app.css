@@ -786,6 +786,9 @@ iframe.mermaid-frame { position: fixed; left: -10000px; top: 0; width: 1600px; h
 .canvas-world > .canvas-section { position: relative; }
 /* Following the flow with the keys: the box walked to, and the ways at a branch. */
 .node-hit.walk-at { box-shadow: 0 0 0 3px var(--accent), 0 0 0 7px color-mix(in srgb, var(--accent) 30%, transparent); background: color-mix(in srgb, var(--accent) 18%, transparent); }
+.node-hit.picked { outline: 2px dashed var(--accent); outline-offset: 3px; }
+.group-hit { position: absolute; border-radius: 4px; cursor: text; }
+.group-hit:hover { box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 60%, transparent); }
 .node-hit.walk-choice { box-shadow: 0 0 0 2px var(--accent-2); }
 .node-hit.walk-choice.picked { box-shadow: 0 0 0 3px var(--accent-2), 0 0 0 7px color-mix(in srgb, var(--accent-2) 30%, transparent); }
 .node-hit.walk-choice::before { content: attr(data-n); position: absolute; top: -11px; left: -11px; min-width: 20px; height: 20px; padding: 0 5px; border-radius: 10px; background: var(--accent-2); color: var(--bg); font: 600 12px/20px var(--sans); text-align: center; }

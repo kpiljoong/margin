@@ -2,7 +2,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { parseFlow } from '../public/flow.js';
-import { connect, addBox, freshName, nextAnswer, setColor, setDirection, removeBox, removeArrow, setArrowKind, setArrowLabel, reverseArrow, setShape, arrowSpot } from '../public/flowedit.js';
+import { connect, addBox, freshName, nextAnswer, setColor, setDirection, removeBox, removeArrow, setArrowKind, setArrowLabel, reverseArrow, setShape, arrowSpot, groupBoxes, renameGroup, ungroup } from '../public/flowedit.js';
 
 const arrows = (src) => {
   const f = parseFlow(src);
@@ -155,4 +155,28 @@ test('shapes: marks on the first place a step is written; a question with answer
   assert.deepEqual(arrowSpot(D, '결제 요청', '승인?'), { line: 0, start: 12, end: 14 });
   assert.deepEqual(arrowSpot(D, '승인?', '재시도'), { line: 2, start: 5, end: 7 });
   assert.deepEqual(arrowSpot('A\n  B', 'A', 'B'), { line: 1, start: 2, end: 2 });
+});
+
+test('groups: boxes put in one (written before their first line), named anew, taken away; the arrows stay', () => {
+  const a = 'Start -> Check?\n  yes -> Pay\n  no -> Retry\nRetry -> Check?\nPay -> (Done)';
+  const g = groupBoxes(a, ['Pay', 'Done'], 'Checkout: end');
+  assert.equal(g, 'Checkout - end:\n  Pay\n  Done\n' + a);
+  const f = parseFlow(g);
+  assert.deepEqual(f.groups, [{ id: 'g1', title: 'Checkout - end', line: 0, parent: null }]);
+  assert.deepEqual(f.nodes.filter((n) => n.group === 'g1').map((n) => [n.text, n.shape]), [['Pay', null], ['Done', 'round']]);
+  // A line that only named a box goes (its shape kept); so does a group it left empty.
+  assert.equal(groupBoxes('A -> B -> C\nLonely\n(Round)\nB -> Round', ['B', 'Lonely', 'Round'], 'Mid'), 'Mid:\n  B\n  Lonely\n  (Round)\nA -> B -> C\nB -> Round');
+  const c = 'Phase:\n  A\n  B\nA -> B -> C';
+  assert.equal(groupBoxes(c, ['A', 'B'], 'New'), 'New:\n  A\n  B\nA -> B -> C');
+  assert.equal(renameGroup(c, 0, 'Stage one'), 'Stage one:\n  A\n  B\nA -> B -> C');
+  // Lines that only named a step written elsewhere too go; one alone stays.
+  assert.equal(ungroup(c, 0), 'A -> B -> C');
+  assert.equal(ungroup('G:\n  A\n  (Round)\n  Lonely\nA -> Round', 0), '(Round)\nLonely\nA -> Round');
+  // A group in a group: the lines under it come out one step.
+  const d = 'Outer:\n  In:\n    A -> B\n  C\nC -> A';
+  assert.equal(ungroup(d, 1), 'Outer:\n  A -> B\n  C\nC -> A');
+  assert.equal(ungroup(d, 0), 'In:\n  A -> B\nC -> A');
+  assert.equal(ungroup(d, 2), d, 'not a group\'s line: nothing');
+  assert.throws(() => groupBoxes(c, ['C'], 'color red'), /can’t name a group/);
+  assert.throws(() => renameGroup(c, 0, 'A -> B'), /can’t name a group/);
 });
