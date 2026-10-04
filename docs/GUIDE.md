@@ -144,6 +144,18 @@ The review draws them **on the note**: each place marked in the colour of its ki
 
 A fix comes back as a red pen proposal on the note, with the lens below it: nothing changes until you accept a mark and apply. The lens of a run stays with its follow-ups until one looks again.
 
+### Forks: one paragraph, other ways (experimental)
+
+**Forks: this paragraph, other ways** (M-x or the palette) asks the agent for two or three other ways of writing the paragraph at the cursor — or the selection — through the task dialog, with the paragraph quoted in the task. The agent writes them to `.agent-notes/forks.json`; the note doesn't change.
+
+The review shows the paragraph **as it is** and the options **side by side**, each with a few words on how it differs, and below them **the note with the one in view in its place** — what comes before and after it as it is, the paragraph lit — so you read an option where it would stand. `j` / `k` (or the mouse over a column) change the one in view.
+
+**Enter** (or **Take**) puts that option in the proposal: it is a change of the run like any other, already accepted — `a` applies it, `n` on its mark leaves it. Another option can be taken instead, and **Keep it** on the paragraph as it is takes it back. Only one paragraph at a time, and only that paragraph: the rest of the note isn't rewritten to go with it.
+
+### Film: a note through the rounds of a run (experimental)
+
+`F` in a review (or **Film**, shown once a run has a follow-up round or has been applied) plays the note through the run: **as it was**, each **round**'s proposal — with what you asked for it (the task, then each follow-up) and the agent's margin notes of that round — and what was **applied**. Each frame shows its changes from the one before as the red pen does, struck through and written in. ← → (`h` `l`) step, the slider and the frames above it jump, Space plays, Esc closes. It only shows: nothing in it changes a note.
+
 ### Suggesting: your own red pen, in a meeting
 
 Margin's red pen is for you too, as tracked changes are in a word processor: made for leading a meeting with the note on a shared screen and correcting it as people talk. Only you write; it is not shared editing.

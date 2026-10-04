@@ -3329,6 +3329,7 @@ const COMMANDS = [
   ['Lens: claims without support (experimental)…', () => setTimeout(() => lensRun('support'), 0)],
   ['Lens: places that disagree (experimental)…', () => setTimeout(() => lensRun('conflict'), 0)],
   ['Lens: decisions and open questions (experimental)…', () => setTimeout(() => lensRun('decisions'), 0)],
+  ['Forks: this paragraph, other ways (experimental)…', () => setTimeout(forkRun, 0)],
   ['Describe a key…', () => describeKey()],
   ['Describe a command…', () => setTimeout(describeCommand, 0)],
   ['Dired: edit a folder as text…', () => setTimeout(pickDiredFolder, 0)],
@@ -5470,6 +5471,7 @@ async function refreshReview(tab) {
   const marked = penFirst() || run.comments?.length || run.lens?.length;
   if (marked && run.status !== 'running') await loadPen();
   if (run.lens?.length) lensMod ||= await import('./lens.js');
+  if (run.forks?.length) forksMod ||= await import('./forks.js');
   // Default: everything that can be applied is selected.
   // Applied/undone runs show what was actually applied.
   const appliedBy = new Map((run.applied?.files || []).map((f) => [f.path, f]));
@@ -5798,6 +5800,76 @@ function lensFix(tab, i) {
   followUp(tab, lensFixText(tab, i) + spaceComments(tab));
 }
 
+// ---- Forks (experimental, forks.js): the paragraph at the cursor (or the
+// selection) written other ways by the agent, side by side in the review;
+// the one taken is a change of the proposal, accepted, for a to apply.
+let forksMod = null;
+async function forkRun() {
+  forksMod ||= await import('./forks.js');
+  const tab = fileTab();
+  if (!tab || !isNote(tab.path)) { toast('Forks are for a paragraph of the note in view: open a note first.', 'error'); return; }
+  const ed = tab.editor;
+  const sel = ed.value.slice(ed.selectionStart, ed.selectionEnd);
+  const para = sel.trim() ? sel.replace(/^\n+|\n+$/g, '') : forksMod.paragraphAt(ed.value, ed.selectionStart);
+  if (!para.trim()) { toast('Put the cursor in a paragraph (or select one) first.', 'error'); return; }
+  openTaskDialog(forksMod.forkTask(para), { scope: 'file', recipe: 'Forks' });
+}
+function forkCard(tab, n, fork) {
+  const base = tab.run.lensBases?.[fork.file];
+  if (!forksMod || base == null) return null;
+  const reviewable = ['review', 'failed', 'cancelled'].includes(tab.run.status);
+  return h('div', { class: 'file-card forks-file', 'data-path': fork.file },
+    h('div', { class: 'file-card-head' },
+      h('span', { class: 'badge st-review' }, 'forks'),
+      h('span', { class: 'path' }, fork.file),
+      h('button', { class: 'btn small', onclick: () => openFile(fork.file) }, 'Open')),
+    forksMod.forksPage({ path: fork.file, n, fork, base, render: (text) => renderMarkdown(text, { image: (url) => localImage(url, fork.file) }),
+      take: reviewable && tab.kind === 'review' ? (pick) => takeFork(tab, n, pick) : null }));
+}
+async function takeFork(tab, n, pick) {
+  const f = tab.run.forks[n];
+  try { await api('POST', `/api/runs/${tab.runId}/fork`, { n, pick }); } catch (e) { toast(e.message, 'error'); return; }
+  // The note's changes are new: its marks wait again, but for the one taken.
+  delete tab.decisions[f.file];
+  if (tab.pen) delete tab.pen[f.file];
+  tab.cur = `${f.file}#F${n}.${pick == null ? 'o' : pick}`;
+  await refreshReview(tab);
+  // Taken is accepted: the marks on the paragraph's lines.
+  const c = tab.run.changes.find((x) => x.path === f.file);
+  const at = pick == null || !c || isBlocked(c) ? -1 : c.base.indexOf(f.quote);
+  if (at >= 0) {
+    const from = c.base.slice(0, at).split('\n').length - 1;
+    const to = from + f.quote.split('\n').length;
+    (c.hunks || []).forEach((hk, i) => {
+      // A line put in (none taken out) counts at either edge of the paragraph.
+      const on = hk.baseEnd === hk.baseStart ? hk.baseStart >= from && hk.baseStart <= to : hk.baseStart < to && hk.baseEnd > from;
+      if (!on || (c.conflicts || []).includes(i)) return;
+      tab.decisions[f.file].hunks.add(i);
+      ((tab.pen ||= {})[f.file] ||= {})[`h${i}`] = 'y';
+    });
+    renderContent(tab.group);
+  }
+  toast(pick == null ? 'The paragraph is back as it is.' : `Option ${pick + 1} is in the proposal, accepted: a applies it.`);
+  bufferEl(tab)?.focus({ preventScroll: true });
+}
+
+// ---- Film (experimental, film.js): a note through the rounds of this run.
+let filmMod = null;
+async function openFilmView(tab) {
+  const run = tab.run;
+  if (!run || run.status === 'running' || tab.kind !== 'review') return;
+  const at = tab.cur?.split('#')[0];
+  const path = [at, run.changes[0]?.path, run.focus].find((p) => p && run.files?.includes(p));
+  if (!path) { toast('No note of this run to show.'); return; }
+  let film;
+  try { film = await api('GET', `/api/runs/${run.id}/film?path=${encodeURIComponent(path)}`); } catch (e) { toast(e.message, 'error'); return; }
+  await loadPen();
+  filmMod ||= await import('./film.js');
+  filmMod.openFilm({ path: film.path, frames: film.frames, pen, render: (text) => renderMarkdown(text, { image: (url) => localImage(url, path) }),
+    close: () => bufferEl(tab)?.focus({ preventScroll: true }) });
+}
+const filmable = (run) => run.kind !== 'proof' && (run.round > 1 || !!run.applied);
+
 // A note the agent only wrote margin notes on (no change to it).
 function remarksCard(path, base, tab) {
   return h('div', { class: 'file-card', 'data-path': path },
@@ -5838,6 +5910,7 @@ function markCur(el) {
   wrap?.querySelectorAll('.pen-on').forEach((x) => x.classList.remove('pen-on'));
   if (el.dataset.mark) el.closest('.pen-page')?.querySelectorAll(`.pen-doc [data-mark="${el.dataset.mark}"]`).forEach((x) => x.classList.add('pen-on'));
   for (const p of wrap?.querySelectorAll('.lens-page') || []) p.lensSelect(p.contains(el) && el.dataset.lens != null ? Number(el.dataset.lens) : null);
+  if (el.dataset.fork != null) el.closest('.forks-page')?.forkPreview(el.dataset.opt);
   // The margin note in view shows all of itself: the ones below make room.
   const body = el.closest('.pen-body');
   if (pen && body && wrap) for (const b of wrap.querySelectorAll('.pen-body')) pen.layoutMargin(b);
@@ -6383,7 +6456,7 @@ const SPECIAL = {
 };
 // Each one's own keys, for M-x and the hint in its head.
 const BUFFER_KEYS = {
-  review: [['y', 'Red pen: accept the change'], ['n', 'Red pen: reject the change'], ['v', 'Red pen / diff'], ['s', 'Space: the red pen in depth (experimental)'], ['x', 'Pick / unpick the change'], ['X', 'Pick / unpick the whole note'], ['A', 'Pick all'], ['U', 'Pick none'], ['a', 'Apply the picked changes'], ['d', 'Discard the run'], ['f', 'Follow up…'], ['u', 'Revert the applied run'], ['=', 'Diff / result'], ['l', 'Show / hide the log'], ['J', 'Next note'], ['K', 'Previous note']],
+  review: [['y', 'Red pen: accept the change'], ['n', 'Red pen: reject the change'], ['v', 'Red pen / diff'], ['s', 'Space: the red pen in depth (experimental)'], ['F', 'Film: the note through the rounds (experimental)'], ['x', 'Pick / unpick the change'], ['X', 'Pick / unpick the whole note'], ['A', 'Pick all'], ['U', 'Pick none'], ['a', 'Apply the picked changes'], ['d', 'Discard the run'], ['f', 'Follow up…'], ['u', 'Revert the applied run'], ['=', 'Diff / result'], ['l', 'Show / hide the log'], ['J', 'Next note'], ['K', 'Previous note']],
   outside: [['y', 'Red pen: keep the change'], ['n', 'Red pen: undo the change'], ['v', 'Red pen / diff'], ['s', 'Space: the red pen in depth (experimental)'], ['x', 'Keep / undo the change'], ['X', 'Keep / undo the whole note'], ['A', 'Keep all'], ['U', 'Keep none'], ['a', 'Done: undo the ones not kept'], ['=', 'Diff / result'], ['J', 'Next note'], ['K', 'Previous note']],
   tasks: [['x', 'Check off / again'], ['a', 'Ask the agent to do it'], ['h', 'Show / hide done ones']],
   search: [['/', 'Search for…']],
@@ -6496,12 +6569,22 @@ function reviewOwnKeys(e, tab, { wrap, items, cur }) {
     if (e.key === 'Enter' || e.key === 'o') { openFile(cur.dataset.path, { line: Number(cur.dataset.line) || undefined }); return true; }
     if (e.key === 'y' || e.key === 'n') return true;
   }
+  // On a fork: Enter (y, x) takes it into the proposal.
+  if (cur?.classList.contains('fork-col')) {
+    if (['Enter', 'y', 'x', ' '].includes(e.key)) {
+      if (reviewable && !own && !cur.classList.contains('fork-in')) takeFork(tab, Number(cur.dataset.fork), cur.dataset.opt === 'o' ? null : Number(cur.dataset.opt));
+      return true;
+    }
+    if (e.key === 'o') { openFile(cur.dataset.path); return true; }
+    if (e.key === 'n') return true;
+  }
   switch (e.key) {
     case 'y': case 'n':
       if (!onPen) return e.key === 'y';
       penDecide(tab, cur.dataset.path, cur.dataset.mark, e.key);
       return true;
     case 's': if (tab.kind !== 'dired') openSpaceView(tab); return true;
+    case 'F': if (!own) openFilmView(tab); return true;
     case 'v':
       store.setItem('an.reviewView', penFirst() ? 'diff' : 'pen');
       tab.views = {};
@@ -6723,7 +6806,8 @@ function reviewView(tab) {
       a.skipped?.length ? ` Skipped: ${a.skipped.map((s) => s.path).join(', ')}.` : '',
       a.commit ? ` Committed as ${a.commit}.` : '',
       ' ',
-      h('button', { class: 'btn small', onclick: () => revertRun(tab) }, 'Undo apply')));
+      h('button', { class: 'btn small', onclick: () => revertRun(tab) }, 'Undo apply'),
+      filmable(run) ? h('button', { class: 'btn small', title: 'The note through the rounds of this run (F) — experimental', onclick: () => openFilmView(tab) }, 'Film') : null));
   }
   if (run.status === 'reverted') wrap.append(h('div', { class: 'review-note' }, `Applied, then undone ${timeAgo(run.revertedAt)}. Your files were restored.`));
   if (run.status === 'discarded') wrap.append(h('div', { class: 'review-note' }, 'Discarded. Nothing was applied.'));
@@ -6742,14 +6826,14 @@ function reviewView(tab) {
   }
 
   const log = h('details', { class: 'log' }, h('summary', {}, logTitle(run)), h('div', { class: 'log-body' }, ...logContent(run)));
-  const quiet = run.status !== 'running' && !run.changes?.length && !run.reply && !run.lens?.length;
+  const quiet = run.status !== 'running' && !run.changes?.length && !run.reply && !run.lens?.length && !run.forks?.length;
   log.open = tab.logOpen ?? (run.status === 'running' || quiet);
   log.addEventListener('toggle', () => { tab.logOpen = log.open; });
   if (run.kind !== 'proof') wrap.append(log);
 
   if (run.status !== 'running') {
     const remarks = Object.entries(run.commentBases || {});
-    if (!run.changes.length) wrap.append(h('div', { class: 'review-note' }, run.kind === 'proof' ? 'No suggestions (yet).' : run.lens?.length ? 'The agent made no changes: what it sees is on the note below (the lens). x picks a finding, f asks for a fix as a red pen proposal.' : remarks.length ? 'The agent made no changes, only notes in the margin.' : 'The agent made no changes.'));
+    if (!run.changes.length) wrap.append(h('div', { class: 'review-note' }, run.kind === 'proof' ? 'No suggestions (yet).' : run.forks?.length ? 'The agent made no changes: its other ways of writing the paragraph are below. Enter takes one into the proposal.' : run.lens?.length ? 'The agent made no changes: what it sees is on the note below (the lens). x picks a finding, f asks for a fix as a red pen proposal.' : remarks.length ? 'The agent made no changes, only notes in the margin.' : 'The agent made no changes.'));
     const checked = reviewable && commandNotesCheck(run);
     if (checked) wrap.append(checked);
     if (reviewable && run.changes.length) {
@@ -6760,18 +6844,21 @@ function reviewView(tab) {
         S.git?.repo && run.kind !== 'proof' ? h('label', { class: 'commit-toggle', title: 'Commit the applied files to git, authored by the agent (local only)' },
           h('input', { type: 'checkbox', checked: store.getItem('an.commitOnApply') !== 'false', onchange: (e) => store.setItem('an.commitOnApply', String(e.target.checked)) }), 'Commit to git') : null,
         run.changes.some(penable) ? h('button', { class: 'btn', title: 'The red pen in depth: paragraph by paragraph (s) — experimental', onclick: () => openSpaceView(tab) }, 'Space') : null,
+        filmable(run) ? h('button', { class: 'btn', title: 'The note through the rounds of this run (F) — experimental', onclick: () => openFilmView(tab) }, 'Film') : null,
         h('button', { class: 'btn', onclick: () => followUp(tab, lensFixText(tab) + spaceComments(tab)) }, 'Follow up…'),
         h('button', { class: 'btn danger', onclick: () => discardRun(tab) }, 'Discard'),
         h('button', { class: 'btn primary', disabled: !n, onclick: () => applyRun(tab) }, `Apply ${n} ${penFirst() ? 'accepted' : 'selected'}`)));
     } else if (reviewable) {
       wrap.append(h('div', { class: 'review-actions' }, h('span', { class: 'grow' }),
+        filmable(run) ? h('button', { class: 'btn', title: 'The note through the rounds of this run (F) — experimental', onclick: () => openFilmView(tab) }, 'Film') : null,
         h('button', { class: 'btn', onclick: () => followUp(tab, lensFixText(tab)) }, 'Follow up…'),
         h('button', { class: 'btn danger', onclick: () => discardRun(tab) }, 'Discard')));
     }
     const locked = !reviewable;
     for (const c of run.changes) wrap.append(fileCard(c, tab, locked));
     for (const [p, base] of remarks) wrap.append(remarksCard(p, base, tab));
-    for (const [p, base] of Object.entries(run.lensBases || {})) wrap.append(lensCard(p, base, tab));
+    for (const [n, f] of (run.forks || []).entries()) wrap.append(forkCard(tab, n, f));
+    for (const [p, base] of Object.entries(run.lensBases || {})) if (run.lens?.some((f) => f.file === p)) wrap.append(lensCard(p, base, tab));
   }
   return wrap;
 }

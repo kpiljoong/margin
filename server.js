@@ -1255,6 +1255,15 @@ const LENS_GUIDE = `To show the user what you see in a note without changing it,
 gap: a claim the note gives no support for; conflict: places that disagree (quote each of them); open: a question or a decision still open; decided: a decision made; link: places that belong together. The quotes of a finding are drawn joined by a line, so quote every place it is about (one to four), each exactly as it is in the note and as little as finds the place. Write the notes in the language of the note. At most 40 findings, the ones that matter most.`;
 const lensGuide = (text) => (text.includes(LENS_FILE) ? LENS_GUIDE : '');
 
+// Forks (experimental, public/forks.js): a paragraph written other ways,
+// side by side with it. Nothing changes until one is taken in the review —
+// then it is a change of the proposal, accepted and applied as any other.
+const FORKS_FILE = '.agent-notes/forks.json';
+const FORKS_GUIDE = `To offer a paragraph written other ways without changing the note, put a JSON object in ${FORKS_FILE} (make the folder):
+{"forks": [{"file": "<path of the note>", "quote": "<the paragraph, exactly as it is in the note>", "options": [{"text": "<the paragraph written another way, in the note's Markdown>", "why": "<a few words on how it differs>"}]}]}
+Two or three options for each paragraph, each one that could stand in its place as it is, different from the others in approach (shorter, more concrete, another order or tone…), in the language of the note.`;
+const forksGuide = (text) => (text.includes(FORKS_FILE) ? FORKS_GUIDE : '');
+
 // Margin's own commands, keys and macros, as notes at the top of the folder
 // (public/leaderkeys.js, recipes.js, macrotext.js): the "commands" scope
 // shares these alone, with their notation (lib/margin-config.md) and the
@@ -1294,6 +1303,7 @@ function buildPrompt(task, focus, followUp = '', pictures = [], commands = null)
   const ink = inkGuide(`${task}\n${followUp}`, note);
   const margin = commentsGuide(`${task}\n${followUp}`);
   const lens = lensGuide(`${task}\n${followUp}`);
+  const forks = forksGuide(`${task}\n${followUp}`);
   const config = COMMANDS_TASK.test(`${task}\n${followUp}`) || COMMAND_NOTES.includes(focus) ? commandsNotation() : '';
   const own = agentInstructions();
   return [
@@ -1308,6 +1318,7 @@ function buildPrompt(task, focus, followUp = '', pictures = [], commands = null)
     pictures.length ? picturesLine(pictures) : '',
     margin ? `\n${margin}\n` : '',
     lens ? `\n${lens}\n` : '',
+    forks ? `\n${forks}\n` : '',
     config ? `\n${config}\n` : '',
     own ? `\nInstructions for this notes folder (from ${INSTRUCTIONS}):\n${own}\n` : '',
     focus ? `The note the user is looking at: ${focus}` : '',
@@ -1406,6 +1417,7 @@ function followUpRun(prevId, { task }) {
   if (fs.existsSync(path.join(runDir(prevId), 'comments.json'))) fs.copyFileSync(path.join(runDir(prevId), 'comments.json'), path.join(dir, 'comments.json'));
   // And what the lens showed, until a round looks again.
   if (fs.existsSync(path.join(runDir(prevId), 'lens.json'))) fs.copyFileSync(path.join(runDir(prevId), 'lens.json'), path.join(dir, 'lens.json'));
+  if (fs.existsSync(path.join(runDir(prevId), 'forks.json'))) fs.copyFileSync(path.join(runDir(prevId), 'forks.json'), path.join(dir, 'forks.json'));
   const round = (prev.round || 1) + 1;
   const meta = {
     ...prev, kind: undefined, id, task, parent: prevId, round, originalTask: prev.originalTask || prev.task,
@@ -1472,6 +1484,7 @@ function launchAgent(meta, prompt) {
     m.finishedAt = new Date().toISOString();
     if (m.status === 'running') m.status = code === 0 ? 'review' : 'failed';
     try { collectLens(m); } catch (e) { fs.appendFileSync(logPath, `\n[agent-notes] lens: ${e.message}\n`); }
+    try { collectForks(m); } catch (e) { fs.appendFileSync(logPath, `\n[agent-notes] forks: ${e.message}\n`); }
     try { collectComments(m); } catch (e) { fs.appendFileSync(logPath, `\n[agent-notes] margin comments: ${e.message}\n`); }
     const out = parseAgentLog(readLog(id, LOG_PARSE_LIMIT), workDir);
     if (out.usage) m.usage = out.usage;
@@ -1570,7 +1583,96 @@ function collectLens(meta) {
 function readLens(id) {
   try { const l = JSON.parse(fs.readFileSync(path.join(runDir(id), 'lens.json'), 'utf8')); return Array.isArray(l?.findings) ? l.findings : []; } catch { return []; }
 }
-// The notes the lens is on, as they were shared.
+// The forks (FORKS_FILE in the agent's copy): kept with the run, each on a
+// paragraph found in the note as it was shared; none taken yet.
+const MAX_FORKS = 5;
+function collectForks(meta) {
+  const dir = runDir(meta.id);
+  const file = path.join(dir, 'work', FORKS_FILE);
+  if (!fs.existsSync(file)) return;
+  let raw;
+  try {
+    if (fs.statSync(file).size > 256 * 1024) throw new Error('forks.json is too large');
+    raw = JSON.parse(fs.readFileSync(file, 'utf8'));
+  } finally {
+    fs.rmSync(file, { force: true });
+    try { fs.rmdirSync(path.dirname(file)); } catch { /* more is there */ }
+  }
+  const list = Array.isArray(raw) ? raw : raw?.forks;
+  if (!Array.isArray(list)) throw new Error('forks.json should hold {"forks": [...]}');
+  const str = (v, max) => (typeof v === 'string' ? v.slice(0, max) : null);
+  const forks = [];
+  for (const x of list.slice(0, 20)) {
+    const file = (str(x?.file, 500) || meta.focus || '').replace(/^\.\//, '');
+    let base = null;
+    try { if (file && meta.files.includes(file)) base = fs.readFileSync(path.join(dir, 'base', file), 'utf8'); } catch { /* not shared */ }
+    const quote = str(x?.quote, 5000)?.replace(/^\n+|\n+$/g, '');
+    if (base == null || !quote?.trim() || !base.includes(quote)) continue;
+    const options = (Array.isArray(x?.options) ? x.options : []).slice(0, 3)
+      .map((o) => ({ text: (str(typeof o === 'string' ? o : o?.text, 5000) || '').replace(/^\n+|\n+$/g, ''), why: (str(o?.why, 300) || '').trim() }))
+      .filter((o) => o.text.trim() && o.text !== quote);
+    if (!options.length) continue;
+    forks.push({ file, quote, options, pick: null });
+    if (forks.length >= MAX_FORKS) break;
+  }
+  writeForks(meta.id, forks);
+}
+const readForks = (id) => { try { const f = JSON.parse(fs.readFileSync(path.join(runDir(id), 'forks.json'), 'utf8')); return Array.isArray(f?.forks) ? f.forks : []; } catch { return []; } };
+const writeForks = (id, forks) => fs.writeFileSync(path.join(runDir(id), 'forks.json'), JSON.stringify({ forks }, null, 2));
+// Taking an option (or the paragraph as it was: pick null) puts it in the
+// agent's copy, where the paragraph stands now; the review shows it as a
+// change.
+function takeFork(id, { n, pick }) {
+  const meta = readMeta(id);
+  if (meta.status !== 'review' || meta.kind === 'proof') throw httpError(409, 'This review is closed');
+  const forks = readForks(id);
+  const f = forks[n];
+  if (!f) throw httpError(404, 'No such fork');
+  if (pick != null && !(Number.isInteger(pick) && f.options[pick])) throw httpError(400, 'No such option');
+  const textOf = (k) => (k == null ? f.quote : f.options[k].text);
+  const abs = path.join(runDir(id), 'work', f.file);
+  const work = fs.readFileSync(abs, 'utf8');
+  const now = textOf(f.pick);
+  const at = work.indexOf(now);
+  if (at < 0) throw httpError(409, 'The paragraph changed in the proposal: it can’t be swapped any more');
+  fs.writeFileSync(abs, work.slice(0, at) + textOf(pick) + work.slice(at + now.length));
+  f.pick = pick ?? null;
+  writeForks(id, forks);
+  return { forks };
+}
+
+// The film (experimental, public/film.js): a note through the rounds of a
+// run — as it was, each round's proposal with what you asked for it and
+// what the agent noted, and what was applied — each with its changes from
+// the one before.
+function filmOf(id, { path: relPath }) {
+  const rel = relOf(workspacePath(relPath));
+  const chain = [];
+  for (let at = id; at && chain.length < 50;) {
+    let meta;
+    try { meta = readMeta(at); } catch { break; } // a round before, removed
+    chain.unshift(meta);
+    at = meta.parent;
+  }
+  const read = (runId, sub) => { try { return fs.readFileSync(path.join(runDir(runId), sub, rel), 'utf8'); } catch { return null; } };
+  const base = read(chain[0].id, 'base');
+  if (base == null) throw httpError(404, 'This note wasn’t shared with the run');
+  const frames = [{ kind: 'original', text: base, task: chain[0].originalTask || chain[0].task }];
+  for (const r of chain) {
+    const notes = readComments(r.id).filter((c) => c.file === rel && (c.round || 1) === (r.round || 1)).map((c) => c.comment || (c.suggest != null ? `→ ${c.suggest}` : '')).filter(Boolean);
+    frames.push({ kind: 'round', round: r.round || 1, run: r.id, text: read(r.id, 'work') ?? '', task: r.task, notes: notes.slice(0, 30) });
+  }
+  const last = chain.at(-1);
+  const done = last.applied?.files?.find((f) => f.path === rel);
+  if (done?.hunks) {
+    const hunks = buildHunks(base, frames.at(-1).text);
+    frames.push({ kind: 'applied', text: applyHunks(base, hunks, new Set(done.hunks)), of: [done.hunks.length, done.of], undone: last.status === 'reverted' });
+  }
+  for (let k = 1; k < frames.length; k++) frames[k].hunks = buildHunks(frames[k - 1].text, frames[k].text);
+  return { path: rel, frames };
+}
+
+// The notes the lens (and the forks) are on, as they were shared.
 function lensBases(id, lens) {
   const out = {};
   for (const f of new Set(lens.map((x) => x.file))) {
@@ -1869,7 +1971,13 @@ async function routeApi(method, url, body) {
     const changes = reviewable ? computeChanges(m[1]) : [];
     const comments = meta.kind === 'proof' ? proofComments(meta) : readComments(m[1]);
     const lens = reviewable ? readLens(m[1]) : [];
-    return { ...meta, command: undefined, ...runReport(m[1]), changes, comments, commentBases: commentBases(m[1], comments, changes), lens, lensBases: lensBases(m[1], lens) };
+    const forks = reviewable ? readForks(m[1]) : [];
+    return { ...meta, command: undefined, ...runReport(m[1]), changes, comments, commentBases: commentBases(m[1], comments, changes), lens, forks, lensBases: lensBases(m[1], [...lens, ...forks]) };
+  }
+  if ((m = p.match(/^\/api\/runs\/([\w-]+)\/fork$/)) && method === 'POST') return takeFork(m[1], body || {});
+  if ((m = p.match(/^\/api\/runs\/([\w-]+)\/film$/)) && method === 'GET') {
+    readMeta(m[1]);
+    return filmOf(m[1], { path: q('path') });
   }
   if ((m = p.match(/^\/api\/runs\/([\w-]+)\/(apply|discard|cancel|revert|followup)$/)) && method === 'POST') {
     if (m[2] === 'apply') {

@@ -69,6 +69,7 @@ for (let i = 0; i < 12; i++) fs.writeFileSync(path.join(ws, 'hits', `h${i}.md`),
 const filler = (p) => Array.from({ length: 10 }, (_, i) => `${p} ${i}`);
 fs.writeFileSync(path.join(ws, 'sub', 'proof.md'), '# Proof\n\nThis is a very good plan for the the team.\n\nWe ship on Friday.\n');
 fs.writeFileSync(path.join(ws, 'sub', 'lens.md'), '# Lens\n\nWe ship on Friday.\n\nEveryone obviously wants a very dark theme.\n\nThe launch is on Monday.\n');
+fs.writeFileSync(path.join(ws, 'sub', 'fork.md'), '# Fork\n\nWe ship on Friday. The team is ready.\n\nThe end.\n');
 fs.writeFileSync(path.join(ws, 'sub', 'drawn.md'), '# Drawn\n\n```flow\nOrder -> Pay -> Ship\n```\n\n![Screen](../assets/screen.svg)\n\n```ink\nbox blue: 10,10 50x40\n```\n');
 fs.writeFileSync(path.join(ws, 'sub', 'meet.md'), '# Meet\n\nWe ship on Monday.\nDocs by Friday.\n');
 fs.writeFileSync(path.join(ws, 'sub', 'messy.md'), ['#Title', 'text', ...filler('a'), '* one', ...filler('b'), '##Sub', 'more', ...filler('c'), '+ two', ''].join('\n'));
@@ -1613,6 +1614,53 @@ await check('the lens (experimental): a command asks where the note disagrees; t
   const t = fs.readFileSync(path.join(ws, 'sub', 'lens.md'), 'utf8');
   const good = t === '# Lens\n\nWe ship on Friday.\n\nEveryone obviously wants a very dark theme.\n\nThe launch is on Monday.\n';
   console.log(`${good ? '✓' : '✗'} the lens left the note as it was`);
+  if (!good) failed = true;
+}
+
+await check('forks (experimental): the paragraph at the cursor other ways, side by side, the one in view in the note; Enter takes it, accepted; applied, the film (F) shows the note through it', `
+  const mac = navigator.platform.startsWith('Mac');
+  const ta = await openNote('sub/fork.md');
+  ta.focus();
+  ta.setSelectionRange(12, 12);
+  document.body.dispatchEvent(new KeyboardEvent('keydown', { code: 'KeyP', key: 'p', bubbles: true, cancelable: true, metaKey: mac, ctrlKey: !mac }));
+  const input = await until(() => !$('#overlay').hidden && $('#overlay input'));
+  input.value = '>Forks: this paragraph';
+  input.dispatchEvent(new Event('input'));
+  await sleep(100);
+  input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }));
+  const task = await until(() => !$('#overlay').hidden && $('#overlay textarea'));
+  const asked = task.value;
+  button('Run on staged copy', $('#overlay')).click();
+  await until(() => $$('.review .fork-col').length === 4, 20000);
+  await sleep(300);
+  const titles = $$('.fork-title').map((x) => x.textContent);
+  const list = $('.fork-col[data-opt="1"]');
+  list.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }));
+  $('.review').focus();
+  await sleep(100);
+  const shown = $$('.forks-doc .fork-here').map((x) => x.textContent);
+  key('Enter');
+  await until(() => $('.fork-col.fork-in[data-opt="1"]') && $('.review .pen-card'), 10000);
+  await sleep(200);
+  const marks = $$('.pen-card').map((c) => c.classList.contains('pen-y'));
+  const apply = button('Apply', $('#main')).textContent;
+  key('a');
+  await until(() => /Applied/.test($('.review')?.textContent || ''), 10000);
+  await sleep(200);
+  key('F');
+  const film = await until(() => $('.film'));
+  const frames = $$('.film-frame').map((x) => x.textContent);
+  key('h'); await sleep(100);
+  const round = { on: $('.film-frame.on')?.textContent, ins: $$('.film-doc .pen-insl').length, del: $$('.film-doc .pen-del').length, said: $('.film-caption').textContent };
+  key('Escape'); await sleep(100);
+  return { asked, titles, shown, marks, apply, frames, round, closed: !$('.film') && !!document.activeElement.closest('.review') };
+`, (v) => (/forks\.json/.test(v?.asked) && /<<<\nWe ship on Friday\. The team is ready\.\n>>>/.test(v.asked) && v.titles.join() === 'As it is,Option 1,Option 2,Option 3'
+  && v.shown.join('|') === 'We ship on Friday.|The team is ready.' && v.marks.length && v.marks.every(Boolean) && v.apply === `Apply ${v.marks.length} accepted`
+  && v.frames.join() === 'As it was,Round 1,Applied' && v.round.on === 'Round 1' && v.round.ins === 2 && v.round.del === 1 && v.round.said === 'The agent\u2019s proposal' && v.closed ? null : `got ${JSON.stringify(v)}`));
+{
+  const t = fs.readFileSync(path.join(ws, 'sub', 'fork.md'), 'utf8');
+  const good = t === '# Fork\n\n- We ship on Friday.\n- The team is ready.\n\nThe end.\n';
+  console.log(`${good ? '✓' : '✗'} the fork taken reached the note, nothing else`);
   if (!good) failed = true;
 }
 

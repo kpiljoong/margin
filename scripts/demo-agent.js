@@ -88,7 +88,9 @@ const REMARKS_ONLY = ['comments only', 'remarks only', '\uCF54\uBA58\uD2B8\uB9CC
 const DRAW = ['draw', 'picture', 'mark up', '\uADF8\uB9BC'];
 // The lens (public/lens.js): what it sees, beside the note, nothing changed.
 const LENS = ['lens.json'];
-const understood = wants(...TIDY, ...SUMMARY, ...TASKS, ...RED, ...DRAW, ...LENS) || (round > 1 && wants(...SHORTER));
+// Forks (public/forks.js): the paragraph of the task, other ways.
+const FORKS = ['forks.json'];
+const understood = wants(...TIDY, ...SUMMARY, ...TASKS, ...RED, ...DRAW, ...LENS, ...FORKS) || (round > 1 && wants(...SHORTER));
 
 // A picture's size in pixels (PNG, or an SVG's width and height), else a guess.
 function sizeOf(file) {
@@ -178,6 +180,20 @@ function lensOf(f, text) {
   return out;
 }
 
+// The paragraph between <<< and >>> in the task, three ways: its first
+// sentence alone, its sentences as a list, and the other way round.
+function forksOf(f, text) {
+  const quote = /<<<\n([\s\S]*?)\n>>>/.exec(process.env.AGENT_NOTES_TASK || '')?.[1];
+  if (!quote || !text.includes(quote)) return [];
+  const said = quote.replace(/\s+/g, ' ').trim().split(/(?<=[.!?])\s+/);
+  const options = [
+    { text: said[0], why: 'Shorter: the first sentence alone.' },
+    { text: said.map((x) => `- ${x}`).join('\n'), why: 'As a list.' },
+    { text: [...said].reverse().join(' '), why: 'The other way round.' },
+  ].filter((o) => o.text !== quote);
+  return options.length ? [{ file: f, quote, options }] : [];
+}
+
 // "Make or change a command…": whatever was asked, the demo adds one macro,
 // "Make it a task", on ⌥X o t (and a step Margin can't read when asked for
 // a broken one, to see the review say so).
@@ -211,6 +227,13 @@ setTimeout(() => {
     console.log(`[demo-agent] ${prev === null ? 'created' : 'edited '} ${f}  (${why})`);
   };
 
+  if (wants(...FORKS)) {
+    const forks = targets.flatMap((f) => forksOf(f, fs.readFileSync(f, 'utf8')));
+    fs.mkdirSync('.agent-notes', { recursive: true });
+    fs.writeFileSync(path.join('.agent-notes', 'forks.json'), JSON.stringify({ forks }, null, 2));
+    console.log(`[demo-agent] done: ${forks.length} paragraph(s) written other ways, the notes untouched.`);
+    return;
+  }
   if (wants(...LENS)) {
     const findings = targets.flatMap((f) => lensOf(f, fs.readFileSync(f, 'utf8')));
     fs.mkdirSync('.agent-notes', { recursive: true });
