@@ -542,6 +542,33 @@ await check('a sketch read as a flow: its boxes, words and arrows as a ```flow b
   return { text: ed.value, boxes, toast: $('#toast')?.textContent };
 `, (v) => (v?.text === '# Board\n\n```ink\nboard: 1600x900\nbox: 100,100 300x120\ntext: 130,140 Idea\nbox: 100,500 300x120\ntext: 130,540 Try it\narrow: 250,230 -> 250,490\n```\n\n```flow\nIdea -> Try it\n```\n\nAfter.\n' && v.boxes === 2 && /A flow of 2 steps and 1 arrow/.test(v.toast) ? null : `got ${JSON.stringify(v)}`));
 
+await check('on a sketch: a double-click in a box changes its words; an arrow drawn between boxes ends on their sides', `
+  const ed = $$('.editor-wrap textarea').find((t) => t.offsetParent);
+  const pic = () => $('.canvas-stage .ink-board img');
+  const img = pic();
+  if (!img?.naturalWidth) return { none: true };
+  const at = (x, y) => { const img = pic(); const r = img.getBoundingClientRect(); return { clientX: r.left + x * r.width / img.naturalWidth, clientY: r.top + y * r.height / img.naturalHeight }; };
+  img.dispatchEvent(new MouseEvent('dblclick', { bubbles: true, cancelable: true, ...at(300, 200) }));
+  const input = await until(() => $('.canvas-rename'), 3000);
+  const was = input?.value;
+  if (!input) return { input: false };
+  input.value = 'Big idea';
+  key('Enter', {}, input);
+  // The sketch drawn again with them.
+  await until(() => $('.canvas-stage .ink-board')?.dataset.source.includes('Big idea') && pic()?.naturalWidth, 5000);
+  await sleep(300);
+  $$('.ink-bar .ink-tool').find((b) => b.title.startsWith('Arrow')).click();
+  const ptr = (type, el, p) => el.dispatchEvent(new PointerEvent(type, { bubbles: true, cancelable: true, button: 0, pointerId: 1, ...p }));
+  const stage = $('.canvas-stage');
+  const board = pic();
+  ptr('pointerdown', board, at(300, 240));
+  for (let i = 1; i <= 6; i++) ptr('pointermove', stage, at(300, 240 + i * 40));
+  ptr('pointerup', stage, at(300, 480));
+  await until(() => ed.value.includes('250,220 -> 250,500'), 5000);
+  key('Escape', {}, stage);
+  return { was, text: ed.value.split('\x60\x60\x60')[1] };
+`, (v) => (v?.was === 'Idea' && /text: 130,140 Big idea\n/.test(v.text) && /\narrow[^\n]*: 250,220 -> 250,500\n/.test(v.text) ? null : `got ${JSON.stringify(v)}`));
+
 await check('Settings shows Labs', `
   document.dispatchEvent(new KeyboardEvent('keydown', { key: ',', metaKey: navigator.platform.startsWith('Mac'), ctrlKey: !navigator.platform.startsWith('Mac'), bubbles: true }));
   const d = await until(() => $('.dialog.settings'));

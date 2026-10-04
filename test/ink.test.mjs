@@ -1,7 +1,7 @@
 // node --test (npm test): marks drawn on a picture, as lines (public/ink.js).
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { parseInk, inkLine, simplify, addMark, removeMark, bentPath, movedMark, grips, reshapedMark, setMark, fitBoard, boardLine } from '../public/ink.js';
+import { parseInk, inkLine, simplify, addMark, removeMark, bentPath, movedMark, grips, reshapedMark, setMark, fitBoard, boardLine, anchors, snapEnd, snapArrow, followBox, wordsIn, textSize } from '../public/ink.js';
 
 test('ink lines: read, written back the same', () => {
   const src = ['box red: 280,120 200x80', '# a comment', 'arrow: 410,220 -> 300,160', 'text blue: 420,230 The button is hidden', 'pen 초록: 100,100 120,104 140,112', '상자 빨강: 1,2 3×4', 'nonsense', 'pen red: 1,2', 'arrow purple: 1,2 -> x'].join('\n');
@@ -85,4 +85,24 @@ test('a sketch: a board line is the page, not a mark; it grows to hold what is d
   assert.equal(fitBoard('  board  : 1600 x 900\nbox red: 1600,10 200x100'), '  board  : 1900x900\nbox red: 1600,10 200x100');
   assert.equal(fitBoard('pen: 10,10 5000,5000'), 'pen: 10,10 5000,5000', 'no board: nothing to grow');
   assert.equal(fitBoard('board: 1600x900\npen: 1,1 99999,1'), 'board: 8000x900\npen: 1,1 99999,1');
+});
+
+test('a sketch: arrows end on the middles of boxes\' sides, and go with a box moved', () => {
+  const { marks } = parseInk(['board: 1600x900', 'box: 100,100 200x100', 'box: 600,100 200x100', 'arrow: 310,150 -> 590,140', 'text: 120,120 Start', 'arrow: 900,800 -> 1000,800'].join('\n'));
+  const [a, b] = marks;
+  assert.deepEqual(anchors(a), [[200, 100], [300, 150], [200, 200], [100, 150]]);
+  assert.deepEqual(snapEnd([320, 160], marks, 40).at, [300, 150]);
+  assert.equal(snapEnd([360, 160], marks, 40), null, 'too far');
+  assert.deepEqual(snapEnd([250, 190], marks, 40).at, [200, 200], 'inside: the nearest side');
+  // Not both ends on one box.
+  const s = snapArrow({ kind: 'arrow', from: [310, 150], to: [590, 140], via: [] }, marks, 40);
+  assert.deepEqual([s.from, s.to], [[300, 150], [600, 150]]);
+  assert.deepEqual(snapArrow({ kind: 'arrow', from: [210, 120], to: [250, 180], via: [] }, marks, 40).to, [250, 180]);
+  // The box moved: the arrow on its anchor goes along, the others stay.
+  const on = { ...marks[2], from: [300, 150], to: [600, 150] };
+  const moved = followBox([a, b, on, marks[3], marks[4]], b, { ...b, x: 700, y: 300 });
+  assert.deepEqual(moved, [[on.line, { ...on, to: [700, 350] }]]);
+  assert.equal(textSize(1600, 900), 45);
+  assert.deepEqual(wordsIn(marks, a, 45).map((m) => m.text), ['Start']);
+  assert.deepEqual(wordsIn(marks, b, 45), []);
 });

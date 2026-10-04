@@ -27,7 +27,7 @@
 // C colours, S shapes, Delete takes it out; N or a double-click on the picture adds a
 // box on its own, and a right-click lists it all. A click on an arrow
 // selects it: Delete takes it out, B makes it go both ways (or one again),
-// R turns it round, D dots it, Enter puts words on it.
+// R turns it round, D dots it, Enter (or a double-click) puts words on it.
 //
 // Comments: M on a box selected (or, with the picture's comment tool, a
 // click on a picture) writes one there; the app keeps them with the note's
@@ -1168,8 +1168,17 @@ export class FigureCanvas {
         return;
       }
       if (!e.target.closest('.canvas-section')) { this.toggleAll(); return; }
-      // Beside the boxes of a picture you can draw on: a new box.
       const fig = this.figureOf(e.target);
+      // A picture's marks: words (no tool on).
+      if (fig?.matches('.ink-figure')) { if (!this.ink.tool) this.ink.write(e, fig); return; }
+      // An arrow: its words.
+      const edge = e.target.closest('.edge');
+      if (edge && fig?.flowNodes && this.h.canEdit?.(fig)) {
+        this.selectEdge(fig, edge.dataset.from, edge.dataset.to);
+        this.labelEdge(this.edgeAt);
+        return;
+      }
+      // Beside the boxes of a picture you can draw on: a new box.
       if (fig?.flowNodes && !e.target.closest('.node-hit') && this.h.canEdit?.(fig)) this.h.onAddBox?.(fig);
     });
     stage.addEventListener('contextmenu', (e) => {

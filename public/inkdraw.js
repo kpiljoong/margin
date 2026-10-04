@@ -14,8 +14,15 @@
 // box's corners, an arrow's ends and bends; the dot in the middle of an
 // arrow's side makes a new bend, a bend dragged straight goes); Delete takes
 // the picked one out, Esc lets go. Each change rewrites its line, one ⌘Z.
+//
+// A double-click writes words: on words, they change (emptied, they go); in
+// a box, its words (or new ones at its top left); elsewhere, new ones there.
+//
+// On a sketch, an arrow drawn to a box ends on the middle of the box's side
+// nearest it (its anchors show), and a box moved or reshaped takes the
+// arrow ends on its anchors along (public/ink.js: snapArrow, followBox).
 
-import { INK, inkLine, simplify, markEl, movedMark, grips, reshapedMark } from './ink.js';
+import { INK, inkLine, simplify, markEl, movedMark, grips, reshapedMark, textSize, anchors, snapEnd, snapArrow, followBox, wordsIn } from './ink.js';
 
 const SVG = 'http://www.w3.org/2000/svg';
 export const TOOLS = [
@@ -29,6 +36,8 @@ export const TOOLS = [
   ['note', '\u{1F4AC}', 'Comment: click where it goes (kept beside the note, as its other comments)', 'M'],
 ];
 const KEYS = { d: 'pen', a: 'arrow', r: 'box', t: 'text', n: 'num', h: 'hide', e: 'erase', m: 'note' };
+
+const isBoard = (fig) => fig?.dataset.board != null;
 
 const el = (tag, cls, text) => {
   const e = document.createElement(tag);
@@ -187,7 +196,13 @@ export class InkTools {
   cancel() {
     this.draft?.el?.remove();
     this.draft = null;
-    if (this.edit) { this.edit.el?.remove(); this.edit.g?.classList.remove('ink-moving'); this.edit = null; }
+    if (this.edit) {
+      this.edit.el?.remove();
+      this.edit.g?.classList.remove('ink-moving');
+      const svg = this.edit.fig.querySelector(':scope > .ink-marks');
+      for (const [line] of this.edit.follow || []) svg?.querySelector(`:scope > .ink-mark[data-line="${line}"]`)?.classList.remove('ink-moving');
+      this.edit = null;
+    }
   }
 
   // ---- changing a mark
@@ -220,14 +235,50 @@ export class InkTools {
     const hit = this.at(e, ed.fig);
     if (!hit) return;
     const [dx, dy] = [hit.p[0] - ed.from[0], hit.p[1] - ed.from[1]];
+    const marks = ed.fig.inkMarks || [];
+    let p = hit.p;
+    let snap = null;
+    // A sketch's arrow end dragged near a box: onto its anchor.
+    if (isBoard(ed.fig) && ed.mark.kind === 'arrow' && ed.grip && !ed.grip.mid) {
+      const last = grips(ed.mark).length - 1;
+      if (ed.grip.i === 0 || ed.grip.i === last) {
+        const other = snapEnd(ed.grip.i === 0 ? ed.mark.to : ed.mark.from, marks, 1);
+        snap = snapEnd(p, marks, this.reach(ed.fig, ed.scale), other?.box);
+        if (snap) p = snap.at;
+      }
+    }
     ed.next = ed.grip
-      ? reshapedMark(ed.mark, ed.grip.i, hit.p, { mid: ed.grip.mid, straight: 6 * ed.scale })
+      ? reshapedMark(ed.mark, ed.grip.i, p, { mid: ed.grip.mid, straight: 6 * ed.scale })
       : movedMark(ed.mark, dx, dy);
     const svg = ed.fig.querySelector(':scope > .ink-marks');
+    const sw = this.width(svg);
+    const make = this.maker();
     ed.el?.remove();
-    ed.el = markEl(ed.next, this.width(svg), this.maker());
+    ed.el = markEl(ed.next, sw, make);
     ed.el.classList.add('ink-draft');
+    if (snap) this.anchorDots(ed.el, snap.box, snap.at, sw, make);
+    // A sketch's box: the arrows on its anchors go with it.
+    for (const [line] of ed.follow || []) svg.querySelector(`:scope > .ink-mark[data-line="${line}"]`)?.classList.remove('ink-moving');
+    ed.follow = isBoard(ed.fig) && ed.mark.kind === 'box' ? followBox(marks, ed.mark, ed.next) : [];
+    for (const [line, m] of ed.follow) {
+      svg.querySelector(`:scope > .ink-mark[data-line="${line}"]`)?.classList.add('ink-moving');
+      ed.el.append(markEl(m, sw, make));
+    }
     svg.append(ed.el);
+  }
+
+  // How near a box an arrow's end snaps to it (picture pixels).
+  reach(fig, scale) {
+    const img = fig.querySelector(':scope > img');
+    return Math.max(textSize(img.naturalWidth, img.naturalHeight) * 1.5, 24 * scale);
+  }
+
+  // A box's anchors, over the mark being drawn; the one taken, filled.
+  anchorDots(g, box, at, sw, make) {
+    for (const q of anchors(box)) {
+      const on = q[0] === at[0] && q[1] === at[1];
+      g.append(make('circle', { class: `ink-anchor${on ? ' on' : ''}`, cx: q[0], cy: q[1], r: sw * (on ? 2.4 : 1.8), 'stroke-width': sw * 0.7 }));
+    }
   }
 
   // → whether it was a drag (a click goes on to pick: a dot's item, say).
@@ -237,7 +288,10 @@ export class InkTools {
     if (!ed.moved) { this.select(ed.fig, ed.mark.line); return false; }
     this.sel = { pic: ed.fig.dataset.line, line: ed.mark.line };
     const at = (m) => inkLine(m);
-    if (ed.next && at(ed.next) !== at(ed.mark)) this.c.h.onInk?.(ed.fig, { set: [ed.mark.line, ed.next] });
+    if (ed.next && at(ed.next) !== at(ed.mark)) {
+      if (ed.follow?.length) this.c.h.onInk?.(ed.fig, { sets: [[ed.mark.line, ed.next], ...ed.follow] });
+      else this.c.h.onInk?.(ed.fig, { set: [ed.mark.line, ed.next] });
+    }
     else this.drawGrips();
     return true;
   }
@@ -307,7 +361,8 @@ export class InkTools {
       while (at.length > 2 && near(at[at.length - 2], b)) at.splice(-2, 1);
       while (at.length > 2 && near(at[1], a)) at.splice(1, 1);
       const via = at.slice(1, -1).map(([x, y]) => [Math.round(x), Math.round(y)]);
-      return { kind: 'arrow', color, from: a, to: b, via };
+      const arrow = { kind: 'arrow', color, from: a, to: b, via };
+      return isBoard(d.fig) ? snapArrow(arrow, d.fig.inkMarks || [], this.reach(d.fig, d.scale)) : arrow;
     }
     return { kind: d.kind === 'hide' ? 'hide' : 'box', color: d.kind === 'hide' ? 'gray' : color, x: Math.min(a[0], b[0]), y: Math.min(a[1], b[1]), w: Math.abs(b[0] - a[0]), h: Math.abs(b[1] - a[1]) };
   }
@@ -318,9 +373,45 @@ export class InkTools {
     const svg = d.fig.querySelector(':scope > .ink-marks');
     if (!svg) return;
     d.el?.remove();
-    d.el = markEl(this.markOf(d), this.width(svg), this.maker());
+    const mark = this.markOf(d);
+    const sw = this.width(svg);
+    const make = this.maker();
+    d.el = markEl(mark, sw, make);
     d.el.classList.add('ink-draft');
+    // An arrow on a sketch: the anchors of the boxes its ends went to.
+    if (mark.kind === 'arrow' && isBoard(d.fig)) {
+      for (const p of [mark.from, mark.to]) {
+        const s = snapEnd(p, d.fig.inkMarks || [], 0);
+        if (s) this.anchorDots(d.el, s.box, s.at, sw, make);
+      }
+    }
     svg.append(d.el);
+  }
+
+  // A double-click with no tool on (fig: the picture): words there.
+  write(e, fig) {
+    const hit = this.at(e, fig);
+    if (!hit) return;
+    const img = fig.querySelector(':scope > img');
+    const size = textSize(img.naturalWidth, img.naturalHeight);
+    const marks = fig.inkMarks || [];
+    const g = e.target.closest?.('.ink-mark');
+    const on = g && marks.find((m) => m.kind === 'text' && String(m.line) === g.dataset.line);
+    const box = !on && marks.filter((m) => m.kind === 'box' && hit.p[0] >= m.x && hit.p[0] <= m.x + m.w && hit.p[1] >= m.y && hit.p[1] <= m.y + m.h)
+      .sort((a, b) => a.w * a.h - b.w * b.h)[0];
+    const words = on || (box && wordsIn(marks, box, size)[0]);
+    this.select(null);
+    if (words) {
+      this.c.typeOver(this.spot(fig, words.x, words.y, 70, size / 2), words.text, (text) => {
+        if (text === words.text) return;
+        this.c.h.onInk?.(fig, text ? { set: [words.line, { ...words, text }] } : { remove: words.line });
+      }, 'Words (empty: none)');
+      return;
+    }
+    const [x, y] = (box ? [box.x + size * 0.4, box.y + size * 0.4] : hit.p).map(Math.round);
+    this.c.typeOver(this.spot(fig, x, y, 70, size / 2), '', (text) => {
+      if (text) this.c.h.onInk?.(fig, { add: inkLine({ kind: 'text', color: this.color, x, y, text }) });
+    }, box ? 'Words in the box' : 'Words on the picture');
   }
 
   // Where on the screen a point of a picture is, as it moves: () → a rect

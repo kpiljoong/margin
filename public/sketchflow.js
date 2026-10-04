@@ -5,11 +5,9 @@
 // numbered dots, an arrow joining nothing — is counted, left to the user
 // (or an agent). Plain logic, tested without a page (test/sketchflow.test.mjs).
 
-import { parseInk, BOARD_SIZE } from './ink.js';
+import { parseInk, textSize, BOARD_SIZE } from './ink.js';
 import { isStepText } from './flow.js';
 
-// The size of a sketch's words (as public/ink.js draws them), from its board.
-const textSize = (board) => Math.max(2, Math.round(Math.max(board?.w || BOARD_SIZE[0], board?.h || BOARD_SIZE[1]) / 320)) * 9;
 // About how wide words are drawn: wide letters (CJK) a size, others half one.
 const textWidth = (t, size) => [...t].reduce((w, ch) => w + (/[\u1100-\u11ff\u2e80-\ua4cf\uac00-\ud7af\uf900-\ufaff\uff00-\uffef]/.test(ch) ? size : size * 0.55), 0);
 
@@ -31,7 +29,7 @@ function stepName(words) {
 // { pen, num, arrows } }, or null when there is nothing to make a step of.
 export function sketchToFlow(src) {
   const { marks, board } = parseInk(src);
-  const size = textSize(board);
+  const size = textSize(board?.w || BOARD_SIZE[0], board?.h || BOARD_SIZE[1]);
   const near = size * 3; // how far from a step an arrow's end may be
   const nodes = marks.filter((m) => m.kind === 'box').map((m) => ({ rect: { x: m.x, y: m.y, w: m.w, h: m.h }, words: [], box: true }));
   const loose = [];

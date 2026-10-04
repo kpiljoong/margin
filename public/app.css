@@ -950,6 +950,8 @@ iframe.mermaid-frame { position: fixed; left: -10000px; top: 0; width: 1600px; h
 .canvas-pane:not(.presenting) .canvas-stage:not(.inking) .ink-figure.ink-editable .ink-mark text { pointer-events: bounding-box; cursor: move; }
 .ink-mark.ink-picked { filter: drop-shadow(0 0 2px var(--accent)) drop-shadow(0 0 2px var(--accent)); }
 .ink-mark.ink-moving { opacity: 0; }
+.ink-anchor { fill: #fff; stroke: var(--accent); }
+.ink-anchor.on { fill: var(--accent); }
 .ink-grip { fill: #fff; stroke: var(--accent); pointer-events: all; cursor: grab; }
 .ink-grip[data-mid] { fill: var(--accent); stroke: #fff; opacity: .8; cursor: copy; }
 .canvas-pane.presenting .ink-grips { display: none; }

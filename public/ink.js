@@ -227,6 +227,62 @@ export function removeMark(src, lineNo) {
   return ls.join('\n');
 }
 
+// ---- sketches: arrows that stay on boxes
+//
+// An arrow drawn to a box of a sketch ends on the middle of one of its
+// sides (an anchor); a box moved or reshaped takes the arrow ends on its
+// anchors along. Nothing new in the lines: an end on an anchor is all it
+// takes.
+
+// The size words are drawn at on a picture w × h (as markEl draws them).
+export const textSize = (w, h) => strokeOf(w, h) * 9;
+
+// A box's anchors: the middles of its top, right, bottom and left sides.
+export const anchors = (b) => [[b.x + b.w / 2, b.y], [b.x + b.w, b.y + b.h / 2], [b.x + b.w / 2, b.y + b.h], [b.x, b.y + b.h / 2]].map(([x, y]) => [Math.round(x), Math.round(y)]);
+
+const toBox = ([x, y], b) => Math.hypot(Math.max(b.x - x, 0, x - (b.x + b.w)), Math.max(b.y - y, 0, y - (b.y + b.h)));
+
+// The anchor an arrow's end at p goes to: of the box nearest it, within
+// reach (inside one, the smallest), not box `not`. → { at, box } or null.
+export function snapEnd(p, marks, reach, not = null) {
+  let best = null;
+  for (const b of marks) {
+    if (b.kind !== 'box' || b === not || (not && b.line === not.line)) continue;
+    const d = toBox(p, b);
+    if (d > reach) continue;
+    if (!best || d < best.d || (d === best.d && b.w * b.h < best.box.w * best.box.h)) best = { d, box: b };
+  }
+  if (!best) return null;
+  const at = anchors(best.box).reduce((a, q) => (Math.hypot(q[0] - p[0], q[1] - p[1]) < Math.hypot(a[0] - p[0], a[1] - p[1]) ? q : a));
+  return { at, box: best.box };
+}
+
+// An arrow with its ends snapped to the boxes of `marks` (not both on one).
+export function snapArrow(a, marks, reach) {
+  const from = snapEnd(a.from, marks, reach);
+  const to = snapEnd(a.to, marks, reach, from?.box);
+  return { ...a, from: from?.at || a.from, to: to?.at || a.to };
+}
+
+// Box `before` made `after`: the arrows with an end on one of its anchors,
+// that end on the same anchor of `after`. → [[line, arrow]].
+export function followBox(marks, before, after) {
+  const was = anchors(before);
+  const now = anchors(after);
+  const on = (p) => was.findIndex((q) => q[0] === Math.round(p[0]) && q[1] === Math.round(p[1]));
+  const out = [];
+  for (const m of marks) {
+    if (m.kind !== 'arrow') continue;
+    const [i, j] = [on(m.from), on(m.to)];
+    if (i < 0 && j < 0) continue;
+    out.push([m.line, { ...m, from: i < 0 ? m.from : now[i], to: j < 0 ? m.to : now[j] }]);
+  }
+  return out;
+}
+
+// The words written in a box (starting in it), top to bottom.
+export const wordsIn = (marks, b, size) => marks.filter((m) => m.kind === 'text' && toBox([m.x + 2, m.y + size / 2], b) <= size / 3).sort((p, q) => p.y - q.y || p.x - q.x);
+
 // ---- drawing (needs a page)
 
 const SVG = 'http://www.w3.org/2000/svg';
