@@ -491,6 +491,7 @@ input[type=checkbox] { accent-color: var(--accent); }
 /* palette extras */
 .palette-item .pi-icon { width: 14px; color: var(--fg-faint); }
 .palette-item .pi-label { white-space: pre; overflow: hidden; text-overflow: ellipsis; }
+.palette-item .pi-alias { color: var(--fg-dim); margin-left: 10px; }
 .palette-empty { padding: 8px 14px; color: var(--fg-faint); }
 
 /* settings */

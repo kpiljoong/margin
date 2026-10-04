@@ -6,7 +6,7 @@ import { openLeader, linkHints, pickHint } from './leader.js';
 import { Macros, describe as describeMacro } from './macro.js';
 import { fillTemplate, isTemplate, TEMPLATE_DIR } from './templates.js';
 import { MarkdownEditor, setEditorKeys } from './editor.js';
-import { emacs, occurLines, occurPattern, keyName as emacsKeyName, commandOf as emacsCommandOf, COMMAND_DOCS, PREFIXES as EMACS_PREFIXES } from './emacs.js';
+import { emacs, occurLines, occurPattern, keyName as emacsKeyName, commandOf as emacsCommandOf, COMMAND_DOCS, PREFIXES as EMACS_PREFIXES, emacsName, keysOf as emacsKeysOf, emacsCommands } from './emacs.js';
 import { hunksOf } from './track.js';
 import { renderDiagrams } from './diagrams.js';
 import { flowToMermaid, flowsAsMermaid, parseFlow, isStepText, flowStepNames, nameKey, flowTour, flowLineAt, COLORS } from './flow.js';
@@ -3202,13 +3202,38 @@ function allCommands() {
       if (it.mx === false) continue;
       if (it.recipe) { const c = out.get(norm(`Recipe: ${it.recipe.name}`)); if (c && !c.leader) c.leader = keys; continue; }
       const same = out.get(norm(it.cmd || '')) || out.get(norm(it.label));
-      if (same) { same.leader ||= keys; continue; }
-      add({ name: leafName(it, group), run: it.run, leader: keys });
+      if (same) { same.leader ||= keys; same.alias ||= it.emacs; continue; }
+      add({ name: leafName(it, group), run: it.run, leader: keys, alias: it.emacs });
     }
   };
   walk(leaderTree(), [], '');
-  return [...out.values()];
+  // Emacs's names: on Margin's own commands as a second name (M-x finds
+  // either); with Emacs keys on, the rest as commands of their own.
+  const all = [...out.values()];
+  const named = new Map();
+  for (const c of all) {
+    c.alias ||= EMACS_ALIASES[c.name];
+    if (c.alias) named.set(c.alias, c);
+  }
+  if (emacs.on) {
+    for (const e of emacsCommands()) {
+      const had = named.get(e.name);
+      if (had) { had.emacsKey ||= e.keys; continue; }
+      if (!editorShown(tab)) continue;
+      all.push({ name: e.name, run: () => emacsRun(tab, e.cmd), emacsKey: e.keys, doc: e.doc, emacsOnly: true, ctx: ['file'] });
+    }
+  }
+  return all;
 }
+
+// Margin's commands (M-x names) that Emacs has under a name of its own.
+const EMACS_ALIASES = {
+  'Save': 'save-buffer', 'Switch note (buffers)…': 'switch-to-buffer', 'Close tab': 'kill-buffer', 'Split: open to the side': 'split-window-right',
+  'Dired: the folder of this note': 'dired', 'Narrow to this section or the selected lines': 'narrow-to-region', 'Widen: show the whole note': 'widen',
+  'Go to line…': 'goto-line', 'Replace in note': 'replace-string', 'Go back': 'pop-global-mark', 'Messages': 'view-echo-area-messages',
+  'Describe a key…': 'describe-key', 'Describe a command…': 'describe-command', 'Paste from the copy history…': 'yank-from-kill-ring',
+  'Rename / move current note…': 'rename-visited-file', 'Tasks in all notes (agenda)': 'org-agenda', 'Back to the note before': 'mode-line-other-buffer',
+};
 
 function mxItems(q) {
   const tab = activeTab();
@@ -3216,8 +3241,9 @@ function mxItems(q) {
   const leaderKey = kbd('leader') || '⌥X';
   return rankCommands(allCommands(), q, { recent: mxRecent, context }).slice(0, 200).map(({ cmd, m }) => ({
     icon: cmd.inBuffer ? '◆' : cmd.recipe ? '✦' : '',
-    label: marked(cmd.name, m.idx),
-    hint: [cmd.inBuffer ? `key ${cmd.inBuffer}` : '', cmd.shortcut ? kbd(cmd.shortcut) : cmd.prefix || '', cmd.leader ? `${leaderKey} ${cmd.leader.join(' ')}` : ''].filter(Boolean).join('  ·  '),
+    // Found by its Emacs name: that name, then Margin's.
+    label: m.alias ? [...marked(cmd.alias, m.idx), h('span', { class: 'pi-alias' }, cmd.name)] : marked(cmd.name, m.idx),
+    hint: [cmd.inBuffer ? `key ${cmd.inBuffer}` : '', cmd.alias && !m.alias ? cmd.alias : '', cmd.emacsKey || '', cmd.shortcut ? kbd(cmd.shortcut) : cmd.prefix || '', cmd.leader ? `${leaderKey} ${cmd.leader.join(' ')}` : ''].filter(Boolean).join('  ·  '),
     run: () => {
       mxRecent = used(mxRecent, cmd.name);
       store.setItem('an.mx', JSON.stringify(mxRecent));
@@ -5692,6 +5718,9 @@ function topicOf(cmd) {
     leaders: leaderPaths(cmd.name, cmd.recipe ? cmd.name.replace(/^Recipe: /, '') : null),
     inBuffer: kind ? { kind, key: cmd.inBuffer } : null,
     recipe: !!cmd.recipe,
+    alias: cmd.alias || null,
+    emacsKey: cmd.emacsKey || null,
+    emacsOnly: !!cmd.emacsOnly,
     run: cmd.run,
   };
 }
@@ -5706,7 +5735,7 @@ function commandDoc(cmd) {
     const own = docOf(cmd.name);
     return own || `In the ${SPECIAL[kind]?.title || kind} buffer, the key ${cmd.inBuffer}: ${cmd.name.replace(/^[^:]+: /, '').replace(/…$/, '')}.`;
   }
-  return docOf(cmd.name) || '';
+  return docOf(cmd.name) || cmd.doc || '';
 }
 
 // Where a command is under the leader: every path (yours from LEADER.md too).
@@ -5816,7 +5845,11 @@ function describeKey() {
 // An Emacs key's command, for help: run on the note in view.
 function emacsTopic(cmd, keys) {
   const tab = fileTab();
-  return { name: cmd, doc: COMMAND_DOCS[cmd] || '', emacsKey: keys, leaders: [], run: tab?.editor ? () => emacsRun(tab, cmd) : null };
+  const name = emacsName(cmd);
+  // A Margin command of its own (save-buffer is Save): that one, with the key.
+  const own = allCommands().find((c) => c.alias === name);
+  if (own) return { ...topicOf(own), emacsKey: keys };
+  return { name, doc: COMMAND_DOCS[cmd] || '', emacsKey: keys, emacsOnly: true, leaders: [], run: tab?.editor ? () => emacsRun(tab, cmd) : null };
 }
 
 function describeLeader() {
@@ -5855,19 +5888,20 @@ function helpView(tab) {
   if (t.shortcut && kbd(t.shortcut)) keys.push(h('li', {}, h('kbd', {}, kbd(t.shortcut)), t.where ? ` ${t.where}` : '', ' — a shortcut: change it in Settings › Keyboard shortcuts.'));
   if (t.prefix) keys.push(h('li', {}, 'Quick open with ', h('kbd', {}, t.prefix), ' first.'));
   if (t.emacsKey) keys.push(h('li', {}, h('kbd', {}, t.emacsKey), ' — in the editor, with Emacs keys on (Settings).'));
+  if (t.alias) keys.push(h('li', {}, h('kbd', {}, `${L} : ${t.alias}`), ' — by its name in Emacs (M-x).'));
   for (const p of t.leaders || []) {
     keys.push(h('li', {}, h('kbd', {}, `${L} ${p.keys.join(' ')}`),
       p.custom ? ` — yours, from ${LEADER_FILE} line ${p.custom}.` : ` — under the leader${p.off ? ' (not here: it needs a note, or a selection, in view)' : ''}.`));
   }
   if (t.inBuffer) keys.push(h('li', {}, h('kbd', {}, t.inBuffer.key), ` — in the ${SPECIAL[t.inBuffer.kind]?.title || t.inBuffer.kind} buffer.`));
-  if (!t.unbound && !t.emacsKey) keys.push(h('li', {}, h('kbd', {}, `${L} :`), ' — by name, as every command (M-x).'));
+  if (!t.unbound) keys.push(h('li', {}, h('kbd', {}, `${L} :`), ' — by name, as every command (M-x).'));
   wrap.append(h('h3', {}, 'Keys'), keys.length ? h('ul', { class: 'help-keys' }, keys) : h('p', {}, 'None.'));
   const example = `- \`o x\` ${t.name}`;
   wrap.append(h('h3', {}, 'To change them'),
-    h('p', {}, t.emacsKey ? 'Emacs keys are as Emacs has them, not changed one by one: turn them all off in Settings › Editor.'
+    h('p', {}, t.emacsOnly ? 'Emacs keys are as Emacs has them, not changed one by one: turn them all off in Settings › Editor.'
       : t.unbound ? `Put a command on it: a shortcut in Settings › Keyboard shortcuts, or a key after ${L} in ${LEADER_FILE}.`
         : `A key after ${L} of your own (or one taken away, or moved) is a line in ${LEADER_FILE}, a note in this folder:`),
-    ...(t.unbound || t.emacsKey ? [] : [h('pre', { class: 'help-example' }, example)]),
+    ...(t.unbound || t.emacsOnly ? [] : [h('pre', { class: 'help-example' }, example)]),
     h('div', { class: 'help-actions' },
       t.run ? h('button', { class: 'btn primary', onclick: () => runTopic(t) }, 'Run it') : null,
       h('button', { class: 'btn', onclick: editLeaderKeys }, `Edit leader keys (${LEADER_FILE})`),
@@ -6803,7 +6837,7 @@ function defaultLeaderTree() {
     { key: ':', label: 'Run a command by name (M-x)…', run: () => openPalette('>'), mx: false },
     { key: '`', label: 'The note before', cmd: 'Back to the note before', run: otherBuffer },
     { key: 'f', label: 'files', items: [
-      { key: 'f', label: 'Find a file…', run: () => openPalette() },
+      { key: 'f', label: 'Find a file…', run: () => openPalette(), emacs: 'find-file' },
       { key: 'n', label: 'New note…', cmd: 'New note', run: () => newNote() },
       { key: 't', label: 'New note from template…', run: () => pickTemplate((t) => newNote(undefined, t)) },
       { key: 'j', label: 'Today’s journal', cmd: 'Open today’s journal note', run: openDaily },
@@ -6827,12 +6861,12 @@ function defaultLeaderTree() {
       { key: 'l', label: 'Go to line…', when: () => !!tab, run: () => openPalette(':') },
       { key: 'n', label: 'Next search result', run: () => stepSearch(1) },
       { key: 'p', label: 'Previous search result', run: () => stepSearch(-1) },
-      { key: 'q', label: 'Query replace…', cmd: 'Query replace (match by match: y n ! . ^ q)', when: () => !!tab, run: () => queryReplaceIn(tab) },
-      { key: 'Q', label: 'Query replace a regular expression…', cmd: 'Query replace regexp (match by match)', when: () => !!tab, run: () => queryReplaceIn(tab, true) },
-      { key: 'o', label: 'Occur: lines that match…', cmd: 'Occur: the lines of this note that match, as a buffer', when: () => !!tab, run: () => occur(tab) },
+      { key: 'q', label: 'Query replace…', cmd: 'Query replace (match by match: y n ! . ^ q)', emacs: 'query-replace', when: () => !!tab, run: () => queryReplaceIn(tab) },
+      { key: 'Q', label: 'Query replace a regular expression…', cmd: 'Query replace regexp (match by match)', emacs: 'query-replace-regexp', when: () => !!tab, run: () => queryReplaceIn(tab, true) },
+      { key: 'o', label: 'Occur: lines that match…', cmd: 'Occur: the lines of this note that match, as a buffer', emacs: 'occur', when: () => !!tab, run: () => occur(tab) },
     ] },
     { key: 'b', label: 'buffers', items: [
-      { key: 'b', label: 'Switch note (buffers)…', run: pickTab },
+      { key: 'b', label: 'Switch note (buffers)…', run: pickTab, emacs: 'switch-to-buffer' },
       { key: '`', label: 'The note before', cmd: 'Back to the note before', run: otherBuffer },
       { key: 'm', label: 'Messages', run: openMessages },
       { key: 'r', label: 'Agent runs', cmd: 'Agent runs (as a buffer)', run: openRuns },
@@ -6850,7 +6884,7 @@ function defaultLeaderTree() {
       { key: 'h', label: 'Go to the sidebar', run: focusSidebar },
       { key: 'l', label: 'Go to the editor', run: focusEditor },
       { key: 'p', label: 'Go to the preview', when: () => previewShown(tab), run: () => focusPreview(tab) },
-      { key: 'w', label: 'Go to the other pane', when: () => S.groups.length > 1, run: () => { splitRight(); focusEditor(); } },
+      { key: 'w', label: 'Go to the other pane', when: () => S.groups.length > 1, run: () => { splitRight(); focusEditor(); }, emacs: 'other-window' },
       { key: 'v', label: 'Split to the side', cmd: 'Split: open to the side', when: () => S.groups.length < 2, run: splitRight },
       { key: 's', label: 'Show / hide the sidebar', cmd: 'Toggle sidebar', run: toggleSidebar },
       { key: 'z', label: 'Focus mode', run: toggleFocusMode },
@@ -6866,29 +6900,29 @@ function defaultLeaderTree() {
       { key: 'w', label: 'Widen: the whole note', cmd: 'Widen: show the whole note', when: () => !!tab.editor?.narrowed, run: () => widenHere(tab) },
     ] },
     { key: 'e', label: 'edit text', when: () => editorShown(tab), items: [
-      { key: 'u', label: 'Uppercase the word or selection', cmd: 'Edit: uppercase the word or selection', run: () => emacsRun(tab, 'upcase-word') },
-      { key: 'l', label: 'Lowercase the word or selection', cmd: 'Edit: lowercase the word or selection', run: () => emacsRun(tab, 'downcase-word') },
-      { key: 'c', label: 'Capitalize the word or selection', cmd: 'Edit: capitalize the word or selection', run: () => emacsRun(tab, 'capitalize-word') },
-      { key: 'q', label: `Fill the paragraph (wrap at ${emacs.fillColumn})`, cmd: 'Edit: fill the paragraph (wrap it at the fill column)', run: () => emacsRun(tab, 'fill-paragraph') },
-      { key: 'Q', label: 'Unfill the paragraph (one line)', cmd: 'Edit: unfill the paragraph (one line)', run: () => emacsRun(tab, 'unfill-paragraph') },
-      { key: 'f', label: 'Set the fill column…', cmd: 'Edit: set the fill column…', run: setFillColumn },
-      { key: 'j', label: 'Join this line to the one before', cmd: 'Edit: join this line to the one before', run: () => emacsRun(tab, 'join-line') },
-      { key: 't', label: 'Swap this line and the one before', cmd: 'Edit: transpose lines', run: () => emacsRun(tab, 'transpose-lines') },
-      { key: 's', label: 'Sort the selected lines', cmd: 'Edit: sort lines', run: () => emacsRun(tab, 'sort-lines') },
+      { key: 'u', label: 'Uppercase the word or selection', cmd: 'Edit: uppercase the word or selection', emacs: 'upcase-word', run: () => emacsRun(tab, 'upcase-word') },
+      { key: 'l', label: 'Lowercase the word or selection', cmd: 'Edit: lowercase the word or selection', emacs: 'downcase-word', run: () => emacsRun(tab, 'downcase-word') },
+      { key: 'c', label: 'Capitalize the word or selection', cmd: 'Edit: capitalize the word or selection', emacs: 'capitalize-word', run: () => emacsRun(tab, 'capitalize-word') },
+      { key: 'q', label: `Fill the paragraph (wrap at ${emacs.fillColumn})`, cmd: 'Edit: fill the paragraph (wrap it at the fill column)', emacs: 'fill-paragraph', run: () => emacsRun(tab, 'fill-paragraph') },
+      { key: 'Q', label: 'Unfill the paragraph (one line)', cmd: 'Edit: unfill the paragraph (one line)', emacs: 'unfill-paragraph', run: () => emacsRun(tab, 'unfill-paragraph') },
+      { key: 'f', label: 'Set the fill column…', cmd: 'Edit: set the fill column…', emacs: 'set-fill-column', run: setFillColumn },
+      { key: 'j', label: 'Join this line to the one before', cmd: 'Edit: join this line to the one before', emacs: 'join-line', run: () => emacsRun(tab, 'join-line') },
+      { key: 't', label: 'Swap this line and the one before', cmd: 'Edit: transpose lines', emacs: 'transpose-lines', run: () => emacsRun(tab, 'transpose-lines') },
+      { key: 's', label: 'Sort the selected lines', cmd: 'Edit: sort lines', emacs: 'sort-lines', run: () => emacsRun(tab, 'sort-lines') },
       { key: 'S', label: 'Sort the selected lines, reversed', cmd: 'Edit: sort lines, reversed', run: () => emacsRun(tab, 'sort-lines', { raw: true }) },
-      { key: 'o', label: 'Delete the blank lines around', cmd: 'Edit: delete blank lines', run: () => emacsRun(tab, 'delete-blank-lines') },
-      { key: 'w', label: 'Delete trailing spaces', cmd: 'Edit: delete trailing whitespace', run: () => emacsRun(tab, 'delete-trailing-whitespace') },
+      { key: 'o', label: 'Delete the blank lines around', cmd: 'Edit: delete blank lines', emacs: 'delete-blank-lines', run: () => emacsRun(tab, 'delete-blank-lines') },
+      { key: 'w', label: 'Delete trailing spaces', cmd: 'Edit: delete trailing whitespace', emacs: 'delete-trailing-whitespace', run: () => emacsRun(tab, 'delete-trailing-whitespace') },
     ] },
     { key: 'x', label: 'mark & registers', when: () => editorShown(tab) || emacs.registers.size > 0, items: [
-      { key: 'SPC', label: 'Set the mark', cmd: 'Mark: set the mark here', when: () => emacs.on && editorShown(tab), run: () => emacsRun(tab, 'set-mark') },
-      { key: 'x', label: 'Swap the cursor and the mark', cmd: 'Mark: exchange point and mark', when: () => emacs.on && editorShown(tab), run: () => emacsRun(tab, 'exchange-point-and-mark') },
-      { key: 'p', label: 'Back to the mark before', cmd: 'Mark: back to the mark before (pop)', when: () => editorShown(tab), run: () => emacsRun(tab, 'set-mark', { raw: true }) },
-      { key: 'h', label: 'Select the whole note', cmd: 'Mark: select the whole note', when: () => editorShown(tab), run: () => emacsRun(tab, 'mark-whole-buffer') },
-      { key: 'r', label: 'Keep this place in a register…', cmd: 'Register: keep this place (then a letter)', when: () => editorShown(tab), run: () => emacsRun(tab, 'point-to-register') },
-      { key: 'j', label: 'Go to a register…', cmd: 'Register: go to the place in it (then a letter)', when: () => editorShown(tab), run: () => emacsRun(tab, 'jump-to-register') },
-      { key: 's', label: 'Copy the selection to a register…', cmd: 'Register: copy the selection to it (then a letter)', when: () => editorShown(tab), run: () => emacsRun(tab, 'copy-to-register') },
-      { key: 'i', label: 'Insert a register…', cmd: 'Register: insert its text (then a letter)', when: () => editorShown(tab), run: () => emacsRun(tab, 'insert-register') },
-      { key: 'l', label: 'List the registers…', cmd: 'Registers: list them', run: listRegisters },
+      { key: 'SPC', label: 'Set the mark', cmd: 'Mark: set the mark here', emacs: 'set-mark-command', when: () => emacs.on && editorShown(tab), run: () => emacsRun(tab, 'set-mark') },
+      { key: 'x', label: 'Swap the cursor and the mark', cmd: 'Mark: exchange point and mark', emacs: 'exchange-point-and-mark', when: () => emacs.on && editorShown(tab), run: () => emacsRun(tab, 'exchange-point-and-mark') },
+      { key: 'p', label: 'Back to the mark before', cmd: 'Mark: back to the mark before (pop)', emacs: 'pop-to-mark-command', when: () => editorShown(tab), run: () => emacsRun(tab, 'set-mark', { raw: true }) },
+      { key: 'h', label: 'Select the whole note', cmd: 'Mark: select the whole note', emacs: 'mark-whole-buffer', when: () => editorShown(tab), run: () => emacsRun(tab, 'mark-whole-buffer') },
+      { key: 'r', label: 'Keep this place in a register…', cmd: 'Register: keep this place (then a letter)', emacs: 'point-to-register', when: () => editorShown(tab), run: () => emacsRun(tab, 'point-to-register') },
+      { key: 'j', label: 'Go to a register…', cmd: 'Register: go to the place in it (then a letter)', emacs: 'jump-to-register', when: () => editorShown(tab), run: () => emacsRun(tab, 'jump-to-register') },
+      { key: 's', label: 'Copy the selection to a register…', cmd: 'Register: copy the selection to it (then a letter)', emacs: 'copy-to-register', when: () => editorShown(tab), run: () => emacsRun(tab, 'copy-to-register') },
+      { key: 'i', label: 'Insert a register…', cmd: 'Register: insert its text (then a letter)', emacs: 'insert-register', when: () => editorShown(tab), run: () => emacsRun(tab, 'insert-register') },
+      { key: 'l', label: 'List the registers…', cmd: 'Registers: list them', emacs: 'list-registers', run: listRegisters },
     ] },
     { key: 'l', label: 'links', items: [
       { key: 'l', label: 'Follow the link at the cursor', when: () => editorShown(tab), run: () => { if (!followLinkAt(tab.editor, tab)) toast('No link at the cursor'); } },
@@ -6933,8 +6967,8 @@ function defaultLeaderTree() {
       { key: 'm', label: S.meeting ? 'Leave meeting mode' : 'Meeting mode', cmd: 'Meeting mode (large text, for sharing the screen)', run: toggleMeeting },
     ] },
     { key: 'q', label: 'macro', items: [
-      { key: 'q', label: macros.recording ? 'Stop recording' : 'Start recording', cmd: 'Macro: start / stop recording', run: toggleRecording },
-      { key: 'r', label: 'Play', when: () => !!macros.last, run: () => playMacro(1) },
+      { key: 'q', label: macros.recording ? 'Stop recording' : 'Start recording', cmd: 'Macro: start / stop recording', emacs: 'kmacro-start-macro', run: toggleRecording },
+      { key: 'r', label: 'Play', when: () => !!macros.last, run: () => playMacro(1), emacs: 'kmacro-end-and-call-macro' },
       { key: 'n', label: 'Play N times…', when: () => !!macros.last, run: playMacroTimes },
       { key: 'e', label: 'Play until it can’t go on', when: () => !!macros.last, run: () => playMacro(Infinity) },
       { key: 's', label: 'Play at every search result', when: () => !!macros.last && !!S.searchQuery.trim(), run: playAtResults },

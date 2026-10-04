@@ -36,3 +36,12 @@ test('used: most recent first, once, at most max', () => {
   assert.deepEqual(used(['a', 'b', 'c'], 'b'), ['b', 'a', 'c']);
   assert.deepEqual(used(['a', 'b'], 'c', 2), ['c', 'a']);
 });
+
+test('a second name (Emacs’s) finds a command too, and says it matched', () => {
+  const list = [...cmds, { name: 'Edit: fill the paragraph (wrap it at the fill column)', alias: 'fill-paragraph' }, { name: 'Save', alias: 'save-buffer' }];
+  const [top] = rankCommands(list, 'fill-para');
+  assert.equal(top.cmd.alias, 'fill-paragraph');
+  assert.ok(top.m.alias, 'matched by the alias');
+  assert.deepEqual(names(rankCommands(list, 'save-buf')), ['Save']);
+  assert.ok(!rankCommands(list, 'save')[0].m.alias, 'its own name when that matches as well');
+});

@@ -446,7 +446,36 @@ export const COMMAND_DOCS = {
   'set-fill-column': 'Set the fill column (to the caret’s column, or the number)', 'point-to-register': 'Keep this place in a register (a letter)', 'jump-to-register': 'Go to the place in a register',
   'copy-to-register': 'Copy the region into a register', 'insert-register': 'Insert the text in a register', narrow: 'Narrow to this section or the selected lines', widen: 'Widen: the whole note',
   'goto-line': 'Go to line', 'next-error': 'The next occur (or search) result', 'previous-error': 'The occur (or search) result before', occur: 'Lines that match, as a buffer',
+  'capitalize-region': 'Capitalize the words in the region', 'unfill-paragraph': 'Join the paragraph’s lines into one', 'sort-lines': 'Sort the lines of the region (⌃U first: reversed)',
+  'delete-trailing-whitespace': 'Delete spaces at the ends of lines (the region’s, else the note’s)',
 };
+
+// Emacs's own names, where ours are shorter: M-x and describe-key show these.
+const NAMES = {
+  'set-mark': 'set-mark-command', 'copy-region': 'kill-ring-save', narrow: 'narrow-to-region', 'split-window': 'split-window-right',
+  'kmacro-start': 'kmacro-start-macro', 'kmacro-end': 'kmacro-end-macro', 'kmacro-play': 'kmacro-end-and-call-macro', redo: 'undo-redo',
+};
+export const emacsName = (cmd) => NAMES[cmd] || cmd;
+
+// The keys a command is on ("C-x C-s"), the fewest keys first.
+export function keysOf(cmd) {
+  const out = [];
+  const walk = (map, path) => {
+    for (const [k, c] of Object.entries(map)) {
+      if (c === cmd) out.push([...path, k].join(' '));
+      else if (PREFIXES[c] && MAPS[PREFIXES[c]]) walk(MAPS[PREFIXES[c]], [...path, k]);
+    }
+  };
+  walk(KEYS, []);
+  return out.sort((a, b) => a.split(' ').length - b.split(' ').length);
+}
+
+// The commands M-x lists by their Emacs names: { cmd, name, keys, doc }.
+// Prefixes, arguments and C-g are keys only.
+export function emacsCommands() {
+  return Object.keys(COMMAND_DOCS).filter((cmd) => !ARGS.has(cmd) && cmd !== 'keyboard-quit' && cmd !== 'ctl-x')
+    .map((cmd) => ({ cmd, name: emacsName(cmd), keys: keysOf(cmd)[0] || '', doc: COMMAND_DOCS[cmd] }));
+}
 
 // The command a key (or a key after a prefix: "C-x C-s") is on, or null.
 export function commandOf(keys) {

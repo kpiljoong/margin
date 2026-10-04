@@ -5,7 +5,7 @@ import assert from 'node:assert/strict';
 import {
   killLineRange, recase, transposeChars, transposeWords, transposeLines, joinLine, spaceAround, deleteBlankLines,
   zapRange, paragraphEdge, displayWidth, fillParagraph, sortLines, trimTrailing, occurLines, occurPattern, expansions,
-  KillRing, keyName, commandOf,
+  KillRing, keyName, commandOf, emacsCommands, emacsName, keysOf,
 } from '../public/emacs.js';
 
 // Apply an edit { from, to, text, caret } to v.
@@ -117,4 +117,16 @@ test('key names, and the commands on them', () => {
   assert.equal(commandOf('M-s o'), 'occur');
   assert.equal(commandOf('C-k'), 'kill-line');
   assert.equal(commandOf('C-x q'), null);
+});
+
+test('M-x: the commands by Emacs’s names, with their keys', () => {
+  const list = emacsCommands();
+  const by = (n) => list.find((c) => c.name === n);
+  assert.deepEqual(by('save-buffer'), { cmd: 'save-buffer', name: 'save-buffer', keys: 'C-x C-s', doc: 'Save' });
+  assert.equal(by('set-mark-command').keys, 'C-SPC');
+  assert.equal(by('kill-ring-save').keys, 'M-w');
+  assert.equal(by('sort-lines').keys, '', 'on no key: by name only');
+  assert.ok(!list.some((c) => ['universal-argument', 'ctl-x', 'keyboard-quit', 'meta-prefix'].includes(c.cmd)), 'prefixes are keys only');
+  assert.deepEqual(keysOf('point-to-register'), ['C-x r SPC', 'C-x r C-SPC', 'C-x r C-@']);
+  assert.equal(emacsName('redo'), 'undo-redo');
 });

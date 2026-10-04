@@ -23,15 +23,21 @@ export function fuzzy(qRaw, text) {
   return { score: score - text.length * 0.01, idx };
 }
 
-// cmds: [{ name, ctx? }] (ctx: the buffer kinds where it belongs). recent:
-// names, most recent first. → [{ cmd, m }] in the order to show.
+// cmds: [{ name, alias?, ctx? }] (alias: a second name, Emacs's; ctx: the
+// buffer kinds where it belongs). recent: names, most recent first.
+// → [{ cmd, m }] in the order to show; m.alias when the alias matched better.
 // Without a query: the buffer's commands, then recent ones, then the rest as
 // listed. With one: by score, with a lift for recent and for the buffer's.
 export function rankCommands(cmds, query, { recent = [], context = '' } = {}) {
   const rank = new Map(recent.map((n, i) => [n, i]));
   const here = (c) => !!context && !!c.ctx?.includes(context);
   const lift = (c) => (rank.has(c.name) ? Math.max(1, 4 - rank.get(c.name) * 0.25) : 0) + (here(c) ? 3 : 0);
-  const out = cmds.map((cmd, i) => ({ cmd, i, m: fuzzy(query, cmd.name) })).filter((x) => x.m);
+  const match = (cmd) => {
+    const m = fuzzy(query, cmd.name);
+    const a = cmd.alias && query.trim() ? fuzzy(query, cmd.alias) : null;
+    return a && (!m || a.score > m.score) ? { ...a, alias: true } : m;
+  };
+  const out = cmds.map((cmd, i) => ({ cmd, i, m: match(cmd) })).filter((x) => x.m);
   if (query.trim()) return out.sort((a, b) => b.m.score + lift(b.cmd) - (a.m.score + lift(a.cmd)) || a.i - b.i);
   const group = (c) => (here(c) ? 0 : rank.has(c.name) ? 1 : 2);
   return out.sort((a, b) => group(a.cmd) - group(b.cmd)

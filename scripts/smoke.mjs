@@ -958,6 +958,22 @@ await check('F8 / ⇧F8 step through the search results from the note; ⌥. repe
     got.occur = await inPage(`await until(() => $$('.occur-row').length); return $$('.occur-row').map((r) => r.textContent);`);
     await keys('j j RET');
     got.occurAt = await inPage(`await sleep(300); const ta = $$('.editor-wrap textarea').find((t) => t.offsetParent); return ta && document.activeElement === ta ? ta.value.slice(0, ta.selectionStart).split('\\n').length : null;`);
+    // M-x knows Emacs's names: its own commands (kill-line) and Margin's (save-buffer is Save).
+    got.mx = await inPage(`
+      const ask = async (q) => {
+        document.activeElement.dispatchEvent(new KeyboardEvent('keydown', { code: 'KeyX', key: '\u2248', altKey: true, bubbles: true, cancelable: true }));
+        await until(() => $('.leader'));
+        document.activeElement.dispatchEvent(new KeyboardEvent('keydown', { code: 'Space', key: ' ', bubbles: true, cancelable: true }));
+        const input = await until(() => $('.dialog.palette input'));
+        input.value = '>' + q;
+        input.dispatchEvent(new Event('input', { bubbles: true }));
+        const first = $('.palette-item')?.textContent;
+        input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }));
+        await sleep(100);
+        return first;
+      };
+      return [await ask('kill-line'), await ask('save-buffer')];
+    `);
     if (got.yank?.v !== 'four fiveone two three\n\nsix\n') problem = 'C-k C-k then C-y did not kill and yank the line';
     else if (got.region?.v !== ' fiveone two three\n\nsix\n' || !got.region.tab?.includes('emacs.md')) problem = 'C-SPC … C-w did not kill the region (or closed the tab)';
     else if (got.yankPop?.v !== 'one two three\n fiveone two three\n\nsix\n') problem = 'M-y did not swap in the kill before';
@@ -965,9 +981,10 @@ await check('F8 / ⇧F8 step through the search results from the note; ⌥. repe
     else if (got.query?.v !== 'xxxCAT dog cat\nbird cat\n' || got.queryAll?.v !== 'xxxCAT dog cat\nbird CAT\n') problem = 'query replace did not work';
     else if (got.saved !== got.queryAll.v) problem = 'C-x C-s did not save';
     else if (got.occur?.length !== 2 || got.occurAt !== 2) problem = 'occur did not list the lines or go to one';
+    else if (!got.mx?.[0]?.startsWith('kill-lineC-k') || !got.mx[1]?.startsWith('save-bufferSave')) problem = 'M-x did not find the commands by their Emacs names';
   } catch (e) { problem = e.message; }
   await setting(false).catch(() => {});
-  const name = 'Emacs keys: kill and yank, the region, C-u, ESC, query replace, C-x C-s, occur';
+  const name = 'Emacs keys: kill and yank, the region, C-u, ESC, query replace, C-x C-s, occur, M-x by Emacs names';
   results.push({ name, ok: !problem });
   console.log(`${problem ? '✗' : '✓'} ${name}${problem ? `\n    ${problem}\n    got: ${JSON.stringify(got)}` : ''}`);
   if (problem) failed = true;
