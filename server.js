@@ -1243,6 +1243,18 @@ const COMMENTS_GUIDE = `To write in the margin instead of in the text, put a JSO
 Quote the note exactly as it is, and as little as is needed to find the place. Write comments in the language of the note. Each comment is shown in the margin next to the quote; the user accepts or rejects each suggestion.`;
 const commentsGuide = (text) => (text.includes(COMMENTS_FILE) || /\b(red pen|margin (notes|comments))\b/i.test(text) ? COMMENTS_GUIDE : '');
 
+// The lens (experimental, public/lens.js): what the agent sees in a note —
+// claims with no support, places that disagree, what is decided or still
+// open — written beside it, never in it. Each finding quotes its places;
+// the review draws them on the note, joined, and a fix comes back as a red
+// pen proposal (a follow-up).
+const LENS_FILE = '.agent-notes/lens.json';
+const LENS_KINDS = new Set(['gap', 'conflict', 'open', 'decided', 'link']);
+const LENS_GUIDE = `To show the user what you see in a note without changing it, put a JSON object in ${LENS_FILE} (make the folder):
+{"findings": [{"file": "<path of the note>", "kind": "gap | conflict | open | decided | link", "quotes": ["<exact text from the note>", "..."], "note": "<what you see, in a sentence or two>"}]}
+gap: a claim the note gives no support for; conflict: places that disagree (quote each of them); open: a question or a decision still open; decided: a decision made; link: places that belong together. The quotes of a finding are drawn joined by a line, so quote every place it is about (one to four), each exactly as it is in the note and as little as finds the place. Write the notes in the language of the note. At most 40 findings, the ones that matter most.`;
+const lensGuide = (text) => (text.includes(LENS_FILE) ? LENS_GUIDE : '');
+
 // Margin's own commands, keys and macros, as notes at the top of the folder
 // (public/leaderkeys.js, recipes.js, macrotext.js): the "commands" scope
 // shares these alone, with their notation (lib/margin-config.md) and the
@@ -1281,6 +1293,7 @@ function buildPrompt(task, focus, followUp = '', pictures = [], commands = null)
   const flow = flowGuide(`${task}\n${followUp}`, note);
   const ink = inkGuide(`${task}\n${followUp}`, note);
   const margin = commentsGuide(`${task}\n${followUp}`);
+  const lens = lensGuide(`${task}\n${followUp}`);
   const config = COMMANDS_TASK.test(`${task}\n${followUp}`) || COMMAND_NOTES.includes(focus) ? commandsNotation() : '';
   const own = agentInstructions();
   return [
@@ -1294,6 +1307,7 @@ function buildPrompt(task, focus, followUp = '', pictures = [], commands = null)
     ink ? `\n${ink}\n` : '',
     pictures.length ? picturesLine(pictures) : '',
     margin ? `\n${margin}\n` : '',
+    lens ? `\n${lens}\n` : '',
     config ? `\n${config}\n` : '',
     own ? `\nInstructions for this notes folder (from ${INSTRUCTIONS}):\n${own}\n` : '',
     focus ? `The note the user is looking at: ${focus}` : '',
@@ -1390,6 +1404,8 @@ function followUpRun(prevId, { task }) {
   fs.cpSync(path.join(runDir(prevId), 'work'), path.join(dir, 'work'), { recursive: true });
   // The margin comments go on with the proposal they belong to.
   if (fs.existsSync(path.join(runDir(prevId), 'comments.json'))) fs.copyFileSync(path.join(runDir(prevId), 'comments.json'), path.join(dir, 'comments.json'));
+  // And what the lens showed, until a round looks again.
+  if (fs.existsSync(path.join(runDir(prevId), 'lens.json'))) fs.copyFileSync(path.join(runDir(prevId), 'lens.json'), path.join(dir, 'lens.json'));
   const round = (prev.round || 1) + 1;
   const meta = {
     ...prev, kind: undefined, id, task, parent: prevId, round, originalTask: prev.originalTask || prev.task,
@@ -1455,6 +1471,7 @@ function launchAgent(meta, prompt) {
     m.signal = signal;
     m.finishedAt = new Date().toISOString();
     if (m.status === 'running') m.status = code === 0 ? 'review' : 'failed';
+    try { collectLens(m); } catch (e) { fs.appendFileSync(logPath, `\n[agent-notes] lens: ${e.message}\n`); }
     try { collectComments(m); } catch (e) { fs.appendFileSync(logPath, `\n[agent-notes] margin comments: ${e.message}\n`); }
     const out = parseAgentLog(readLog(id, LOG_PARSE_LIMIT), workDir);
     if (out.usage) m.usage = out.usage;
@@ -1508,6 +1525,56 @@ function commentBases(id, comments, changes) {
       const abs = path.join(runDir(id), 'base', c.file);
       if (fs.statSync(abs).size < 512 * 1024) out[c.file] = fs.readFileSync(abs, 'utf8');
     } catch { /* not shared */ }
+  }
+  return out;
+}
+// The lens's findings (LENS_FILE in the agent's copy): kept with the run,
+// each on quotes found in the note as it was shared.
+const MAX_LENS = 40;
+function collectLens(meta) {
+  const dir = runDir(meta.id);
+  const file = path.join(dir, 'work', LENS_FILE);
+  if (!fs.existsSync(file)) return;
+  let raw;
+  try {
+    if (fs.statSync(file).size > 256 * 1024) throw new Error('lens.json is too large');
+    raw = JSON.parse(fs.readFileSync(file, 'utf8'));
+  } finally {
+    fs.rmSync(file, { force: true });
+    try { fs.rmdirSync(path.dirname(file)); } catch { /* comments.json is there too */ }
+  }
+  const list = Array.isArray(raw) ? raw : raw?.findings;
+  if (!Array.isArray(list)) throw new Error('lens.json should hold {"findings": [...]}');
+  const str = (v, max) => (typeof v === 'string' ? v.slice(0, max) : null);
+  const bases = new Map();
+  const baseOf = (f) => {
+    if (!bases.has(f)) {
+      try { bases.set(f, fs.statSync(path.join(dir, 'base', f)).size < 512 * 1024 ? fs.readFileSync(path.join(dir, 'base', f), 'utf8') : null); } catch { bases.set(f, null); }
+    }
+    return bases.get(f);
+  };
+  const findings = [];
+  for (const x of list.slice(0, 200)) {
+    const file = (str(x?.file, 500) || meta.focus || '').replace(/^\.\//, '');
+    const base = file && meta.files.includes(file) ? baseOf(file) : null;
+    if (base == null) continue;
+    const quotes = [...new Set((Array.isArray(x?.quotes) ? x.quotes : [x?.quote]).map((q) => str(q, 500)))]
+      .filter((q) => q?.trim() && base.includes(q)).slice(0, 4);
+    const note = (str(x?.note ?? x?.comment, 1000) || '').trim();
+    if (!quotes.length || !note) continue;
+    findings.push({ file, kind: LENS_KINDS.has(x?.kind) ? x.kind : 'link', quotes, note });
+    if (findings.length >= MAX_LENS) break;
+  }
+  fs.writeFileSync(path.join(dir, 'lens.json'), JSON.stringify({ round: meta.round || 1, findings }, null, 2));
+}
+function readLens(id) {
+  try { const l = JSON.parse(fs.readFileSync(path.join(runDir(id), 'lens.json'), 'utf8')); return Array.isArray(l?.findings) ? l.findings : []; } catch { return []; }
+}
+// The notes the lens is on, as they were shared.
+function lensBases(id, lens) {
+  const out = {};
+  for (const f of new Set(lens.map((x) => x.file))) {
+    try { out[f] = fs.readFileSync(path.join(runDir(id), 'base', f), 'utf8'); } catch { /* not shared */ }
   }
   return out;
 }
@@ -1801,7 +1868,8 @@ async function routeApi(method, url, body) {
     const reviewable = meta.status !== 'running';
     const changes = reviewable ? computeChanges(m[1]) : [];
     const comments = meta.kind === 'proof' ? proofComments(meta) : readComments(m[1]);
-    return { ...meta, command: undefined, ...runReport(m[1]), changes, comments, commentBases: commentBases(m[1], comments, changes) };
+    const lens = reviewable ? readLens(m[1]) : [];
+    return { ...meta, command: undefined, ...runReport(m[1]), changes, comments, commentBases: commentBases(m[1], comments, changes), lens, lensBases: lensBases(m[1], lens) };
   }
   if ((m = p.match(/^\/api\/runs\/([\w-]+)\/(apply|discard|cancel|revert|followup)$/)) && method === 'POST') {
     if (m[2] === 'apply') {

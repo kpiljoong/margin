@@ -86,7 +86,9 @@ const RED = ['red pen', 'comments.json', '\uBE68\uAC04\uD39C'];
 const REMARKS_ONLY = ['comments only', 'remarks only', '\uCF54\uBA58\uD2B8\uB9CC'];
 // Pictures (그림): a step added to each ```flow, a callout on each picture (its ```ink lines).
 const DRAW = ['draw', 'picture', 'mark up', '\uADF8\uB9BC'];
-const understood = wants(...TIDY, ...SUMMARY, ...TASKS, ...RED, ...DRAW) || (round > 1 && wants(...SHORTER));
+// The lens (public/lens.js): what it sees, beside the note, nothing changed.
+const LENS = ['lens.json'];
+const understood = wants(...TIDY, ...SUMMARY, ...TASKS, ...RED, ...DRAW, ...LENS) || (round > 1 && wants(...SHORTER));
 
 // A picture's size in pixels (PNG, or an SVG's width and height), else a guess.
 function sizeOf(file) {
@@ -152,6 +154,30 @@ function marks(f, text) {
   return out;
 }
 
+// Through the lens, mechanically: a line ending in "?" is open, one with
+// "decided" (or 결정) decided, "obviously", "everyone"… is a claim with
+// nothing behind it, and two different weekdays for the same note disagree.
+function lensOf(f, text) {
+  const out = [];
+  const said = [];
+  let fence = false;
+  for (const l of text.split('\n')) {
+    if (/^\s*(```|~~~)/.test(l)) { fence = !fence; continue; }
+    if (fence || /^\s*#/.test(l)) continue;
+    const q = l.replace(/^\s*(?:(?:[-*+]|\d+[.)])\s+(?:\[[ xX]\]\s+)?|>\s?)/, '').trim().slice(0, 120);
+    if (!q) continue;
+    said.push(q);
+    if (/\?$/.test(q)) out.push({ file: f, kind: 'open', quotes: [q], note: 'Still open: the note doesn\'t answer it.' });
+    else if (/\b(decided|agreed)\b|\uACB0\uC815/i.test(q)) out.push({ file: f, kind: 'decided', quotes: [q], note: 'Decided.' });
+    if (/\b(obviously|clearly|everyone|always|never)\b/i.test(q)) out.push({ file: f, kind: 'gap', quotes: [q], note: 'Said as a fact, with nothing to back it.' });
+  }
+  const DAY = /\b(Monday|Tuesday|Wednesday|Thursday|Friday|Saturday|Sunday)\b/;
+  const dated = said.filter((q) => DAY.test(q));
+  const other = dated.find((q) => DAY.exec(q)[1] !== DAY.exec(dated[0])[1]);
+  if (other) out.push({ file: f, kind: 'conflict', quotes: [dated[0], other], note: `${DAY.exec(dated[0])[1]} here, ${DAY.exec(other)[1]} there: which is it?` });
+  return out;
+}
+
 // "Make or change a command…": whatever was asked, the demo adds one macro,
 // "Make it a task", on ⌥X o t (and a step Margin can't read when asked for
 // a broken one, to see the review say so).
@@ -185,6 +211,13 @@ setTimeout(() => {
     console.log(`[demo-agent] ${prev === null ? 'created' : 'edited '} ${f}  (${why})`);
   };
 
+  if (wants(...LENS)) {
+    const findings = targets.flatMap((f) => lensOf(f, fs.readFileSync(f, 'utf8')));
+    fs.mkdirSync('.agent-notes', { recursive: true });
+    fs.writeFileSync(path.join('.agent-notes', 'lens.json'), JSON.stringify({ findings }, null, 2));
+    console.log(`[demo-agent] done: ${findings.length} thing(s) seen through the lens, the notes untouched.`);
+    return;
+  }
   if (wants(...RED)) {
     const all = targets.flatMap((f) => marks(f, fs.readFileSync(f, 'utf8')));
     const only = wants(...REMARKS_ONLY);

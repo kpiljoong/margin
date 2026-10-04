@@ -1070,3 +1070,50 @@ li.callout-hot { background: color-mix(in srgb, var(--accent) 16%, transparent);
 .space-hint.msg { font-size: 0; }
 .space-hint.msg::after { content: attr(data-msg); font-size: 12.5px; color: var(--fg); }
 .space.still, .space.still * { transition: none !important; animation: none !important; }
+
+/* the lens (experimental, lens.js): what the agent sees, drawn on the note */
+.lens-page { padding: 10px 18px 18px 6px; }
+.lens-k-gap { --lk: var(--warn); }
+.lens-k-conflict { --lk: var(--bad); }
+.lens-k-open { --lk: var(--accent); }
+.lens-k-decided { --lk: var(--ok); }
+.lens-k-link { --lk: var(--fg-dim); }
+.lens-kinds { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin: 0 0 10px 44px; }
+.lens-badge { font-size: 10.5px; letter-spacing: .04em; text-transform: uppercase; color: var(--fg-faint); margin-right: 4px; }
+.lens-chip { font: inherit; font-size: 12px; padding: 1px 9px; border-radius: 10px; border: 1px solid var(--lk); background: color-mix(in srgb, var(--lk) 14%, transparent); color: var(--fg); cursor: pointer; }
+.lens-chip.off { background: none; color: var(--fg-faint); border-style: dashed; }
+.lens-body { position: relative; display: grid; grid-template-columns: 44px minmax(0, 1fr) 230px; column-gap: 0; }
+.lens-arcs { position: absolute; left: 0; top: 0; overflow: visible; }
+.lens-doc { grid-column: 2; min-width: 0; }
+.lens-doc .mermaid, .lens-doc pre { white-space: pre-wrap; }
+.lens-doc > :not(.lens-has) { opacity: .55; transition: opacity .2s; }
+.lens-q { background: color-mix(in srgb, var(--lk) 16%, transparent); border-bottom: 2px solid var(--lk); border-radius: 2px; cursor: pointer; transition: background .15s, opacity .15s; }
+.lens-q.lens-on { background: color-mix(in srgb, var(--lk) 34%, transparent); }
+.lens-focus .lens-q:not(.lens-on) { background: none; border-bottom-color: color-mix(in srgb, var(--lk) 40%, transparent); }
+.lens-arc { fill: none; stroke: var(--lk); stroke-width: 1.6; opacity: .55; transition: opacity .15s, stroke-width .15s; }
+.lens-dot { fill: var(--lk); opacity: .7; }
+.lens-hit { fill: none; stroke: transparent; stroke-width: 10; pointer-events: stroke; cursor: pointer; }
+.lens-focus .lens-arc:not(.lens-on), .lens-focus .lens-dot:not(.lens-on) { opacity: .15; }
+.lens-arc.lens-on { opacity: 1; stroke-width: 2.4; }
+.lens-dot.lens-on { opacity: 1; }
+.lens-hide-gap .lens-q.lens-k-gap, .lens-hide-conflict .lens-q.lens-k-conflict, .lens-hide-open .lens-q.lens-k-open,
+.lens-hide-decided .lens-q.lens-k-decided, .lens-hide-link .lens-q.lens-k-link { background: none; border-bottom-color: transparent; }
+.lens-margin { grid-column: 3; position: relative; margin-left: 20px; }
+.lens-card { position: absolute; left: 0; right: 0; top: 0; padding: 4px 6px 5px 9px; border-left: 3px solid var(--lk); border-radius: 0 var(--radius) var(--radius) 0; background: var(--bg); font-size: 12.5px; }
+.lens-card[hidden] { display: none; }
+.lens-card-head { display: flex; align-items: center; gap: 6px; margin-bottom: 2px; }
+.lens-card-head .btn { margin-left: auto; padding: 0 7px; }
+.lens-kind { font-size: 10.5px; font-weight: 600; letter-spacing: .03em; text-transform: uppercase; color: var(--lk); }
+.lens-note { line-height: 1.35; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 3; overflow: hidden; overflow-wrap: anywhere; }
+.lens-card.kb-cur .lens-note { display: block; }
+.lens-quotes { display: flex; flex-direction: column; align-items: flex-start; gap: 1px; margin-top: 3px; }
+.lens-quote { font: inherit; font-size: 11.5px; border: 0; background: none; padding: 0; color: var(--fg-dim); cursor: pointer; text-align: left; }
+.lens-quote:hover { color: var(--fg); text-decoration: underline; }
+.lens-quote.gone { color: var(--fg-faint); text-decoration: line-through; cursor: default; }
+.lens-card:not(.kb-cur) .lens-quotes { display: none; }
+.lens-card.lens-pick { background: color-mix(in srgb, var(--lk) 12%, var(--bg)); }
+.lens-card.lens-pick .lens-kind::after { content: " · to fix"; color: var(--fg-dim); }
+.review .lens-card.kb-cur { box-shadow: none; background: color-mix(in srgb, var(--lk) 10%, var(--bg)); }
+.review:focus .lens-card.kb-cur { outline: 1px solid color-mix(in srgb, var(--lk) 50%, transparent); }
+@media (max-width: 760px) { .lens-body { grid-template-columns: 36px minmax(0, 1fr) 150px; } }
+@media (prefers-reduced-motion: reduce) { .lens-q, .lens-arc, .lens-doc > * { transition: none; } }

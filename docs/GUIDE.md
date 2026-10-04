@@ -123,6 +123,27 @@ The agent writes these notes to `.agent-notes/comments.json` in its copy (any ta
 
 The comments are for the agent, not the note: they stay with the review (until it closes) and go out only when you follow up. The wheel moves along; a click on a card or a mark picks it. With reduced motion on, the cards don't float.
 
+### Lens: what the agent sees in the note (experimental)
+
+A lens asks the agent to look at the note in view without changing it, from one angle — three commands in M-x (⌥X :) or the palette (⌘P, then `>`):
+
+- **Lens: claims without support** — numbers, causes, promises and judgements given as facts with nothing behind them.
+- **Lens: places that disagree** — dates, numbers, owners or decisions that don't match.
+- **Lens: decisions and open questions** — what is decided, what is still open, and the places they depend on.
+
+Each fills in the task dialog, so you see what is asked and shared before it runs. The agent writes what it sees to `.agent-notes/lens.json` in its copy (any task that names that file gets the format); Margin keeps it with the run, never in the note, and keeps only findings whose quotes are really in the note.
+
+The review draws them **on the note**: each place marked in the colour of its kind (no support, disagree, open, decided, together), the places of one finding **joined by an arc** in the gutter, and the finding's card in the margin. The chips at the top show or hide a kind. The current finding lights its places and its arc; a click on a marked place or an arc picks its finding, a quote in a card shows its place.
+
+| Key | |
+|---|---|
+| `j` / `k` | next / previous finding |
+| `x` | pick the finding for a fix (or unpick it) |
+| `f` (or **Fix…** on a card) | follow up: the picked findings and the current one, written as a request for a red pen fix — edit it, then run it |
+| `o` / Enter | open the note at the finding |
+
+A fix comes back as a red pen proposal on the note, with the lens below it: nothing changes until you accept a mark and apply. The lens of a run stays with its follow-ups until one looks again.
+
 ### Suggesting: your own red pen, in a meeting
 
 Margin's red pen is for you too, as tracked changes are in a word processor: made for leading a meeting with the note on a shared screen and correcting it as people talk. Only you write; it is not shared editing.

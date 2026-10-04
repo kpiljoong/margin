@@ -68,6 +68,7 @@ fs.mkdirSync(path.join(ws, 'hits'));
 for (let i = 0; i < 12; i++) fs.writeFileSync(path.join(ws, 'hits', `h${i}.md`), Array.from({ length: 5 }, (_, j) => `needle ${i}.${j}`).join('\n\n') + '\n');
 const filler = (p) => Array.from({ length: 10 }, (_, i) => `${p} ${i}`);
 fs.writeFileSync(path.join(ws, 'sub', 'proof.md'), '# Proof\n\nThis is a very good plan for the the team.\n\nWe ship on Friday.\n');
+fs.writeFileSync(path.join(ws, 'sub', 'lens.md'), '# Lens\n\nWe ship on Friday.\n\nEveryone obviously wants a very dark theme.\n\nThe launch is on Monday.\n');
 fs.writeFileSync(path.join(ws, 'sub', 'drawn.md'), '# Drawn\n\n```flow\nOrder -> Pay -> Ship\n```\n\n![Screen](../assets/screen.svg)\n\n```ink\nbox blue: 10,10 50x40\n```\n');
 fs.writeFileSync(path.join(ws, 'sub', 'meet.md'), '# Meet\n\nWe ship on Monday.\nDocs by Friday.\n');
 fs.writeFileSync(path.join(ws, 'sub', 'messy.md'), ['#Title', 'text', ...filler('a'), '* one', ...filler('b'), '##Sub', 'more', ...filler('c'), '+ two', ''].join('\n'));
@@ -1567,6 +1568,51 @@ await check('red pen on pictures: a flow step and an ink callout drawn on them; 
   const t = fs.readFileSync(path.join(ws, 'sub', 'drawn.md'), 'utf8');
   const good = t === '# Drawn\n\n```flow\nOrder -> Pay -> Ship\nShip -> Double-check\n```\n\n![Screen](../assets/screen.svg)\n\n```ink\nbox blue: 10,10 50x40\n```\n';
   console.log(`${good ? '✓' : '✗'} the step reached the flow, the callout stayed out`);
+  if (!good) failed = true;
+}
+
+await check('the lens (experimental): a command asks where the note disagrees; the places are joined on it, nothing changes; x picks one, f asks for its fix, back as a red pen', `
+  const mac = navigator.platform.startsWith('Mac');
+  await openNote('sub/lens.md');
+  await sleep(200);
+  document.body.dispatchEvent(new KeyboardEvent('keydown', { code: 'KeyP', key: 'p', bubbles: true, cancelable: true, metaKey: mac, ctrlKey: !mac }));
+  const input = await until(() => !$('#overlay').hidden && $('#overlay input'));
+  input.value = '>Lens: places that disagree';
+  input.dispatchEvent(new Event('input'));
+  await sleep(100);
+  input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }));
+  const task = await until(() => !$('#overlay').hidden && $('#overlay textarea'));
+  const asked = task.value;
+  button('Run on staged copy', $('#overlay')).click();
+  await until(() => $('.review .lens-card'), 20000);
+  await sleep(300);
+  $('.review').focus();
+  const kinds = $$('.lens-card').map((c) => c.querySelector('.lens-kind').textContent);
+  const arcs = $$('.lens-arc').length;
+  const changes = $('.review-note')?.textContent || '';
+  key('j'); await sleep(100);
+  const lit = $$('.lens-q.lens-on').map((x) => x.textContent);
+  key('x'); await sleep(50);
+  const picked = !!$('.lens-card.kb-cur.lens-pick');
+  key('f');
+  const fix = await until(() => !$('#overlay').hidden && $('#overlay textarea'));
+  const said = fix.value;
+  button('Run follow-up', $('#overlay')).click();
+  await until(() => $('.review .pen-card') && $('.review .lens-card'), 20000);
+  await sleep(300);
+  const pen = $$('.pen-card').map((c) => c.textContent);
+  const still = $$('.lens-card').length;
+  button('Discard', $('#main')).click();
+  button('Discard', await until(() => $('.dialog.confirm'))).click();
+  await until(() => /Discarded/.test($('.review')?.textContent || ''), 5000);
+  return { asked, kinds, arcs, changes, lit, picked, said, pen, still };
+`, (v) => (/lens\.json/.test(v?.asked) && v.kinds.join() === 'Disagree,No support' && v.arcs === 1 && /no changes/.test(v.changes)
+  && v.lit.join('|') === 'We ship on Friday.|The launch is on Monday.' && v.picked && /^Fix this with the red pen/.test(v.said) && /Friday here, Monday there/.test(v.said)
+  && v.pen.some((t) => /very/.test(t)) && v.still === 2 ? null : `got ${JSON.stringify(v)}`));
+{
+  const t = fs.readFileSync(path.join(ws, 'sub', 'lens.md'), 'utf8');
+  const good = t === '# Lens\n\nWe ship on Friday.\n\nEveryone obviously wants a very dark theme.\n\nThe launch is on Monday.\n';
+  console.log(`${good ? '✓' : '✗'} the lens left the note as it was`);
   if (!good) failed = true;
 }
 

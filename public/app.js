@@ -3326,6 +3326,9 @@ const COMMANDS = [
   ['Macro: save the last one (MACROS.md)…', () => setTimeout(saveLastMacro, 0)],
   ['Macros: edit (MACROS.md)', () => editMacros()],
   ['Make or change a command… (ask the agent)', () => setTimeout(() => changeByAgent(), 0)],
+  ['Lens: claims without support (experimental)…', () => setTimeout(() => lensRun('support'), 0)],
+  ['Lens: places that disagree (experimental)…', () => setTimeout(() => lensRun('conflict'), 0)],
+  ['Lens: decisions and open questions (experimental)…', () => setTimeout(() => lensRun('decisions'), 0)],
   ['Describe a key…', () => describeKey()],
   ['Describe a command…', () => setTimeout(describeCommand, 0)],
   ['Dired: edit a folder as text…', () => setTimeout(pickDiredFolder, 0)],
@@ -5464,8 +5467,9 @@ async function refreshReview(tab) {
   try { tab.run = await api('GET', `/api/runs/${tab.runId}`); }
   catch (e) { toast(e.message, 'error'); return; }
   const run = tab.run;
-  const marked = penFirst() || run.comments?.length;
+  const marked = penFirst() || run.comments?.length || run.lens?.length;
   if (marked && run.status !== 'running') await loadPen();
+  if (run.lens?.length) lensMod ||= await import('./lens.js');
   // Default: everything that can be applied is selected.
   // Applied/undone runs show what was actually applied.
   const appliedBy = new Map((run.applied?.files || []).map((f) => [f.path, f]));
@@ -5754,6 +5758,46 @@ function spaceComments(tab) {
   return lines.length ? `My comments on your proposal:\n${lines.join('\n')}\n` : '';
 }
 
+// ---- Lens (experimental, lens.js): what the agent sees in a note, on it.
+// Started by a command (the task dialog, filled in); the run's findings are
+// drawn on the note in its review, and a fix is a follow-up whose answer is
+// a red pen proposal.
+let lensMod = null;
+async function lensRun(which) {
+  lensMod ||= await import('./lens.js');
+  if (!fileTab() || !isNote(fileTab().path)) { toast('The lens looks at the note in view: open a note first.', 'error'); return; }
+  openTaskDialog(lensMod.LENS_TASKS[which], { scope: 'file', recipe: 'Lens' });
+}
+function lensCard(path, base, tab) {
+  if (!lensMod || !pen) return null;
+  const findings = tab.run.lens.map((f, i) => ({ ...f, i })).filter((f) => f.file === path);
+  const reviewable = ['review', 'failed', 'cancelled'].includes(tab.run.status);
+  const page = lensMod.lensPage({
+    path, base, findings, pen,
+    render: (text) => renderMarkdown(text, { image: (url) => localImage(url, path) }),
+    hidden: ((tab.lensHidden ||= {})[path] ||= new Set()),
+    pick: (i) => { const card = page.querySelector(`.lens-card[data-lens="${i}"]`); if (card) setReviewCur(tab, card); },
+    fix: reviewable ? (i) => lensFix(tab, i) : null,
+  });
+  for (const card of page.querySelectorAll('.lens-card')) card.classList.toggle('lens-pick', !!tab.lensPicks?.has(Number(card.dataset.lens)));
+  return h('div', { class: 'file-card lens-file', 'data-path': path },
+    h('div', { class: 'file-card-head' },
+      h('span', { class: 'badge st-review' }, 'lens'),
+      h('span', { class: 'path' }, path),
+      h('button', { class: 'btn small', onclick: () => openFile(path) }, 'Open')),
+    page);
+}
+// The findings to fix: the picked ones (x), and the one given.
+function lensFixText(tab, i = null) {
+  if (!lensMod || !tab.run?.lens?.length) return '';
+  const picked = new Set(tab.lensPicks || []);
+  if (i != null) picked.add(i);
+  return lensMod.fixRequest([...picked].sort((a, b) => a - b).map((k) => tab.run.lens[k]).filter(Boolean));
+}
+function lensFix(tab, i) {
+  followUp(tab, lensFixText(tab, i) + spaceComments(tab));
+}
+
 // A note the agent only wrote margin notes on (no change to it).
 function remarksCard(path, base, tab) {
   return h('div', { class: 'file-card', 'data-path': path },
@@ -5793,6 +5837,7 @@ function markCur(el) {
   const wrap = el.closest('[data-tab]') || el.closest('.review');
   wrap?.querySelectorAll('.pen-on').forEach((x) => x.classList.remove('pen-on'));
   if (el.dataset.mark) el.closest('.pen-page')?.querySelectorAll(`.pen-doc [data-mark="${el.dataset.mark}"]`).forEach((x) => x.classList.add('pen-on'));
+  for (const p of wrap?.querySelectorAll('.lens-page') || []) p.lensSelect(p.contains(el) && el.dataset.lens != null ? Number(el.dataset.lens) : null);
   // The margin note in view shows all of itself: the ones below make room.
   const body = el.closest('.pen-body');
   if (pen && body && wrap) for (const b of wrap.querySelectorAll('.pen-body')) pen.layoutMargin(b);
@@ -6372,6 +6417,7 @@ function showSpecial(c, tab) {
   wrap.addEventListener('mousedown', (e) => { const it = e.target.closest('.kb-item'); if (it) setReviewCur(tab, it, false); });
   c.replaceChildren(wrap);
   if (pen) wrap.querySelectorAll('.pen-body').forEach(pen.layoutMargin);
+  wrap.querySelectorAll('.lens-page').forEach((p) => p.lensLayout());
   if (same) wrap.scrollTop = top;
   const cur = reviewItems(wrap).find((el) => itemKey(el) === tab.cur);
   if (cur) { cur.classList.add('kb-cur'); markCur(cur); }
@@ -6437,6 +6483,19 @@ function reviewOwnKeys(e, tab, { wrap, items, cur }) {
   const go = (el) => { if (el) setReviewCur(tab, el); };
   const fileOf = (el) => el?.closest('.file-card');
   const onPen = cur?.classList.contains('pen-card');
+  // On a finding of the lens: x picks it for a fix, f asks for the fix.
+  if (cur?.classList.contains('lens-card')) {
+    const i = Number(cur.dataset.lens);
+    if (e.key === 'x' || e.key === ' ') {
+      tab.lensPicks ||= new Set();
+      if (!tab.lensPicks.delete(i)) tab.lensPicks.add(i);
+      cur.classList.toggle('lens-pick', tab.lensPicks.has(i));
+      return true;
+    }
+    if (e.key === 'f') { if (reviewable && !own) lensFix(tab, i); return true; }
+    if (e.key === 'Enter' || e.key === 'o') { openFile(cur.dataset.path, { line: Number(cur.dataset.line) || undefined }); return true; }
+    if (e.key === 'y' || e.key === 'n') return true;
+  }
   switch (e.key) {
     case 'y': case 'n':
       if (!onPen) return e.key === 'y';
@@ -6479,7 +6538,7 @@ function reviewOwnKeys(e, tab, { wrap, items, cur }) {
     }
     case 'a': if (outside) keepOutside(tab); else if (tab.kind === 'dired') applyDired(tab); else if (reviewable && tab.run.changes.length && selectedCount(tab)) applyRun(tab); return true;
     case 'd': if (reviewable && !own) discardRun(tab); return true;
-    case 'f': if (reviewable && !own) followUp(tab); return true;
+    case 'f': if (reviewable && !own) followUp(tab, lensFixText(tab) + spaceComments(tab)); return true;
     case 'u': if (tab.run?.status === 'applied') revertRun(tab); return true;
     case 'l': { const log = wrap.querySelector('details.log'); if (log) log.open = !log.open; return true; }
     case '=': {
@@ -6683,14 +6742,14 @@ function reviewView(tab) {
   }
 
   const log = h('details', { class: 'log' }, h('summary', {}, logTitle(run)), h('div', { class: 'log-body' }, ...logContent(run)));
-  const quiet = run.status !== 'running' && !run.changes?.length && !run.reply;
+  const quiet = run.status !== 'running' && !run.changes?.length && !run.reply && !run.lens?.length;
   log.open = tab.logOpen ?? (run.status === 'running' || quiet);
   log.addEventListener('toggle', () => { tab.logOpen = log.open; });
   if (run.kind !== 'proof') wrap.append(log);
 
   if (run.status !== 'running') {
     const remarks = Object.entries(run.commentBases || {});
-    if (!run.changes.length) wrap.append(h('div', { class: 'review-note' }, run.kind === 'proof' ? 'No suggestions (yet).' : remarks.length ? 'The agent made no changes, only notes in the margin.' : 'The agent made no changes.'));
+    if (!run.changes.length) wrap.append(h('div', { class: 'review-note' }, run.kind === 'proof' ? 'No suggestions (yet).' : run.lens?.length ? 'The agent made no changes: what it sees is on the note below (the lens). x picks a finding, f asks for a fix as a red pen proposal.' : remarks.length ? 'The agent made no changes, only notes in the margin.' : 'The agent made no changes.'));
     const checked = reviewable && commandNotesCheck(run);
     if (checked) wrap.append(checked);
     if (reviewable && run.changes.length) {
@@ -6701,17 +6760,18 @@ function reviewView(tab) {
         S.git?.repo && run.kind !== 'proof' ? h('label', { class: 'commit-toggle', title: 'Commit the applied files to git, authored by the agent (local only)' },
           h('input', { type: 'checkbox', checked: store.getItem('an.commitOnApply') !== 'false', onchange: (e) => store.setItem('an.commitOnApply', String(e.target.checked)) }), 'Commit to git') : null,
         run.changes.some(penable) ? h('button', { class: 'btn', title: 'The red pen in depth: paragraph by paragraph (s) — experimental', onclick: () => openSpaceView(tab) }, 'Space') : null,
-        h('button', { class: 'btn', onclick: () => followUp(tab, spaceComments(tab)) }, 'Follow up…'),
+        h('button', { class: 'btn', onclick: () => followUp(tab, lensFixText(tab) + spaceComments(tab)) }, 'Follow up…'),
         h('button', { class: 'btn danger', onclick: () => discardRun(tab) }, 'Discard'),
         h('button', { class: 'btn primary', disabled: !n, onclick: () => applyRun(tab) }, `Apply ${n} ${penFirst() ? 'accepted' : 'selected'}`)));
     } else if (reviewable) {
       wrap.append(h('div', { class: 'review-actions' }, h('span', { class: 'grow' }),
-        h('button', { class: 'btn', onclick: () => followUp(tab) }, 'Follow up…'),
+        h('button', { class: 'btn', onclick: () => followUp(tab, lensFixText(tab)) }, 'Follow up…'),
         h('button', { class: 'btn danger', onclick: () => discardRun(tab) }, 'Discard')));
     }
     const locked = !reviewable;
     for (const c of run.changes) wrap.append(fileCard(c, tab, locked));
     for (const [p, base] of remarks) wrap.append(remarksCard(p, base, tab));
+    for (const [p, base] of Object.entries(run.lensBases || {})) wrap.append(lensCard(p, base, tab));
   }
   return wrap;
 }
