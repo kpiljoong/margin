@@ -1,7 +1,7 @@
 // node --test (npm test): marks drawn on a picture, as lines (public/ink.js).
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { parseInk, inkLine, simplify, addMark, removeMark, bentPath, movedMark, grips, reshapedMark, setMark, fitBoard, boardLine, anchors, snapEnd, snapArrow, followBox, wordsIn, textSize, elbowRoute, sideOf, arrowPath, arrowMids, curveParts } from '../public/ink.js';
+import { parseInk, inkLine, simplify, addMark, removeMark, bentPath, movedMark, grips, reshapedMark, setMark, fitBoard, boardLine, anchors, snapEnd, snapArrow, followBox, wordsIn, textSize, elbowRoute, sideOf, arrowPath, arrowMids, curveParts, followBoxes, markBounds } from '../public/ink.js';
 
 test('ink lines: read, written back the same', () => {
   const src = ['box red: 280,120 200x80', '# a comment', 'arrow: 410,220 -> 300,160', 'text blue: 420,230 The button is hidden', 'pen 초록: 100,100 120,104 140,112', '상자 빨강: 1,2 3×4', 'nonsense', 'pen red: 1,2', 'arrow purple: 1,2 -> x'].join('\n');
@@ -163,4 +163,20 @@ test('a sketch: arrows end on the middles of boxes\' sides, and go with a box mo
   assert.equal(textSize(1600, 900), 45);
   assert.deepEqual(wordsIn(marks, a, 45).map((m) => m.text), ['Start']);
   assert.deepEqual(wordsIn(marks, b, 45), []);
+});
+
+test('several marks at once: boxes moved together take the arrows between them, the bounds of each kind', () => {
+  const { marks } = parseInk(['board: 1600x900', 'box: 100,100 200x100', 'box: 600,100 200x100', 'arrow: 300,150 -> 600,150', 'arrow: 200,200 -> 200,400', 'arrow: 700,200 -> 700,400'].join('\n'));
+  const [a, b, between, down] = marks;
+  const moved = (m) => ({ ...m, x: m.x + 10, y: m.y + 20 });
+  // Both boxes moved: both ends of the arrow between them go; one picked too goes as it was moved (skipped).
+  assert.deepEqual(followBoxes(marks, [[a, moved(a)], [b, moved(b)]]).map(([l, m]) => [l, m.from, m.to]), [
+    [3, [310, 170], [610, 170]], [4, [210, 220], [200, 400]], [5, [710, 220], [700, 400]],
+  ]);
+  assert.deepEqual(followBoxes(marks, [[a, moved(a)]], [between.line]).map(([l]) => l), [down.line]);
+  assert.deepEqual(markBounds(a, 1600, 900), { x: 100, y: 100, w: 200, h: 100 });
+  assert.deepEqual(markBounds({ kind: 'arrow', from: [10, 50], via: [[40, 5]], to: [30, 20] }, 1600, 900), { x: 10, y: 5, w: 30, h: 45 });
+  assert.deepEqual(markBounds({ kind: 'num', x: 100, y: 100, text: '1' }, 1600, 900), { x: 65, y: 65, w: 70, h: 70 });
+  const t = markBounds({ kind: 'text', x: 10, y: 20, text: 'ab\uAC00' }, 1600, 900);
+  assert.deepEqual([t.x, t.y, Math.round(t.w), Math.round(t.h)], [10, 20, 95, 54]);
 });

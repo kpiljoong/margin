@@ -1206,12 +1206,15 @@ export class FigureCanvas {
       else setTimeout(() => this.showStep(this.presenting?.i ?? 0, true), 50); // the view grew
     });
     // ⌘V of a picture: into the note, to draw on.
+    // ⌘V of marks' lines: onto the picture looked at; ⌘C / ⌘X: the marks picked.
     stage.addEventListener('paste', (e) => {
       const files = [...(e.clipboardData?.files || [])].filter((f) => f.type.startsWith('image/'));
+      if (!files.length && !e.target.closest('input') && this.ink.paste(e.clipboardData?.getData('text/plain') || '')) { e.preventDefault(); return; }
       if (!files.length || !this.h.onPastePictures) return;
       e.preventDefault();
       this.h.onPastePictures(files);
     });
+    for (const kind of ['copy', 'cut']) stage.addEventListener(kind, (e) => { if (!e.target.closest('input')) this.ink.copy(e, kind === 'cut'); });
     stage.addEventListener('keydown', (e) => {
       if (this.wiring && e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); this.endWire(false); return; }
       // ⌘Z / ⌘⇧Z (Ctrl+Z, Ctrl+Y): the note's undo, drawing included.

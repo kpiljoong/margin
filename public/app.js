@@ -2449,9 +2449,11 @@ function inkEdit(tab, fig, change) {
     const start = lineOffset(v, at + 1);
     const close = at + 1 + (src ? src.split('\n').length : 0);
     if (v.slice(start, start + src.length) !== src || !/^\s*(`{3,}|~{3,})\s*$/.test(v.slice(lineOffset(v, close), eol(close)))) { toast('The note changed — try again.', 'error'); return; }
-    // sets: several marks changed at once (a box and the arrows on it).
+    // sets: several marks changed at once (a box and the arrows on it);
+    // removes: several taken out.
     let next = change.add ? addMark(src, change.add) : change.sets ? change.sets.reduce((t, [n, m]) => setMark(t, n, m), src)
-      : change.set ? setMark(src, ...change.set) : removeMark(src, change.remove);
+      : change.set ? setMark(src, ...change.set)
+        : change.removes ? [...change.removes].sort((x, y) => y - x).reduce(removeMark, src) : removeMark(src, change.remove);
     if (board) {
       next = fitBoard(next);
       // A sketch grown: its comments are on its new board line.

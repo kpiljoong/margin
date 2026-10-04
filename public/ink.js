@@ -382,20 +382,43 @@ export function snapArrow(a, marks, reach) {
   return { ...a, from: from?.at || a.from, to: to?.at || a.to };
 }
 
-// Box `before` made `after`: the arrows with an end on one of its anchors,
-// that end on the same anchor of `after`. → [[line, arrow]].
-export function followBox(marks, before, after) {
-  const was = anchors(before);
-  const now = anchors(after);
-  const on = (p) => was.findIndex((q) => q[0] === Math.round(p[0]) && q[1] === Math.round(p[1]));
+// Boxes moved or reshaped ([[before, after]]): the arrows (but those on the
+// lines `skip`) with an end on one of their anchors, that end on the same
+// anchor after. → [[line, arrow]].
+export function followBoxes(marks, moves, skip = []) {
+  const to = new Map();
+  for (const [before, after] of moves) {
+    const now = anchors(after);
+    anchors(before).forEach((q, i) => to.set(`${q[0]},${q[1]}`, now[i]));
+  }
+  const at = (p) => to.get(`${Math.round(p[0])},${Math.round(p[1])}`);
   const out = [];
   for (const m of marks) {
-    if (m.kind !== 'arrow') continue;
-    const [i, j] = [on(m.from), on(m.to)];
-    if (i < 0 && j < 0) continue;
-    out.push([m.line, { ...m, from: i < 0 ? m.from : now[i], to: j < 0 ? m.to : now[j] }]);
+    if (m.kind !== 'arrow' || skip.includes(m.line)) continue;
+    const [f, t] = [at(m.from), at(m.to)];
+    if (f || t) out.push([m.line, { ...m, from: f || m.from, to: t || m.to }]);
   }
   return out;
+}
+export const followBox = (marks, before, after) => followBoxes(marks, [[before, after]]);
+
+// About how wide words are drawn at `size`: wide letters (CJK) a size, others half one.
+export const textWidth = (t, size) => [...t].reduce((w, ch) => w + (/[\u1100-\u11ff\u2e80-\ua4cf\uac00-\ud7af\uf900-\ufaff\uff00-\uffef]/.test(ch) ? size : size * 0.55), 0);
+
+// The rectangle a mark takes on a picture w × h: { x, y, w, h }.
+export function markBounds(m, w, h) {
+  const sw = strokeOf(w, h);
+  const of = (pts) => {
+    const xs = pts.map((p) => p[0]);
+    const ys = pts.map((p) => p[1]);
+    return { x: Math.min(...xs), y: Math.min(...ys), w: Math.max(...xs) - Math.min(...xs), h: Math.max(...ys) - Math.min(...ys) };
+  };
+  if (m.kind === 'pen') return of(m.pts);
+  if (m.kind === 'arrow') return of([m.from, ...(m.via || []), m.to]);
+  if (m.kind === 'box' || m.kind === 'hide') return { x: m.x, y: m.y, w: m.w, h: m.h };
+  if (m.kind === 'num') return { x: m.x - sw * 7, y: m.y - sw * 7, w: sw * 14, h: sw * 14 };
+  const size = textSize(w, h);
+  return { x: m.x, y: m.y, w: textWidth(m.text, size), h: size * 1.2 };
 }
 
 // The words written in a box (starting in it), top to bottom.

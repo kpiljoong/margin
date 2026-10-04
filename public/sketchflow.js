@@ -5,11 +5,8 @@
 // numbered dots, an arrow joining nothing — is counted, left to the user
 // (or an agent). Plain logic, tested without a page (test/sketchflow.test.mjs).
 
-import { parseInk, textSize, BOARD_SIZE } from './ink.js';
+import { parseInk, textSize, textWidth, BOARD_SIZE } from './ink.js';
 import { isStepText } from './flow.js';
-
-// About how wide words are drawn: wide letters (CJK) a size, others half one.
-const textWidth = (t, size) => [...t].reduce((w, ch) => w + (/[\u1100-\u11ff\u2e80-\ua4cf\uac00-\ud7af\uf900-\ufaff\uff00-\uffef]/.test(ch) ? size : size * 0.55), 0);
 
 const inRect = ([x, y], r, pad = 0) => x >= r.x - pad && x <= r.x + r.w + pad && y >= r.y - pad && y <= r.y + r.h + pad;
 const toRect = ([x, y], r) => Math.hypot(Math.max(r.x - x, 0, x - (r.x + r.w)), Math.max(r.y - y, 0, y - (r.y + r.h)));

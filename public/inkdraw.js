@@ -21,14 +21,20 @@
 // arrow's part makes a new point, a point dragged straight goes); Delete takes
 // the picked one out, Esc lets go. Each change rewrites its line, one ⌘Z.
 //
+// Several at once: Shift and a click picks one more (or one less), Shift and
+// a drag picks the marks inside the band. A drag on one of them moves them
+// all (on a sketch, arrows on a box moved go along); Delete takes them out;
+// ⌘C / ⌘X copy (cut) their lines, and ⌘V puts marks' lines on the picture
+// looked at, a little aside, picked.
+//
 // A double-click writes words: on words, they change (emptied, they go); in
 // a box, its words (or new ones at its top left); elsewhere, new ones there.
 //
 // On a sketch, an arrow drawn to a box ends on the middle of the box's side
 // nearest it (its anchors show), and a box moved or reshaped takes the
-// arrow ends on its anchors along (public/ink.js: snapArrow, followBox).
+// arrow ends on its anchors along (public/ink.js: snapArrow, followBoxes).
 
-import { INK, inkLine, simplify, markEl, movedMark, grips, reshapedMark, textSize, anchors, snapEnd, snapArrow, followBox, wordsIn, arrowMids, ARROW_STYLES } from './ink.js';
+import { INK, inkLine, parseInk, simplify, markEl, movedMark, grips, reshapedMark, textSize, anchors, snapEnd, snapArrow, followBoxes, wordsIn, arrowMids, markBounds, ARROW_STYLES } from './ink.js';
 
 const SVG = 'http://www.w3.org/2000/svg';
 export const TOOLS = [
@@ -66,7 +72,8 @@ export class InkTools {
     this.path = null; // an arrow drawn point by point: { fig, scale, pts, cursor, el }
     this.arrowStyle = 'straight';
     this.edit = null; // a mark being moved or reshaped: { fig, mark, grip, from, next, el }
-    this.sel = null; // the mark picked: { pic: its picture's line, line }
+    this.sel = null; // the marks picked: { pic: their picture's line, lines }
+    this.band = null; // Shift and a drag: { fig, from, to, moved, line, el }
     this.bar = el('div', 'ink-bar');
     this.bar.hidden = true;
     this.buttons = new Map();
@@ -151,9 +158,9 @@ export class InkTools {
       if (e.key === 'Escape') { this.select(null); return true; }
       if (e.key === 'Delete' || e.key === 'Backspace') {
         const fig = this.picked();
-        const { line } = this.sel;
+        const { lines } = this.sel;
         this.select(null);
-        if (fig) this.c.h.onInk?.(fig, { remove: line });
+        if (fig) this.c.h.onInk?.(fig, lines.length > 1 ? { removes: lines } : { remove: lines[0] });
         return true;
       }
     }
@@ -193,6 +200,7 @@ export class InkTools {
   }
 
   move(e) {
+    if (this.band) { this.stretch(e); return true; }
     if (this.edit) { this.drag(e); return true; }
     if (this.path && !this.draft) {
       const hit = this.path.fig.isConnected && this.at(e, this.path.fig);
@@ -209,6 +217,7 @@ export class InkTools {
   }
 
   up(e) {
+    if (this.band) return this.endBand();
     if (this.edit) return this.drop();
     if (this.pathDown) { this.pathDown = false; return true; }
     const d = this.draft;
@@ -244,11 +253,13 @@ export class InkTools {
     this.draft = null;
     this.path?.el?.remove();
     this.path = null;
+    this.band?.el?.remove();
+    this.band = null;
     if (this.edit) {
       this.edit.el?.remove();
       this.edit.g?.classList.remove('ink-moving');
       const svg = this.edit.fig.querySelector(':scope > .ink-marks');
-      for (const [line] of this.edit.follow || []) svg?.querySelector(`:scope > .ink-mark[data-line="${line}"]`)?.classList.remove('ink-moving');
+      for (const line of [...(this.edit.follow || []).map(([l]) => l), ...(this.edit.group || []).map((m) => m.line)]) svg?.querySelector(`:scope > .ink-mark[data-line="${line}"]`)?.classList.remove('ink-moving');
       this.edit = null;
     }
   }
@@ -257,6 +268,15 @@ export class InkTools {
 
   // A press on a mark (or a grip) of the picture looked at. → it's ours.
   grab(e) {
+    // Shift: a band to pick marks with, or a mark more (or less).
+    const on = !this.c.presenting && e.shiftKey && !e.target.closest?.('.ink-grip') && e.target.closest?.('.ink-figure.ink-editable');
+    const start = on && this.at(e, on);
+    if (start) {
+      const g = e.target.closest('.ink-mark');
+      this.band = { fig: on, from: start.p, to: start.p, x: e.clientX, y: e.clientY, id: e.pointerId, moved: false, line: g && g.dataset.line !== '' ? Number(g.dataset.line) : null, el: null };
+      e.preventDefault();
+      return true;
+    }
     const t = !this.c.presenting && e.target.closest?.('.ink-grip, .ink-mark');
     const fig = t?.closest('.ink-figure.ink-editable');
     const g = t?.closest('.ink-mark') || fig?.querySelector(`:scope > .ink-marks > .ink-mark[data-line="${t?.dataset.line}"]`);
@@ -267,7 +287,56 @@ export class InkTools {
       return false;
     }
     const grip = t.classList.contains('ink-grip') ? { i: Number(t.dataset.i), mid: t.dataset.mid != null } : null;
-    this.edit = { fig, g, mark, grip, from: hit.p, scale: hit.scale, x: e.clientX, y: e.clientY, id: e.pointerId, moved: false, next: null, el: null };
+    // One of several picked: they all go.
+    const sel = this.sel?.pic === fig.dataset.line ? this.sel.lines : [];
+    const group = !grip && sel.length > 1 && sel.includes(mark.line) ? fig.inkMarks.filter((m) => sel.includes(m.line)) : null;
+    this.edit = { fig, g, mark, grip, group, from: hit.p, scale: hit.scale, x: e.clientX, y: e.clientY, id: e.pointerId, moved: false, next: null, el: null };
+    return true;
+  }
+
+  // The band stretched to the pointer.
+  stretch(e) {
+    const b = this.band;
+    if (!b.moved) {
+      if (Math.hypot(e.clientX - b.x, e.clientY - b.y) < 4) return;
+      b.moved = true;
+      try { this.c.stage.setPointerCapture(b.id); } catch { /* a pointer no longer down */ }
+    }
+    const hit = this.at(e, b.fig);
+    const svg = b.fig.querySelector(':scope > .ink-marks');
+    if (!hit || !svg) return;
+    b.to = hit.p;
+    const r = this.bandRect(b);
+    b.el?.remove();
+    b.el = this.maker()('rect', { class: 'ink-band', x: r.x, y: r.y, width: r.w, height: r.h, 'stroke-width': this.width(svg) * 0.6 });
+    svg.append(b.el);
+  }
+
+  bandRect(b) {
+    return { x: Math.min(b.from[0], b.to[0]), y: Math.min(b.from[1], b.to[1]), w: Math.abs(b.to[0] - b.from[0]), h: Math.abs(b.to[1] - b.from[1]) };
+  }
+
+  // The band let go: the marks wholly in it picked too (a click: the mark
+  // under it picked, or let go).
+  endBand() {
+    const b = this.band;
+    this.cancel();
+    if (!b.fig.isConnected) return true;
+    const had = this.sel?.pic === b.fig.dataset.line ? this.sel.lines : [];
+    let lines;
+    if (!b.moved) {
+      if (b.line == null) return true;
+      lines = had.includes(b.line) ? had.filter((l) => l !== b.line) : [...had, b.line];
+    } else {
+      const r = this.bandRect(b);
+      const img = b.fig.querySelector(':scope > img');
+      const inside = (b.fig.inkMarks || []).filter((m) => {
+        const q = markBounds(m, img.naturalWidth, img.naturalHeight);
+        return q.x >= r.x && q.y >= r.y && q.x + q.w <= r.x + r.w && q.y + q.h <= r.y + r.h;
+      });
+      lines = [...new Set([...had, ...inside.map((m) => m.line)])];
+    }
+    this.select(lines.length ? b.fig : null, lines);
     return true;
   }
 
@@ -278,6 +347,8 @@ export class InkTools {
       ed.moved = true;
       try { this.c.stage.setPointerCapture(ed.id); } catch { /* a pointer no longer down */ }
       ed.g?.classList.add('ink-moving');
+      const svg = ed.fig.querySelector(':scope > .ink-marks');
+      for (const m of ed.group || []) svg?.querySelector(`:scope > .ink-mark[data-line="${m.line}"]`)?.classList.add('ink-moving');
       this.c.stage.querySelectorAll('.ink-grips').forEach((x) => x.remove());
     }
     const hit = this.at(e, ed.fig);
@@ -295,20 +366,26 @@ export class InkTools {
         if (snap) p = snap.at;
       }
     }
-    ed.next = ed.grip
-      ? reshapedMark(ed.mark, ed.grip.i, p, { mid: ed.grip.mid, straight: 6 * ed.scale })
-      : movedMark(ed.mark, dx, dy);
+    const olds = ed.group || [ed.mark];
+    if (ed.group) ed.nexts = ed.group.map((m) => movedMark(m, dx, dy));
+    else {
+      ed.next = ed.grip
+        ? reshapedMark(ed.mark, ed.grip.i, p, { mid: ed.grip.mid, straight: 6 * ed.scale })
+        : movedMark(ed.mark, dx, dy);
+      ed.nexts = [ed.next];
+    }
     const svg = ed.fig.querySelector(':scope > .ink-marks');
     const sw = this.width(svg);
     const make = this.maker();
     ed.el?.remove();
-    const after = marks.map((m) => (m === ed.mark ? ed.next : m));
-    ed.el = markEl(ed.next, sw, make, after);
-    ed.el.classList.add('ink-draft');
+    const after = marks.map((m) => ed.nexts[olds.indexOf(m)] || m);
+    ed.el = make('g', { class: 'ink-draft' });
+    for (const m of ed.nexts) ed.el.append(markEl(m, sw, make, after));
     if (snap) this.anchorDots(ed.el, snap.box, snap.at, sw, make);
-    // A sketch's box: the arrows on its anchors go with it.
+    // A sketch's boxes: the arrows on their anchors go with them.
     for (const [line] of ed.follow || []) svg.querySelector(`:scope > .ink-mark[data-line="${line}"]`)?.classList.remove('ink-moving');
-    ed.follow = isBoard(ed.fig) && ed.mark.kind === 'box' ? followBox(marks, ed.mark, ed.next) : [];
+    const boxes = olds.map((m, i) => [m, ed.nexts[i]]).filter(([m]) => m.kind === 'box');
+    ed.follow = isBoard(ed.fig) && boxes.length ? followBoxes(marks, boxes, olds.map((m) => m.line)) : [];
     for (const [line, m] of ed.follow) {
       svg.querySelector(`:scope > .ink-mark[data-line="${line}"]`)?.classList.add('ink-moving');
       ed.el.append(markEl(m, sw, make, after));
@@ -335,19 +412,55 @@ export class InkTools {
     const ed = this.edit;
     this.cancel();
     if (!ed.moved) { this.select(ed.fig, ed.mark.line); return false; }
-    this.sel = { pic: ed.fig.dataset.line, line: ed.mark.line };
-    const at = (m) => inkLine(m);
-    if (ed.next && at(ed.next) !== at(ed.mark)) {
-      if (ed.follow?.length) this.c.h.onInk?.(ed.fig, { sets: [[ed.mark.line, ed.next], ...ed.follow] });
-      else this.c.h.onInk?.(ed.fig, { set: [ed.mark.line, ed.next] });
+    const olds = ed.group || [ed.mark];
+    this.sel = { pic: ed.fig.dataset.line, lines: olds.map((m) => m.line) };
+    const nexts = ed.nexts || [];
+    if (nexts.some((m, i) => inkLine(m) !== inkLine(olds[i]))) {
+      if (nexts.length > 1 || ed.follow?.length) this.c.h.onInk?.(ed.fig, { sets: [...olds.map((m, i) => [m.line, nexts[i]]), ...ed.follow] });
+      else this.c.h.onInk?.(ed.fig, { set: [ed.mark.line, nexts[0]] });
     }
     else this.drawGrips();
     return true;
   }
 
-  select(fig, line) {
-    this.sel = fig ? { pic: fig.dataset.line, line } : null;
+  // lines: a mark's line, or several.
+  select(fig, lines) {
+    this.sel = fig && lines != null ? { pic: fig.dataset.line, lines: [].concat(lines) } : null;
     this.drawGrips();
+  }
+
+  // ⌘C (cut: ⌘X): the marks picked, as their lines. → whether it did.
+  copy(e, cut = false) {
+    const fig = this.picked();
+    const src = fig?.dataset.source.split('\n') || [];
+    const lines = (this.sel?.lines || []).filter((l) => src[l] != null).sort((a, b) => a - b);
+    if (!lines.length || !e.clipboardData) return false;
+    e.clipboardData.setData('text/plain', lines.map((l) => src[l].trim()).join('\n'));
+    e.preventDefault();
+    if (cut) {
+      this.select(null);
+      this.c.h.onInk?.(fig, lines.length > 1 ? { removes: lines } : { remove: lines[0] });
+    }
+    return true;
+  }
+
+  // ⌘V of marks' lines (copied from a picture, or written): on the picture
+  // looked at, a little aside, picked. → whether they were marks.
+  paste(text) {
+    const fig = !this.c.presenting && this.c.stage.querySelector('.ink-figure.ink-editable');
+    const img = fig?.querySelector(':scope > img');
+    if (!img?.naturalWidth) return false;
+    const { marks, bad } = parseInk(text);
+    if (!marks.length || bad.length) return false;
+    const d = Math.round(Math.max(img.naturalWidth, img.naturalHeight) / 80);
+    const lines = marks.map((m) => inkLine(movedMark(m, d, d)));
+    const body = fig.dataset.inkLine === '' ? '' : (fig.dataset.source || '').replace(/\s+$/, '');
+    const first = body ? body.split('\n').length : 0;
+    this.cancel();
+    this.c.h.onInk?.(fig, { add: lines.join('\n') });
+    // Picked once the picture is drawn again with them.
+    this.sel = { pic: fig.dataset.line, lines: lines.map((_, i) => first + i), soon: true };
+    return true;
   }
 
   // The picture of the mark picked, while it is the one looked at.
@@ -355,9 +468,9 @@ export class InkTools {
     return this.sel && this.c.stage.querySelector(`.ink-figure.ink-editable[data-line="${this.sel.pic}"]`);
   }
 
-  // The picked mark ringed, its grips on it (again after the picture is
-  // drawn again). Another picture looked at lets it go; while its own is
-  // being drawn again, it waits.
+  // The picked mark ringed, its grips on it (several: ringed, a frame
+  // round them), again after the picture is drawn again. Another picture
+  // looked at lets them go; while its own is being drawn again, they wait.
   drawGrips() {
     this.c.stage.querySelectorAll('.ink-grips').forEach((x) => x.remove());
     this.c.stage.querySelectorAll('.ink-mark.ink-picked').forEach((x) => x.classList.remove('ink-picked'));
@@ -367,12 +480,23 @@ export class InkTools {
     const fig = this.picked();
     const svg = fig?.querySelector(':scope > .ink-marks');
     if (!svg) return;
-    const mark = fig.inkMarks?.find((m) => m.line === this.sel.line);
-    if (!mark) { this.sel = null; return; }
-    svg.querySelector(`:scope > .ink-mark[data-line="${mark.line}"]`)?.classList.add('ink-picked');
+    const picked = (fig.inkMarks || []).filter((m) => this.sel.lines.includes(m.line));
+    if (!picked.length) { if (!this.sel.soon) this.sel = null; return; }
+    this.sel = { pic: this.sel.pic, lines: picked.map((m) => m.line) };
+    for (const m of picked) svg.querySelector(`:scope > .ink-mark[data-line="${m.line}"]`)?.classList.add('ink-picked');
     const sw = this.width(svg);
     const make = this.maker();
     const g = make('g', { class: 'ink-grips' });
+    if (picked.length > 1) {
+      const img = fig.querySelector(':scope > img');
+      const bs = picked.map((m) => markBounds(m, img.naturalWidth, img.naturalHeight));
+      const [x, y] = [Math.min(...bs.map((b) => b.x)), Math.min(...bs.map((b) => b.y))];
+      const pad = sw * 3;
+      g.append(make('rect', { class: 'ink-selbox', x: x - pad, y: y - pad, width: Math.max(...bs.map((b) => b.x + b.w)) - x + pad * 2, height: Math.max(...bs.map((b) => b.y + b.h)) - y + pad * 2, 'stroke-width': sw * 0.6, 'stroke-dasharray': `${sw * 3} ${sw * 2}` }));
+      svg.append(g);
+      return;
+    }
+    const mark = picked[0];
     const pts = grips(mark);
     const dot = (p, i, mid) => {
       const c = make('circle', { class: 'ink-grip', cx: p[0], cy: p[1], r: sw * (mid ? 1.8 : 2.6), 'stroke-width': sw * 0.8, 'data-line': mark.line, 'data-i': i });

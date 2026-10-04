@@ -580,6 +580,46 @@ await check('on a sketch: a double-click in a box changes its words; an arrow dr
   return { was, kinds, text: ed.value.split('\x60\x60\x60')[1] };
 `, (v) => (v?.was === 'Idea' && /text: 130,140 Big idea\n/.test(v.text) && /\narrow[^\n]* elbow: 250,220 -> 250,500\n/.test(v.text) && v.kinds.join('|') === 'Straight ✓|Curved|Elbow|Delete' ? null : `got ${JSON.stringify(v)}`));
 
+await check('on a sketch: Shift and a drag picks marks; a drag moves them all (an arrow on a box goes along); copied, pasted aside, and taken out', `
+  const ed = $$('.editor-wrap textarea').find((t) => t.offsetParent);
+  const pic = () => $('.canvas-stage .ink-board img');
+  if (!pic()?.naturalWidth) return { none: true };
+  const at = (x, y) => { const img = pic(); const r = img.getBoundingClientRect(); return { clientX: r.left + x * r.width / img.naturalWidth, clientY: r.top + y * r.height / img.naturalHeight }; };
+  const stage = $('.canvas-stage');
+  const ptr = (type, el, p, more = {}) => el.dispatchEvent(new PointerEvent(type, { bubbles: true, cancelable: true, button: 0, pointerId: 1, ...p, ...more }));
+  const picked = () => $$('.canvas-stage .ink-board .ink-mark.ink-picked').length;
+  // The sketch drawn again since the last change; nothing picked.
+  await until(() => $('.canvas-stage .ink-board')?.dataset.source.includes(' elbow: ') && pic()?.naturalWidth, 5000);
+  await sleep(300);
+  key('Escape', {}, stage);
+  ptr('pointerdown', pic(), at(50, 450), { shiftKey: true });
+  for (let i = 1; i <= 5; i++) ptr('pointermove', stage, at(50 + 80 * i, 450 + 50 * i), { shiftKey: true });
+  ptr('pointerup', stage, at(450, 700), { shiftKey: true });
+  const out = { picked: picked(), frame: !!$('.canvas-stage .ink-selbox') };
+  const f = $('.canvas-stage .ink-board');
+  const box = f.inkMarks.find((m) => m.kind === 'box' && m.y === 500);
+  const hit = f.querySelector(\`.ink-mark[data-line="\${box.line}"] .ink-hit\`);
+  ptr('pointerdown', hit, at(100, 560));
+  for (let i = 1; i <= 5; i++) ptr('pointermove', stage, at(100 + 20 * i, 560));
+  ptr('pointerup', stage, at(200, 560));
+  await until(() => ed.value.includes('box: 200,500 300x120'), 5000);
+  out.moved = ed.value.split('\x60\x60\x60')[1];
+  out.still = await until(() => $('.canvas-stage .ink-board')?.dataset.source.includes('box: 200,500') && picked() === 2, 5000);
+  const dt = new DataTransfer();
+  stage.dispatchEvent(new ClipboardEvent('copy', { clipboardData: dt, bubbles: true, cancelable: true }));
+  out.copied = dt.getData('text/plain');
+  const dt2 = new DataTransfer();
+  dt2.setData('text/plain', out.copied);
+  stage.dispatchEvent(new ClipboardEvent('paste', { clipboardData: dt2, bubbles: true, cancelable: true }));
+  await until(() => ed.value.includes('box red: 220,520 300x120'), 5000);
+  out.pasted = await until(() => $('.canvas-stage .ink-board')?.dataset.source.includes('box red: 220,520') && picked() === 2, 5000);
+  key('Delete', {}, stage);
+  await until(() => !ed.value.includes('box red: 220,520'), 5000);
+  out.after = ed.value.split('\x60\x60\x60')[1];
+  return out;
+`, (v) => (v?.picked === 2 && v.frame && /\nbox: 200,500 300x120\ntext: 230,540 Try it\n/.test(v.moved) && / elbow: 250,220 -> 350,500\n/.test(v.moved) && /\narrow: 250,230 -> 250,490\n/.test(v.moved)
+  && v.still && v.copied === 'box: 200,500 300x120\ntext: 230,540 Try it' && v.pasted && v.after === v.moved ? null : `got ${JSON.stringify(v)}`));
+
 await check('Settings shows Labs', `
   document.dispatchEvent(new KeyboardEvent('keydown', { key: ',', metaKey: navigator.platform.startsWith('Mac'), ctrlKey: !navigator.platform.startsWith('Mac'), bubbles: true }));
   const d = await until(() => $('.dialog.settings'));
