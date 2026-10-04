@@ -1110,15 +1110,6 @@ export class FigureCanvas {
     this.saveTimer = setTimeout(() => { try { store.setItem(ZOOM_KEY, JSON.stringify(this.zoomFor)); } catch { /* private mode */ } }, 400);
   }
 
-  // While the wheel zooms, the pictures are one image the screen scales
-  // (the words on a sketch drawn again at each step moved against its
-  // lines); drawn sharp again once the wheel rests.
-  zooming() {
-    this.world.classList.add('zooming');
-    clearTimeout(this.zoomRest);
-    this.zoomRest = setTimeout(() => this.world.classList.remove('zooming'), 150);
-  }
-
   zoomBy(f) {
     const r = this.stage.getBoundingClientRect();
     this.zoomAt(this.k * f, r.width / 2, r.height / 2);
@@ -1170,7 +1161,6 @@ export class FigureCanvas {
         return;
       }
       const r = stage.getBoundingClientRect();
-      this.zooming();
       this.zoomAt(this.k * Math.exp(-e.deltaY * (e.ctrlKey ? 0.01 : 0.002)), e.clientX - r.left, e.clientY - r.top);
     }, { passive: false });
 
