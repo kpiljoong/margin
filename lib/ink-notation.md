@@ -13,7 +13,7 @@ hide gray: 40,20 300x30
 
 1. The button is hidden behind the banner
 
-- One line is one mark. `box: x,y WxH` (top left corner and size), `arrow: x,y -> x,y` (from, to; points between are bends, drawn rounded: `arrow: x,y -> x,y -> x,y`), `text: x,y words` (where the words start), `pen: x,y x,y …` (a line through the points), `num: x,y 1` (a numbered dot, its centre). `hide: x,y WxH` is a part the user hid: it shows as a gray box in your copy; leave the `hide` lines there as they are.
+- One line is one mark. `box: x,y WxH` (top left corner and size), `arrow: x,y -> x,y` (from, to; points between are corners: `arrow: x,y -> x,y -> x,y`; `arrow curved: …` is one curve through its points, `arrow elbow: x,y -> x,y` goes at right angles, out of the sides of the boxes its ends are on), `text: x,y words` (where the words start), `pen: x,y x,y …` (a line through the points), `num: x,y 1` (a numbered dot, its centre). `hide: x,y WxH` is a part the user hid: it shows as a gray box in your copy; leave the `hide` lines there as they are.
 - Coordinates are the picture's own pixels from its top left (the sizes are listed below); keep marks inside the picture.
 - The colour after the kind is optional (red when left out): red, orange, yellow, green, teal, blue, purple, gray, black. Lines starting with `#` or `//` are comments.
 - The block goes right under the picture's line (one blank line between is fine). If the picture has a block already, add your lines to it; leave the lines already there alone unless the task is about them.

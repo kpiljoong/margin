@@ -1,7 +1,7 @@
 // node --test (npm test): marks drawn on a picture, as lines (public/ink.js).
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { parseInk, inkLine, simplify, addMark, removeMark, bentPath, movedMark, grips, reshapedMark, setMark, fitBoard, boardLine, anchors, snapEnd, snapArrow, followBox, wordsIn, textSize } from '../public/ink.js';
+import { parseInk, inkLine, simplify, addMark, removeMark, bentPath, movedMark, grips, reshapedMark, setMark, fitBoard, boardLine, anchors, snapEnd, snapArrow, followBox, wordsIn, textSize, elbowRoute, sideOf, arrowPath, arrowMids, curveParts } from '../public/ink.js';
 
 test('ink lines: read, written back the same', () => {
   const src = ['box red: 280,120 200x80', '# a comment', 'arrow: 410,220 -> 300,160', 'text blue: 420,230 The button is hidden', 'pen 초록: 100,100 120,104 140,112', '상자 빨강: 1,2 3×4', 'nonsense', 'pen red: 1,2', 'arrow purple: 1,2 -> x'].join('\n');
@@ -40,7 +40,7 @@ test('a hidden part: gray unless a colour is given, also blur and in Korean', ()
   assert.equal(inkLine(marks[0]), 'hide gray: 40,20 300x30');
 });
 
-test('an arrow that bends: its bends in order, drawn round at them', () => {
+test('an arrow through points: the points in order (bentPath rounds an elbow arrow\'s corners)', () => {
   const { marks, bad } = parseInk(['arrow blue: 0,0 -> 100,0 -> 100,100', 'arrow: 1,2 → 3,4 → 5,6 → 7,8', 'arrow: 1,2 -> 3,4 -> x'].join('\n'));
   assert.deepEqual(marks.map((m) => [m.from, m.via, m.to]), [[[0, 0], [[100, 0]], [100, 100]], [[1, 2], [[3, 4], [5, 6]], [7, 8]]]);
   assert.deepEqual(bad, [2]);
@@ -50,6 +50,64 @@ test('an arrow that bends: its bends in order, drawn round at them', () => {
   // Never more than half a side: a short side is rounded all the way.
   assert.equal(bentPath([[0, 0], [10, 0], [10, 100]], 20), 'M0,0 L5,0 Q10,0 10,5 L10,100');
   assert.equal(bentPath([[0, 0], [5, 5]], 20), 'M0,0 L5,5');
+});
+
+test('an arrow\'s kind: straight (not said), curved or elbow, a word before or after the colour', () => {
+  const { marks, bad } = parseInk([
+    'arrow red curved: 0,0 -> 50,50 -> 100,0',
+    'arrow curved blue: 1,2 -> 3,4',
+    'arrow elbow: 0,0 -> 50,50 -> 100,0',
+    '\uD654\uC0B4\uD45C \uACE1\uC120: 1,2 -> 3,4',
+    'arrow: 1,2 -> 3,4',
+    'box curved: 1,2 3x4',
+    'arrow red blue: 1,2 -> 3,4',
+    'arrow curved elbow: 1,2 -> 3,4',
+  ].join('\n'));
+  assert.deepEqual(marks.map((m) => [m.style, m.color]), [['curved', 'red'], ['curved', 'blue'], ['elbow', 'red'], ['curved', 'red'], ['straight', 'red']]);
+  assert.deepEqual(bad, [5, 6, 7]);
+  assert.deepEqual(marks[2].via, [], 'an elbow arrow finds its own way: points between don\'t count');
+  assert.equal(inkLine(marks[0]), 'arrow red curved: 0,0 -> 50,50 -> 100,0');
+  assert.equal(inkLine(marks[2]), 'arrow red elbow: 0,0 -> 100,0');
+  assert.equal(inkLine(marks[4]), 'arrow red: 1,2 -> 3,4');
+  // Its kind changed in place: the other words as they were.
+  const src = 'arrow blue: 0,0 -> 10,10\n\uD654\uC0B4\uD45C \uACE1\uC120 \uD30C\uB791: 1,2 -> 3,4';
+  const [a, b] = parseInk(src).marks;
+  const curved = setMark(src, 0, { ...a, style: 'curved' });
+  assert.equal(curved.split('\n')[0], 'arrow blue curved: 0,0 -> 10,10');
+  assert.equal(setMark(curved, 0, { ...a, style: 'straight' }).split('\n')[0], 'arrow blue: 0,0 -> 10,10');
+  assert.equal(setMark(src, 1, { ...b, to: [5, 6] }).split('\n')[1], '\uD654\uC0B4\uD45C \uACE1\uC120 \uD30C\uB791: 1,2 -> 5,6');
+  assert.equal(setMark(src, 1, { ...b, style: 'elbow' }).split('\n')[1], '\uD654\uC0B4\uD45C \uD30C\uB791 elbow: 1,2 -> 3,4');
+});
+
+test('drawing an arrow: straight corners, a curve through its points, an elbow round its boxes', () => {
+  const round = (ps) => ps.map((p) => p.map((v) => Math.round(v * 1000) / 1000));
+  const straight = { kind: 'arrow', from: [0, 0], via: [[100, 0]], to: [100, 100], style: 'straight' };
+  assert.deepEqual(arrowPath(straight, 2), { d: 'M0,0 L100,0 L100,100', back: [100, 0] });
+  assert.deepEqual(round(arrowMids(straight)), [[50, 0], [100, 50]]);
+  // Curved: through the point between (a lever), the head along the curve's end.
+  const curved = { kind: 'arrow', from: [0, 0], via: [[50, 50]], to: [100, 0], style: 'curved' };
+  const parts = curveParts([curved.from, ...curved.via, curved.to]);
+  assert.deepEqual(parts.map((x) => [x[0], x[3]]), [[[0, 0], [50, 50]], [[50, 50], [100, 0]]]);
+  assert.match(arrowPath(curved, 2).d, /^M0,0 C8\.3,8\.3 33\.3,50 50,50 C66\.7,50 91\.7,8\.3 100,0$/);
+  assert.deepEqual(round([arrowPath(curved, 2).back]), [[91.667, 8.333]]);
+  assert.deepEqual(round(arrowMids(curved)), [[21.875, 28.125], [78.125, 28.125]]);
+  assert.match(arrowPath({ ...curved, via: [] }, 2).d, /^M0,0 L100,0$/, 'with no point between, a curve is straight');
+  // Elbow: on no box, across then down as it mostly goes.
+  assert.deepEqual(elbowRoute([0, 0], [100, 50]), [[0, 0], [50, 0], [50, 50], [100, 50]]);
+  assert.deepEqual(elbowRoute([0, 0], [20, 100]), [[0, 0], [0, 50], [20, 50], [20, 100]]);
+  // Out of a box's right side into the next one's left side.
+  assert.deepEqual(elbowRoute([300, 150], [600, 140], 1, 3, 10), [[300, 150], [450, 150], [450, 140], [600, 140]]);
+  // Out of the bottom, into a left side: one corner.
+  assert.deepEqual(elbowRoute([200, 200], [400, 300], 2, 3, 10), [[200, 200], [200, 300], [400, 300]]);
+  // Both on top sides: up past both, across, down.
+  assert.deepEqual(elbowRoute([100, 100], [300, 150], 0, 0, 10), [[100, 100], [100, 90], [300, 90], [300, 150]]);
+  // The sides come from the boxes the ends are on.
+  const { marks } = parseInk(['box: 100,100 200x100', 'box: 600,100 200x100', 'arrow elbow: 300,150 -> 600,150'].join('\n'));
+  assert.equal(sideOf([300, 150], marks), 1);
+  assert.equal(sideOf([600, 150], marks), 3);
+  assert.equal(sideOf([601, 150], marks), -1);
+  assert.deepEqual(arrowMids(marks[2]), [], 'no points to add to an elbow arrow');
+  assert.deepEqual(arrowPath(marks[2], 2, marks).back, [300, 150]);
 });
 
 test('a mark moved, reshaped by its grips, and written back in its place', () => {

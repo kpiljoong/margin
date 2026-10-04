@@ -1,9 +1,15 @@
-// Drawing on a picture in the canvas: a pen, an arrow (straight, or bending
-// as it was drawn), a box, words, and an eraser. Each mark finished is a line written in the picture's ```ink block
+// Drawing on a picture in the canvas: a pen, an arrow, a box, words, and an
+// eraser. Each mark finished is a line written in the picture's ```ink block
 // (public/ink.js has the lines; the app writes them, one ⌘Z each).
 //
+// An arrow: a drag draws it from where it starts to where it ends. A click
+// starts one point by point instead: each click a point on it, a
+// double-click (or Enter, or a click on a box of a sketch) its end; Esc
+// lets it go. A again, with the arrow on, changes its kind: straight
+// (corners at the points), curved (through them), elbow (across and down).
+//
 // The tool bar shows when a picture is the one looked at, or a tool is on.
-// Keys: D pen, A arrow, R box, T text, N numbered dot, H hide, E eraser,
+// Keys: D pen, A arrow (again: its kind), R box, T text, N numbered dot, H hide, E eraser,
 // M a comment (kept beside the note, not drawn: the app has it), C colour,
 // Esc: the tool off. With a tool on, a drag on a picture draws (beside it the
 // canvas still pans); a click with T puts words there, with N the next
@@ -11,8 +17,8 @@
 //
 // With no tool on, the marks of the picture looked at can be changed: a
 // click picks one (its grips show), a drag moves it, a grip reshapes it (a
-// box's corners, an arrow's ends and bends; the dot in the middle of an
-// arrow's side makes a new bend, a bend dragged straight goes); Delete takes
+// box's corners, an arrow's ends and points; the dot in the middle of an
+// arrow's part makes a new point, a point dragged straight goes); Delete takes
 // the picked one out, Esc lets go. Each change rewrites its line, one ⌘Z.
 //
 // A double-click writes words: on words, they change (emptied, they go); in
@@ -22,12 +28,12 @@
 // nearest it (its anchors show), and a box moved or reshaped takes the
 // arrow ends on its anchors along (public/ink.js: snapArrow, followBox).
 
-import { INK, inkLine, simplify, markEl, movedMark, grips, reshapedMark, textSize, anchors, snapEnd, snapArrow, followBox, wordsIn } from './ink.js';
+import { INK, inkLine, simplify, markEl, movedMark, grips, reshapedMark, textSize, anchors, snapEnd, snapArrow, followBox, wordsIn, arrowMids, ARROW_STYLES } from './ink.js';
 
 const SVG = 'http://www.w3.org/2000/svg';
 export const TOOLS = [
   ['pen', '✎', 'Pen', 'D'],
-  ['arrow', '↗', 'Arrow: drag straight, or bend it as you go', 'A'],
+  ['arrow', '↗', 'Arrow: drag, or click point by point (double-click ends)', 'A'],
   ['box', '▭', 'Box', 'R'],
   ['text', 'T', 'Words', 'T'],
   ['num', '\u2460', 'Numbered dot: click where it goes; item 1. of a numbered list in the section says what it is', 'N'],
@@ -38,6 +44,9 @@ export const TOOLS = [
 const KEYS = { d: 'pen', a: 'arrow', r: 'box', t: 'text', n: 'num', h: 'hide', e: 'erase', m: 'note' };
 
 const isBoard = (fig) => fig?.dataset.board != null;
+
+// An arrow's kinds, as the tool shows them.
+export const ARROW_KINDS = { straight: ['↗', 'Straight'], curved: ['\u2934', 'Curved'], elbow: ['\u21B1', 'Elbow'] };
 
 const el = (tag, cls, text) => {
   const e = document.createElement(tag);
@@ -54,6 +63,8 @@ export class InkTools {
     this.tool = null; // 'pen' | 'arrow' | 'box' | 'text' | 'num' | 'hide' | 'erase' | 'note'
     this.color = 'red';
     this.draft = null; // the mark being drawn: { fig, kind, pts, el }
+    this.path = null; // an arrow drawn point by point: { fig, scale, pts, cursor, el }
+    this.arrowStyle = 'straight';
     this.edit = null; // a mark being moved or reshaped: { fig, mark, grip, from, next, el }
     this.sel = null; // the mark picked: { pic: its picture's line, line }
     this.bar = el('div', 'ink-bar');
@@ -67,6 +78,7 @@ export class InkTools {
       this.buttons.set(kind, b);
       this.bar.append(b);
     }
+    this.paintArrow();
     this.dot = el('button', 'ink-tool ink-color');
     this.dot.type = 'button';
     this.dot.title = 'Colour (C)';
@@ -94,6 +106,22 @@ export class InkTools {
     else this.c.mark();
   }
 
+  // The arrow tool's look: the kind it draws.
+  paintArrow() {
+    const b = this.buttons.get('arrow');
+    const [icon, name] = ARROW_KINDS[this.arrowStyle];
+    b.textContent = icon;
+    b.title = `Arrow, ${name.toLowerCase()}: drag, or click point by point (double-click ends) (A; A again: the next kind)`;
+  }
+
+  // The arrow tool's next kind (straight, curved, elbow).
+  nextArrow() {
+    this.arrowStyle = ARROW_STYLES[(ARROW_STYLES.indexOf(this.arrowStyle) + 1) % ARROW_STYLES.length];
+    this.paintArrow();
+    this.c.h.onInkHint?.(`${ARROW_KINDS[this.arrowStyle][1]} arrows`);
+    if (this.path) this.previewPath();
+  }
+
   paintDot() {
     const [fill, line] = INK[this.color];
     this.dot.style.background = line;
@@ -110,6 +138,14 @@ export class InkTools {
 
   // A key, while a picture is looked at (or a tool is on). → used it.
   key(e, looking) {
+    if (this.path) {
+      if (e.key === 'Escape') { this.cancel(); return true; }
+      if (e.key === 'Enter') { this.endPath(); return true; }
+      if (e.key === 'Backspace' || e.key === 'Delete') {
+        if (this.path.pts.length > 1) { this.path.pts.pop(); this.previewPath(); } else this.cancel();
+        return true;
+      }
+    }
     if (e.key === 'Escape' && this.tool) { this.use(null); return true; }
     if (this.sel && !this.tool) {
       if (e.key === 'Escape') { this.select(null); return true; }
@@ -123,6 +159,7 @@ export class InkTools {
     }
     if (!looking && !this.tool) return false;
     const kind = KEYS[e.key];
+    if (kind === 'arrow' && this.tool === 'arrow') { this.nextArrow(); return true; }
     if (kind) { this.use(this.tool === kind ? null : kind); return true; }
     if (e.key === 'c') { this.pickColor(this.bar.getBoundingClientRect()); return true; }
     return false;
@@ -141,6 +178,7 @@ export class InkTools {
   down(e) {
     if (!this.tool && e.button === 0) return this.grab(e);
     if (!this.tool || e.button !== 0) return false;
+    if (this.path) { e.preventDefault(); this.pathClick(e); this.pathDown = true; return true; }
     const hit = this.at(e);
     if (!hit) return false;
     e.preventDefault();
@@ -156,22 +194,30 @@ export class InkTools {
 
   move(e) {
     if (this.edit) { this.drag(e); return true; }
+    if (this.path && !this.draft) {
+      const hit = this.path.fig.isConnected && this.at(e, this.path.fig);
+      if (hit) { this.path.cursor = hit.p; this.previewPath(); }
+      return true;
+    }
     const d = this.draft;
     if (!d) return false;
     const hit = this.at(e, d.fig);
     if (!hit || d.kind === 'text' || d.kind === 'num' || d.kind === 'note') return true;
-    if (d.kind === 'pen' || d.kind === 'arrow') d.pts.push(hit.p); else d.pts[1] = hit.p;
+    if (d.kind === 'pen') d.pts.push(hit.p); else d.pts[1] = hit.p;
     this.preview();
     return true;
   }
 
   up(e) {
     if (this.edit) return this.drop();
+    if (this.pathDown) { this.pathDown = false; return true; }
     const d = this.draft;
     if (!d) return false;
     this.draft = null;
     d.el?.remove();
     const moved = Math.hypot(e.clientX - d.x, e.clientY - d.y) > 4;
+    // An arrow clicked, not dragged: drawn point by point from there.
+    if (d.kind === 'arrow' && !moved) { this.path = { fig: d.fig, scale: d.scale, pts: [d.pts[0]], cursor: null, el: null }; return true; }
     if (d.kind === 'text') { if (!moved) this.words(d); return true; }
     if (d.kind === 'note') {
       // One comment, then the tool is put down.
@@ -196,6 +242,8 @@ export class InkTools {
   cancel() {
     this.draft?.el?.remove();
     this.draft = null;
+    this.path?.el?.remove();
+    this.path = null;
     if (this.edit) {
       this.edit.el?.remove();
       this.edit.g?.classList.remove('ink-moving');
@@ -254,7 +302,8 @@ export class InkTools {
     const sw = this.width(svg);
     const make = this.maker();
     ed.el?.remove();
-    ed.el = markEl(ed.next, sw, make);
+    const after = marks.map((m) => (m === ed.mark ? ed.next : m));
+    ed.el = markEl(ed.next, sw, make, after);
     ed.el.classList.add('ink-draft');
     if (snap) this.anchorDots(ed.el, snap.box, snap.at, sw, make);
     // A sketch's box: the arrows on its anchors go with it.
@@ -262,7 +311,7 @@ export class InkTools {
     ed.follow = isBoard(ed.fig) && ed.mark.kind === 'box' ? followBox(marks, ed.mark, ed.next) : [];
     for (const [line, m] of ed.follow) {
       svg.querySelector(`:scope > .ink-mark[data-line="${line}"]`)?.classList.add('ink-moving');
-      ed.el.append(markEl(m, sw, make));
+      ed.el.append(markEl(m, sw, make, after));
     }
     svg.append(ed.el);
   }
@@ -330,7 +379,7 @@ export class InkTools {
       if (mid) c.dataset.mid = '';
       g.append(c);
     };
-    if (mark.kind === 'arrow') pts.slice(1).forEach((p, i) => dot([(pts[i][0] + p[0]) / 2, (pts[i][1] + p[1]) / 2], i, true));
+    if (mark.kind === 'arrow') arrowMids(mark).forEach((p, i) => dot(p, i, true));
     pts.forEach((p, i) => dot(p, i, false));
     svg.append(g);
   }
@@ -352,40 +401,78 @@ export class InkTools {
     const [a, b] = [d.pts[0], d.pts[d.pts.length - 1]];
     const color = this.color;
     if (d.kind === 'pen') return { kind: 'pen', color, pts: simplify(d.pts, 1.2 * d.scale).map(([x, y]) => [Math.round(x), Math.round(y)]) };
-    if (d.kind === 'arrow') {
-      // Drawn bending, it bends where the drag turned; a nearly straight
-      // drag stays straight, and a hook at either end (the hand slipping)
-      // doesn't count.
-      const at = simplify(d.pts, 5 * d.scale);
-      const near = (p, q) => Math.hypot(p[0] - q[0], p[1] - q[1]) < 16 * d.scale;
-      while (at.length > 2 && near(at[at.length - 2], b)) at.splice(-2, 1);
-      while (at.length > 2 && near(at[1], a)) at.splice(1, 1);
-      const via = at.slice(1, -1).map(([x, y]) => [Math.round(x), Math.round(y)]);
-      const arrow = { kind: 'arrow', color, from: a, to: b, via };
-      return isBoard(d.fig) ? snapArrow(arrow, d.fig.inkMarks || [], this.reach(d.fig, d.scale)) : arrow;
-    }
+    if (d.kind === 'arrow') return this.arrowOf(d.fig, d.pts, d.scale);
     return { kind: d.kind === 'hide' ? 'hide' : 'box', color: d.kind === 'hide' ? 'gray' : color, x: Math.min(a[0], b[0]), y: Math.min(a[1], b[1]), w: Math.abs(b[0] - a[0]), h: Math.abs(b[1] - a[1]) };
+  }
+
+  // An arrow through the points, of the kind the tool draws (on a sketch,
+  // its ends on the boxes near them).
+  arrowOf(fig, pts, scale) {
+    const r = ([x, y]) => [Math.round(x), Math.round(y)];
+    const style = this.arrowStyle;
+    const arrow = { kind: 'arrow', color: this.color, style, from: r(pts[0]), to: r(pts[pts.length - 1]), via: style === 'elbow' ? [] : pts.slice(1, -1).map(r) };
+    return isBoard(fig) ? snapArrow(arrow, fig.inkMarks || [], this.reach(fig, scale)) : arrow;
+  }
+
+  // A click while an arrow is drawn point by point: a point; on (or next
+  // to) the last one — a double-click — or on a box of a sketch, its end;
+  // off the picture, the end at the last point.
+  pathClick(e) {
+    const P = this.path;
+    const hit = P.fig.isConnected && this.at(e, P.fig);
+    if (!hit) { this.endPath(); return; }
+    const last = P.pts[P.pts.length - 1];
+    if (Math.hypot(hit.p[0] - last[0], hit.p[1] - last[1]) < 6 * hit.scale) { this.endPath(); return; }
+    P.pts.push(hit.p);
+    const marks = P.fig.inkMarks || [];
+    const reach = this.reach(P.fig, P.scale);
+    const onBox = isBoard(P.fig) && snapEnd(hit.p, marks, reach, snapEnd(P.pts[0], marks, reach)?.box);
+    if (onBox || this.arrowStyle === 'elbow') this.endPath();
+    else { P.cursor = null; this.previewPath(); }
+  }
+
+  // The arrow drawn point by point, written.
+  endPath() {
+    const P = this.path;
+    this.cancel();
+    if (!P || P.pts.length < 2 || !P.fig.isConnected) return;
+    this.c.h.onInk?.(P.fig, { add: inkLine(this.arrowOf(P.fig, P.pts, P.scale)) });
+  }
+
+  previewPath() {
+    const P = this.path;
+    const pts = P.cursor ? [...P.pts, P.cursor] : P.pts;
+    P.el?.remove();
+    P.el = null;
+    if (pts.length < 2) return;
+    P.el = this.draw(P.fig, this.arrowOf(P.fig, pts, P.scale));
   }
 
   // The mark so far, drawn over the picture.
   preview() {
     const d = this.draft;
-    const svg = d.fig.querySelector(':scope > .ink-marks');
-    if (!svg) return;
     d.el?.remove();
-    const mark = this.markOf(d);
+    d.el = this.draw(d.fig, this.markOf(d));
+  }
+
+  // A mark not written yet, drawn over the picture (an arrow on a sketch:
+  // the anchors of the boxes its ends went to). → its element.
+  draw(fig, mark) {
+    const svg = fig.querySelector(':scope > .ink-marks');
+    if (!svg) return null;
     const sw = this.width(svg);
     const make = this.maker();
-    d.el = markEl(mark, sw, make);
-    d.el.classList.add('ink-draft');
-    // An arrow on a sketch: the anchors of the boxes its ends went to.
-    if (mark.kind === 'arrow' && isBoard(d.fig)) {
+    const marks = fig.inkMarks || [];
+    const g = markEl(mark, sw, make, marks);
+    g.classList.add('ink-draft');
+    if (mark.kind === 'arrow' && isBoard(fig)) {
       for (const p of [mark.from, mark.to]) {
-        const s = snapEnd(p, d.fig.inkMarks || [], 0);
-        if (s) this.anchorDots(d.el, s.box, s.at, sw, make);
+        const s = snapEnd(p, marks, 0);
+        if (s) this.anchorDots(g, s.box, s.at, sw, make);
       }
     }
-    svg.append(d.el);
+    svg.append(g);
+    return g;
   }
 
   // A double-click with no tool on (fig: the picture): words there.

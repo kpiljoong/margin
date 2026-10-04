@@ -1187,6 +1187,10 @@ export class FigureCanvas {
       if (!fig) return;
       const b = e.target.closest('.node-hit');
       const edge = e.target.closest('.edge');
+      // An arrow drawn on a picture: its kind.
+      const g = fig.matches('.ink-figure.ink-editable') && e.target.closest('.ink-mark');
+      const arrow = g && fig.inkMarks?.find((m) => m.kind === 'arrow' && String(m.line) === g.dataset.line);
+      if (arrow && this.h.onInkMenu) { this.ink.select(fig, arrow.line); this.h.onInkMenu(e, fig, arrow); return; }
       if (edge && !b) {
         this.selectEdge(fig, edge.dataset.from, edge.dataset.to);
         this.h.onArrow?.(fig, this.edgeAt, 'menu', e);

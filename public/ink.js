@@ -7,21 +7,25 @@
 //   ```ink
 //   box red: 280,120 200x80
 //   arrow red: 410,220 -> 300,160
-//   arrow blue: 100,300 -> 180,240 -> 300,260
+//   arrow blue curved: 100,300 -> 180,240 -> 300,260
+//   arrow elbow: 500,100 -> 700,300
 //   text red: 420,230 The button is hidden
 //   pen blue: 100,100 120,104 140,112
 //   num red: 300,110 1
 //   hide: 40,20 300x30
 //   ```
 //
-// - pen: a line through the points · arrow: from → to, any bends between
-//   (drawn round) · box: corner and
+// - pen: a line through the points · arrow: from → to, any points between;
+//   straight (corners at the points), curved (one curve through them: a
+//   point between is a lever) or elbow (across and down, round any boxes it
+//   joins; points between don't count) · box: corner and
 //   size · text: where it starts, then the words · num: a numbered dot, its
 //   centre and number — item 1 of the numbered list in the picture's section
 //   says what it is (linkCallouts) · hide: a part covered, corner and size
 //   (gray unless a colour is given); covered on screen, in a copy, and in the
 //   copy an agent gets (server.js masks the pictures it shares).
-// - The colour is optional (red, the pen's), any of the flow colours or black.
+// - The colour is optional (red, the pen's), any of the flow colours or black;
+//   so is an arrow's kind (straight when not said), before or after it.
 // - Other apps show the picture and the lines as code; Margin draws them on
 //   the picture. `#` or `//` starts a comment. Plain logic, tested without a
 //   page (test/ink.test.mjs), but for inkSvg.
@@ -33,7 +37,10 @@ import { COLORS, colorKey } from './flow.js';
 
 // Also in Korean: pen, arrow, box, text, number, hide.
 const KINDS = { pen: 'pen', arrow: 'arrow', box: 'box', text: 'text', num: 'num', number: 'num', hide: 'hide', blur: 'hide', '\uAC00\uB9AC\uAE30': 'hide', '\uD39C': 'pen', '\uD654\uC0B4\uD45C': 'arrow', '\uC0C1\uC790': 'box', '\uAE00': 'text', '\uBC88\uD638': 'num', board: 'board', '\uBCF4\uB4DC': 'board' };
-const LINE = /^(\S+?)(?:\s+([^\s:]+))?\s*:\s*(.*)$/;
+const LINE = /^(\S+?)((?:\s+[^\s:]+)*)\s*:\s*(.*)$/;
+// An arrow's kinds (also in Korean: straight, curved, elbow).
+const STYLES = { straight: 'straight', line: 'straight', curved: 'curved', curve: 'curved', elbow: 'elbow', '\uC9C1\uC120': 'straight', '\uACE1\uC120': 'curved', '\uAEBE\uC740\uC120': 'elbow' };
+export const ARROW_STYLES = ['straight', 'curved', 'elbow'];
 const NUM = '(-?\\d+(?:\\.\\d+)?)';
 const POINT = new RegExp(`^${NUM},${NUM}$`);
 const BOX = new RegExp(`^${NUM},${NUM}\\s+${NUM}\\s*[x×]\\s*${NUM}$`);
@@ -47,8 +54,8 @@ export const INK = { ...COLORS, black: ['#e8e9ec', '#1f2328'] };
 export const INK_COLORS = Object.keys(INK);
 const inkColor = (word) => (/^(black|\uAC80\uC815)$/i.test(word) ? 'black' : colorKey(word));
 
-// The marks: [{ kind, color, line, … }] (pts: [[x, y]] for a pen; from, to
-// for an arrow; x, y, w, h for a box; x, y, text for text), and the lines
+// The marks: [{ kind, color, line, … }] (pts: [[x, y]] for a pen; from, to,
+// via, style for an arrow; x, y, w, h for a box; x, y, text for text), and the lines
 // that aren't marks (0-based); board: { w, h, line } of a sketch (the
 // largest, if it says more than once), or null.
 export function parseInk(src) {
@@ -60,8 +67,17 @@ export function parseInk(src) {
     if (!body || body.startsWith('#') || body.startsWith('//')) return;
     const m = LINE.exec(body);
     const kind = m && KINDS[m[1].toLowerCase()];
-    const color = m && (m[2] ? inkColor(m[2]) : kind === 'hide' ? 'gray' : 'red');
-    if (!kind || !color) { bad.push(line); return; }
+    let color = null;
+    let style = null;
+    let ok = !!kind;
+    for (const w of ok ? m[2].trim().split(/\s+/).filter(Boolean) : []) {
+      const s = kind === 'arrow' && STYLES[w.toLowerCase()];
+      if (s && !style) style = s;
+      else if (!color && inkColor(w)) color = inkColor(w);
+      else ok = false;
+    }
+    if (!ok) { bad.push(line); return; }
+    color ||= kind === 'hide' ? 'gray' : 'red';
     const rest = m[3].trim();
     const n = (v) => Number(v);
     let mark = null;
@@ -78,7 +94,7 @@ export function parseInk(src) {
       const ps = rest.split(/\s*(?:->|→)\s*/).map((p) => POINT.exec(p));
       if (ps.length >= 2 && ps.every(Boolean)) {
         const at = ps.map((p) => [n(p[1]), n(p[2])]);
-        mark = { from: at[0], to: at[at.length - 1], via: at.slice(1, -1) };
+        mark = { from: at[0], to: at[at.length - 1], via: style === 'elbow' ? [] : at.slice(1, -1), style: style || 'straight' };
       }
     } else if (kind === 'box' || kind === 'hide') {
       const b = BOX.exec(rest);
@@ -130,9 +146,10 @@ const pt = ([x, y]) => `${r(x)},${r(y)}`;
 
 // A mark as its line.
 export function inkLine(mark) {
-  const head = `${mark.kind} ${mark.color || 'red'}: `;
+  const kind = mark.kind === 'arrow' && mark.style && mark.style !== 'straight' ? ` ${mark.style}` : '';
+  const head = `${mark.kind} ${mark.color || 'red'}${kind}: `;
   if (mark.kind === 'pen') return head + mark.pts.map(pt).join(' ');
-  if (mark.kind === 'arrow') return head + [mark.from, ...(mark.via || []), mark.to].map(pt).join(' -> ');
+  if (mark.kind === 'arrow') return head + [mark.from, ...(mark.style === 'elbow' ? [] : mark.via || []), mark.to].map(pt).join(' -> ');
   if (mark.kind === 'box' || mark.kind === 'hide') return `${head}${pt([mark.x, mark.y])} ${r(mark.w)}x${r(mark.h)}`;
   return `${head}${pt([mark.x, mark.y])} ${String(mark.text).replace(/\s+/g, ' ').trim()}`;
 }
@@ -173,6 +190,100 @@ export function bentPath(pts, r) {
   return `${d} L${p(pts[pts.length - 1])}`;
 }
 
+// A curve through the points (Catmull–Rom): a cubic piece between each two,
+// [[from, c1, c2, to]].
+export function curveParts(pts) {
+  const out = [];
+  for (let i = 0; i < pts.length - 1; i++) {
+    const [p0, p1, p2, p3] = [pts[i - 1] || pts[i], pts[i], pts[i + 1], pts[i + 2] || pts[i + 1]];
+    out.push([p1, [p1[0] + (p2[0] - p0[0]) / 6, p1[1] + (p2[1] - p0[1]) / 6], [p2[0] - (p3[0] - p1[0]) / 6, p2[1] - (p3[1] - p1[1]) / 6], p2]);
+  }
+  return out;
+}
+
+// The ways out of a box's sides, as anchors() has them: top, right, bottom, left.
+const SIDES = [[0, -1], [1, 0], [0, 1], [-1, 0]];
+
+// An elbow arrow's corners from a to b, going out of the sides of the boxes
+// they are on (sa, sb: 0 top … 3 left, as anchors(); -1: on none, then the
+// way it mostly goes), `gap` off a box before it turns. → the points, a
+// and b with them.
+export function elbowRoute(a, b, sa = -1, sb = -1, gap = 0) {
+  const across = (s) => s === 1 || s === 3;
+  const [dx, dy] = [b[0] - a[0], b[1] - a[1]];
+  const way = (h) => (h ? (dx >= 0 ? 1 : 3) : dy >= 0 ? 2 : 0);
+  const [ga, gb] = [sa < 0 ? 0 : gap, sb < 0 ? 0 : gap];
+  if (sa < 0) sa = way(sb >= 0 ? across(sb) : Math.abs(dx) >= Math.abs(dy));
+  if (sb < 0) sb = (way(across(sa)) + 2) % 4;
+  const out = (o, s, g) => [o[0] + SIDES[s][0] * g, o[1] + SIDES[s][1] * g];
+  const [p, q] = [out(a, sa, ga), out(b, sb, gb)];
+  // How far from u to v, the way side s faces.
+  const ahead = (s, u, v) => SIDES[s][0] * (v[0] - u[0]) + SIDES[s][1] * (v[1] - u[1]);
+  let mid;
+  if (across(sa) === across(sb)) {
+    // Both sides face along k: across at one point of k between them (past
+    // both, when they face the same way), else along at one point of the other.
+    const k = across(sa) ? 0 : 1;
+    const at = (v, w) => (k === 0 ? [v, w] : [w, v]);
+    let v = null;
+    if (sa === sb) v = SIDES[sa][k] > 0 ? Math.max(p[k], q[k]) : Math.min(p[k], q[k]);
+    else if (ahead(sa, p, q) >= 0) v = (p[k] + q[k]) / 2;
+    if (v != null) mid = [at(v, p[1 - k]), at(v, q[1 - k])];
+    else { const w = (p[1 - k] + q[1 - k]) / 2; mid = [at(p[k], w), at(q[k], w)]; }
+  } else {
+    const c = across(sa) ? [q[0], p[1]] : [p[0], q[1]];
+    mid = [ahead(sa, p, c) >= 0 && ahead(sb, q, c) >= 0 ? c : across(sa) ? [p[0], q[1]] : [q[0], p[1]]];
+  }
+  // No point twice, none in the middle of a straight run.
+  const pts = [];
+  for (const x of [a, p, ...mid, q, b]) {
+    const l = pts[pts.length - 1];
+    if (l && l[0] === x[0] && l[1] === x[1]) continue;
+    const o = pts[pts.length - 2];
+    if (o && ((o[0] === l[0] && l[0] === x[0]) || (o[1] === l[1] && l[1] === x[1]))) pts.pop();
+    pts.push(x);
+  }
+  return pts;
+}
+
+// The side of a box of `marks` an arrow's end at p is on (its anchor):
+// 0 top … 3 left, or -1.
+export function sideOf(p, marks) {
+  for (const b of marks) {
+    if (b.kind !== 'box') continue;
+    const i = anchors(b).findIndex((q) => q[0] === Math.round(p[0]) && q[1] === Math.round(p[1]));
+    if (i >= 0) return i;
+  }
+  return -1;
+}
+
+const fx = (q) => `${Math.round(q[0] * 10) / 10},${Math.round(q[1] * 10) / 10}`;
+
+// How an arrow is drawn, as it says (the boxes of `marks` turn an elbow
+// arrow): its SVG path, and the point its head points away from.
+export function arrowPath(m, sw, marks = []) {
+  const pts = [m.from, ...(m.via || []), m.to];
+  if (m.style === 'elbow') {
+    const route = elbowRoute(m.from, m.to, sideOf(m.from, marks), sideOf(m.to, marks), sw * 8);
+    return { d: bentPath(route, sw * 4), back: route[route.length - 2] || m.from };
+  }
+  if (m.style === 'curved' && pts.length > 2) {
+    const parts = curveParts(pts);
+    const [p, , c2, q] = parts[parts.length - 1];
+    return { d: `M${fx(pts[0])}${parts.map(([, a, b, c]) => ` C${fx(a)} ${fx(b)} ${fx(c)}`).join('')}`, back: c2[0] === q[0] && c2[1] === q[1] ? p : c2 };
+  }
+  return { d: `M${pts.map(fx).join(' L')}`, back: pts[pts.length - 2] };
+}
+
+// Where the dots that add a point to an arrow go: halfway along each of
+// its parts (none on an elbow arrow).
+export function arrowMids(m) {
+  const pts = [m.from, ...(m.via || []), m.to];
+  if (m.style === 'elbow') return [];
+  if (m.style === 'curved' && pts.length > 2) return curveParts(pts).map(([p, a, b, q]) => [0, 1].map((k) => (p[k] + 3 * a[k] + 3 * b[k] + q[k]) / 8));
+  return pts.slice(1).map((p, i) => [(pts[i][0] + p[0]) / 2, (pts[i][1] + p[1]) / 2]);
+}
+
 // ---- changing a mark (the canvas: inkdraw.js)
 
 // A mark moved by dx, dy.
@@ -184,7 +295,7 @@ export function movedMark(m, dx, dy) {
 }
 
 // The points that reshape a mark: a box's (or hidden part's) corners
-// clockwise from the top left, an arrow's ends and bends; none for the rest.
+// clockwise from the top left, an arrow's ends and points between; none for the rest.
 export function grips(m) {
   if (m.kind === 'box' || m.kind === 'hide') return [[m.x, m.y], [m.x + m.w, m.y], [m.x + m.w, m.y + m.h], [m.x, m.y + m.h]];
   if (m.kind === 'arrow') return [m.from, ...(m.via || []), m.to];
@@ -207,10 +318,17 @@ export function reshapedMark(m, i, [x, y], { mid = false, straight = 0 } = {}) {
   return { ...m, x: Math.min(o[0], x), y: Math.min(o[1], y), w: Math.abs(x - o[0]), h: Math.abs(y - o[1]) };
 }
 
-// The block with line n made `mark`, its kind and colour words as they were.
+// The block with line n made `mark`, its kind and colour words as they were
+// (an arrow's kind changed, its word).
 export function setMark(src, n, mark) {
   const ls = String(src).split('\n');
-  const head = /^\s*[^:]*:/.exec(ls[n] ?? '')?.[0];
+  let head = /^\s*[^:]*:/.exec(ls[n] ?? '')?.[0];
+  if (head && mark.kind === 'arrow') {
+    const words = head.slice(0, -1).trim().split(/\s+/);
+    const was = words.slice(1).map((w) => STYLES[w.toLowerCase()]).find(Boolean) || 'straight';
+    const now = mark.style || 'straight';
+    if (was !== now) head = `${/^\s*/.exec(head)[0]}${[words[0], ...words.slice(1).filter((w) => !STYLES[w.toLowerCase()]), ...(now === 'straight' ? [] : [now])].join(' ')}:`;
+  }
   const line = inkLine(mark);
   ls[n] = head ? `${head} ${line.slice(line.indexOf(':') + 1).trim()}` : line;
   return ls.join('\n');
@@ -302,11 +420,12 @@ export function inkSvg(marks, w, h) {
     return e;
   };
   // What is hidden first, under the rest.
-  for (const m of [...marks.filter((x) => x.kind === 'hide'), ...marks.filter((x) => x.kind !== 'hide')]) svg.append(markEl(m, sw, make));
+  for (const m of [...marks.filter((x) => x.kind === 'hide'), ...marks.filter((x) => x.kind !== 'hide')]) svg.append(markEl(m, sw, make, marks));
   return svg;
 }
 
-export function markEl(m, sw, make) {
+// marks: the picture's, for an elbow arrow to go round its boxes.
+export function markEl(m, sw, make, marks = []) {
   const c = stroke(m.color);
   const g = make('g', { class: 'ink-mark', 'data-line': m.line ?? '' });
   const line = { fill: 'none', stroke: c, 'stroke-width': sw, 'stroke-linecap': 'round', 'stroke-linejoin': 'round' };
@@ -323,13 +442,12 @@ export function markEl(m, sw, make) {
     t.textContent = m.text;
     g.append(t);
   } else if (m.kind === 'arrow') {
-    const pts = [m.from, ...(m.via || []), m.to];
-    const [x1, y1] = pts[pts.length - 2];
+    const { d, back: [x1, y1] } = arrowPath(m, sw, marks);
     const [x2, y2] = m.to;
     const a = Math.atan2(y2 - y1, x2 - x1);
     const head = sw * 5;
     const wing = (s) => `${x2 - head * Math.cos(a + s)},${y2 - head * Math.sin(a + s)}`;
-    g.append(make('path', { ...line, d: bentPath(pts, sw * 20) }));
+    g.append(make('path', { ...line, d }));
     g.append(make('polyline', { ...line, points: `${wing(0.5)} ${x2},${y2} ${wing(-0.5)}` }));
   } else {
     const size = sw * 9;

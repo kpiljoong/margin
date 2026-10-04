@@ -12,10 +12,11 @@ import { emacs, occurLines, occurPattern, keyName as emacsKeyName, commandOf as 
 import { hunksOf } from './track.js';
 import { renderDiagrams } from './diagrams.js';
 import { flowToMermaid, flowsAsMermaid, parseFlow, isStepText, flowStepNames, nameKey, flowTour, flowLineAt, COLORS } from './flow.js';
-import { pairInk, parseInk, addMark, removeMark, setMark, fitBoard, boardLine, INK, INK_COLORS } from './ink.js';
+import { pairInk, parseInk, addMark, removeMark, setMark, fitBoard, boardLine, INK, INK_COLORS, ARROW_STYLES } from './ink.js';
 import { pictureHunks, penPlaces, pictureSummary, showPicture, PLACE } from './penpic.js';
 import { connect, addBox, freshName, nextAnswer, setColor, setDirection, removeBox, removeArrow, setArrowKind, setArrowLabel, reverseArrow, setShape, arrowSpot } from './flowedit.js';
 import { FigureCanvas } from './canvas.js';
+import { ARROW_KINDS } from './inkdraw.js';
 import { pinnedFigure, pinLabel } from './pins.js';
 import { sketchToFlow } from './sketchflow.js';
 import { goalAt, boxAt, mentionRanges, definitionLines, leadLines, numberedItems } from './figure-goal.js';
@@ -2049,6 +2050,8 @@ function canvasFor(tab) {
     onArrowStep: (pre, from, to) => gotoArrow(tab, pre, from, to),
     onShapeMenu: (pre, id, at) => shapeMenu(tab, pre, id, at),
     onInk: (fig, change) => inkEdit(tab, fig, change),
+    onInkMenu: (e, fig, mark) => inkArrowMenu(tab, e, fig, mark),
+    onInkHint: (msg) => toast(msg),
     // Comments on the pictures (kept with the note's others).
     onBoxComment: (pre, id, rect) => drawingComment(tab, pre, { on: 'flow', box: nodeText(pre, id) }, rect),
     onInkComment: (fig, [x, y], rect) => drawingComment(tab, fig, { on: fig.dataset.board != null ? 'sketch' : 'picture', x, y }, rect),
@@ -2618,6 +2621,16 @@ function cardMenu(tab, e, pre) {
     flow || from || pre.dataset.board != null ? '-' : null,
     ...(pre.matches('.ink-figure') ? pictureItems(() => inkPicture(pre, tab.path))
       : img ? pictureItems(() => diagramPicture(img, from || tab.path, `${stem(from || tab.path)}-diagram`)) : []),
+  ]);
+}
+
+// An arrow drawn on a picture: its kind (straight, curved, elbow), or out.
+function inkArrowMenu(tab, e, fig, mark) {
+  const now = mark.style || 'straight';
+  contextMenu(e, [
+    ...ARROW_STYLES.map((style) => ({ label: `${ARROW_KINDS[style][1]}${style === now ? ' ✓' : ''}`, run: () => { if (style !== now) inkEdit(tab, fig, { set: [mark.line, { ...mark, style, via: style === 'elbow' ? [] : mark.via }] }); } })),
+    '-',
+    { label: 'Delete', danger: true, run: () => inkEdit(tab, fig, { remove: mark.line }) },
   ]);
 }
 

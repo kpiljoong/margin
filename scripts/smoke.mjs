@@ -431,29 +431,33 @@ await check('hiding a part of a picture: H covers it, and the task dialog says t
   return out;
 `, (v) => (v?.line === 'hide gray: 40,30 40x15' && v.drawn && v.list.includes('assets/screen.svg (picture, parts hidden)') ? null : `got ${JSON.stringify(v)}`));
 
-await check('an arrow drawn bending bends there; one drawn straight stays straight', `
+await check('an arrow: clicks draw it point by point (a double-click ends it), a drag draws it straight; A again changes its kind', `
   const ed = () => $$('.editor-wrap textarea').find((t) => t.offsetParent);
   const img = () => $('.canvas-stage .ink-figure img');
   if (!(await until(() => img()?.naturalWidth, 15000))) return { none: true };
   const stage = $('.canvas-stage');
   const pt = (fx, fy) => { const r = img().getBoundingClientRect(); return { clientX: r.left + r.width * fx, clientY: r.top + r.height * fy }; };
   const ptr = (type, el, p) => el.dispatchEvent(new PointerEvent(type, { bubbles: true, cancelable: true, button: 0, pointerId: 1, ...p }));
+  const click = (fx, fy) => { ptr('pointerdown', img(), pt(fx, fy)); ptr('pointerup', stage, pt(fx, fy)); };
   img().dispatchEvent(new MouseEvent('click', { bubbles: true })); await sleep(300);
   stage.focus(); key('a', {}, stage);
-  ptr('pointerdown', img(), pt(0.5, 0.5));
-  for (let i = 1; i <= 10; i++) ptr('pointermove', stage, pt(0.5 + 0.03 * i, 0.5));
-  for (let i = 1; i <= 10; i++) ptr('pointermove', stage, pt(0.8, 0.5 + 0.03 * i));
-  ptr('pointerup', stage, pt(0.8, 0.8));
+  click(0.5, 0.5); click(0.8, 0.5);
+  ptr('pointermove', stage, pt(0.7, 0.7));
+  const following = !!$('.canvas-stage .ink-draft');
+  click(0.8, 0.8); click(0.8, 0.8);
   await until(() => ed().value.includes('arrow red: 200,150 ->'), 8000);
-  await until(() => $('.canvas-stage .ink-mark path[d*="Q"]'), 8000); await sleep(500); // drawn again
+  const sharp = await until(() => $$('.canvas-stage .ink-mark:not(.ink-draft) path').some((p) => p.getAttribute('d') === 'M200,150 L320,150 L320,240'), 8000);
+  await sleep(500); // drawn again
   ptr('pointerdown', img(), pt(0.1, 0.9));
-  for (let i = 1; i <= 10; i++) ptr('pointermove', stage, pt(0.1 + 0.02 * i, 0.9 - 0.02 * i));
+  for (let i = 1; i <= 10; i++) ptr('pointermove', stage, pt(0.1 + 0.02 * i, 0.9 - (i < 6 ? 0 : 0.04 * (i - 5))));
   ptr('pointerup', stage, pt(0.3, 0.7));
   await until(() => ed().value.includes('arrow red: 40,270 ->'), 8000);
+  await sleep(300);
+  const kinds = [];
+  for (let i = 0; i < 3; i++) { key('a', {}, stage); kinds.push($('.ink-bar .ink-tool.on')?.title.split(':')[0]); }
   key('Escape', {}, stage);
-  const bent = $('.canvas-stage .ink-mark path[d*="Q"]');
-  return { lines: ed().value.split('\\n').filter((l) => l.startsWith('arrow')), bent: !!bent };
-`, (v) => (v?.lines?.join('|') === 'arrow red: 200,150 -> 320,150 -> 320,240|arrow red: 40,270 -> 120,210' && v.bent ? null : `got ${JSON.stringify(v)}`));
+  return { lines: ed().value.split('\\n').filter((l) => l.startsWith('arrow')), following, sharp: !!sharp, kinds, off: !$('.ink-bar .ink-tool.on') };
+`, (v) => (v?.lines?.join('|') === 'arrow red: 200,150 -> 320,150 -> 320,240|arrow red: 40,270 -> 120,210' && v.following && v.sharp && v.kinds.join('|') === 'Arrow, curved|Arrow, elbow|Arrow, straight' && v.off ? null : `got ${JSON.stringify(v)}`));
 
 await check('changing marks with no tool on: a drag moves one, a corner reshapes it, Delete takes the picked one out', `
   const ed = () => $$('.editor-wrap textarea').find((t) => t.offsetParent);
@@ -542,7 +546,7 @@ await check('a sketch read as a flow: its boxes, words and arrows as a ```flow b
   return { text: ed.value, boxes, toast: $('#toast')?.textContent };
 `, (v) => (v?.text === '# Board\n\n```ink\nboard: 1600x900\nbox: 100,100 300x120\ntext: 130,140 Idea\nbox: 100,500 300x120\ntext: 130,540 Try it\narrow: 250,230 -> 250,490\n```\n\n```flow\nIdea -> Try it\n```\n\nAfter.\n' && v.boxes === 2 && /A flow of 2 steps and 1 arrow/.test(v.toast) ? null : `got ${JSON.stringify(v)}`));
 
-await check('on a sketch: a double-click in a box changes its words; an arrow drawn between boxes ends on their sides', `
+await check('on a sketch: a double-click in a box changes its words; an arrow drawn between boxes ends on their sides, made elbow by a right-click', `
   const ed = $$('.editor-wrap textarea').find((t) => t.offsetParent);
   const pic = () => $('.canvas-stage .ink-board img');
   const img = pic();
@@ -566,8 +570,15 @@ await check('on a sketch: a double-click in a box changes its words; an arrow dr
   ptr('pointerup', stage, at(300, 480));
   await until(() => ed.value.includes('250,220 -> 250,500'), 5000);
   key('Escape', {}, stage);
-  return { was, text: ed.value.split('\x60\x60\x60')[1] };
-`, (v) => (v?.was === 'Idea' && /text: 130,140 Big idea\n/.test(v.text) && /\narrow[^\n]*: 250,220 -> 250,500\n/.test(v.text) ? null : `got ${JSON.stringify(v)}`));
+  // Right-click the arrow: elbow.
+  const drawn = await until(() => { const f = $('.canvas-stage .ink-board'); return f?.dataset.source.includes('250,220 -> 250,500') && f.inkMarks?.find((m) => m.kind === 'arrow' && m.from[1] === 220) && f; }, 5000);
+  const line = drawn?.inkMarks.find((m) => m.kind === 'arrow' && m.from[1] === 220).line;
+  drawn?.querySelector(\`.ink-mark[data-line="\${line}"] .ink-hit\`).dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true, button: 2, ...at(250, 360) }));
+  const kinds = $$('.ctx-menu .ctx-item').map((b) => b.textContent);
+  $$('.ctx-menu .ctx-item').find((b) => b.textContent.startsWith('Elbow'))?.click();
+  await until(() => / elbow: 250,220 -> 250,500/.test(ed.value), 5000);
+  return { was, kinds, text: ed.value.split('\x60\x60\x60')[1] };
+`, (v) => (v?.was === 'Idea' && /text: 130,140 Big idea\n/.test(v.text) && /\narrow[^\n]* elbow: 250,220 -> 250,500\n/.test(v.text) && v.kinds.join('|') === 'Straight ✓|Curved|Elbow|Delete' ? null : `got ${JSON.stringify(v)}`));
 
 await check('Settings shows Labs', `
   document.dispatchEvent(new KeyboardEvent('keydown', { key: ',', metaKey: navigator.platform.startsWith('Mac'), ctrlKey: !navigator.platform.startsWith('Mac'), bubbles: true }));
