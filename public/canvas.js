@@ -1146,7 +1146,7 @@ export class FigureCanvas {
     this.world.addEventListener('inkdrawn', () => this.drawComments());
     stage.addEventListener('wheel', (e) => {
       e.preventDefault();
-      this.editing?.remove();
+      // Words being typed stay, over their spot (apply() places them).
       // h.wheelPans() (Labs): the wheel or two fingers move, a pinch or
       // ⌘/Ctrl + wheel zooms. Otherwise the wheel zooms.
       if (this.h.wheelPans?.() && !e.ctrlKey && !e.metaKey) {
