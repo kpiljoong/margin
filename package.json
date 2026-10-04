@@ -1,7 +1,7 @@
 {
   "name": "margin",
   "productName": "Margin",
-  "version": "0.5.54",
+  "version": "0.5.55",
   "description": "A lightweight, local-first Markdown workspace where you delegate edits to an AI agent and review them hunk by hunk.",
   "private": true,
   "license": "MIT",
