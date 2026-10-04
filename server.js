@@ -1201,7 +1201,7 @@ const flowGuide = (text, note) => (FLOW_TASK.test(text) || /^\s*```flow\s*$/m.te
 // Tasks about pictures (in English or Korean): the ```ink notation
 // (lib/ink-notation.md), and the pictures the shared notes show are copied
 // in with them, their sizes in the prompt.
-const PICTURE_TASK = /\b(ink|pictures?|screenshots?|screen ?shots?|images?|photos?|annotat\w*|mark up|draw on)\b|\uADF8\uB9BC|\uC2A4\uD06C\uB9B0\s?\uC0F7|\uC774\uBBF8\uC9C0|\uC0AC\uC9C4/i;
+const PICTURE_TASK = /\b(ink|pictures?|screenshots?|screen ?shots?|images?|photos?|annotat\w*|mark up|draw on|sketch(es)?)\b|\uC2A4\uCF00\uCE58|\uADF8\uB9BC|\uC2A4\uD06C\uB9B0\s?\uC0F7|\uC774\uBBF8\uC9C0|\uC0AC\uC9C4/i;
 const MAX_PICTURES = 40;
 const MAX_PICTURE_BYTES = 10 * 1024 * 1024;
 let inkNotation = null;

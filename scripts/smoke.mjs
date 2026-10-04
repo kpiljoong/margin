@@ -36,6 +36,7 @@ fs.writeFileSync(path.join(ws, 'pics.md'), '# Pics\n\n![Big picture](assets/big.
 fs.writeFileSync(path.join(ws, 'assets', 'screen.svg'), '<svg xmlns="http://www.w3.org/2000/svg" width="400" height="300"><rect width="400" height="300" fill="#ddd"/></svg>');
 fs.writeFileSync(path.join(ws, 'dots.md'), '# Dots\n\n![Screen](assets/screen.svg)\n\n1. First thing\n2. Second thing\n');
 fs.writeFileSync(path.join(ws, 'shot.md'), '# Shot\n\n![Screen](assets/screen.svg)\n\nAfter.\n');
+fs.writeFileSync(path.join(ws, 'sketch.md'), '# Sketch\n\nTalk.\n');
 // Lines for a keyboard macro, and notes to run one at every search result.
 fs.writeFileSync(path.join(ws, 'macro.md'), 'apple\nbanana\ncherry');
 fs.writeFileSync(path.join(ws, 'emacs.md'), 'one two three\nfour five\nsix\n');
@@ -482,6 +483,30 @@ await check('changing marks with no tool on: a drag moves one, a corner reshapes
   out.lines = ed().value.split('\\n').filter((l) => /^(num|hide|arrow)/.test(l));
   return out;
 `, (v) => (v?.dot === 'ink-hit' && v.grips === 4 && v.corner === 'ink-grip' && v.lines.join('|') === 'num red: 160,120 1|num red: 240,180 2|arrow red: 200,150 -> 320,150 -> 320,240|arrow red: 40,270 -> 120,210' ? null : `got ${JSON.stringify(v)}`));
+
+await check('a sketch: + Sketch adds a blank board with the pen up; a line drawn past its edge is a line of the block, and the board grows', `
+  const ed = await openNote('sketch.md');
+  if (!$('.canvas-pane')?.offsetParent) button('Canvas').click();
+  ed.setSelectionRange(ed.value.length, ed.value.length);
+  (await until(() => button('+ Sketch'), 8000)).click();
+  const img = () => $('.canvas-stage .ink-board img');
+  if (!(await until(() => img()?.naturalWidth, 15000))) return { none: true };
+  await sleep(500);
+  const stage = $('.canvas-stage');
+  const text = () => $$('.editor-wrap textarea').find((t) => t.offsetParent).value;
+  const pt = (fx, fy) => { const r = img().getBoundingClientRect(); return { clientX: r.left + r.width * fx, clientY: r.top + r.height * fy }; };
+  const ptr = (type, el, p) => el.dispatchEvent(new PointerEvent(type, { bubbles: true, cancelable: true, button: 0, pointerId: 1, ...p }));
+  const out = { pen: $('.ink-tool.on')?.title, keys: document.activeElement === stage };
+  ptr('pointerdown', img(), pt(0.1, 0.1));
+  for (let i = 1; i <= 6; i++) ptr('pointermove', stage, pt(0.1 + i * 0.05, 0.1 + i * 0.2));
+  ptr('pointerup', stage, pt(0.4, 1.3));
+  await until(() => text().includes('pen black'), 8000);
+  out.text = text();
+  out.tall = (await until(() => img()?.naturalHeight > 900 && img().naturalHeight, 8000)) || img()?.naturalHeight;
+  out.still = document.activeElement === stage;
+  key('Escape', {}, stage);
+  return out;
+`, (v) => (v?.pen?.startsWith('Pen') && v.keys && v.still && /^# Sketch\n\nTalk\.\n\n```ink\nboard: 1600x(1[0-9]00)\npen black: [\d, ]+\n```\n$/.test(v.text) && v.tall > 900 ? null : `got ${JSON.stringify(v)}`));
 
 await check('Settings shows Labs', `
   document.dispatchEvent(new KeyboardEvent('keydown', { key: ',', metaKey: navigator.platform.startsWith('Mac'), ctrlKey: !navigator.platform.startsWith('Mac'), bubbles: true }));

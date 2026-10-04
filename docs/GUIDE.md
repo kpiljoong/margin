@@ -120,6 +120,7 @@ Quick keys for a meeting:
 | ⌥X p n / p N | next / previous comment |
 | ⌥X p x | resolve the comment you're on (Undo in the message); ⌥X p h shows the resolved ones |
 | ⌥X p v | review your suggestions |
+| ⌥X p s | a sketch: a blank board below the cursor, on the canvas with the pen up (see "A sketch" below) |
 | ⌘⇧M (⌥X p m, ⌥X t m) | meeting mode on / off |
 
 A comment may start with who said it, `@Mina …` (Tab completes a name used before), and 🕑 adds the time (remembered). Comments are kept beside the note, in `.agent-notes/comments/<note>.json`, never in its text; they go with a renamed note, have replies, and are resolved, not deleted. An agent asked about the note reads the open ones.
@@ -492,6 +493,18 @@ Login request -> Auth server -> Success?
   - **Copy with the marks**: ⧉ on a picture (or right-click → Copy as image / Save as PNG…) gives the picture with its marks drawn on, at its own size, to paste in a chat or an issue.
   - **Hide a part** (`hide`, also `blur`, `가리기`; gray unless a colour is given): a name, an address, a token in a screenshot is covered — in the preview and on the canvas, opened large, in a copy, presenting (never a step), and in what an agent is shared: it gets a copy of the picture with the part filled in, never the picture itself. A GIF can't be covered, so it isn't shared. The picture file itself is left as it is: anyone with the file (or another app) still sees everything.
   - The preview draws the marks on the picture too; other apps show the picture and the lines as code.
+  - **A sketch** — drawing as it comes, in a meeting say: **+ Sketch** in the canvas bar, ⌥X p s, or the palette's **Sketch: a blank board to draw on, below the cursor** adds an ` ```ink ` block with a `board:` line and no picture above it. It is a blank page of that size (`board: 1600x900`), on the canvas with the pen up, in black; every tool above works on it, each mark a line of the block. Drawn past its bottom or right edge, the board grows to hold it (the `board:` line is rewritten, in steps of 100). The preview shows it as a picture, presenting steps through its marks, ⧉ copies it, and an agent reads and writes it as it does marks on a picture (a change comes back as red pen on the sketch).
+
+    ````
+    ```ink
+    board: 1600x900
+    pen black: 120,140 180,200 260,210
+    box: 400,120 300x160
+    text black: 420,320 Decision: ship next week
+    ```
+    ````
+
+  - **Not while suggesting**: drawing on the canvas (a sketch, a picture's marks, a flow) writes the note's text straight away, so it waits until you stop suggesting (⌘⇧T).
   - **An agent marks it up too**: a task about pictures ("mark the problems on the screenshot", "스크린샷에 표시해줘" — words like picture, screenshot, image, ink, annotate) gets the ` ```ink ` notation and the sizes of the pictures, and the pictures the shared notes show are shared with it (the task dialog lists them). Its marks come back as red pen on the picture, each block's change to take or leave.
 
 ## Drawings (Excalidraw)

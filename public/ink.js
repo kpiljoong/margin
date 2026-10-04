@@ -21,40 +21,56 @@
 //   says what it is (linkCallouts) · hide: a part covered, corner and size
 //   (gray unless a colour is given); covered on screen, in a copy, and in the
 //   copy an agent gets (server.js masks the pictures it shares).
-// - The colour is optional (red, the pen's), any of the flow colours.
+// - The colour is optional (red, the pen's), any of the flow colours or black.
 // - Other apps show the picture and the lines as code; Margin draws them on
 //   the picture. `#` or `//` starts a comment. Plain logic, tested without a
 //   page (test/ink.test.mjs), but for inkSvg.
+// - A block with a `board: 1600x900` line and no picture above it is a
+//   sketch: the marks on a blank page that size, drawn in a meeting say. It
+//   grows as it is drawn past its edge (fitBoard).
 
 import { COLORS, colorKey } from './flow.js';
 
 // Also in Korean: pen, arrow, box, text, number, hide.
-const KINDS = { pen: 'pen', arrow: 'arrow', box: 'box', text: 'text', num: 'num', number: 'num', hide: 'hide', blur: 'hide', '\uAC00\uB9AC\uAE30': 'hide', '\uD39C': 'pen', '\uD654\uC0B4\uD45C': 'arrow', '\uC0C1\uC790': 'box', '\uAE00': 'text', '\uBC88\uD638': 'num' };
+const KINDS = { pen: 'pen', arrow: 'arrow', box: 'box', text: 'text', num: 'num', number: 'num', hide: 'hide', blur: 'hide', '\uAC00\uB9AC\uAE30': 'hide', '\uD39C': 'pen', '\uD654\uC0B4\uD45C': 'arrow', '\uC0C1\uC790': 'box', '\uAE00': 'text', '\uBC88\uD638': 'num', board: 'board', '\uBCF4\uB4DC': 'board' };
 const LINE = /^(\S+?)(?:\s+([^\s:]+))?\s*:\s*(.*)$/;
 const NUM = '(-?\\d+(?:\\.\\d+)?)';
 const POINT = new RegExp(`^${NUM},${NUM}$`);
 const BOX = new RegExp(`^${NUM},${NUM}\\s+${NUM}\\s*[x×]\\s*${NUM}$`);
 const TEXT = new RegExp(`^${NUM},${NUM}\\s+(.+)$`);
+const SIZE = /^(\d{2,5})\s*[x×]\s*(\d{2,5})$/;
+export const BOARD_MAX = 8000;
 const LABEL = new RegExp(`^${NUM},${NUM}\\s+([\\p{L}\\p{N}]{1,3})$`, 'u');
 
-export const INK_COLORS = Object.keys(COLORS);
+// The pens: the flow colours, and black (to write with on a sketch).
+export const INK = { ...COLORS, black: ['#e8e9ec', '#1f2328'] };
+export const INK_COLORS = Object.keys(INK);
+const inkColor = (word) => (/^(black|\uAC80\uC815)$/i.test(word) ? 'black' : colorKey(word));
 
 // The marks: [{ kind, color, line, … }] (pts: [[x, y]] for a pen; from, to
 // for an arrow; x, y, w, h for a box; x, y, text for text), and the lines
-// that aren't marks (0-based).
+// that aren't marks (0-based); board: { w, h, line } of a sketch (the
+// largest, if it says more than once), or null.
 export function parseInk(src) {
   const marks = [];
   const bad = [];
+  let board = null;
   String(src).replace(/\r\n?/g, '\n').split('\n').forEach((raw, line) => {
     const body = raw.trim();
     if (!body || body.startsWith('#') || body.startsWith('//')) return;
     const m = LINE.exec(body);
     const kind = m && KINDS[m[1].toLowerCase()];
-    const color = m && (m[2] ? colorKey(m[2]) : kind === 'hide' ? 'gray' : 'red');
+    const color = m && (m[2] ? inkColor(m[2]) : kind === 'hide' ? 'gray' : 'red');
     if (!kind || !color) { bad.push(line); return; }
     const rest = m[3].trim();
     const n = (v) => Number(v);
     let mark = null;
+    if (kind === 'board') {
+      const b = SIZE.exec(rest);
+      const [w, h] = b ? [n(b[1]), n(b[2])] : [0, 0];
+      if (w >= 100 && h >= 100 && w <= BOARD_MAX && h <= BOARD_MAX) { if (!board || w * h > board.w * board.h) board = { w, h, line }; } else bad.push(line);
+      return;
+    }
     if (kind === 'pen') {
       const pts = rest.split(/\s+/).map((p) => POINT.exec(p)).filter(Boolean).map((p) => [n(p[1]), n(p[2])]);
       if (pts.length >= 2 && pts.length === rest.split(/\s+/).length) mark = { pts };
@@ -77,7 +93,36 @@ export function parseInk(src) {
     if (mark) marks.push({ kind, color, line, ...mark });
     else bad.push(line);
   });
-  return { marks, bad };
+  return { marks, bad, board };
+}
+
+// ---- sketches
+
+export const BOARD_SIZE = [1600, 900];
+export const boardLine = (w = BOARD_SIZE[0], h = BOARD_SIZE[1]) => `board: ${w}x${h}`;
+const strokeOf = (w, h) => Math.max(2, Math.round(Math.max(w, h) / 320));
+
+// A sketch's block grown to hold its marks (a margin past the farthest, in
+// steps of 100), its board line rewritten; the block as it was when they fit.
+export function fitBoard(src, margin = 80) {
+  const { marks, board } = parseInk(src);
+  if (!board) return src;
+  const sw = strokeOf(board.w, board.h);
+  let [x, y] = [0, 0];
+  const reach = (px, py) => { x = Math.max(x, px); y = Math.max(y, py); };
+  for (const m of marks) {
+    if (m.kind === 'pen') m.pts.forEach((p) => reach(...p));
+    else if (m.kind === 'arrow') [m.from, ...(m.via || []), m.to].forEach((p) => reach(...p));
+    else if (m.kind === 'box' || m.kind === 'hide') reach(m.x + m.w, m.y + m.h);
+    else if (m.kind === 'text') reach(m.x + m.text.length * sw * 5, m.y + sw * 12);
+    else reach(m.x + sw * 7, m.y + sw * 7);
+  }
+  const grow = (has, far) => (far + margin > has ? Math.min(BOARD_MAX, Math.ceil((far + margin) / 100) * 100) : has);
+  const [w, h] = [grow(board.w, x), grow(board.h, y)];
+  if (w === board.w && h === board.h) return src;
+  const ls = String(src).split('\n');
+  ls[board.line] = ls[board.line].replace(/\d{2,5}\s*[x×]\s*\d{2,5}\s*$/, `${w}x${h}`);
+  return ls.join('\n');
 }
 
 const r = (v) => Math.round(v);
@@ -185,7 +230,7 @@ export function removeMark(src, lineNo) {
 // ---- drawing (needs a page)
 
 const SVG = 'http://www.w3.org/2000/svg';
-const stroke = (color) => (COLORS[color] || COLORS.red)[1];
+const stroke = (color) => (INK[color] || INK.red)[1];
 
 // The marks as SVG over a picture of w × h pixels: <svg class="ink-marks">,
 // each mark a <g class="ink-mark" data-line>.
@@ -259,8 +304,14 @@ export function pairInk(root, { all = false } = {}) {
   for (const pre of [...root.querySelectorAll('pre[data-lang="ink" i]')]) {
     const p = pre.previousElementSibling;
     const img = soleImage(p);
-    if (!img) continue; // no picture above: the lines stay as code
-    const fig = inkFigure(img, p.dataset.line, pre.dataset.line, pre.dataset.source ?? pre.textContent, drawn);
+    const source = pre.dataset.source ?? pre.textContent;
+    if (!img) {
+      // No picture above: a sketch, or else the lines stay as code.
+      const b = inkBoard(source, pre.dataset.line);
+      if (b) { pre.replaceWith(b.fig); drawn.push(b.drawn); }
+      continue;
+    }
+    const fig = inkFigure(img, p.dataset.line, pre.dataset.line, source, drawn);
     p.remove();
     pre.replaceWith(fig);
   }
@@ -284,6 +335,24 @@ export function inkOn(p, source) {
   p.replaceWith(fig);
   return { fig, drawn: Promise.all(drawn) };
 }
+
+// A sketch: its block's marks on a blank page. The figure's line and ink
+// line are both the block's. → { fig, drawn }, or null when it has no board.
+export function inkBoard(source, line = '') {
+  const board = parseInk(source).board;
+  if (!board) return null;
+  const img = document.createElement('img');
+  img.alt = 'Sketch';
+  img.src = boardImage(board.w, board.h);
+  const drawn = [];
+  const fig = inkFigure(img, line, line, source, drawn);
+  fig.classList.add('ink-board');
+  fig.dataset.board = '';
+  return { fig, drawn: Promise.all(drawn) };
+}
+
+// A blank page w × h, as a picture (data: — the page allows no other).
+export const boardImage = (w, h) => `data:image/svg+xml,${encodeURIComponent(`<svg xmlns="http://www.w3.org/2000/svg" width="${w}" height="${h}" viewBox="0 0 ${w} ${h}"><rect width="${w}" height="${h}" fill="#fff"/></svg>`)}`;
 
 const soleImage = (p) => (p?.tagName === 'P' && p.children.length === 1 && p.firstElementChild.tagName === 'IMG' && !p.textContent.trim() ? p.firstElementChild : null);
 

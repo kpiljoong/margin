@@ -12,7 +12,7 @@ import { emacs, occurLines, occurPattern, keyName as emacsKeyName, commandOf as 
 import { hunksOf } from './track.js';
 import { renderDiagrams } from './diagrams.js';
 import { flowToMermaid, flowsAsMermaid, parseFlow, isStepText, flowStepNames, nameKey, flowTour, flowLineAt, COLORS } from './flow.js';
-import { pairInk, addMark, removeMark, setMark } from './ink.js';
+import { pairInk, addMark, removeMark, setMark, fitBoard, boardLine, INK, INK_COLORS } from './ink.js';
 import { pictureHunks, penPlaces, pictureSummary, showPicture, PLACE } from './penpic.js';
 import { connect, addBox, freshName, nextAnswer, setColor, setDirection, removeBox, removeArrow, setArrowKind, setArrowLabel, reverseArrow, setShape, arrowSpot } from './flowedit.js';
 import { FigureCanvas } from './canvas.js';
@@ -2041,6 +2041,7 @@ function canvasFor(tab) {
     onCardMenu: (e, pre) => cardMenu(tab, e, pre),
     onArrow: (pre, a, what, arg) => editArrow(tab, pre, a, what, arg),
     onNewFlow: () => newFlowHere(tab),
+    onNewSketch: () => newSketchHere(tab),
     onPastePictures: (files) => pastePictures(tab, files),
     onUndo: (redo) => drawUndo(tab, redo),
     onArrowStep: (pre, from, to) => gotoArrow(tab, pre, from, to),
@@ -2050,7 +2051,7 @@ function canvasFor(tab) {
     onInkHover: (fig, num) => { const r = fig && calloutRange(tab, fig, num); tab.editor.setHints(r ? [r] : []); },
     onInkDot: (fig, num) => { const r = calloutRange(tab, fig, num); if (r) gotoOffset(tab, r[0], r[0], false); else toast(`No item ${num}. in a numbered list of this section to say what it is.`); },
     onInkColor: (at, color, pick) => contextMenu({ preventDefault() {}, stopPropagation() {}, clientX: at.x, clientY: at.y },
-      COLOR_ITEMS.map((c, i) => ({ label: `${colorLabel(c)}${c === color ? ' ✓' : ''}`, swatch: COLORS[c], key: String(i + 1), hotkey: String(i + 1), run: () => pick(c) }))),
+      INK_COLORS.map((c, i) => ({ label: `${colorLabel(c)}${c === color ? ' ✓' : ''}`, swatch: INK[c], key: String(i + 1), hotkey: String(i + 1), run: () => pick(c) }))),
     // The box under the pointer: its mentions in the text, marked.
     onHover: (pre, id) => {
       const node = pre?.flowNodes?.find((n) => n.id === id);
@@ -2247,7 +2248,7 @@ function renderCanvas(tab) {
 // The pictures' part of a figure, as public/figure-goal.js reads it.
 const figInfo = (fig) => ({
   line: Number(fig.dataset.line) || 0,
-  source: fig.matches('pre[data-lang]') && !fig.dataset.from ? (fig.dataset.source ?? fig.textContent) : null,
+  source: (fig.matches('pre[data-lang]') && !fig.dataset.from) || fig.dataset.board != null ? (fig.dataset.source ?? fig.textContent) : null,
   flowNodes: fig.flowNodes,
   diagramNodes: fig.diagramNodes,
   inkMarks: fig.inkMarks,
@@ -2298,6 +2299,7 @@ function gotoBox(tab, pre, id, focus = true) {
 // Rename a box of a ```flow block: every place its text is written, in one edit.
 function renameBox(tab, pre, node, text) {
   if (!isStepText(text)) { toast('A box’s text can’t hold arrows, " : " or end with ":"', 'error'); return; }
+  if (suggestingNow(tab)) return;
   const v = tab.editor.value;
   const base = Number(pre.dataset.line) + 1;
   const src = pre.dataset.source.replace(/\n$/, '').split('\n');
@@ -2344,6 +2346,7 @@ function cantEdit(pre) {
 // change(src) → { text, select?, rename? } or null (nothing to do).
 function editFlow(tab, pre, change) {
   if (!flowEditable(pre)) { cantEdit(pre); return false; }
+  if (suggestingNow(tab)) return false;
   const v = tab.editor.value;
   const src = pre.dataset.source.replace(/\n$/, '');
   const start = lineOffset(v, Number(pre.dataset.line) + 1);
@@ -2406,12 +2409,15 @@ function gotoArrow(tab, pre, a, b) {
 
 // A mark drawn on a picture: a line added to (or taken out of) the ```ink
 // block after it, the block made with the first mark and gone with the last.
-// One ⌘Z each.
+// A sketch's block is its own picture: it stays, and grows to hold what is
+// drawn past its edge. One ⌘Z each.
 function inkEdit(tab, fig, change) {
+  if (suggestingNow(tab)) return;
   const v = tab.editor.value;
   const eol = (n) => { const i = v.indexOf('\n', lineOffset(v, n)); return i < 0 ? v.length : i; };
   const pic = Number(fig.dataset.line);
-  if (!/!\[/.test(v.slice(lineOffset(v, pic), eol(pic)))) { toast('The note changed — try again.', 'error'); return; }
+  const board = fig.dataset.board != null;
+  if (!(board ? /^\s*(`{3,}|~{3,})\s*ink\s*$/i : /!\[/).test(v.slice(lineOffset(v, pic), eol(pic)))) { toast('The note changed — try again.', 'error'); return; }
   let from;
   let to;
   let text;
@@ -2427,7 +2433,8 @@ function inkEdit(tab, fig, change) {
     const start = lineOffset(v, at + 1);
     const close = at + 1 + (src ? src.split('\n').length : 0);
     if (v.slice(start, start + src.length) !== src || !/^\s*(`{3,}|~{3,})\s*$/.test(v.slice(lineOffset(v, close), eol(close)))) { toast('The note changed — try again.', 'error'); return; }
-    const next = change.add ? addMark(src, change.add) : change.set ? setMark(src, ...change.set) : removeMark(src, change.remove);
+    let next = change.add ? addMark(src, change.add) : change.set ? setMark(src, ...change.set) : removeMark(src, change.remove);
+    if (board) next = fitBoard(next);
     if (next.trim()) { from = start; to = start + src.length; text = next; } else {
       // The last mark gone: the block too, the picture as it was.
       from = eol(pic);
@@ -2436,10 +2443,21 @@ function inkEdit(tab, fig, change) {
     }
   }
   tab.editor.closeStep();
-  // The cursor on the picture's line: the canvas stays on it.
+  // The cursor on the picture's line: the canvas stays on it, and keeps the
+  // keys (the next tool, say).
+  const keys = tab.canvas?.el.contains(document.activeElement);
   tab.editor.replace(from, to, text, lineOffset(v, pic));
   tab.editor.closeStep();
+  if (keys) tab.canvas.stage.focus({ preventScroll: true });
   renderStatus();
+}
+
+// Drawing writes the picture's lines straight into the note: not while
+// suggesting, where every edit is a suggestion on the text. → refused.
+function suggestingNow(tab) {
+  if (!tab.editor?.tracking) return false;
+  toast(withKey('Drawing goes straight into the note: stop suggesting first', 'suggest'), 'error');
+  return true;
 }
 
 const SHAPE_ITEMS = [['box', 'Box'], ['round', 'Rounded'], ['circle', 'Circle'], ['db', 'Database'], ['decision', 'Question (diamond)']];
@@ -2593,6 +2611,7 @@ function bigFlowHint(tab, line, text) {
 // ![[Name]], and the canvas still shows it here.
 async function moveFlowOut(tab, pre) {
   if (!flowEditable(pre)) { cantEdit(pre); return; }
+  if (suggestingNow(tab)) return;
   const line = Number(pre.dataset.line);
   const src = pre.dataset.source.replace(/\n$/, '');
   const where = () => {
@@ -2672,6 +2691,7 @@ function belowCursor(tab, block) {
 // is in), with one box to name.
 function newFlowHere(tab = fileTab()) {
   if (!tab?.editor || !isNote(tab.path)) { toast('Open a note to add a flow.', 'error'); return; }
+  if (suggestingNow(tab)) return;
   const b = belowCursor(tab, '```flow\nStart\n```');
   tab.editor.closeStep();
   tab.editor.replace(b.at, b.end, b.text, b.start + 8);
@@ -2680,6 +2700,28 @@ function newFlowHere(tab = fileTab()) {
     tab.canvas.selectSoon(b.line, 'Start', true);
     tab.canvas.stage.focus({ preventScroll: true });
   } else toast(withKey('A flow: draw on it in the Canvas view', 'cycle-mode'));
+}
+
+// A sketch: a blank ```ink board below the cursor's line, on the canvas
+// with the pen up — for drawing as it comes, in a meeting say. Opens the
+// canvas when it isn't.
+function newSketchHere(tab = fileTab()) {
+  if (!tab?.editor || !isNote(tab.path)) { toast('Open a note to add a sketch.', 'error'); return; }
+  if (suggestingNow(tab)) return;
+  const b = belowCursor(tab, `\`\`\`ink\n${boardLine()}\n\`\`\``);
+  tab.editor.closeStep();
+  tab.editor.replace(b.at, b.end, b.text, b.start);
+  tab.editor.closeStep();
+  if (!tab.canvas?.el.isConnected) setMode('canvas');
+  const cv = tab.canvas;
+  if (!cv?.el.isConnected) return;
+  renderCanvas(tab);
+  // Writing on a blank page: in black, unless another pen was picked.
+  if (cv.ink.color === 'red') { cv.ink.color = 'black'; cv.ink.paintDot(); }
+  // Looking at it, wherever the camera was (once the view is laid out).
+  requestAnimationFrame(() => { if (cv.el.isConnected && cv.goal?.fig?.dataset.board != null) cv.refocus(false); });
+  cv.ink.use('pen');
+  cv.stage.focus({ preventScroll: true });
 }
 
 // Pictures pasted on the canvas: kept in ./assets/ (as the editor does), each
@@ -3129,6 +3171,7 @@ const COMMANDS = [
   ['View: editor and canvas (pictures follow the cursor)', () => setMode('canvas')],
   ['Canvas: present the flows (full screen, one box at a time)', () => presentFlows()],
   ['Flow: new flow to draw on', () => newFlowHere()],
+  ['Sketch: a blank board to draw on, below the cursor', () => newSketchHere()],
   ['Flow: move the flow at the cursor to a note of its own', () => moveFlowAtCursor()],
   ['Canvas: copy the whole canvas as an image', () => canvasExport((p) => copyPicture(p))],
   ['Canvas: save the whole canvas as PNG', () => canvasExport((p) => savePicture(p))],
@@ -4161,7 +4204,8 @@ function inkPicture(fig, from) {
   let made = null;
   const svg = () => (made ||= (async () => {
     if (!img?.naturalWidth) throw new Error('the picture isn’t loaded');
-    const data = await blobDataUrl(await (await fetch(img.src)).blob());
+    // A sketch's page is a data: URL already (which the page may not fetch).
+    const data = img.src.startsWith('data:') ? img.src : await blobDataUrl(await (await fetch(img.src)).blob());
     const w = img.naturalWidth;
     const hh = img.naturalHeight;
     const marks = fig.querySelector(':scope > .ink-marks')?.cloneNode(true);
@@ -4170,7 +4214,7 @@ function inkPicture(fig, from) {
     return `<svg xmlns="http://www.w3.org/2000/svg" width="${w}" height="${hh}" viewBox="0 0 ${w} ${hh}"><image href="${data}" width="${w}" height="${hh}"/>${body}</svg>`;
   })());
   return {
-    from, name: `${stem(file || from)}-marked`, what: () => 'the picture with its marks',
+    from, name: fig.dataset.board != null ? `${stem(from)}-sketch` : `${stem(file || from)}-marked`, what: () => 'the picture with its marks',
     svg,
     png: async () => imageToPng(`data:image/svg+xml;charset=utf-8,${encodeURIComponent(await svg())}`, { scale: 1 }),
   };
@@ -7067,6 +7111,7 @@ function defaultLeaderTree() {
       { key: 'x', label: 'Resolve the comment here', cmd: 'Pen: resolve the comment here', when: () => note && openComments(tab).length > 0, run: () => { const c = commentAt(tab); if (c) resolveNote(tab, c); else toast('No comment here'); } },
       { key: 'h', label: tab?.showResolved ? 'Hide resolved comments' : 'Show resolved comments', cmd: 'Pen: show / hide resolved comments', when: () => note && !!tab.comments?.some((c) => c.resolved), run: () => { tab.showResolved = !tab.showResolved; drawNotes(tab); } },
       { key: 'v', label: 'Review my suggestions (y n A a)', cmd: 'Review your suggestions on this note', when: () => note && !!(tab.proof || proofRun(tab)), run: () => reviewSuggestions(tab) },
+      { key: 's', label: 'Sketch: a board to draw on', cmd: 'Sketch: a blank board to draw on, below the cursor', when: () => note, run: () => newSketchHere(tab) },
       { key: 'm', label: S.meeting ? 'Leave meeting mode' : 'Meeting mode', cmd: 'Meeting mode (large text, for sharing the screen)', run: toggleMeeting },
     ] },
     { key: 'q', label: 'macro', items: [

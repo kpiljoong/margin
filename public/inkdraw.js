@@ -14,8 +14,7 @@
 // arrow's side makes a new bend, a bend dragged straight goes); Delete takes
 // the picked one out, Esc lets go. Each change rewrites its line, one ⌘Z.
 
-import { COLORS } from './flow.js';
-import { inkLine, simplify, markEl, movedMark, grips, reshapedMark } from './ink.js';
+import { INK, inkLine, simplify, markEl, movedMark, grips, reshapedMark } from './ink.js';
 
 const SVG = 'http://www.w3.org/2000/svg';
 export const TOOLS = [
@@ -85,7 +84,7 @@ export class InkTools {
   }
 
   paintDot() {
-    const [fill, line] = COLORS[this.color];
+    const [fill, line] = INK[this.color];
     this.dot.style.background = line;
     this.dot.style.borderColor = fill;
   }

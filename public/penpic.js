@@ -11,7 +11,7 @@
 // page (test/penpic.test.mjs), but for showPicture.
 
 import { parseFlow } from './flow.js';
-import { parseInk, inkOn } from './ink.js';
+import { parseInk, inkOn, inkBoard } from './ink.js';
 
 const OPEN = /^ {0,3}(`{3,}|~{3,})\s*([\w-]*)\s*$/;
 const PICTURE = /^(flow|ink)$/i;
@@ -33,6 +33,9 @@ function blocksOf(lines) {
   return out;
 }
 
+// A sketch: a ```ink block with a board line (no picture above it).
+const isBoard = (ls) => !!parseInk(ls.join('\n')).board;
+
 const imageAbove = (lines, at) => {
   let i = at - 1;
   while (i >= 0 && !lines[i].trim()) i--;
@@ -50,7 +53,7 @@ export function pictureHunks(base, hunks) {
   const out = [];
   const taken = new Set();
   for (const b of blocksOf(lines)) {
-    if (!PICTURE.test(b.lang) || (b.lang === 'ink' && !imageAbove(lines, b.start))) continue;
+    if (!PICTURE.test(b.lang) || (b.lang === 'ink' && !imageAbove(lines, b.start) && !isBoard(lines.slice(b.start + 1, b.end)))) continue;
     const mine = [];
     let inside = true;
     hunks.forEach((hk, i) => {
@@ -74,7 +77,7 @@ export function pictureHunks(base, hunks) {
     if (!m || !PICTURE.test(m[2]) || last <= first || !closes(A[last], m[1])) return;
     if (A.slice(first + 1, last).some((l) => closes(l, m[1]))) return;
     const lang = m[2].toLowerCase();
-    if (lang === 'ink' && !imageAbove(lines, hk.baseStart)) return;
+    if (lang === 'ink' && !imageAbove(lines, hk.baseStart) && !isBoard(A.slice(first + 1, last))) return;
     const added = A.slice(first + 1, last).map((text) => ({ text, hunk: i, change: 'add' }));
     out.push({ lang, start: hk.baseStart, end: hk.baseEnd, hunks: [i], fresh: true, base: [], proposed: added, union: added });
   });
@@ -202,9 +205,11 @@ export function showPicture(p, pic, { state, render, drawn }) {
     g.classList.add(`pen-pic-${change}`, `pen-${state(key)}`);
   };
   if (pic.lang === 'ink') {
-    const above = p.previousElementSibling; // the picture's paragraph
-    p.remove();
-    const made = above && inkOn(above, pic.union.map((l) => l.text).join('\n'));
+    const src = pic.union.map((l) => l.text).join('\n');
+    // The picture's paragraph above, or else a sketch in place of the placeholder.
+    const above = p.previousElementSibling;
+    let made = above && inkOn(above, src);
+    if (!made && (made = inkBoard(src))) p.replaceWith(made.fig); else p.remove();
     if (!made) return;
     made.fig.classList.add('pen-pic');
     made.drawn.then(() => {

@@ -1,7 +1,7 @@
 // node --test (npm test): marks drawn on a picture, as lines (public/ink.js).
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { parseInk, inkLine, simplify, addMark, removeMark, bentPath, movedMark, grips, reshapedMark, setMark } from '../public/ink.js';
+import { parseInk, inkLine, simplify, addMark, removeMark, bentPath, movedMark, grips, reshapedMark, setMark, fitBoard, boardLine } from '../public/ink.js';
 
 test('ink lines: read, written back the same', () => {
   const src = ['box red: 280,120 200x80', '# a comment', 'arrow: 410,220 -> 300,160', 'text blue: 420,230 The button is hidden', 'pen 초록: 100,100 120,104 140,112', '상자 빨강: 1,2 3×4', 'nonsense', 'pen red: 1,2', 'arrow purple: 1,2 -> x'].join('\n');
@@ -69,4 +69,20 @@ test('a mark moved, reshaped by its grips, and written back in its place', () =>
   assert.equal(inkLine(reshapedMark(arrow, 1, [52, 48], { straight: 3 })), 'arrow red: 0,0 -> 100,100');
   // Its own words for the kind and colour stay.
   assert.equal(setMark('# note\n\uC0C1\uC790 \uD30C\uB791: 1,2 3x4\npen: 1,1 2,2', 1, movedMark(parseInk('box: 1,2 3x4').marks[0], 10, 0)), '# note\n\uC0C1\uC790 \uD30C\uB791: 11,2 3x4\npen: 1,1 2,2');
+});
+
+test('a sketch: a board line is the page, not a mark; it grows to hold what is drawn past it', () => {
+  const src = [boardLine(), 'pen blue: 10,10 40,40', '\uBCF4\uB4DC: 800x600', 'board: 20x20', 'board: big'].join('\n');
+  const { marks, bad, board } = parseInk(src);
+  assert.equal(boardLine(), 'board: 1600x900');
+  assert.deepEqual(board, { w: 1600, h: 900, line: 0 }, 'the largest one');
+  assert.deepEqual(marks.map((m) => m.kind), ['pen']);
+  assert.deepEqual(bad, [3, 4]);
+  assert.equal(parseInk('pen: 1,1 2,2').board, null);
+  // Inside: as it was. Past the bottom (and the right): larger, in steps of 100.
+  assert.equal(fitBoard('board: 1600x900\npen: 10,10 1500,800'), 'board: 1600x900\npen: 10,10 1500,800');
+  assert.equal(fitBoard('board: 1600x900\npen: 10,10 1500,950'), 'board: 1600x1100\npen: 10,10 1500,950');
+  assert.equal(fitBoard('  board  : 1600 x 900\nbox red: 1600,10 200x100'), '  board  : 1900x900\nbox red: 1600,10 200x100');
+  assert.equal(fitBoard('pen: 10,10 5000,5000'), 'pen: 10,10 5000,5000', 'no board: nothing to grow');
+  assert.equal(fitBoard('board: 1600x900\npen: 1,1 99999,1'), 'board: 8000x900\npen: 1,1 99999,1');
 });

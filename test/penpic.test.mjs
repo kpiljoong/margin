@@ -43,3 +43,13 @@ test('a hunk adding a whole flow is one picture, all of it new; a block also cha
   const fence = BASE.replace('```flow\nOrder', '```mermaid\nOrder');
   assert.deepEqual(pictureHunks(BASE, hunksOf(BASE, fence)), []);
 });
+
+test('a sketch (an ```ink board, no picture above) is a picture too; plain ink lines alone stay text', () => {
+  const base = ['# Meeting', '', '```ink', 'board: 1600x900', 'pen blue: 10,10 40,40', '```', '', '```ink', 'box: 1,1 2x2', '```', ''].join('\n');
+  const work = base.replace('pen blue: 10,10 40,40', 'pen blue: 10,10 40,40\ntext red: 50,50 Owner?').replace('box: 1,1 2x2', 'box: 1,1 3x3');
+  const pics = pictureHunks(base, hunksOf(base, work));
+  assert.deepEqual(pics.map((p) => [p.lang, p.start, p.end, p.fresh]), [['ink', 2, 5, false]]);
+  assert.equal(pictureSummary(pics[0], pics[0].hunks[0]), '+ “Owner?”');
+  const fresh = pictureHunks(base, hunksOf(base, `${base}\n\`\`\`ink\nboard: 800x600\npen: 1,1 2,2\n\`\`\`\n`));
+  assert.deepEqual(fresh.map((p) => [p.lang, p.fresh]), [['ink', true]]);
+});

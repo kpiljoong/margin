@@ -87,7 +87,7 @@ export class FigureCanvas {
   // tour() → the steps to present (see present) ·
   // drawing: canEdit(pre) · onAddAfter(pre, id) · onAddBox(pre) ·
   // onConnect(pre, from, to) · onDelete(pre, id) · onColorMenu(pre, id, at) ·
-  // onBoxMenu(e, pre, id) · onCardMenu(e, pre) · onNewFlow() · onUndo(redo) ·
+  // onBoxMenu(e, pre, id) · onCardMenu(e, pre) · onNewFlow() · onNewSketch() · onUndo(redo) ·
   // onArrow(pre, { from, to }, what, arg): what is delete, both, reverse,
   // dotted, label (arg: the words) or menu (arg: the event) ·
   // onArrowStep(pre, from, to): put the cursor on an arrow · onShapeMenu(pre, id, at) ·
@@ -165,6 +165,7 @@ export class FigureCanvas {
     this.ink = new InkTools(this);
     this.ink.bar.addEventListener('click', () => this.stage.focus({ preventScroll: true }));
     this.el.append(this.ink.bar);
+    if (this.h.onNewSketch) this.el.querySelector('.canvas-bar').prepend(button('+ Sketch', 'Add a blank board to the note, below the cursor, and draw on it with the pen', () => this.h.onNewSketch()));
     if (this.h.onNewFlow) this.el.querySelector('.canvas-bar').prepend(button('+ Flow', 'Add a ```flow picture to the note, below the cursor, and draw on it', () => this.h.onNewFlow()));
     this.apply();
     this.bind();
@@ -205,6 +206,12 @@ export class FigureCanvas {
         b.type = 'button';
         b.onclick = () => this.h.onNewFlow();
         this.empty.append(b);
+      }
+      if (this.h.onNewSketch) {
+        const b = el('button', 'btn', 'New sketch');
+        b.type = 'button';
+        b.onclick = () => this.h.onNewSketch();
+        this.empty.append(' ', b);
       }
     }
   }
