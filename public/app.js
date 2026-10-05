@@ -6229,9 +6229,7 @@ function liveKey(tab, e) {
     drawNotes(tab);
     return true;
   }
-  const { from, to, insert } = liveMod.keepEdit(ed.value, o.i, o.entry);
-  const s = ed.selectionStart;
-  const caret = s > to ? s + insert.length - (to - from) : s;
+  const { from, to, insert, caret } = liveMod.keepEdit(ed.value, o.i, o.entry, ed.selectionStart);
   ed.closeStep();
   ed.replace(from, to, insert, caret);
   ed.closeStep();

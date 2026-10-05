@@ -94,20 +94,29 @@ export function keptLine(e) {
 }
 
 // Keeping it: the edit to the note — line i becomes the kept line; a
-// callout stands apart (a blank line before and after). → { from, to, insert }.
-export function keepEdit(text, i, e) {
+// callout stands apart (a blank line before and after). With the cursor on
+// that line it goes to the kept line's end; on the empty line right under a
+// callout, one line further, so what comes next isn't part of it.
+// → { from, to, insert, caret }.
+export function keepEdit(text, i, e, at = -1) {
   const lines = text.split('\n');
   let from = 0;
   for (let k = 0; k < i; k++) from += lines[k].length + 1;
   const to = from + lines[i].length;
   const indent = e.kind === 'todo' || e.kind === 'note' ? /^\s*/.exec(lines[i])[0] : '';
   let insert = indent + keptLine(e);
-  if (insert.startsWith('>')) {
-    if (i > 0 && lines[i - 1].trim() && !lines[i - 1].startsWith('>')) insert = `\n${insert}`;
-    else if (i > 0 && lines[i - 1].startsWith('>')) insert = `\n${insert}`;
+  const callout = insert.startsWith('>');
+  if (callout) {
+    if (i > 0 && lines[i - 1].trim()) insert = `\n${insert}`;
     if (i < lines.length - 1 && lines[i + 1].trim()) insert += '\n';
   }
-  return { from, to, insert };
+  const end = from + insert.replace(/\n+$/, '').length;
+  let caret = end;
+  if (at > to) {
+    caret = at + insert.length - (to - from);
+    if (callout && at === to + 1 && !lines[i + 1]?.trim()) { insert += '\n'; caret++; }
+  } else if (at >= 0 && at < from) caret = at;
+  return { from, to, insert, caret };
 }
 
 // The time it took, as people read it.

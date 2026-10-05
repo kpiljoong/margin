@@ -55,6 +55,24 @@ test('keptLine and keepEdit: the line as the meeting writes it, a callout apart'
   assert.equal(t.insert, '  - [ ] Send the survey @ann');
 });
 
+test('keepEdit: the cursor after the kept line, not in its middle', () => {
+  const D = { kind: 'decision', sentence: 'We launch on October 20.' };
+  const apply = (text, e) => text.slice(0, e.from) + e.insert + text.slice(e.to);
+  const mark = (text, e) => { const a = apply(text, e); return a.slice(0, e.caret) + '|' + a.slice(e.caret); };
+  // On the line itself, at its end: the end of the kept sentence.
+  const one = '## Launch\nmkt ok\n-> go w/ 20th';
+  assert.equal(mark(one, keepEdit(one, 2, D, one.length)), '## Launch\nmkt ok\n\n> [!decision] We launch on October 20.|');
+  // On the empty line under it: a blank line between, then the cursor.
+  const two = '## Launch\n-> go w/ 20th\n\n## Next';
+  assert.equal(mark(two, keepEdit(two, 1, D, two.indexOf('\n\n') + 1)), '## Launch\n\n> [!decision] We launch on October 20.\n\n|\n## Next');
+  // A to-do: the cursor at its end, the date included.
+  const three = 'ann: survey thurs';
+  const t = keepEdit(three, 0, { kind: 'todo', sentence: 'Send the survey', owner: 'ann', due: '2026-10-15' }, 5);
+  assert.equal(mark(three, t), '- [ ] Send the survey @ann \u{1F4C5} 2026-10-15|');
+  // Above the line: where it was.
+  assert.equal(keepEdit(one, 2, D, 3).caret, 3);
+});
+
 test('wanted and quantile', () => {
   assert.equal(wanted('## Status (5m)'), false);
   assert.equal(wanted('Previous meeting: [[Weekly 2026-10-05]]'), false);
