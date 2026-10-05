@@ -188,7 +188,7 @@ export function agendaTunnel(rect, opts) {
 // Where the camera is: turned (yaw) round the middle, tilted (pitch) over
 // the floor, so far back (dist); persp: the CSS perspective; lift: the floor
 // lower on the screen.
-export const ORBIT_CAMERA = { yaw: 0, pitch: 58, dist: 640, persp: 1200, lift: 40 };
+export const ORBIT_CAMERA = { yaw: 0, pitch: 58, dist: 480, persp: 1200, lift: 30 };
 
 // A point of the orbit's world (x, y on the floor, z up) on the screen, as
 // CSS draws the floor with orbitTransform(cam). → { x, y, s, depth }.
@@ -510,7 +510,7 @@ export function orbitScene(opts) {
       return Math.hypot(px - (a.x + vx * u), py - (a.y + vy * u));
     };
     const P = (p) => project(cam, size.w, size.h, p);
-    if (t.kind === 'decision') { const p = P([0, 0, 300]); return { d: Math.hypot(px - p.x, py - p.y) * 0.8, p }; }
+    if (t.kind === 'decision') { const p = P([0, 0, 300]); return { d: Math.hypot(px - p.x, py - p.y), p }; }
     if (t.ring) {
       let best = { d: Infinity };
       for (let k = 0; k < 72; k++) { const p = P([...polar(k * 5, ORBIT.ring), 60]); const d = Math.hypot(px - p.x, py - p.y); if (d < best.d) best = { d, p }; }
@@ -526,6 +526,8 @@ export function orbitScene(opts) {
     for (const t of targets()) {
       if (!opts.accepts(it, t)) continue;
       const m = distTo(t, x, y);
+      // Near the middle is the middle: a pillar at the back can pass behind it.
+      if (t.kind === 'decision' && m.d < 60) return { ...m, t };
       if (m.d < reach && (!best || m.d < best.d)) best = { ...m, t };
     }
     return best;
