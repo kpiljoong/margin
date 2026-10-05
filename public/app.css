@@ -1760,27 +1760,3 @@ li.callout-hot { background: color-mix(in srgb, var(--accent) 16%, transparent);
   .desk-hint { display: none; }
 }
 .desk.far .desk-card.t-group { border-width: calc(1.5px * var(--iz, 1)); }
-
-/* The desk tilted (t): the plane leans back in perspective; the card read
-   stands up on its lower edge, facing you, as do the margin's. */
-.desk { perspective: 1400px; perspective-origin: var(--ox, 50%) var(--oy, 62%); }
-.desk-plane { position: absolute; inset: 0; transform-style: preserve-3d; }
-.desk-world { transform-style: preserve-3d; }
-.desk.tilted .desk-plane { transform-origin: var(--ox) var(--oy); transform: rotateX(calc(var(--tilt) * 1deg)); }
-.desk.tilted .desk-grid { inset: -3000px -2500px 0 -2500px; }
-.desk.tilted .desk-grid-near { background-position: calc(var(--gx, 0px) + 2500px) calc(var(--gy, 0px) + 3000px); }
-.desk.tilted .desk-grid-far { background-position: calc(var(--gx2, 0px) + 2500px) calc(var(--gy2, 0px) + 3000px); }
-.desk.tilted .desk-grid { mask-image: linear-gradient(to bottom, transparent 2300px, #000 3300px); }
-/* A hair above the plane: level with it, clicks fall through to the plane. */
-.desk.tilted .desk-card { transform-origin: 50% 100%; transform: translateZ(1px); }
-.desk.tilted .desk-card.stand, .desk.tilted .desk-card.t-ai { transform: rotateX(calc(var(--tilt) * -1deg)); box-shadow: 0 30px 60px rgba(0, 0, 0, .45), 0 0 0 1px var(--accent); }
-.desk.tilted .desk-card.t-ai { box-shadow: 0 30px 60px rgba(0, 0, 0, .45); animation: none; }
-.desk.tilted .desk-card.lifted { transform: translateZ(50px); }
-.desk.tilted .desk-card.given { transform: translateZ(28px); transition: transform .3s; }
-.desk.tilted .desk-card.stand.given, .desk.tilted .desk-card.stand.lifted { transform: translateZ(28px) rotateX(calc(var(--tilt) * -1deg)); }
-.desk.tilted .desk-card.t-group { transform: translateZ(.5px); }
-/* Standing AI cards keep their size from afar, so the rows don't swell into each other. */
-.desk.tilted.far .desk-card.t-ai .desk-head { font-size: 12px; padding: 6px 8px; }
-.desk-tilt { margin-left: 6px; }
-.desk-tilt.on { color: var(--accent-2); border-color: var(--accent-2); }
-.desk-dock-head .desk-status { margin-left: auto; }

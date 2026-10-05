@@ -1971,24 +1971,6 @@ await check('the desk: a .canvas opens as cards; a card dropped on another makes
     ? null : `the desk did not pile the cards: ${JSON.stringify(v)} ${JSON.stringify(d)}`;
 });
 
-await check('the desk tilted (t): the plane lies back, the selected card stands; a card lying on it is still hit where it shows, and screen and plane points map back', `
-  const d = $('.desk').desk;
-  d.fit(false);
-  d.sel = new Set(['f']); d.paintSel();
-  d.setTilt(true);
-  await until(() => d.tilt === 40, 3000);
-  await sleep(100);
-  const r = $('.desk').getBoundingClientRect();
-  const n = d.d.nodes.find((x) => x.id === 'b');
-  const m = d.shownAt(n);
-  const hit = document.elementFromPoint(r.left + m.x, r.top + m.y)?.closest('.desk-card')?.dataset.id;
-  const back = d.flatOf(d.screenOf(200, 150).x, d.screenOf(200, 150).y);
-  const v = { tilted: $('.desk').classList.contains('tilted'), stand: $$('.desk-card.stand').map((c) => c.dataset.id).join(), hit, back: [Math.round(back.x), Math.round(back.y)] };
-  d.setTilt(false);
-  await until(() => d.tilt === 0, 3000);
-  return { ...v, flat: !$('.desk').classList.contains('tilted') };
-`, (v) => (v?.tilted && v.stand === 'f' && v.hit === 'b' && v.back[0] === 200 && v.back[1] === 150 && v.flat ? null : `got ${JSON.stringify(v)}`));
-
 fs.writeFileSync(path.join(ws, 'sub', 'space 2026-10-05.md'), '# space 2026-10-05\n\n## Status (1m)\n\n> [!decision] Beta stays open.\n\n- [ ] Send the survey @ann\n\n## Launch (1m)\n\n> [!question] A press kit?\n');
 await check('meetings in space (experimental): the depth stage (the note flat, the agenda on the floor), the tunnel to the next item, a card thrown in the decision orbit is a change to propose', `
   const mac = navigator.platform.startsWith('Mac');
