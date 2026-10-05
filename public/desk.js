@@ -295,7 +295,7 @@ export class Desk {
     });
     this.status = el('span', 'desk-status');
     const dock = el('div', 'desk-dock', el('div', 'desk-dock-head', el('b', null, 'Margin'), this.status), this.ctx, this.actions, this.log, this.input);
-    dock.addEventListener('pointerdown', (e) => e.stopPropagation());
+    dock.addEventListener('pointerdown', (e) => { e.stopPropagation(); this.pressed('dock'); });
     dock.addEventListener('wheel', (e) => e.stopPropagation());
     dock.addEventListener('dblclick', (e) => e.stopPropagation());
     return dock;
@@ -548,10 +548,15 @@ export class Desk {
     const c = e.target.closest?.('.desk-card');
     return c ? c.dataset.id : null;
   }
+  // What the last two presses were on: a double-click counts only when both
+  // were on the same thing (the plane, or one card) — not a click on a
+  // margin card's × and then one where it was.
+  pressed(on) { this.presses = [this.presses?.[1], on]; }
   down(e) {
     if (e.button === 2) return;
     this.el.focus({ preventScroll: true });
     const id = this.hit(e);
+    this.pressed(id ? (e.target.closest('button') ? 'button' : id) : 'plane');
     const ai = id && this.ai.find((a) => a.id === id);
     if (ai) return; // its own buttons
     const sx = e.clientX;
@@ -668,6 +673,8 @@ export class Desk {
   dbl(e) {
     if (e.target.closest?.('.desk-dock')) return;
     const id = this.hit(e);
+    const [a, b] = this.presses || [];
+    if (a !== b || b !== (id || 'plane')) return;
     const n = id && this.d.nodes.find((x) => x.id === id);
     if (!id) { const w = this.toWorld(e.clientX, e.clientY); this.addText(w.x - 130, w.y - 30); return; }
     if (n?.type === 'text') this.edit(id);
