@@ -9,7 +9,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { meetingItems, agendaOf, agendaAt, nextAgendaEdit, classifyLine, typedKind, moveItem, wallOf, previousOf, nextMeetingPath, minutes, wrapTask, bodyOf, foldNote, nextNote } from '../public/meeting.js';
+import { meetingItems, agendaOf, agendaAt, nextAgendaEdit, classifyLine, typedKind, moveItem, wallOf, previousOf, nextMeetingPath, minutes, wrapTask, bodyOf, foldNote, nextNote, foldQuestions } from '../public/meeting.js';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const NOTE = [
@@ -227,4 +227,11 @@ test('fold: to-dos under their owners in a Wrap-up, the rest again, the next mee
     '## Pricing (5m)', '', '- Offer range', '',
   ].join('\n'));
   assert.equal(nextNote('# M\n\n> [!question] Who?\n', { path: 'M.md', next: 'M (next).md' }), '# M (next)\n\nPrevious meeting: [[M]]\n\n> [!question] Who?\n');
+  // A question the meeting settled: not open in the wrap-up, not carried on.
+  const settled = foldQuestions(out).map((q) => q.key);
+  assert.deepEqual(foldQuestions(out).map((q) => q.body), ['A press kit?']);
+  const closed = foldNote(note, { path: 'sub/Weekly 2026-10-05.md', next: 'sub/Weekly 2026-10-12.md', settled });
+  assert.ok(!closed.includes('### Open questions'));
+  assert.match(closed, /### Settled\n\n- A press kit\?\n/);
+  assert.ok(!nextNote(note, { path: 'sub/Weekly 2026-10-05.md', next: 'sub/Weekly 2026-10-12.md', settled }).includes('press kit'));
 });

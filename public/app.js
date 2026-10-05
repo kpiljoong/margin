@@ -6387,8 +6387,8 @@ async function foldMeeting(tab = fileTab()) {
     await Promise.all([loadMeet(), loadLive()]);
     clockStep(tab);
     const st = tab.live;
-    const on = liveActive(tab) && st?.started;
-    if (on) {
+    const on = liveActive(tab);
+    if (on && st?.started) {
       // The line last written goes too; then what is still being written.
       clearTimeout(st.timer);
       livePause(tab);
@@ -6397,16 +6397,18 @@ async function foldMeeting(tab = fileTab()) {
     }
     const kept = st ? liveMod.keepAll(noteText(tab), st.entries) : noteText(tab);
     let summary = '';
+    let settled = [];
+    const asks = meetMod.foldQuestions(kept);
     if (on) {
       toast('Folding: the margin sums the meeting up\u2026');
       const lines = kept.split('\n');
       const ctl = new AbortController();
       const late = setTimeout(() => ctl.abort(), 20000);
       try {
-        const body = { ...(await liveBody(tab, lines, lines.length - 1)), line: '', task: 'summary', note: lines.filter((l) => !liveMod.asked(l)).join('\n').slice(0, 16000) };
+        const body = { ...(await liveBody(tab, lines, lines.length - 1)), line: '', task: 'summary', note: lines.filter((l) => !liveMod.asked(l)).join('\n').slice(0, 16000), questions: asks.map((q) => q.body) };
         const { said, end } = await liveStream(body, ctl.signal, () => {});
-        if (end.ok) summary = liveMod.plainReply(said);
-        st.cost += end.cost || 0;
+        if (end.ok) { const r = liveMod.foldReply(said, asks.length); summary = r.summary; settled = r.settled.map((k) => asks[k].key); }
+        if (st) st.cost += end.cost || 0;
       } catch { /* none: folded without it */ } finally { clearTimeout(late); }
     }
     const agenda = meetMod.agendaOf(kept);
@@ -6414,9 +6416,9 @@ async function foldMeeting(tab = fileTab()) {
     const next = meetMod.nextMeetingPath(tab.path);
     let made = false;
     if (!S.files.some((f) => f.path === next)) {
-      try { await api('POST', '/api/file', { path: next, content: meetMod.nextNote(kept, { path: tab.path, next }) }); made = true; await loadTree(); } catch { /* there after all */ }
+      try { await api('POST', '/api/file', { path: next, content: meetMod.nextNote(kept, { path: tab.path, next, settled }) }); made = true; await loadTree(); } catch { /* there after all */ }
     }
-    await proposeText(tab, meetMod.foldNote(kept, { path: tab.path, next, summary, times }),
+    await proposeText(tab, meetMod.foldNote(kept, { path: tab.path, next, summary, times, settled }),
       `Folded${summary ? '' : ' (no summary: the live margin is off)'}: y / A to accept, a to apply${made ? ` \u00B7 made ${stem(next)}` : ''}`);
   } catch (e) {
     if (e.message !== 'unsaved') toast(e.message, 'error');

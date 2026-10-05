@@ -7,7 +7,7 @@ import { createRequire } from 'node:module';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { wanted, ruleOf, dueOf, leadOf, parseReply, keptLine, keepEdit, keepAll, memoryOf, plainReply, asked, quantile } from '../public/live.js';
+import { wanted, ruleOf, dueOf, leadOf, parseReply, keptLine, keepEdit, keepAll, memoryOf, plainReply, asked, foldReply, quantile } from '../public/live.js';
 
 const require = createRequire(import.meta.url);
 const server = require('../lib/live.js');
@@ -81,6 +81,12 @@ test('ask the margin: a ?? line, answered, kept in its place', () => {
   assert.equal(plainReply('[note] It ends Oct 30.'), 'It ends Oct 30.');
   assert.equal(keptLine({ kind: 'answer', sentence: 'It ends Oct 30.' }), 'It ends Oct 30.');
   assert.deepEqual(keepEdit('a\n  ?? when\nb', 1, { kind: 'answer', sentence: 'Oct 30.' }), { from: 2, to: 11, insert: '  Oct 30.', caret: 11 });
+});
+
+test('foldReply: the summary, and the questions it settled', () => {
+  assert.deepEqual(foldReply('We moved the launch.\nQA is done in-house.\nSettled: 2, 9, 2', 3), { summary: 'We moved the launch. QA is done in-house.', settled: [1] });
+  assert.deepEqual(foldReply('We met.\n**Settled:** none', 2), { summary: 'We met.', settled: [] });
+  assert.deepEqual(foldReply('We met.', 2), { summary: 'We met.', settled: [] });
 });
 
 test('memoryOf: the last meeting, as the margin is told it', () => {
@@ -251,6 +257,8 @@ test('the resident session: the last meeting in its header; requests answered, n
     assert.equal(s[0].text, 'Meeting: C\nToday: T\n\nLast meeting (W):\nDecided: launch Oct 20\n\nItem: (none)\nLine: one');
     assert.match(s[1].text, /^Request: answer [\s\S]*\nQuestion: when\n\nThe note:\n# C\none$/);
     assert.equal(s[2].text, 'Item: (none)\nLine: two');
+    await ask({ key: 'C', line: '', task: 'summary', note: '# C', questions: ['QA?', 'Venue?'], memory });
+    assert.match(sent().at(-1).text, /^Request: the meeting is over[\s\S]*"Settled:"[\s\S]*\nQuestions:\n1\. QA\?\n2\. Venue\?\n\nThe note:\n# C$/);
     // Another meeting, and back: C's minutes are its lines, not the request.
     await ask({ key: 'D', line: 'x' });
     await sleep(60);

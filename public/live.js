@@ -129,6 +129,14 @@ export function remarkOf(said) {
 // A request's reply (an answer, a summary): its sentences, on one line.
 export const plainReply = (text) => text.replace(/^\s*\[[^\]\n]*\]\s*/, '').replace(/\s*\n+\s*/g, ' ').trim();
 
+// Fold's reply: the summary, then "Settled: 1, 3" — the questions (by
+// number, from 1) the meeting decided or answered. → { summary, settled: [index] }.
+export function foldReply(text, count) {
+  const m = /(?:^|\n)\s*\**Settled:?\**:?\s*([^\n]*)\s*$/i.exec(text);
+  const settled = m ? [...new Set((m[1].match(/\d+/g) || []).map(Number).filter((n) => n >= 1 && n <= count).map((n) => n - 1))] : [];
+  return { summary: plainReply(m ? text.slice(0, m.index) : text), settled };
+}
+
 // The last meeting, as the margin is told it: what it decided, the to-dos
 // still open and done, its questions, risks and what it left for this one.
 export function memoryOf(name, items, max = 1500) {

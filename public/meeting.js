@@ -249,9 +249,16 @@ export function wrapTask(path, next, times) {
 // then the link to the next meeting. A section an earlier fold left goes
 // (its to-dos are moved again), as do the questions asked of the margin
 // (?? …). Done here, not by an agent: what the margin
-// wrote is already in the note. times: [{ title, budget, ms }].
+// wrote is already in the note. times: [{ title, budget, ms }]; settled:
+// the keys of questions the meeting decided or answered (not open any more).
 const WRAP = /^##\s+Wrap-up\s*$/i;
-export function foldNote(text, { path, next, summary = '', times = [] }) {
+// The questions a fold asks about: the note's, an earlier fold's left out.
+export function foldQuestions(text) {
+  const w = text.split('\n').findIndex((l) => WRAP.test(l));
+  const body = w < 0 ? text : text.split('\n').slice(0, w).join('\n');
+  return meetingItems(body).filter((i) => i.kind === 'question');
+}
+export function foldNote(text, { path, next, summary = '', times = [], settled = [] }) {
   const stem = (p) => p.split('/').pop().replace(/\.(md|markdown)$/i, '');
   let lines = text.split('\n');
   const w = lines.findIndex((l) => WRAP.test(l));
@@ -289,23 +296,28 @@ export function foldNote(text, { path, next, summary = '', times = [] }) {
     owners.sort((a, b) => (a === '') - (b === ''));
     for (const o of owners) out.push(o ? `**@${o}**` : '**No owner**', '', ...todos.filter((t) => (OWNER.exec(t)?.[2] || '') === o), '');
   }
+  const done = new Set(settled);
   for (const [head, kind] of [['Decisions', 'decision'], ['Open questions', 'question'], ['Risks', 'risk'], ['Ideas', 'idea']]) {
-    const xs = items.filter((i) => i.kind === kind);
+    const xs = items.filter((i) => i.kind === kind && !done.has(i.key));
     if (!xs.length) continue;
     out.push(`### ${head}`, '');
     for (const i of xs) out.push(`> [!${TYPE[kind]}] ${i.text}`, '');
   }
+  // Settled: plain lines, so they are no longer read as open.
+  const gone = items.filter((i) => i.kind === 'question' && done.has(i.key));
+  if (gone.length) out.push('### Settled', '', ...gone.map((i) => `- ${i.text}`), '');
   out.push(`Next meeting: [[${stem(next)}]]`, '');
   return out.join('\n');
 }
 
 // The next meeting's note: its name, the link back, the same agenda, and
 // under each item the questions left open there and what was left for it
-// (#next); the rest of them at the end.
-export function nextNote(text, { path, next }) {
+// (#next), not those settled; the rest of them at the end.
+export function nextNote(text, { path, next, settled = [] }) {
   const stem = (p) => p.split('/').pop().replace(/\.(md|markdown)$/i, '');
   const agenda = agendaOf(text);
-  const items = meetingItems(text).filter((i) => i.kind === 'question' || i.kind === 'next');
+  const done = new Set(settled);
+  const items = meetingItems(text).filter((i) => (i.kind === 'question' && !done.has(i.key)) || i.kind === 'next');
   const line = (i) => (i.kind === 'question' ? `> [!question] ${i.text}` : `- ${i.text}`);
   const under = (xs) => xs.flatMap((i) => [line(i), ...(i.kind === 'question' ? [''] : [])]);
   const out = [`# ${stem(next)}`, '', `Previous meeting: [[${stem(path)}]]`, ''];
