@@ -1644,3 +1644,119 @@ li.callout-hot { background: color-mix(in srgb, var(--accent) 16%, transparent);
 @keyframes live-wait { 50% { opacity: .35; } }
 @keyframes live-caret { 50% { opacity: 0; } }
 @media (prefers-reduced-motion: reduce) { .live-note.s-wait .live-text::after, .live-note.s-stream .live-text::after { animation: none; } }
+
+/* The desk (public/desk.js): cards on a plane. Text is always flat and
+   facing you; depth is the lift of what is moving, the shadow under cards,
+   the two layers of dots moving at two speeds. */
+.desk-slot { flex: 1; min-height: 0; position: relative; display: flex; }
+.desk { position: relative; flex: 1; overflow: hidden; outline: none; background: var(--bg); user-select: none; touch-action: none; }
+.desk-grid, .desk-grid > div { position: absolute; inset: 0; pointer-events: none; }
+.desk-grid-far { background-image: radial-gradient(circle, color-mix(in srgb, var(--fg-faint) 35%, transparent) 1px, transparent 1.4px); background-size: var(--gs2, 48px) var(--gs2, 48px); background-position: var(--gx2, 0) var(--gy2, 0); }
+.desk-grid-near { background-image: radial-gradient(circle, color-mix(in srgb, var(--fg-faint) 70%, transparent) 1px, transparent 1.5px); background-size: var(--gs, 24px) var(--gs, 24px); background-position: var(--gx, 0) var(--gy, 0); }
+.desk-world { position: absolute; left: 0; top: 0; width: 0; height: 0; transform-origin: 0 0; }
+.desk-edges { position: absolute; overflow: visible; pointer-events: none; }
+.desk-edge { fill: none; stroke: var(--fg-faint); stroke-width: 2; }
+.desk-edge.ghost { stroke: var(--accent-2); stroke-dasharray: 6 6; animation: desk-march 1s linear infinite; }
+@keyframes desk-march { to { stroke-dashoffset: -12; } }
+.desk-edges marker path { fill: var(--fg-faint); }
+.desk-labels { position: absolute; left: 0; top: 0; }
+.desk-edge-label { position: absolute; transform: translate(-50%, -50%); padding: 1px 8px; border-radius: 10px; background: var(--bg-2); border: 1px solid var(--border); color: var(--fg-dim); font-size: 12px; white-space: nowrap; }
+.desk-edge-label.ghost { border-color: var(--accent-2); color: var(--accent-2); }
+
+.desk-card { --card: var(--border); position: absolute; display: flex; flex-direction: column; box-sizing: border-box; border: 1px solid var(--card); border-radius: 10px; background: var(--bg-2); box-shadow: 0 1px 2px rgba(0, 0, 0, .18), 0 4px 14px rgba(0, 0, 0, .10); transition: box-shadow .16s, transform .16s, opacity .2s; }
+.desk-card.sel { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent), 0 6px 20px rgba(0, 0, 0, .18); }
+.desk-card.lifted { transform: translateY(-4px) scale(1.015); box-shadow: 0 18px 40px rgba(0, 0, 0, .32), 0 4px 10px rgba(0, 0, 0, .2); z-index: 5; opacity: .96; transition: box-shadow .16s, transform .16s; }
+.desk-card.drop-on { box-shadow: 0 0 0 3px var(--accent-2), 0 10px 26px rgba(0, 0, 0, .25); }
+.desk-card.drop-on::after { content: 'Stack'; position: absolute; top: -26px; left: 8px; padding: 1px 8px; border-radius: 10px; background: var(--accent-2); color: var(--bg); font-size: 12px; }
+.desk-head { flex: none; padding: 7px 12px 0; font-weight: 600; color: var(--fg); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.desk-head:empty { display: none; }
+.desk-body { flex: 1; min-height: 0; overflow: hidden; padding: 4px 12px 10px; font-size: 13px; line-height: 1.5; user-select: text; }
+.desk-card.sel .desk-body { overflow: auto; }
+.desk-body > :first-child { margin-top: 4px; }
+.desk-body img { max-width: 100%; border-radius: 6px; }
+.desk-card.t-file .desk-body img:only-child { display: block; margin: 0 auto; max-height: 100%; }
+.desk-card.t-file .desk-head::before { content: '❏ '; color: var(--fg-faint); font-weight: 400; }
+.desk-missing { color: var(--bad); }
+.desk-grip { position: absolute; right: 0; bottom: 0; width: 14px; height: 14px; cursor: nwse-resize; }
+.desk-edit { width: 100%; height: 100%; box-sizing: border-box; resize: none; border: 0; outline: none; background: none; color: var(--fg); font: 13px/1.5 var(--sans); }
+.desk-card.editing .desk-body { overflow: hidden; }
+
+.desk-card.t-group { background: color-mix(in srgb, var(--card) 7%, transparent); border: 1.5px dashed color-mix(in srgb, var(--card) 70%, var(--fg-faint)); box-shadow: none; }
+.desk-card.t-group .desk-head { position: absolute; top: 10px; left: 10px; right: 10px; padding: 4px 10px; font-size: 15px; color: var(--fg-dim); }
+.desk-card.t-group.sel { border-style: solid; border-color: var(--accent); box-shadow: none; }
+.desk-label-edit { width: 100%; font: 600 15px var(--sans); background: var(--bg); color: var(--fg); border: 1px solid var(--accent); border-radius: 4px; padding: 2px 6px; }
+.desk-ghost { position: absolute; border: 2px dashed var(--accent-2); border-radius: 12px; background: color-mix(in srgb, var(--accent-2) 8%, transparent); animation: desk-in .3s ease-out; }
+.desk-ghost span { position: absolute; top: 12px; left: 16px; color: var(--accent-2); font-weight: 600; font-size: 15px; }
+
+.desk-card.c-1 { --card: #e5484d; } .desk-card.c-2 { --card: #f76b15; } .desk-card.c-3 { --card: #e2b007; }
+.desk-card.c-4 { --card: #30a46c; } .desk-card.c-5 { --card: #0ea5c6; } .desk-card.c-6 { --card: #8e4ec6; }
+.desk-card:is(.c-1, .c-2, .c-3, .c-4, .c-5, .c-6, .c-hex):not(.t-group) { background: color-mix(in srgb, var(--card) 9%, var(--bg-2)); }
+
+/* What the margin wrote: beside the cards, not one of them until kept. */
+.desk-card.t-ai { --card: var(--accent-2); border-style: dashed; background: color-mix(in srgb, var(--accent-2) 7%, var(--bg-2)); box-shadow: 0 10px 30px rgba(0, 0, 0, .22); animation: desk-in .25s ease-out; height: auto; }
+.desk-card.t-ai .desk-head { color: var(--accent-2); font-size: 12px; text-transform: uppercase; letter-spacing: .05em; }
+.desk-card.t-ai .desk-head::before { content: '✦ '; }
+.desk-card.t-ai.s-wait .desk-body::after, .desk-card.t-ai.s-stream .desk-body::after { content: '▍'; color: var(--accent-2); animation: desk-blink 1s steps(2) infinite; }
+.desk-card.t-ai.s-error { --card: var(--bad); }
+.desk-card.t-ai.k-question .desk-body { font-size: 14px; }
+.desk-ai-foot { display: flex; gap: 6px; padding: 0 10px 10px; }
+.desk-ai-foot .ghost { margin-left: auto; }
+@keyframes desk-in { from { opacity: 0; transform: translateY(8px) scale(.98); } }
+@keyframes desk-blink { 50% { opacity: 0; } }
+
+/* Thinking: the cards given to the margin breathe. */
+.desk-card.given { box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent-2) 60%, transparent), 0 8px 26px color-mix(in srgb, var(--accent-2) 25%, transparent); animation: desk-breathe 1.4s ease-in-out infinite; }
+@keyframes desk-breathe { 50% { box-shadow: 0 0 0 4px color-mix(in srgb, var(--accent-2) 30%, transparent), 0 12px 32px color-mix(in srgb, var(--accent-2) 35%, transparent); } }
+
+/* Far away: titles only, large enough to read. */
+.desk.far .desk-card:not(.t-group):not(.t-ai) .desk-body { visibility: hidden; }
+.desk-card.t-text .desk-head, .desk-card.t-link .desk-head { display: none; }
+.desk.far .desk-card:not(.t-group) .desk-head { display: block; font-size: min(calc(15px * var(--iz, 1)), 72px); padding: calc(6px * var(--iz, 1)) calc(8px * var(--iz, 1)); white-space: normal; line-height: 1.25; }
+.desk.far .desk-card.t-group .desk-head { font-size: min(calc(15px * var(--iz, 1)), 44px); line-height: 1.1; top: 4px; padding: 0 8px; }
+
+.desk-marquee { position: absolute; border: 1px solid var(--accent); background: color-mix(in srgb, var(--accent) 10%, transparent); pointer-events: none; }
+
+.desk-dock { position: absolute; top: 12px; right: 12px; bottom: 12px; width: 320px; display: flex; flex-direction: column; gap: 8px; padding: 12px; box-sizing: border-box; border: 1px solid var(--border); border-radius: 12px; background: color-mix(in srgb, var(--bg-2) 88%, transparent); backdrop-filter: blur(14px); box-shadow: 0 12px 40px rgba(0, 0, 0, .25); transition: box-shadow .2s, border-color .2s; }
+.desk-dock.hot { border-color: var(--accent-2); box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent-2) 40%, transparent), 0 12px 40px rgba(0, 0, 0, .3); }
+.desk-dock.flash { border-color: var(--accent-2); }
+.desk.thinking .desk-dock { border-color: color-mix(in srgb, var(--accent-2) 60%, var(--border)); }
+.desk-dock-head { display: flex; align-items: baseline; gap: 8px; }
+.desk-dock-head b { color: var(--accent-2); }
+.desk-status { margin-left: auto; color: var(--fg-faint); font-size: 12px; }
+.desk-ctx { color: var(--fg-dim); font-size: 12px; }
+.desk-withheld { color: var(--warn); margin-top: 2px; }
+.desk-actions { display: flex; flex-wrap: wrap; gap: 6px; }
+.desk-log { flex: 1; min-height: 0; overflow: auto; display: flex; flex-direction: column; gap: 8px; user-select: text; }
+.desk-say { padding: 6px 10px; border-radius: 10px; font-size: 13px; line-height: 1.45; }
+.desk-say > :first-child { margin-top: 0; } .desk-say > :last-child { margin-bottom: 0; }
+.desk-say.me { align-self: flex-end; max-width: 85%; background: color-mix(in srgb, var(--accent) 16%, var(--bg-3)); }
+.desk-say.margin { background: var(--bg-3); }
+.desk-say.margin .btn { margin-top: 6px; }
+.desk-say.note { color: var(--fg-dim); font-size: 12px; background: none; border: 1px dashed var(--border); }
+.desk-say.error { color: var(--bad); }
+.desk-input { resize: none; box-sizing: border-box; width: 100%; padding: 8px 10px; border: 1px solid var(--border); border-radius: 8px; background: var(--bg); color: var(--fg); font: 13px/1.4 var(--sans); outline: none; }
+.desk-input:focus { border-color: var(--accent); }
+.desk-hint { position: absolute; left: 14px; bottom: 10px; right: 350px; color: var(--fg-faint); font-size: 11.5px; pointer-events: none; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+@media (prefers-reduced-motion: reduce) {
+  .desk-card, .desk-card.lifted { transition: none; transform: none; }
+  .desk-card.given, .desk-edge.ghost, .desk-card.t-ai, .desk-ghost { animation: none; }
+}
+.desk-num { position: absolute; top: -9px; right: 10px; padding: 0 7px; border-radius: 9px; background: var(--accent-2); color: var(--bg); font: 600 11px/18px var(--sans); }
+.desk-num:empty { display: none; }
+.desk.far .desk-num { font-size: calc(11px * var(--iz, 1)); line-height: 1.6; top: calc(-9px * var(--iz, 1)); padding: 0 calc(7px * var(--iz, 1)); border-radius: calc(9px * var(--iz, 1)); }
+.desk-card.sel:not(.t-group) { z-index: 3; }
+.desk.far .desk-card.drop-on::after { font-size: calc(12px * var(--iz, 1)); top: calc(-26px * var(--iz, 1)); padding: 0 calc(8px * var(--iz, 1)); border-radius: calc(10px * var(--iz, 1)); }
+.desk.far .desk-edge { stroke-width: calc(2px * var(--iz, 1)); }
+.desk.far .desk-edge-label { font-size: calc(12px * var(--iz, 1)); padding: 0 calc(8px * var(--iz, 1)); border-radius: calc(10px * var(--iz, 1)); border-width: calc(1px * var(--iz, 1)); }
+.desk-actions .btn.hot { background: var(--accent-2); border-color: var(--accent-2); color: var(--bg); transform: scale(1.06); }
+.desk { container-type: size; }
+@container (max-width: 820px) {
+  .desk-dock { width: 240px; padding: 10px; }
+  .desk-hint { right: 270px; }
+}
+@container (max-width: 560px) {
+  .desk-dock { top: auto; left: 12px; width: auto; height: 42%; }
+  .desk-hint { display: none; }
+}
+.desk.far .desk-card.t-group { border-width: calc(1.5px * var(--iz, 1)); }

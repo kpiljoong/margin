@@ -1943,6 +1943,34 @@ await check('meetings: fold (the rail\u2019s Fold) \u2014 to-dos under their own
 for (const f of ['fold 2026-10-05.md', 'fold 2026-10-12.md']) fs.rmSync(path.join(ws, 'sub', f), { force: true });
 await sleep(500);
 
+fs.writeFileSync(path.join(ws, 'desk.canvas'), JSON.stringify({ nodes: [
+  { id: 'a', type: 'text', text: 'First card', x: 0, y: 0, width: 260, height: 140, keep: 'me' },
+  { id: 'b', type: 'text', text: 'Second card', x: 500, y: 0, width: 260, height: 140 },
+  { id: 'f', type: 'file', file: 'flow.md', x: 0, y: 400, width: 400, height: 300 },
+], edges: [{ id: 'e', fromNode: 'a', toNode: 'f', label: 'see' }] }, null, '\t'));
+await check('the desk: a .canvas opens as cards; a card dropped on another makes a pile in a group, saved with what Obsidian wrote', `
+  (await until(() => $$('#sidebar .tree-row').find((r) => r.dataset.path === 'desk.canvas'), 15000)).click();
+  await until(() => $$('.desk-card').length === 3);
+  const note = await until(() => $('.desk-card[data-id="f"] .desk-body')?.textContent.includes('Proposal') && 1, 5000);
+  const at = (id) => { const r = $(\`.desk-card[data-id="\${id}"]\`).getBoundingClientRect(); return { x: r.x + 20, y: r.y + 10 }; };
+  const p = (type, { x, y }) => $('.desk').dispatchEvent(new PointerEvent(type, { clientX: x, clientY: y, bubbles: true, button: 0, pointerId: 1 }));
+  const from = at('b');
+  const to = at('a');
+  $(\`.desk-card[data-id="b"] .desk-head\`).dispatchEvent(new PointerEvent('pointerdown', { clientX: from.x, clientY: from.y, bubbles: true, button: 0, pointerId: 1 }));
+  for (let i = 1; i <= 5; i++) p('pointermove', { x: from.x + (to.x - from.x) * i / 5, y: from.y + (to.y - from.y) * i / 5 + 10 });
+  p('pointerup', { x: to.x, y: to.y + 10 });
+  await until(() => $('.desk-card.t-group'));
+  await sleep(1500); // autosave
+  return { note: !!note, group: $('.desk-card.t-group')?.textContent, edges: $$('.desk-edges path:not([d^="M0,0"])').length };
+`, (v) => {
+  let d = null;
+  try { d = JSON.parse(fs.readFileSync(path.join(ws, 'desk.canvas'), 'utf8')); } catch { /* not yet */ }
+  const g = d?.nodes.find((n) => n.type === 'group');
+  const b = d?.nodes.find((n) => n.id === 'b');
+  return v?.note && v.group === 'Stack' && v.edges >= 1 && g && b.x < 100 && b.y > 0 && d.nodes.find((n) => n.id === 'a').keep === 'me' && d.edges[0].label === 'see'
+    ? null : `the desk did not pile the cards: ${JSON.stringify(v)} ${JSON.stringify(d)}`;
+});
+
 fs.writeFileSync(path.join(ws, 'sub', 'space 2026-10-05.md'), '# space 2026-10-05\n\n## Status (1m)\n\n> [!decision] Beta stays open.\n\n- [ ] Send the survey @ann\n\n## Launch (1m)\n\n> [!question] A press kit?\n');
 await check('meetings in space (experimental): the depth stage (the note flat, the agenda on the floor), the tunnel to the next item, a card thrown in the decision orbit is a change to propose', `
   const mac = navigator.platform.startsWith('Mac');

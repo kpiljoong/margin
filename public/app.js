@@ -20,7 +20,7 @@ import { ARROW_KINDS } from './inkdraw.js';
 import { pinnedFigure, pinLabel } from './pins.js';
 import { sketchToFlow } from './sketchflow.js';
 import { goalAt, boxAt, mentionRanges, definitionLines, leadLines, numberedItems } from './figure-goal.js';
-import { isDrawing, drawingFormat, DrawingFrame, renderDrawingEmbeds, cachedEmbed, forgetEmbed, drawingImageUrl } from './drawing.js';
+import { isDrawing as isExcalidraw, drawingFormat, DrawingFrame, renderDrawingEmbeds, cachedEmbed, forgetEmbed, drawingImageUrl } from './drawing.js';
 import { copyPng, copySvg, svgFromDataUrl, imageToPng } from './clip.js';
 import { openViewer } from './viewer.js';
 import { fuzzy, rankCommands, used } from './commands.js';
@@ -326,6 +326,10 @@ const tabById = (id) => S.tabs.find((t) => t.id === id) || null;
 const activeIn = (g) => tabById(S.groups[g]?.active);
 const activeTab = () => activeIn(S.focus);
 const fileTab = () => { const t = activeTab(); return t && t.kind === 'file' ? t : null; };
+// A desk (.canvas) opens in a tab like a drawing's (kind 'drawing', desk: true):
+// the same saving, conflicts, closing and renaming.
+const isDesk = (p) => /\.canvas$/i.test(p);
+const isDrawing = (p) => isExcalidraw(p) || isDesk(p);
 const drawingTab = () => { const t = activeTab(); return t && t.kind === 'drawing' ? t : null; };
 const isDoc = (t) => !!t && (t.kind === 'file' || t.kind === 'drawing'); // tabs that stand for a file
 const persist = () => {
@@ -789,7 +793,7 @@ async function closeTab(id) {
     else await flushDrawing(tab);
     if (tab.text !== tab.saved && !(await askConfirm(`Discard unsaved changes to ${tab.path}?`, { okLabel: 'Discard', danger: true }))) return;
   }
-  if (tab.kind === 'drawing') { clearTimeout(tab.autosaveTimer); tab.frame?.destroy(); tab.frame = null; }
+  if (tab.kind === 'drawing') { clearTimeout(tab.autosaveTimer); tab.frame?.destroy(); tab.frame = null; tab.deskView = null; }
   if (tab.timer) clearInterval(tab.timer);
   const g = tab.group ?? 0;
   const siblings = S.tabs.filter((t) => t.group === g);
@@ -1134,10 +1138,11 @@ function treeRows(node, depth, rows) {
   const active = (fileTab() || drawingTab())?.path;
   for (const f of node.files.sort((a, b) => a.path.localeCompare(b.path))) {
     const drawing = isDrawing(f.path);
-    const row = h('div', { class: `tree-row${f.path === active ? ' active' : ''}${f.note || drawing || isMermaidFile(f.path) ? '' : ' dim'}`, title: f.path, 'data-path': f.path,
+    const row = h('div', { class: `tree-row${f.path === active ? ' active' : ''}${f.note || drawing || isMermaidFile(f.path) ? '' : ' dim'}`, title: f.path, 'data-path': f.path, draggable: 'true',
+      ondragstart: (e) => { e.dataTransfer.setData('text/x-margin-path', f.path); e.dataTransfer.effectAllowed = 'copy'; },
       onclick: (e) => (/\.(png|jpe?g|gif|webp|avif|svg|bmp)$/i.test(f.path) ? openImage(f.path) : openFile(f.path, { side: e.metaKey || e.ctrlKey })),
       oncontextmenu: (e) => fileMenu(e, f) },
-    h('span', { class: 'chev' }, drawing ? '◇' : isMermaidFile(f.path) ? '◈' : f.note ? '' : '·'), h('span', { class: 'name' }, f.note ? basename(f.path).replace(/\.md$/, '') : basename(f.path)),
+    h('span', { class: 'chev' }, isDesk(f.path) ? '▦' : drawing ? '◇' : isMermaidFile(f.path) ? '◈' : f.note ? '' : '·'), h('span', { class: 'name' }, f.note ? basename(f.path).replace(/\.md$/, '') : basename(f.path)),
     S.gitMap.has(f.path) ? h('span', { class: `git-code gc-${S.gitMap.get(f.path)}`, title: 'Changed since last commit' }, S.gitMap.get(f.path)) : null);
     row.style.paddingLeft = pad(depth);
     rows.push(row);
@@ -3428,6 +3433,7 @@ const COMMANDS = [
   ['Go forward', () => navGo(1), { key: 'nav-forward' }],
   ['Toggle sidebar', toggleSidebar, { key: 'sidebar' }],
   ['New drawing (Excalidraw)…', () => newDrawing()],
+  ['New desk \u2014 notes and cards laid out to think with, and the margin to sort, question and merge them (experimental)…', () => newDesk()],
   ['New Mermaid diagram file (.mmd)…', () => setTimeout(() => newMermaidFile(), 0)],
   ['Reload files from disk', () => loadTree().then(syncOpenTabs)],
   ...(desktop ? [
@@ -3996,6 +4002,7 @@ function folderMenu(e, dir) {
     { label: 'New note from template here…', run: () => pickTemplate((t) => newNote(dir, t)) },
     { label: 'New folder here…', run: () => newFolder(dir) },
     { label: 'New drawing here…', run: () => newDrawing(dir) },
+    { label: 'New desk here…', run: () => newDesk(dir) },
     { label: 'New Mermaid diagram here…', run: () => newMermaidFile(dir) },
     revealItem(dir),
     { label: 'Dired: edit as text…', run: () => openDired(dir) },
@@ -4112,13 +4119,13 @@ async function openDrawing(path, { focus = true, group, side = false } = {}) {
     try {
       const f = await api('GET', `/api/file?path=${encodeURIComponent(path)}`);
       // Obsidian drawings are read-only for now: writing them back must keep the plugin's format.
-      const readonly = drawingFormat(path) === 'obsidian';
-      tab = { id: `d:${path}`, kind: 'drawing', path, text: f.content, saved: f.content, hash: f.hash, readonly, view: readonly, group: target };
+      const readonly = !isDesk(path) && drawingFormat(path) === 'obsidian';
+      tab = { id: `d:${path}`, kind: 'drawing', desk: isDesk(path), path, text: f.content, saved: f.content, hash: f.hash, readonly, view: readonly, group: target };
       S.tabs.push(tab);
     } catch (e) { toast(e.message, 'error'); return; }
   } else if (side && tab.group !== target) moveTab(tab, target, false);
   activate(tab.id);
-  if (focus) requestAnimationFrame(() => tab.frame?.el.focus());
+  if (focus) requestAnimationFrame(() => (tab.frame?.el || tab.deskView?.el)?.focus());
   for (let d = dirname(path); d; d = dirname(d)) S.expanded.add(d);
   S.recent = [path, ...S.recent.filter((p) => p !== path)].slice(0, 30);
   store.setItem(`an.recent.${S.info?.root}`, JSON.stringify(S.recent));
@@ -4230,7 +4237,7 @@ async function saveDrawing(tab, { force = false, flush = false } = {}) {
       Object.assign(tab, { hash: r.hash, saved: text, conflict: false, missing: false });
       refreshEmbeds(tab.path);
     } catch (e) {
-      if (e.status === 409) { tab.conflict = true; toast('Drawing changed on disk — choose how to resolve it (banner above the drawing).', 'error'); }
+      if (e.status === 409) { tab.conflict = true; toast(tab.desk ? 'Desk changed on disk — choose how to resolve it (banner above the desk).' : 'Drawing changed on disk — choose how to resolve it (banner above the drawing).', 'error'); }
       else toast(`Save failed: ${e.message}`, 'error');
     }
   })();
@@ -4255,6 +4262,7 @@ async function reloadDrawing(tab) {
     const f = await api('GET', `/api/file?path=${encodeURIComponent(tab.path)}`);
     Object.assign(tab, { text: f.content, saved: f.content, hash: f.hash, conflict: false, missing: false });
     tab.frame?.post({ type: 'load', text: f.content });
+    tab.deskView?.load(f.content);
   } catch (e) { toast(e.message, 'error'); }
   renderTabs();
   renderDrawingBanner(tab);
@@ -4265,10 +4273,10 @@ function renderDrawingBanner(tab) {
   if (!slot?.isConnected) return;
   const before = slot.childElementCount;
   if (tab.missing) {
-    slot.replaceChildren(h('div', { class: 'banner' }, h('span', { class: 'grow' }, 'This drawing no longer exists on disk. Saving will recreate it.')));
+    slot.replaceChildren(h('div', { class: 'banner' }, h('span', { class: 'grow' }, `This ${tab.desk ? 'desk' : 'drawing'} no longer exists on disk. Saving will recreate it.`)));
   } else if (tab.conflict) {
     slot.replaceChildren(h('div', { class: 'banner' },
-      h('span', { class: 'grow' }, 'This drawing changed on disk while you had unsaved edits.'),
+      h('span', { class: 'grow' }, `This ${tab.desk ? 'desk' : 'drawing'} changed on disk while you had unsaved edits.`),
       h('button', { class: 'btn small', onclick: () => reloadDrawing(tab) }, 'Load disk version'),
       h('button', { class: 'btn small danger', onclick: () => saveDrawing(tab, { force: true, flush: true }) }, 'Keep mine & overwrite')));
   } else slot.replaceChildren();
@@ -4276,6 +4284,7 @@ function renderDrawingBanner(tab) {
 }
 
 function drawingView(tab, c) {
+  if (tab.desk) { deskView(tab, c); return; }
   const toolbar = h('div', { class: 'toolbar' },
     ...navButtons(),
     h('span', { class: 'crumbs' }, tab.path.split('/').join('  ›  ')),
@@ -4331,6 +4340,144 @@ function placeFramesSoon() {
   requestAnimationFrame(() => { placeQueued = false; placeFrames(); });
 }
 
+// ------------------------------------------------------------------ the desk
+// A .canvas file (JSON Canvas, as Obsidian writes them) laid out as cards to
+// think with (public/desk.js), and the margin beside them (server.js
+// /api/desk → a fast model through the claude CLI): only the cards given to
+// it, only when asked; private notes are withheld by the server.
+let deskMod = null;
+const loadDesk = async () => (deskMod ||= await import('./desk.js'));
+
+async function newDesk(folder) {
+  const base = folder ?? (activeTab()?.path ? dirname(activeTab().path) : '');
+  let name = await askText({ title: 'New desk', label: 'Path relative to the workspace. “.canvas” is added if missing. It opens in Obsidian too.', value: base ? `${base}/` : '', placeholder: 'folder/Desk', okLabel: 'Create' });
+  if (!name?.trim() || name.endsWith('/')) return;
+  name = name.trim();
+  if (!/\.canvas$/i.test(name)) name = `${name}.canvas`;
+  if (S.files.some((f) => f.path === name)) { toast('A file with that name already exists', 'error'); return; }
+  try {
+    const { EMPTY_DESK } = await loadDesk();
+    const r = await api('PUT', '/api/file', { path: name, content: EMPTY_DESK });
+    await loadTree();
+    openFile(r.path);
+  } catch (e) { toast(e.message, 'error'); }
+}
+
+// One request to the desk's margin; its reply as it is written.
+async function deskStream(body, onText) {
+  const res = await fetch('/api/desk/ask', {
+    method: 'POST', headers: { 'content-type': 'application/json', 'x-agent-notes-token': token }, body: JSON.stringify(body),
+  });
+  if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || res.statusText);
+  const reader = res.body.getReader();
+  const dec = new TextDecoder();
+  let buf = '';
+  let said = '';
+  let end = null;
+  let withheld = [];
+  let keys = null;
+  let nums = null;
+  for (;;) {
+    const { value, done } = await reader.read();
+    if (done) break;
+    buf += dec.decode(value, { stream: true });
+    for (let i = buf.indexOf('\n'); i >= 0; i = buf.indexOf('\n')) {
+      const msg = JSON.parse(buf.slice(0, i));
+      buf = buf.slice(i + 1);
+      if (msg.t != null) { said += msg.t; onText(said); } else if (msg.end) end = msg.end;
+      else if (msg.cards) { keys = msg.cards.map((c) => c[0]); nums = new Map(msg.cards); withheld = msg.withheld; }
+    }
+  }
+  return { said, end: end || { ok: false, error: 'No answer' }, withheld, keys, nums };
+}
+
+// The first time: what the desk's margin sends, and where.
+async function deskConsent() {
+  if (store.getItem('an.deskMargin') === '1') return true;
+  const ok = await askConfirm('The desk’s margin sends the cards you give it (their text, and the notes they show) to Claude (Haiku) through your claude login. Notes marked private, and what .agentnotesignore names, are never sent. Nothing goes until you ask.', { okLabel: 'Send the cards' });
+  if (ok) store.setItem('an.deskMargin', '1');
+  return ok;
+}
+let deskWarm = false;
+function deskWarmUp() {
+  if (deskWarm || store.getItem('an.deskMargin') !== '1') return;
+  deskWarm = true;
+  api('POST', '/api/desk/warm', {}).catch(() => { deskWarm = false; });
+}
+
+function deskView(tab, c) {
+  const toolbar = h('div', { class: 'toolbar' },
+    ...navButtons(),
+    h('span', { class: 'crumbs' }, tab.path.split('/').join('  ›  ')),
+    h('span', { class: 'badge', title: 'A JSON Canvas: Obsidian opens it too' }, 'Desk'),
+    h('button', { class: 'icon-btn', title: 'All the cards in view (z)', onclick: () => tab.deskView?.fit() }, '⤢'),
+    h('button', { class: 'icon-btn', title: S.groups.length > 1 ? 'Move to the other pane' : withKey('Open to the side', 'split'), onclick: () => (S.groups.length > 1 ? moveTab(tab, tab.group === 0 ? 1 : 0) : splitRight()) }, '◫'),
+    h('button', { class: 'icon-btn', title: 'More actions', onclick: (e) => { const r = e.currentTarget.getBoundingClientRect(); contextMenu({ preventDefault() {}, stopPropagation() {}, clientX: r.right - 200, clientY: r.bottom + 4 }, [
+      { label: 'Open as text (JSON)', run: () => openDrawingAsText(tab) },
+      revealItem(tab.path),
+      '-',
+      { label: 'Rename / move…', run: () => renameItem(tab.path) },
+      { label: 'Delete desk', danger: true, run: () => deleteItem(tab.path) },
+    ]); } }, '⋯'));
+  const banner = h('div', { class: 'banner-slot' });
+  tab.bannerEl = banner;
+  const slot = h('div', { class: 'desk-slot' });
+  c.replaceChildren(toolbar, banner, slot);
+  renderDrawingBanner(tab);
+  if (tab.deskView) { slot.append(tab.deskView.el); return; }
+  if (tab.fatal) { slot.append(h('div', { class: 'drawing-error' }, h('p', {}, `This desk can’t be shown: ${tab.fatal}`), h('button', { class: 'btn', onclick: () => openDrawingAsText(tab) }, 'Open as text'))); return; }
+  loadDesk().then((m) => {
+    if (!S.tabs.includes(tab) || tab.deskView) return;
+    try {
+      tab.deskView = new m.Desk({
+        text: tab.text,
+        path: tab.path,
+        reduced: typeof matchMedia === 'function' && matchMedia('(prefers-reduced-motion: reduce)').matches,
+        render: (md, from = tab.path) => renderMarkdown(md, { image: (url) => localImage(url, from), embed: () => null }),
+        readNote: async (p) => {
+          const open = S.tabs.find((x) => x.kind === 'file' && x.path === p);
+          return open ? open.content : (await api('GET', `/api/file?path=${encodeURIComponent(p)}`)).content.replace(/\r\n/g, '\n');
+        },
+        imageUrl: (p) => `/api/raw?path=${encodeURIComponent(p)}&t=${token}`,
+        openNote: (p) => openFile(p, { side: true }),
+        pickNote: () => new Promise((resolve) => {
+          const files = S.files.filter((f) => (f.note && !isTemplate(f.path)) || IMAGE_FILE.test(f.path));
+          picker({
+            placeholder: 'Put a note on the desk…',
+            source: (q) => files.map((f) => ({ f, m: fuzzy(q, f.path) })).filter((x) => x.m).slice(0, 60).map(({ f, m }) => ({ icon: '❏', label: marked(f.path, m.idx), run: () => resolve(f.path) })),
+            onCancel: () => resolve(null),
+          });
+        }),
+        makeNote: async (md) => {
+          const title = /^#\s+(.+)$/m.exec(md)?.[1]?.replace(/[\\/:*?"<>|#^[\]]/g, ' ').trim() || 'Merged';
+          const base = dirname(tab.path);
+          const name = await askText({ title: 'Make a note of it', label: 'Path relative to the workspace. “.md” is added if missing. The cards it comes from stay as they are.', value: `${base ? `${base}/` : ''}${title}`, okLabel: 'Create' });
+          if (!name?.trim() || name.endsWith('/')) return null;
+          let p = name.trim();
+          if (!/\.md$/i.test(p)) p = `${p}.md`;
+          try {
+            const f = await api('POST', '/api/file', { path: p, content: md.endsWith('\n') ? md : `${md}\n` });
+            await loadTree();
+            toast(`Made ${f.path}`);
+            return f.path;
+          } catch (e) { toast(e.message, 'error'); return null; }
+        },
+        ask: async (req, onText) => {
+          if (!(await deskConsent())) throw new Error('Not sent');
+          deskWarm = true;
+          return deskStream({ ...req, path: tab.path }, onText);
+        },
+        onChange: (text) => { tab.text = text; renderTabs(); scheduleDrawingSave(tab); },
+        toast,
+      });
+    } catch (e) { tab.fatal = e.message; renderContent(tab.group); return; }
+    if (slot.isConnected) slot.append(tab.deskView.el);
+    else if (activeIn(tab.group) === tab) renderContent(tab.group);
+    deskWarmUp();
+    requestAnimationFrame(() => { tab.deskView?.fit(false); tab.deskView?.el.focus(); });
+  });
+}
+
 // ![[…]] in a note: a drawing or a Mermaid file, shown as a picture (click to open).
 function fileEmbed(target, label, fromPath) {
   const rel = resolveLink(target, fromPath);
@@ -4338,7 +4485,7 @@ function fileEmbed(target, label, fromPath) {
   // another, nor in itself.
   if (rel && isNote(rel)) return noteEmbedDepth || rel === fromPath ? null : noteEmbed(rel, target);
   if (rel && isMermaidFile(rel)) return mermaidEmbed(rel, label || target);
-  if (rel && isDrawing(rel)) return drawingEmbed(rel, label, target);
+  if (rel && isExcalidraw(rel)) return drawingEmbed(rel, label, target);
   // ![[shot.png]]: the picture, as ![](shot.png) shows it.
   if (rel && IMAGE_FILE.test(rel)) return `<img src="${escAttr(`/api/raw?path=${encodeURIComponent(rel)}&t=${token}`)}" alt="${escAttr(label || stem(rel))}">`;
   return null;
@@ -4716,6 +4863,7 @@ function convertFlow(pre) {
 
 // A drawing, diagram or note changed: redraw the notes that show it.
 function refreshEmbeds(path) {
+  for (const t of S.tabs) t.deskView?.refreshNote(path);
   forgetEmbed(path);
   mmdSources.delete(path);
   noteSources.delete(path);

@@ -15,6 +15,7 @@ const { parseAgentLog } = require('./lib/agentlog');
 const { picturesIn, pictureSize, hiddenIn } = require('./lib/pictures');
 const { lockRanges, lockedHunks, drawerText, drawerScraps, addedLines } = require('./lib/beside');
 const { liveMargin, projectOf } = require('./lib/live');
+const { deskMargin } = require('./lib/desk');
 
 const APP_DIR = __dirname;
 const PUBLIC_DIR = path.join(APP_DIR, 'public');
@@ -135,7 +136,7 @@ function agentStatus(agent, fresh) {
 const SKIP_NAMES = new Set(['.git', 'node_modules', '.agent-notes', '.DS_Store', '.obsidian', '.trash']);
 const NOTE_EXT = new Set(['.md', '.markdown', '.mdx', '.txt']);
 const TEXT_EXT = new Set([...NOTE_EXT, '.json', '.yaml', '.yml', '.toml', '.csv', '.org', '.rst',
-  '.html', '.css', '.js', '.ts', '.py', '.sh', '.agentnotesignore', '.gitignore']);
+  '.html', '.css', '.js', '.ts', '.py', '.sh', '.canvas', '.agentnotesignore', '.gitignore']);
 const MAX_OPEN_BYTES = 2 * 1024 * 1024;
 // Excalidraw drawings carry their images inline, so they may be larger.
 const MAX_DRAWING_BYTES = 32 * 1024 * 1024;
@@ -2125,6 +2126,7 @@ async function routeApi(method, url, body) {
   if (method === 'POST' && p === '/api/live/warm') return { ...liveUp().warm(), agent: liveAgent().label };
   if (method === 'POST' && p === '/api/live/stop') { live?.stop(); return { ok: true }; }
   if (method === 'POST' && p === '/api/live/project') return liveProject(String((body || {}).path || ''));
+  if (method === 'POST' && p === '/api/desk/warm') return { ...deskUp().warm(), agent: liveAgent().label };
   if ((m = p.match(/^\/api\/proofs\/([\w-]+)$/)) && method === 'PUT') return saveProof(m[1], body || {});
   if (method === 'POST' && p === '/api/runs') return { ...startRun(body || {}), command: undefined };
   if ((m = p.match(/^\/api\/runs\/([\w-]+)$/)) && method === 'GET') {
@@ -2211,6 +2213,61 @@ function liveProject(rel) {
   }
   notes.sort((a, b) => b.mtime - a.mtime);
   return { by, names: mine[by], notes: notes.slice(0, 30) };
+}
+
+// The desk's margin (experimental, lib/desk.js): the cards someone gives it,
+// with a request. A note on a card is read here, never one that is private
+// or that .agentnotesignore names (it is withheld, and said so).
+let desk = null;
+function deskUp() {
+  const agent = liveAgent();
+  if (!agent) throw httpError(400, 'The desk\u2019s margin needs the Claude Code agent (Settings \u2192 Agents).');
+  if (!desk) {
+    const env = { ...process.env };
+    delete env.ELECTRON_RUN_AS_NODE;
+    desk = deskMargin({ bin: agent.command.trim().split(/\s+/)[0], env });
+  }
+  return desk;
+}
+function deskCards(cards) {
+  const ignored = loadIgnore(ROOT);
+  const out = [];
+  const withheld = [];
+  let room = 40000;
+  for (const c of (Array.isArray(cards) ? cards : []).slice(0, 60)) {
+    let title = '';
+    let text = '';
+    if (c && typeof c.file === 'string') {
+      let abs;
+      try { abs = workspacePath(c.file); } catch { continue; }
+      const rel = relOf(abs);
+      if (ignored(rel) || (NOTE_EXT.has(extOf(abs)) && isPrivateNote(abs))) { withheld.push(rel); continue; }
+      title = path.basename(rel).replace(/\.[^.]+$/, '');
+      if (!NOTE_EXT.has(extOf(abs))) text = '(a file that is not a note)';
+      else text = cachedText(rel)?.text.replace(/^\uFEFF?---\r?\n[\s\S]*?\r?\n---\r?\n?/, '') ?? '(not found)';
+    } else if (c && typeof c.text === 'string') text = c.text;
+    else continue;
+    text = text.trim().slice(0, Math.min(6000, Math.max(0, room)));
+    room -= text.length;
+    out.push({ n: out.length + 1, key: String(c.key || c.file || out.length).slice(0, 200), title, text });
+  }
+  return { cards: out, withheld };
+}
+function deskAsk(req, res, body) {
+  const canvas = workspacePath(String(body.path || ''));
+  if (loadIgnore(ROOT)(relOf(canvas))) throw httpError(403, 'This desk is in .agentnotesignore: its cards are not sent.');
+  const m = deskUp();
+  const { cards, withheld } = deskCards(body.cards);
+  res.writeHead(200, { ...SECURITY_HEADERS, 'Content-Type': 'application/x-ndjson; charset=utf-8' });
+  // First: the cards sent, with the numbers they were given (a talk keeps
+  // its numbers, so they are known once the request is made).
+  let head = false;
+  const start = () => { if (!head) { head = true; res.write(`${JSON.stringify({ cards: cards.map((c) => [c.key, c.n]), withheld })}\n`); } };
+  let over = false;
+  const cancel = m.ask({ task: String(body.task || ''), cards, question: String(body.question || '').slice(0, 2000), talk: String(body.talk || '').slice(0, 100) },
+    (t) => { start(); res.write(`${JSON.stringify({ t })}\n`); }, (info) => { start(); over = true; res.end(`${JSON.stringify({ end: info })}\n`); });
+  start();
+  res.on('close', () => { if (!over) cancel(); });
 }
 
 function liveLine(req, res, body) {
@@ -2309,6 +2366,7 @@ const server = http.createServer(async (req, res) => {
       return send(res, 401, { error: 'Missing session token. Open the URL printed in the terminal.' });
     }
     if (req.method === 'POST' && url.pathname === '/api/live/line') return liveLine(req, res, await readBody(req, 128 * 1024));
+    if (req.method === 'POST' && url.pathname === '/api/desk/ask') return deskAsk(req, res, await readBody(req, 512 * 1024));
     const body = req.method === 'POST' || req.method === 'PUT'
       ? await readBody(req, url.pathname === '/api/asset' || (url.pathname === '/api/file' && req.method === 'PUT') || (url.pathname === '/api/runs' && req.method === 'POST') ? 40 * 1024 * 1024 : undefined) : null;
     send(res, 200, await routeApi(req.method, url, body));
@@ -2351,6 +2409,7 @@ listen(opts.port);
 
 function shutdown() {
   live?.stop();
+  desk?.stop();
   for (const id of running.keys()) { try { cancelRun(id, 'server stopped'); } catch { /* ignore */ } }
   process.exit(0);
 }
