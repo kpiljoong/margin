@@ -2198,6 +2198,7 @@ function liveLine(req, res, body) {
   let over = false;
   const cancel = live.line({
     key, title: text(body.title, 200), item: text(body.item, 200), line: text(body.line, 2000), under: text(body.under, 300), today: text(body.today, 300),
+    memory: text(body.memory, 2000), task: ['answer', 'summary'].includes(body.task) ? body.task : null, note: body.task ? text(body.note, 16000) : '',
     agenda: Array.isArray(body.agenda) ? body.agenda.slice(0, 30).map((a) => text(a, 120)) : [],
   }, (t) => res.write(`${JSON.stringify({ t })}\n`), (info) => { over = true; res.end(`${JSON.stringify({ end: info })}\n`); });
   res.on('close', () => { if (!over) cancel(); });
@@ -2284,7 +2285,7 @@ const server = http.createServer(async (req, res) => {
     if (!tokenOk(req.headers['x-agent-notes-token'])) {
       return send(res, 401, { error: 'Missing session token. Open the URL printed in the terminal.' });
     }
-    if (req.method === 'POST' && url.pathname === '/api/live/line') return liveLine(req, res, await readBody(req, 64 * 1024));
+    if (req.method === 'POST' && url.pathname === '/api/live/line') return liveLine(req, res, await readBody(req, 128 * 1024));
     const body = req.method === 'POST' || req.method === 'PUT'
       ? await readBody(req, url.pathname === '/api/asset' || (url.pathname === '/api/file' && req.method === 'PUT') || (url.pathname === '/api/runs' && req.method === 'POST') ? 40 * 1024 * 1024 : undefined) : null;
     send(res, 200, await routeApi(req.method, url, body));

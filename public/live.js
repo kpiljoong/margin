@@ -4,7 +4,10 @@
 // as it comes (server.js → lib/live.js). It is only shown: Tab keeps it (the
 // line in the note becomes it, in the meeting's own Markdown), Esc lets it go.
 
-const KIND = { decision: 'Decided', question: 'Open', todo: 'To-do', risk: 'Risk', idea: 'Idea', next: 'Next time', note: 'Note' };
+const KIND = { decision: 'Decided', question: 'Open', todo: 'To-do', risk: 'Risk', idea: 'Idea', next: 'Next time', note: 'Note', answer: 'Answer' };
+// "?? when did we say": a question to the margin, not for the minutes.
+const ASKED = /^\s*\?\?/;
+export const asked = (line) => ASKED.test(line);
 
 // Lines worth minutes: words, not a heading, a fence, a rule or the link
 // to the previous meeting.
@@ -82,6 +85,7 @@ export function leadOf(lines, i) {
 // What a line is, at once, before any model: { kind, fixed (written as
 // one already), owner, due }. lead: its list's lead-in.
 export function ruleOf(line, today = new Date(), lead = null) {
+  if (ASKED.test(line)) return { kind: 'answer', fixed: true, owner: null, due: null };
   const c = CALL.exec(line);
   const t = !c && TASK.exec(line);
   const owner = AT.exec(line)?.[1] || WHO.exec(line)?.[1]?.toLowerCase() || null;
@@ -110,7 +114,32 @@ export function parseReply(text) {
   const owner = parts.find((p) => p.startsWith('@'))?.slice(1).replace(/[^\p{L}\p{N}_.-]/gu, '') || null;
   const due = parts.find((p) => /^\d{4}-\d{2}-\d{2}$/.test(p)) || null;
   // One head: a second one, or a second line, joins the sentence.
-  return { head: true, kind, owner, due, sentence: text.slice(m[0].length).replace(/\s*\n+\s*(?:\[[^\]\n]*\]\s*)?/g, ' ').replace(/\s*\[(?:decision|todo|question|risk|idea|next|note)\b[^\]\n]*\]\s*/gi, ' ').trimEnd() };
+  const said = text.slice(m[0].length).replace(/\s*\n+\s*(?:\[[^\]\n]*\]\s*)?/g, ' ').replace(/\s*\[(?:decision|todo|question|risk|idea|next|note)\b[^\]\n]*\]\s*/gi, ' ');
+  return { head: true, kind, owner, due, ...remarkOf(said) };
+}
+
+// "We launch on Oct 27. || Last week: the 20th. Changed?": the sentence, and
+// what the margin remarks on it (the last meeting, earlier in this one).
+export function remarkOf(said) {
+  const at = said.indexOf('||');
+  if (at < 0) return { sentence: said.replace(/\s*\|$/, '').trimEnd(), remark: '' };
+  return { sentence: said.slice(0, at).trimEnd(), remark: said.slice(at + 2).replace(/\s*\|+\s*/g, ' ').trim() };
+}
+
+// A request's reply (an answer, a summary): its sentences, on one line.
+export const plainReply = (text) => text.replace(/^\s*\[[^\]\n]*\]\s*/, '').replace(/\s*\n+\s*/g, ' ').trim();
+
+// The last meeting, as the margin is told it: what it decided, the to-dos
+// still open and done, its questions, risks and what it left for this one.
+export function memoryOf(name, items, max = 1500) {
+  const say = (i) => `${i.body}${i.owner ? ` @${i.owner}` : ''}${i.due ? ` (due ${i.due})` : ''}`;
+  const pick = (kind, f = () => true) => items.filter((i) => i.kind === kind && f(i)).map(say);
+  const parts = [['Decided', pick('decision')], ['Open to-dos', pick('todo', (i) => !i.done)], ['Done', pick('todo', (i) => i.done)],
+    ['Open questions', pick('question')], ['Risks', pick('risk')], ['Left for this meeting', pick('next')]]
+    .filter(([, xs]) => xs.length).map(([h, xs]) => `${h}: ${xs.join('; ')}`);
+  if (!parts.length) return '';
+  const s = `Last meeting (${name}):\n${parts.join('\n')}`;
+  return s.length > max ? `${s.slice(0, max - 1)}\u2026` : s;
 }
 
 // The line as the meeting writes it down: a decision or question callout,
@@ -126,6 +155,20 @@ export function keptLine(e) {
   return s;
 }
 
+// Every line's minutes the margin wrote and nobody let go, kept (as Tab
+// would), from the last line up. Lines written as minutes already, and
+// answers, stay as they are.
+export function keepAll(text, entries) {
+  const lines = text.split('\n');
+  for (let i = lines.length - 1; i >= 0; i--) {
+    const e = lines[i].trim() && entries.get(lines[i].trim());
+    if (!e || e.state !== 'done' || e.fixed || e.kind === 'answer' || !e.sentence.trim()) continue;
+    const { from, to, insert } = keepEdit(text, i, e);
+    text = text.slice(0, from) + insert + text.slice(to);
+  }
+  return text;
+}
+
 // Keeping it: the edit to the note — line i becomes the kept line; a
 // callout stands apart (a blank line before and after). With the cursor on
 // that line it goes to the kept line's end; on the empty line right under a
@@ -136,7 +179,7 @@ export function keepEdit(text, i, e, at = -1) {
   let from = 0;
   for (let k = 0; k < i; k++) from += lines[k].length + 1;
   const to = from + lines[i].length;
-  const indent = e.kind === 'todo' || e.kind === 'next' || e.kind === 'note' ? /^\s*/.exec(lines[i])[0] : '';
+  const indent = e.kind === 'todo' || e.kind === 'next' || e.kind === 'note' || e.kind === 'answer' ? /^\s*/.exec(lines[i])[0] : '';
   let insert = indent + keptLine(e);
   const callout = insert.startsWith('>');
   if (callout) {
@@ -177,8 +220,9 @@ export function liveCard() {
   const due = el('span', 'live-due');
   const ms = el('span', 'live-ms');
   const text = el('span', 'live-text');
+  const remark = el('div', 'live-remark');
   const keys = el('div', 'live-keys', 'Tab keep \u00B7 Esc not this');
-  const card = el('div', 'mnote live-note', el('div', 'live-body', chip, who, due, text, ms), keys);
+  const card = el('div', 'mnote live-note', el('div', 'live-body', chip, who, due, text, ms), remark, keys);
   card.show = (e) => {
     card.className = `mnote live-note k-${e.kind} s-${e.state}${e.offer ? ' offer' : ''}`;
     chip.textContent = e.state === 'kept' ? '\u2713 Kept' : KIND[e.kind];
@@ -188,6 +232,8 @@ export function liveCard() {
     ms.textContent = t.first ? `${secs(t.first - t.stop)} \u00B7 ${t.done ? secs(t.done - t.stop) : '\u2026'}` : '';
     text.textContent = e.sentence || (e.state === 'error' ? e.error || 'No answer' : '');
     card.title = e.sentence || '';
+    remark.textContent = e.remark ? `\u21B3 ${e.remark}` : '';
+    remark.hidden = !e.remark || e.state === 'kept';
     keys.hidden = !e.offer;
   };
   return card;

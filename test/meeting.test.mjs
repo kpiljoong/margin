@@ -9,7 +9,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { meetingItems, agendaOf, agendaAt, nextAgendaEdit, classifyLine, typedKind, moveItem, wallOf, previousOf, nextMeetingPath, minutes, wrapTask, bodyOf } from '../public/meeting.js';
+import { meetingItems, agendaOf, agendaAt, nextAgendaEdit, classifyLine, typedKind, moveItem, wallOf, previousOf, nextMeetingPath, minutes, wrapTask, bodyOf, foldNote, nextNote } from '../public/meeting.js';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const NOTE = [
@@ -196,4 +196,35 @@ test('the demo agent carries risks and ideas into the wrap-up, and #next to the 
     const next = fs.readFileSync(path.join(ws, 'Weekly 2026-10-12.md'), 'utf8');
     assert.match(next, /## Launch \(10m\)\n\n- The offer range\n- Pricing for teams\n/);
   } finally { fs.rmSync(ws, { recursive: true, force: true }); }
+});
+
+test('fold: to-dos under their owners in a Wrap-up, the rest again, the next meeting', () => {
+  const note = [
+    '# Weekly 2026-10-05', '', '## Launch (10m)', '', '> [!decision] We launch on Oct 10.', '', 'Before that:',
+    '- [ ] Decide on QA @sua \u{1F4C5} 2026-10-09', '- [ ] Ship the tool', '- [x] Book the venue @ann', '',
+    '> [!question] A press kit?', '', '?? who books the hall', '', '## Pricing (5m)', '', '> [!warning] Review may slip.', '', '- Offer range #next', '',
+  ].join('\n');
+  const times = [{ title: 'Launch', budget: 10, ms: 12 * 60000 }, { title: 'Pricing', budget: 5, ms: 0 }];
+  const out = foldNote(note, { path: 'sub/Weekly 2026-10-05.md', next: 'sub/Weekly 2026-10-12.md', summary: 'We set the launch.', times });
+  assert.equal(out, [
+    '# Weekly 2026-10-05', '', '## Launch (10m)', '', '> [!decision] We launch on Oct 10.', '', 'Before that:', '',
+    '> [!question] A press kit?', '', '## Pricing (5m)', '', '> [!warning] Review may slip.', '', '- Offer range #next', '',
+    '## Wrap-up', '', 'We set the launch.', '', '**Time:** Launch 12m of 10m', '',
+    '### To-dos by owner', '', '**@sua**', '', '- [ ] Decide on QA @sua \u{1F4C5} 2026-10-09', '', '**@ann**', '', '- [x] Book the venue @ann', '',
+    '**No owner**', '', '- [ ] Ship the tool', '',
+    '### Decisions', '', '> [!decision] We launch on Oct 10.', '', '### Open questions', '', '> [!question] A press kit?', '',
+    '### Risks', '', '> [!warning] Review may slip.', '', 'Next meeting: [[Weekly 2026-10-12]]', '',
+  ].join('\n'));
+  // Again: the section is redone, its to-dos (and a new one) moved again.
+  const again = foldNote(`${out.replace('\n## Wrap-up', '- [ ] New one @bob\n\n## Wrap-up')}`, { path: 'sub/Weekly 2026-10-05.md', next: 'sub/Weekly 2026-10-12.md' });
+  assert.equal(again.match(/## Wrap-up/g).length, 1);
+  assert.match(again, /\*\*@bob\*\*\n\n- \[ \] New one @bob\n/);
+  assert.equal(again.match(/Decide on QA/g).length, 1);
+  assert.ok(!again.includes('We set the launch.'));
+  // Next time: the same agenda, its questions and #next under their items.
+  assert.equal(nextNote(note, { path: 'sub/Weekly 2026-10-05.md', next: 'sub/Weekly 2026-10-12.md' }), [
+    '# Weekly 2026-10-12', '', 'Previous meeting: [[Weekly 2026-10-05]]', '', '## Launch (10m)', '', '> [!question] A press kit?', '',
+    '## Pricing (5m)', '', '- Offer range', '',
+  ].join('\n'));
+  assert.equal(nextNote('# M\n\n> [!question] Who?\n', { path: 'M.md', next: 'M (next).md' }), '# M (next)\n\nPrevious meeting: [[M]]\n\n> [!question] Who?\n');
 });

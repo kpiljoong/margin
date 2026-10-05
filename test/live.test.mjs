@@ -7,7 +7,7 @@ import { createRequire } from 'node:module';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { wanted, ruleOf, dueOf, leadOf, parseReply, keptLine, keepEdit, quantile } from '../public/live.js';
+import { wanted, ruleOf, dueOf, leadOf, parseReply, keptLine, keepEdit, keepAll, memoryOf, plainReply, asked, quantile } from '../public/live.js';
 
 const require = createRequire(import.meta.url);
 const server = require('../lib/live.js');
@@ -60,13 +60,55 @@ test('a list item: its lead-in says what the items are', () => {
 test('parseReply: the head once its bracket closes, then the sentence (both sides)', () => {
   for (const parse of [parseReply, server.parseReply]) {
     assert.deepEqual(parse('[to'), { head: false, sentence: '' });
-    assert.deepEqual(parse('[todo @bob 2026-10-15] Bob drafts'), { head: true, kind: 'todo', owner: 'bob', due: '2026-10-15', sentence: 'Bob drafts' });
+    assert.deepEqual(parse('[todo @bob 2026-10-15] Bob drafts'), { head: true, kind: 'todo', owner: 'bob', due: '2026-10-15', sentence: 'Bob drafts', remark: '' });
     assert.equal(parse('[decision] We launch on October 20.').sentence, 'We launch on October 20.');
     assert.equal(parse('[whatever] Hi').kind, null);
     assert.equal(parse('[todo @bob] Bob drafts the notes; [todo @mina] Mina reviews').sentence, 'Bob drafts the notes; Mina reviews');
     assert.equal(parse('[todo @bob] Bob drafts the notes,\n[todo @mina] Mina reviews').sentence, 'Bob drafts the notes, Mina reviews');
     assert.equal(parse('No head at all.').sentence, 'No head at all.');
+    // A remark after "||" (a partial "|" while it streams is not shown).
+    assert.deepEqual([parse('[decision] We launch Oct 27. |').sentence, parse('[decision] We launch Oct 27. |').remark], ['We launch Oct 27.', '']);
+    const r = parse('[decision] We launch Oct 27. || Last meeting set Oct 20. Changed?');
+    assert.deepEqual([r.sentence, r.remark], ['We launch Oct 27.', 'Last meeting set Oct 20. Changed?']);
   }
+});
+
+test('ask the margin: a ?? line, answered, kept in its place', () => {
+  assert.equal(asked('?? when did we say'), true);
+  assert.equal(asked('press kit?? bob unsure'), false);
+  assert.deepEqual(ruleOf('?? when did we say the beta ends', MON), { kind: 'answer', fixed: true, owner: null, due: null });
+  assert.equal(plainReply('The beta ends\non Oct 30.\n'), 'The beta ends on Oct 30.');
+  assert.equal(plainReply('[note] It ends Oct 30.'), 'It ends Oct 30.');
+  assert.equal(keptLine({ kind: 'answer', sentence: 'It ends Oct 30.' }), 'It ends Oct 30.');
+  assert.deepEqual(keepEdit('a\n  ?? when\nb', 1, { kind: 'answer', sentence: 'Oct 30.' }), { from: 2, to: 11, insert: '  Oct 30.', caret: 11 });
+});
+
+test('memoryOf: the last meeting, as the margin is told it', () => {
+  const items = [
+    { kind: 'decision', body: 'We launch on Oct 20' },
+    { kind: 'todo', body: 'QA checklist', owner: 'sua', due: '2026-10-09' },
+    { kind: 'todo', body: 'Book the venue', done: true },
+    { kind: 'question', body: 'A press kit?' },
+    { kind: 'next', body: 'Pricing' },
+  ];
+  assert.equal(memoryOf('Weekly 2026-10-05', items), 'Last meeting (Weekly 2026-10-05):\nDecided: We launch on Oct 20\nOpen to-dos: QA checklist @sua (due 2026-10-09)\nDone: Book the venue\nOpen questions: A press kit?\nLeft for this meeting: Pricing');
+  assert.equal(memoryOf('W', []), '');
+  const long = memoryOf('W', Array.from({ length: 200 }, (_, i) => ({ kind: 'decision', body: `decision number ${i}` })), 300);
+  assert.equal(long.length, 300);
+  assert.ok(long.endsWith('\u2026'));
+});
+
+test('keepAll: every line the margin answered, kept as Tab would, from the bottom up', () => {
+  const text = '## Plan (10m)\nlaunch 20th ok\n- [ ] Draft @bob\nann: survey thurs\n?? when\nbeta ok\nlater';
+  const entries = new Map([
+    ['launch 20th ok', { kind: 'decision', state: 'done', sentence: 'We launch on the 20th.' }],
+    ['- [ ] Draft @bob', { kind: 'todo', fixed: true, state: 'done', sentence: 'Bob drafts.' }],
+    ['ann: survey thurs', { kind: 'todo', state: 'done', owner: 'ann', due: '2026-10-15', sentence: 'Ann sends the survey.' }],
+    ['?? when', { kind: 'answer', fixed: true, state: 'done', sentence: 'Oct 20.' }],
+    ['beta ok', { kind: 'note', state: 'gone', sentence: 'Beta is fine.' }],
+    ['later', { kind: 'note', state: 'stream', sentence: 'La' }],
+  ]);
+  assert.equal(keepAll(text, entries), '## Plan (10m)\n\n> [!decision] We launch on the 20th.\n\n- [ ] Draft @bob\n- [ ] Ann sends the survey. @ann \u{1F4C5} 2026-10-15\n?? when\nbeta ok\nlater');
 });
 
 test('keptLine and keepEdit: the line as the meeting writes it, a callout apart', () => {
@@ -127,7 +169,7 @@ process.stdin.on('data', (d) => {
     if (j.type !== 'user') continue;
     const text = j.message.content;
     fs.appendFileSync(process.env.FAKE_LOG, JSON.stringify({ pid: process.pid, text }) + '\\n');
-    const line = /Line: (.*)$/.exec(text)[1];
+    const line = /Line: (.*)$/.exec(text)?.[1] ?? 'REQUEST';
     if (line === 'DIE') process.exit(3);
     n++;
     const out = (o) => process.stdout.write(JSON.stringify(o) + '\\n');
@@ -183,6 +225,39 @@ test('the resident session: one meeting, another, the swap, up again after it en
     await sleep(100);
     // Their scratch folders are gone.
     assert.deepEqual(cwds.filter((d) => fs.existsSync(d)), []);
+  } finally {
+    m.stop();
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('the resident session: the last meeting in its header; requests answered, not minutes', { skip: process.platform === 'win32' }, async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'margin-live-test-'));
+  const bin = path.join(dir, 'fake-claude');
+  fs.writeFileSync(bin, FAKE, { mode: 0o755 });
+  const log = path.join(dir, 'log');
+  const m = server.liveMargin({ bin, env: { ...process.env, FAKE_LOG: log }, warmMs: 30, retryMs: 50 });
+  const ask = (req) => new Promise((done) => m.line({ title: req.key, agenda: [], today: 'T', ...req }, () => {}, done));
+  const sent = () => fs.readFileSync(log, 'utf8').trim().split('\n').map((l) => JSON.parse(l));
+  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+  try {
+    m.warm();
+    await sleep(60);
+    const memory = 'Last meeting (W):\nDecided: launch Oct 20';
+    assert.equal((await ask({ key: 'C', line: 'one', memory })).ok, true);
+    assert.equal((await ask({ key: 'C', line: '?? when', task: 'answer', note: '# C\none', memory })).ok, true);
+    assert.equal((await ask({ key: 'C', line: 'two', task: 'nonsense', memory })).ok, true);
+    let s = sent();
+    assert.equal(s[0].text, 'Meeting: C\nToday: T\n\nLast meeting (W):\nDecided: launch Oct 20\n\nItem: (none)\nLine: one');
+    assert.match(s[1].text, /^Request: answer [\s\S]*\nQuestion: when\n\nThe note:\n# C\none$/);
+    assert.equal(s[2].text, 'Item: (none)\nLine: two');
+    // Another meeting, and back: C's minutes are its lines, not the request.
+    await ask({ key: 'D', line: 'x' });
+    await sleep(60);
+    await ask({ key: 'D', line: 'y' });
+    await ask({ key: 'C', line: 'three', memory });
+    s = sent();
+    assert.match(s.at(-1).text, /Minutes so far:\n- one\n- two\n\nItem: \(none\)\nLine: three$/);
   } finally {
     m.stop();
     fs.rmSync(dir, { recursive: true, force: true });

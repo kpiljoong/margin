@@ -3364,6 +3364,7 @@ const COMMANDS = [
   ['Meeting: mark the line for next time (experimental)', () => classifyHere('next'), { key: 'meeting-later' }],
   ['Meeting: next agenda item (experimental)', () => nextAgendaItem(), { key: 'meeting-next' }],
   ['Meeting: wrap up \u2014 minutes, to-dos by owner, the next meeting (experimental)\u2026', () => setTimeout(() => wrapUp(), 0)],
+  ['Meeting: fold \u2014 the margin\u2019s minutes into the note, to-dos by owner, the next meeting, in seconds (experimental)', () => foldMeeting(), { key: 'meeting-fold' }],
   ['Meeting: decision wall (experimental)', () => setTimeout(() => wallView(), 0)],
   ['Meeting: depth stage \u2014 the rail behind the note, the agenda on the floor (experimental)', () => setTimeout(toggleStage, 0)],
   ['Meeting: decision orbit \u2014 the wall in space (experimental)', () => setTimeout(() => wallView(fileTab(), true), 0)],
@@ -5912,6 +5913,7 @@ function railFor(tab) {
   tab.railEl = meetMod.railPane({
     go: (it) => go(it.to),
     goLine: (line) => { const ls = tab.editor.value.split('\n'); go(ls.slice(0, line + 1).join('\n').length); },
+    fold: () => foldMeeting(tab),
     wrapUp: () => wrapUp(tab),
     wall: () => wallView(tab),
     hint: `${kbd('meeting-decision')} a decision · ${kbd('meeting-todo')} a to-do · ${kbd('meeting-question')} a question · ${kbd('meeting-risk')} a risk · ${kbd('meeting-idea')} an idea · ${kbd('meeting-later')} next time, or start a line with ! [] ? · ${kbd('meeting-next')} the next item`,
@@ -6112,6 +6114,63 @@ function livePump(tab) {
   liveSend(tab, { ...q, lineNo: at }, lines);
 }
 
+// What each message to the margin carries: the meeting, its agenda, the
+// item the line is under, and the last meeting.
+async function liveBody(tab, lines, lineNo) {
+  const text = lines.join('\n');
+  const agenda = meetMod.agendaOf(text);
+  const pos = lines.slice(0, lineNo).reduce((n, l) => n + l.length + 1, 0);
+  return {
+    path: tab.path, title: /^#\s+(.+)$/m.exec(text)?.[1] || tab.path.replace(/^.*\//, '').replace(/\.\w+$/, ''),
+    agenda: agenda.map((a) => a.title), item: agenda[meetMod.agendaAt(agenda, pos)]?.title || '', today: liveMod.weekAhead(), memory: await liveMemory(tab, text),
+  };
+}
+
+// The meeting before ("Previous meeting: [[…]]"): what it decided and left
+// open, read once a note; nothing when it is private.
+async function liveMemory(tab, text) {
+  const name = meetMod.previousOf(text);
+  const path = name && resolveLink(name, tab.path);
+  if (!path) return '';
+  if (tab.liveMem?.path === path) return tab.liveMem.value;
+  let value = '';
+  try {
+    const priv = (await api('POST', '/api/private', { paths: [path] })).private || {};
+    if (!priv[path]) {
+      const open = S.tabs.find((t) => t.kind === 'file' && t.path === path);
+      const prev = open ? open.content : (await api('GET', `/api/file?path=${encodeURIComponent(path)}`)).content;
+      value = liveMod.memoryOf(stem(path), meetMod.meetingItems(prev));
+    }
+  } catch { /* gone: nothing to remember */ }
+  tab.liveMem = { path, value };
+  return value;
+}
+
+// One message to the margin; its reply as it is written: onText(all of it
+// so far). → the end's info.
+async function liveStream(body, signal, onText) {
+  const res = await fetch('/api/live/line', {
+    method: 'POST', signal, headers: { 'content-type': 'application/json', 'x-agent-notes-token': token }, body: JSON.stringify(body),
+  });
+  if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || res.statusText);
+  const reader = res.body.getReader();
+  const dec = new TextDecoder();
+  let buf = '';
+  let said = '';
+  let end = null;
+  for (;;) {
+    const { value, done } = await reader.read();
+    if (done) break;
+    buf += dec.decode(value, { stream: true });
+    for (let i = buf.indexOf('\n'); i >= 0; i = buf.indexOf('\n')) {
+      const msg = JSON.parse(buf.slice(0, i));
+      buf = buf.slice(i + 1);
+      if (msg.t != null) { said += msg.t; onText(said); } else if (msg.end) end = msg.end;
+    }
+  }
+  return { said, end: end || { ok: false, error: 'No answer' } };
+}
+
 async function liveSend(tab, q, lines) {
   const st = tab.live;
   const e = q.entry;
@@ -6120,47 +6179,26 @@ async function liveSend(tab, q, lines) {
   st.calls++;
   e.state = 'stream';
   e.t.send = performance.now();
-  const text = lines.join('\n');
-  const agenda = meetMod.agendaOf(text);
-  const pos = lines.slice(0, q.lineNo).reduce((n, l) => n + l.length + 1, 0);
-  const item = agenda[meetMod.agendaAt(agenda, pos)]?.title || '';
-  const title = /^#\s+(.+)$/m.exec(text)?.[1] || tab.path.replace(/^.*\//, '').replace(/\.\w+$/, '');
-  const today = liveMod.weekAhead();
   e.card.show(e);
   liveHudShow(tab);
-  let said = '';
   try {
-    const res = await fetch('/api/live/line', {
-      method: 'POST', signal: ctl.signal,
-      headers: { 'content-type': 'application/json', 'x-agent-notes-token': token },
-      body: JSON.stringify({ path: tab.path, title, agenda: agenda.map((a) => a.title), item, under: liveMod.leadOf(lines, q.lineNo) || '', line: q.text.trim(), today }),
+    const body = { ...(await liveBody(tab, lines, q.lineNo)), under: liveMod.leadOf(lines, q.lineNo) || '', line: q.text.trim() };
+    // "?? …": a question to the margin, answered from the note and the last meeting.
+    if (e.kind === 'answer') Object.assign(body, { task: 'answer', note: lines.join('\n').slice(0, 16000) });
+    const { end } = await liveStream(body, ctl.signal, (said) => {
+      const r = e.kind === 'answer' ? { head: true, sentence: liveMod.plainReply(said) } : liveMod.parseReply(said);
+      if (!r.head || !r.sentence) return;
+      if (!e.t.first) e.t.first = performance.now();
+      if (r.kind && !e.fixed) e.kind = r.kind;
+      if (r.owner) e.owner = r.owner;
+      // Dates by rule first: a model counts weekdays less well.
+      if (e.kind === 'todo') e.due = liveMod.dueOf(e.line) || r.due || e.due;
+      e.sentence = r.sentence;
+      e.remark = r.remark || '';
+      e.card.show(e);
+      liveNotesSoon(tab);
     });
-    if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || res.statusText);
-    const reader = res.body.getReader();
-    const dec = new TextDecoder();
-    let buf = '';
-    for (;;) {
-      const { value, done } = await reader.read();
-      if (done) break;
-      buf += dec.decode(value, { stream: true });
-      for (let i = buf.indexOf('\n'); i >= 0; i = buf.indexOf('\n')) {
-        const msg = JSON.parse(buf.slice(0, i));
-        buf = buf.slice(i + 1);
-        if (msg.t != null) {
-          said += msg.t;
-          const r = liveMod.parseReply(said);
-          if (!r.head || !r.sentence) continue;
-          if (!e.t.first) e.t.first = performance.now();
-          if (r.kind && !e.fixed) e.kind = r.kind;
-          if (r.owner) e.owner = r.owner;
-          // Dates by rule first: a model counts weekdays less well.
-          if (e.kind === 'todo') e.due = liveMod.dueOf(e.line) || r.due || e.due;
-          e.sentence = r.sentence;
-          e.card.show(e);
-          liveNotesSoon(tab);
-        } else if (msg.end) liveEnd(tab, e, msg.end);
-      }
-    }
+    liveEnd(tab, e, end);
   } catch (err) {
     if (ctl.signal.aborted) {
       st.cancelled++;
@@ -6335,6 +6373,56 @@ async function wrapUp(tab = fileTab()) {
   openTaskDialog(meetMod.wrapTask(tab.path, meetMod.nextMeetingPath(tab.path), times), { scope: 'file', recipe: 'Wrap up' });
 }
 
+// Fold: the quick wrap-up, in seconds and without an agent. The margin's
+// minutes go into the note (as Tab would keep them), its to-dos under their
+// owners in a "## Wrap-up" with the time and its decisions and questions
+// again, and a summary the live margin writes (when it is on); proposed,
+// for review. The next meeting's note is made when there is none.
+async function foldMeeting(tab = fileTab()) {
+  if (!tab || !isNote(tab.path)) { toast('Fold is for a meeting\u2019s note: open it first.', 'error'); return; }
+  if (tab.editor?.tracking) { toast('Stop suggesting first: fold proposes its own changes.', 'error'); return; }
+  if (tab.folding) return;
+  tab.folding = true;
+  try {
+    await Promise.all([loadMeet(), loadLive()]);
+    clockStep(tab);
+    const st = tab.live;
+    const on = liveActive(tab) && st?.started;
+    if (on) {
+      // The line last written goes too; then what is still being written.
+      clearTimeout(st.timer);
+      livePause(tab);
+      const until = Date.now() + 8000;
+      while ((st.inflight || st.queue.length) && Date.now() < until) await new Promise((r) => setTimeout(r, 100));
+    }
+    const kept = st ? liveMod.keepAll(noteText(tab), st.entries) : noteText(tab);
+    let summary = '';
+    if (on) {
+      toast('Folding: the margin sums the meeting up\u2026');
+      const lines = kept.split('\n');
+      const ctl = new AbortController();
+      const late = setTimeout(() => ctl.abort(), 20000);
+      try {
+        const body = { ...(await liveBody(tab, lines, lines.length - 1)), line: '', task: 'summary', note: lines.filter((l) => !liveMod.asked(l)).join('\n').slice(0, 16000) };
+        const { said, end } = await liveStream(body, ctl.signal, () => {});
+        if (end.ok) summary = liveMod.plainReply(said);
+        st.cost += end.cost || 0;
+      } catch { /* none: folded without it */ } finally { clearTimeout(late); }
+    }
+    const agenda = meetMod.agendaOf(kept);
+    const times = agenda.map((a) => ({ title: a.title, budget: a.budget, ms: tab.meet?.spent[a.title] || 0 }));
+    const next = meetMod.nextMeetingPath(tab.path);
+    let made = false;
+    if (!S.files.some((f) => f.path === next)) {
+      try { await api('POST', '/api/file', { path: next, content: meetMod.nextNote(kept, { path: tab.path, next }) }); made = true; await loadTree(); } catch { /* there after all */ }
+    }
+    await proposeText(tab, meetMod.foldNote(kept, { path: tab.path, next, summary, times }),
+      `Folded${summary ? '' : ' (no summary: the live margin is off)'}: y / A to accept, a to apply${made ? ` \u00B7 made ${stem(next)}` : ''}`);
+  } catch (e) {
+    if (e.message !== 'unsaved') toast(e.message, 'error');
+  } finally { tab.folding = false; }
+}
+
 async function wallView(tab = fileTab(), orbiting = false) {
   if (!tab || !isNote(tab.path)) { toast('The wall shows a meeting’s note: open it first.', 'error'); return; }
   await Promise.all([loadMeet(), loadStage()]);
@@ -6354,7 +6442,7 @@ async function wallView(tab = fileTab(), orbiting = false) {
 }
 // The note as the wall left it: a proposal of yours, to settle in the red
 // pen review (y n A a), as suggestions are.
-async function proposeText(tab, text) {
+async function proposeText(tab, text, said = 'The wall\u2019s changes, proposed: y / A to accept, a to apply.') {
   await flushAutosave(tab);
   if (tab.conflict || tab.content !== tab.saved) { toast('Save the note first: the proposal starts from the note on disk.', 'error'); throw new Error('unsaved'); }
   let r;
@@ -6362,7 +6450,7 @@ async function proposeText(tab, text) {
   await api('PUT', `/api/proofs/${r.id}`, { text: toDisk(text, tab.eol) });
   await loadRuns();
   openReview(r.id);
-  toast('The wall’s changes, proposed: y / A to accept, a to apply.');
+  toast(said);
 }
 
 // "Since last time": the previous meeting's to-dos and decisions, on the
@@ -8286,6 +8374,7 @@ const ACTIONS = {
   'meeting-risk': () => classifyHere('risk'),
   'meeting-idea': () => classifyHere('idea'),
   'meeting-later': () => classifyHere('next'),
+  'meeting-fold': () => foldMeeting(),
   'meeting-next': () => nextAgendaItem(),
 };
 
@@ -8444,6 +8533,7 @@ function defaultLeaderTree() {
       { key: '5', label: 'The line: an idea', cmd: 'Meeting: mark the line an idea (experimental)', when: () => note, run: () => classifyHere('idea') },
       { key: '6', label: 'The line: for next time', cmd: 'Meeting: mark the line for next time (experimental)', when: () => note, run: () => classifyHere('next') },
       { key: 'g', label: 'Next agenda item', cmd: 'Meeting: next agenda item (experimental)', when: () => note, run: () => nextAgendaItem() },
+      { key: 'z', label: 'Fold the meeting (quick wrap-up)', cmd: 'Meeting: fold \u2014 the margin\u2019s minutes into the note, to-dos by owner, the next meeting, in seconds (experimental)', when: () => note, run: () => foldMeeting() },
       { key: 'w', label: 'Wrap up the meeting…', cmd: 'Meeting: wrap up \u2014 minutes, to-dos by owner, the next meeting (experimental)\u2026', when: () => note, run: () => wrapUp() },
       { key: 'b', label: 'Decision wall', cmd: 'Meeting: decision wall (experimental)', when: () => note, run: () => wallView() },
       { key: 'D', label: meetStage ? 'Depth stage: off' : 'Depth stage (experimental)', cmd: 'Meeting: depth stage \u2014 the rail behind the note, the agenda on the floor (experimental)', when: () => note, run: () => toggleStage() },

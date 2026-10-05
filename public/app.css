@@ -1619,6 +1619,8 @@ li.callout-hot { background: color-mix(in srgb, var(--accent) 16%, transparent);
 .live-note { border-left-color: color-mix(in srgb, var(--pen) 70%, transparent); background: color-mix(in srgb, var(--pen) 5%, var(--bg)); cursor: default; padding: 3px 88px 3px 10px; transition: background .2s, box-shadow .2s; }
 .live-note.k-decision { --m: var(--m-decision); } .live-note.k-question { --m: var(--m-question); } .live-note.k-todo { --m: var(--m-todo); } .live-note.k-note { --m: var(--m-note); }
 .live-note.k-risk { --m: var(--m-risk); } .live-note.k-idea { --m: var(--m-idea); } .live-note.k-next { --m: var(--m-next); }
+.live-note.k-answer { --m: var(--accent-2); } .live-note.k-answer .live-body { white-space: normal; overflow-wrap: anywhere; }
+.live-remark { margin-top: 2px; font: 12.5px/1.35 var(--sans); color: var(--warn); }
 .live-body { color: var(--pen); font: 16px/1.35 var(--hand); min-height: 21px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .live-note.offer .live-body, .live-note.s-error .live-body { white-space: normal; overflow-wrap: anywhere; }
 .live-chip, .live-who, .live-due, .live-ms { display: inline-block; margin-right: 5px; font: 600 10.5px/1 var(--sans); vertical-align: 2px; }

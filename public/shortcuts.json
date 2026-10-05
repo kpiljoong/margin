@@ -38,6 +38,7 @@
   { "id": "meeting-idea", "label": "Meeting: mark the line an idea (experimental)", "group": "Suggesting & meetings", "keys": "CmdOrCtrl+Alt+5", "scope": "app" },
   { "id": "meeting-later", "label": "Meeting: mark the line for next time (experimental)", "group": "Suggesting & meetings", "keys": "CmdOrCtrl+Alt+6", "scope": "app" },
   { "id": "meeting-next", "label": "Meeting: next agenda item (experimental)", "group": "Suggesting & meetings", "keys": "CmdOrCtrl+Alt+Enter", "scope": "app" },
+  { "id": "meeting-fold", "label": "Meeting: fold the margin's minutes into the note, the next meeting (experimental)", "group": "Suggesting & meetings", "keys": "CmdOrCtrl+Alt+Shift+Enter", "scope": "app" },
   { "id": "paste-history", "label": "Paste from the copy history", "group": "Editor", "keys": "CmdOrCtrl+Shift+V", "scope": "app" },
   { "id": "nav-back", "label": "Go back", "group": "View", "keys": "CmdOrCtrl+[", "scope": "app" },
   { "id": "nav-forward", "label": "Go forward", "group": "View", "keys": "CmdOrCtrl+]", "scope": "app" },

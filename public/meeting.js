@@ -91,7 +91,7 @@ export function agendaOf(text) {
     if (!hd.budget) return;
     const next = heads.slice(k + 1).find((x) => x.level <= hd.level || x.budget);
     const last = next ? next.i - 1 : lines.length - 1;
-    out.push({ title: hd.title.replace(BUDGET, '').trim(), budget: Number(hd.budget[1]), line: hd.i, from: lines[hd.i].from, end: lines[last].to, lastLine: last });
+    out.push({ title: hd.title.replace(BUDGET, '').trim(), budget: Number(hd.budget[1]), level: hd.level, line: hd.i, from: lines[hd.i].from, end: lines[last].to, lastLine: last });
   });
   return out;
 }
@@ -243,6 +243,83 @@ export function wrapTask(path, next, times) {
   ].join('\n');
 }
 
+// Fold (the live margin's quick wrap-up): the note with its to-dos moved
+// to a "## Wrap-up" at the end, under their owners, after the summary, the
+// time on each item and its decisions, questions, risks and ideas again,
+// then the link to the next meeting. A section an earlier fold left goes
+// (its to-dos are moved again), as do the questions asked of the margin
+// (?? …). Done here, not by an agent: what the margin
+// wrote is already in the note. times: [{ title, budget, ms }].
+const WRAP = /^##\s+Wrap-up\s*$/i;
+export function foldNote(text, { path, next, summary = '', times = [] }) {
+  const stem = (p) => p.split('/').pop().replace(/\.(md|markdown)$/i, '');
+  let lines = text.split('\n');
+  const w = lines.findIndex((l) => WRAP.test(l));
+  let old = [];
+  if (w >= 0) {
+    let e = lines.findIndex((l, i) => i > w && /^#{1,2}\s/.test(l));
+    if (e < 0) e = lines.length;
+    old = lines.slice(w + 1, e);
+    lines = [...lines.slice(0, w), ...lines.slice(e)];
+  }
+  const todos = [];
+  const body = [];
+  let fence = false;
+  let cut = false;
+  for (const l of lines) {
+    if (/^\s*(```|~~~)/.test(l)) fence = !fence;
+    if (!fence && TASK.test(l)) { todos.push(l.trim()); cut = true; continue; }
+    // "?? …": asked of the live margin, not part of the minutes.
+    if (!fence && /^\s*\?\?/.test(l)) { cut = true; continue; }
+    if (cut && !l.trim() && !body.at(-1)?.trim()) continue;
+    cut = false;
+    body.push(l);
+  }
+  for (const l of old) if (TASK.test(l)) todos.push(l.trim());
+  while (body.length && !body.at(-1).trim()) body.pop();
+  const items = meetingItems(body.join('\n'));
+  const out = [...body, '', '## Wrap-up', ''];
+  if (summary.trim()) out.push(summary.trim(), '');
+  const said = times.filter((t) => t.ms > 0).map((t) => `${t.title} ${Math.max(1, Math.round(t.ms / 60000))}m of ${t.budget}m`);
+  if (said.length) out.push(`**Time:** ${said.join('; ')}`, '');
+  if (todos.length) {
+    out.push('### To-dos by owner', '');
+    const owners = [];
+    for (const t of todos) { const o = OWNER.exec(t)?.[2] || ''; if (!owners.includes(o)) owners.push(o); }
+    owners.sort((a, b) => (a === '') - (b === ''));
+    for (const o of owners) out.push(o ? `**@${o}**` : '**No owner**', '', ...todos.filter((t) => (OWNER.exec(t)?.[2] || '') === o), '');
+  }
+  for (const [head, kind] of [['Decisions', 'decision'], ['Open questions', 'question'], ['Risks', 'risk'], ['Ideas', 'idea']]) {
+    const xs = items.filter((i) => i.kind === kind);
+    if (!xs.length) continue;
+    out.push(`### ${head}`, '');
+    for (const i of xs) out.push(`> [!${TYPE[kind]}] ${i.text}`, '');
+  }
+  out.push(`Next meeting: [[${stem(next)}]]`, '');
+  return out.join('\n');
+}
+
+// The next meeting's note: its name, the link back, the same agenda, and
+// under each item the questions left open there and what was left for it
+// (#next); the rest of them at the end.
+export function nextNote(text, { path, next }) {
+  const stem = (p) => p.split('/').pop().replace(/\.(md|markdown)$/i, '');
+  const agenda = agendaOf(text);
+  const items = meetingItems(text).filter((i) => i.kind === 'question' || i.kind === 'next');
+  const line = (i) => (i.kind === 'question' ? `> [!question] ${i.text}` : `- ${i.text}`);
+  const under = (xs) => xs.flatMap((i) => [line(i), ...(i.kind === 'question' ? [''] : [])]);
+  const out = [`# ${stem(next)}`, '', `Previous meeting: [[${stem(path)}]]`, ''];
+  const titles = new Set(agenda.map((a) => a.title));
+  for (const a of agenda) {
+    out.push(`${'#'.repeat(a.level || 2)} ${a.title} (${a.budget}m)`, '');
+    const xs = items.filter((i) => i.section === a.title);
+    if (xs.length) out.push(...under(xs), ...(xs.at(-1).kind === 'next' ? [''] : []));
+  }
+  const rest = items.filter((i) => !titles.has(i.section));
+  if (rest.length) out.push(...(agenda.length ? ['## Carried over', ''] : []), ...under(rest), ...(rest.at(-1).kind === 'next' ? [''] : []));
+  return `${out.join('\n').replace(/\n+$/, '')}\n`;
+}
+
 // ---------------------------------------------------------------- views
 
 function el(tag, cls, ...kids) {
@@ -295,7 +372,7 @@ export function railPane(opts) {
     agendaEl,
     lane('decision', 'Decisions'), lane('todo', 'To-dos'), lane('question', 'Questions'),
     lane('more', 'Risks \u00B7 ideas \u00B7 next time', ['risk', 'idea', 'next']),
-    el('div', 'mrail-foot', btn('Wrap up ▸', () => opts.wrapUp(), 'primary'), btn('Wall ▦', () => opts.wall())),
+    el('div', 'mrail-foot', btn('Fold', () => opts.fold(), 'primary'), btn('Wrap up ▸', () => opts.wrapUp()), btn('Wall ▦', () => opts.wall())),
     el('div', 'mrail-hint', opts.hint || 'Start a line with ! (a decision), [] (a to-do) or ? (a question)'));
   let agendaRows = [];
 

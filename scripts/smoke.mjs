@@ -1909,6 +1909,40 @@ await check('meetings: a line marked a risk, an idea, for next time (\u2318\u232
 fs.rmSync(path.join(ws, 'sub', 'kinds 2026-10-05.md'), { force: true });
 await sleep(500);
 
+fs.writeFileSync(path.join(ws, 'sub', 'fold 2026-10-05.md'), '# fold 2026-10-05\n\n## Launch (5m)\n\n> [!decision] We launch on Oct 10.\n\n- [ ] Ship the tool @bob\n?? who books the hall\n\n> [!question] A press kit?\n');
+await check('meetings: fold (the rail\u2019s Fold) \u2014 to-dos under their owners in a Wrap-up, proposed for review, and the next meeting\u2019s note made', `
+  const mac = navigator.platform.startsWith('Mac');
+  const command = async (name) => {
+    document.body.dispatchEvent(new KeyboardEvent('keydown', { code: 'KeyP', key: 'p', bubbles: true, cancelable: true, metaKey: mac, ctrlKey: !mac }));
+    const input = await until(() => !$('#overlay').hidden && $('#overlay input'));
+    input.value = '>' + name;
+    input.dispatchEvent(new Event('input'));
+    await sleep(100);
+    input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }));
+  };
+  await openNote('sub/fold 2026-10-05.md');
+  await command('Meeting rail:');
+  await until(() => $('.mrail .mrail-item'));
+  button('Fold', $('.mrail')).click();
+  const review = await until(() => /Wrap-up/.test($('.review')?.textContent || '') && $('.review'), 8000);
+  const toast = $('#toast').textContent;
+  await sleep(300);
+  button('Discard', $('#main')).click();
+  button('Discard', await until(() => $('.dialog.confirm'))).click();
+  await until(() => /Discarded/.test($('.review')?.textContent || ''), 5000);
+  await command('Meeting rail:');
+  await sleep(200);
+  document.body.dispatchEvent(new KeyboardEvent('keydown', { code: 'KeyM', key: 'M', shiftKey: true, bubbles: true, cancelable: true, metaKey: mac, ctrlKey: !mac }));
+  await sleep(200);
+  return { review: !!review, toast, owner: /@bob/.test(review?.textContent || '') };
+`, (v) => {
+  const next = (() => { try { return fs.readFileSync(path.join(ws, 'sub', 'fold 2026-10-12.md'), 'utf8'); } catch { return null; } })();
+  return v?.review && v.owner && /^Folded/.test(v.toast) && /made fold 2026-10-12/.test(v.toast)
+    && next === '# fold 2026-10-12\n\nPrevious meeting: [[fold 2026-10-05]]\n\n## Launch (5m)\n\n> [!question] A press kit?\n' ? null : `got ${JSON.stringify({ v, next })}`;
+});
+for (const f of ['fold 2026-10-05.md', 'fold 2026-10-12.md']) fs.rmSync(path.join(ws, 'sub', f), { force: true });
+await sleep(500);
+
 fs.writeFileSync(path.join(ws, 'sub', 'space 2026-10-05.md'), '# space 2026-10-05\n\n## Status (1m)\n\n> [!decision] Beta stays open.\n\n- [ ] Send the survey @ann\n\n## Launch (1m)\n\n> [!question] A press kit?\n');
 await check('meetings in space (experimental): the depth stage (the note flat, the agenda on the floor), the tunnel to the next item, a card thrown in the decision orbit is a change to propose', `
   const mac = navigator.platform.startsWith('Mac');
