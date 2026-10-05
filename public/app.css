@@ -1452,7 +1452,7 @@ li.callout-hot { background: color-mix(in srgb, var(--accent) 16%, transparent);
 .wall-doc { flex: 1; overflow: auto; padding: 8px 14px 30px; font-size: 13px; }
 .wall-block { padding: 2px 8px; margin: 0 -8px; border-radius: 7px; transition: background .2s, box-shadow .2s; }
 .wall-block.lit { background: color-mix(in srgb, var(--accent) 12%, transparent); box-shadow: inset 3px 0 0 var(--accent); }
-.wall-cols { display: flex; gap: 14px; overflow: auto; padding-bottom: 12px; align-items: flex-start; }
+.wall-cols { display: flex; gap: 14px; overflow: auto; padding-bottom: 12px; }
 .wall-col { flex: 1 1 200px; min-width: 190px; max-width: 290px; display: flex; flex-direction: column; gap: 9px; padding: 10px; border-radius: 12px; border: 1px dashed transparent; min-height: 140px; transition: background .2s, border-color .2s; }
 .wall-decided { --m: var(--m-decision); }
 .wall-open { --m: var(--m-question); }
