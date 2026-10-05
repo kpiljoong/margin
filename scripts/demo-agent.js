@@ -90,7 +90,9 @@ const DRAW = ['draw', 'picture', 'mark up', '\uADF8\uB9BC'];
 const LENS = ['lens.json'];
 // Forks (public/forks.js): the paragraph of the task, other ways.
 const FORKS = ['forks.json'];
-const understood = wants(...TIDY, ...SUMMARY, ...TASKS, ...RED, ...DRAW, ...LENS, ...FORKS) || (round > 1 && wants(...SHORTER));
+// A meeting's wrap-up: minutes, to-dos by owner, the next meeting's note.
+const WRAP = ['wrap up', '\uB9C8\uBB34\uB9AC'];
+const understood = wants(...WRAP) || wants(...TIDY, ...SUMMARY, ...TASKS, ...RED, ...DRAW, ...LENS, ...FORKS) || (round > 1 && wants(...SHORTER));
 
 // A picture's size in pixels (PNG, or an SVG's width and height), else a guess.
 function sizeOf(file) {
@@ -197,6 +199,52 @@ function forksOf(f, text) {
 // "Make or change a command…": whatever was asked, the demo adds one macro,
 // "Make it a task", on ⌥X o t (and a step Margin can't read when asked for
 // a broken one, to see the review say so).
+// The meeting's note with a wrap-up at its end (the to-dos moved there, by
+// owner), and the next meeting's note → [note, { path, text }].
+function wrapUp(f, text, rawTask) {
+  const lines = text.replace(/\n+$/, '').split('\n');
+  const keep = [];
+  const todos = [];
+  const decisions = [];
+  const questions = [];
+  const agenda = [];
+  let section = '';
+  let fence = false;
+  const once = (list, t) => !list.some((x) => x.replace(/\s+/g, ' ') === t.replace(/\s+/g, ' ')) && list.push(t);
+  for (const l of lines) {
+    if (/^\s*(```|~~~)/.test(l)) fence = !fence;
+    if (fence || /^\s*(```|~~~)/.test(l)) { keep.push(l); continue; }
+    const hd = /^#{1,6}\s+(.*?)\s*$/.exec(l);
+    if (hd) {
+      section = hd[1];
+      if (/\(\d+\s*(m|min|\uBD84)\)$/.test(section)) agenda.push({ head: l, questions: [] });
+    }
+    const call = /^\s*>\s*\[!(decision|question)\]\s*(.*)$/i.exec(l);
+    if (call) once(call[1].toLowerCase() === 'decision' ? decisions : questions, call[2].trim());
+    if (call && call[1].toLowerCase() === 'question' && agenda.length) agenda[agenda.length - 1].questions.push(call[2].trim());
+    if (/^\s*[-*+]\s+\[[ xX]\]\s+\S/.test(l)) { todos.push(l.trim()); continue; }
+    keep.push(l);
+  }
+  const note = keep.join('\n').replace(/\n{3,}/g, '\n\n').replace(/\n+$/, '');
+  const owner = (t) => /(?:^|\s)@([\p{L}\p{N}_][\p{L}\p{N}_.-]*)/u.exec(t)?.[1] || '';
+  const owners = [...new Set(todos.map(owner))].sort((a, b) => (!a) - (!b));
+  const time = /Time on the agenda: (.*)\.\s*$/m.exec(rawTask)?.[1];
+  const next = /Create the next meeting's note, (.+?): "# "/.exec(rawTask)?.[1] || f.replace(/\.md$/i, ' (next).md');
+  const stem = (p) => path.basename(p).replace(/\.md$/i, '');
+  const out = [note, '', '## Wrap-up', '',
+    `${agenda.length} item${agenda.length === 1 ? '' : 's'} on the agenda: ${decisions.length} decided, ${questions.length} left open, ${todos.length} to-do${todos.length === 1 ? '' : 's'} for ${owners.filter(Boolean).length} people.`];
+  if (time) out.push('', `**Time:** ${time.split('; ').join(' · ')}`);
+  out.push('', '### To-dos by owner');
+  for (const o of owners) out.push('', o ? `**@${o}**` : '**No owner**', '', ...todos.filter((t) => owner(t) === o));
+  if (decisions.length) out.push('', '### Decisions', '', ...decisions.flatMap((d) => [`> [!decision] ${d}`, '']));
+  if (questions.length) out.push(...(decisions.length ? [] : ['']), '### Open questions', '', ...questions.flatMap((q) => [`> [!question] ${q}`, '']));
+  if (out[out.length - 1] !== '') out.push('');
+  out.push(`Next meeting: [[${stem(next)}]]`, '');
+  const nextText = [`# ${stem(next)}`, '', `Previous meeting: [[${stem(f)}]]`, '',
+    ...agenda.flatMap((a) => [a.head, '', ...a.questions.flatMap((q) => [`> [!question] ${q}`, ''])])].join('\n').replace(/\n+$/, '\n');
+  return [out.join('\n').replace(/\n{3,}/g, '\n\n'), { path: next, text: nextText }];
+}
+
 function commandNotes() {
   const read = (f) => (fs.existsSync(f) ? fs.readFileSync(f, 'utf8') : '');
   const macros = read('MACROS.md');
@@ -227,6 +275,14 @@ setTimeout(() => {
     console.log(`[demo-agent] ${prev === null ? 'created' : 'edited '} ${f}  (${why})`);
   };
 
+  // Before the rest: the wrap-up's task speaks of to-dos too.
+  if (wants(...WRAP) && focus && files.includes(focus)) {
+    const [note, next] = wrapUp(focus, fs.readFileSync(focus, 'utf8'), process.env.AGENT_NOTES_TASK || '');
+    write(focus, note, 'the wrap-up');
+    if (!fs.existsSync(next.path)) write(next.path, next.text, 'the next meeting');
+    console.log(`[demo-agent] done: ${changed} file(s) changed. Review them in Margin.`);
+    return;
+  }
   if (wants(...FORKS)) {
     const forks = targets.flatMap((f) => forksOf(f, fs.readFileSync(f, 'utf8')));
     fs.mkdirSync('.agent-notes', { recursive: true });

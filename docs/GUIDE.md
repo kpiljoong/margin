@@ -211,6 +211,41 @@ A comment may start with who said it, `@Mina …` (Tab completes a name used bef
 - **Meeting minutes** (⌥X r 9): clean minutes from the note, your corrections and comments folded in, with the decisions and the action items as tasks (`- [ ] what @owner 📅 date`), as red pen marks to accept.
 - **Apply my comments** (⌥X r 0): the agent revises the note as your comments ask, a mark for each.
 
+### Meetings: the rail, the wrap-up and the decision wall (experimental)
+
+For a meeting run from the note: what it **decides**, leaves **open** and **hands out** is written in the note as plain Markdown any app reads —
+
+```markdown
+## Launch date (10m)
+
+> [!decision] We launch on October 20.
+
+> [!question] Do we need a press kit?
+
+- [ ] Draft the release notes @ann 📅 2026-10-12
+```
+
+— and Margin gathers it as you go and after.
+
+**Meeting rail** (M-x or the palette, ⌥X p M) puts a rail beside the note in meeting mode (and turns meeting mode on). At the top, the **agenda**: the headings with minutes in them, `## Status (5m)` (or `(10 min)`), as a bar, each with a clock that runs while the cursor is in that item — the bar fills, and turns red past its minutes. Below, three lanes — **Decisions**, **To-dos**, **Questions** — fill as they are written; a new one flies from its line to its card, and a click on a card goes back to the line. The rail is off until you turn it on, and meeting mode is as it was without it.
+
+Marking a line, in a meeting:
+
+| Key | |
+|---|---|
+| ⌘⌥1 (⌥X p 1) | the line is a decision (`> [!decision] …`, a callout of its own); again: plain words |
+| ⌘⌥2 (⌥X p 2) | the line is a to-do (`- [ ] …`); write `@who` and `📅 YYYY-MM-DD` in it |
+| ⌘⌥3 (⌥X p 3) | the line is an open question (`> [!question] …`) |
+| ⌘⌥↩ (⌥X p g) | the next agenda item: a new line at its end, its clock running |
+
+With the rail on, a line started with `! ` (a decision), `[] ` (a to-do) or `? ` (a question) becomes one when you end it with Enter — with Korean input too.
+
+**Wrap up** (the rail's **Wrap up ▸**, ⌥X p w, or M-x *Meeting: wrap up…*) asks the agent, as a task you can still change, to add a **Wrap-up** section at the end of the note — what the meeting did, the time each agenda item took (from the clock), the to-dos **by owner**, the decisions and the open questions — and to write the **next meeting's note**: the same name a week on when it has a date in it (`Weekly 2026-10-05` → `Weekly 2026-10-12`), the same agenda, the open questions carried over under their items, and a line `Previous meeting: [[…]]`. It comes back as a run to review and apply, as any. The next note then shows a **Since last time** card at the top: the previous meeting's to-dos by owner, how many are done (the ring), and what it decided; a click opens the previous note at that line, × hides it.
+
+**Decision wall** (the rail's **Wall ▦**, ⌥X p b, or M-x) shows the meeting on one screen: columns of cards — **Decided**, **Open questions**, one for **each owner**'s to-dos, and the to-dos with no owner — beside the note. Pointing at a card draws a thread to its paragraph in the note. **Drag** a card to another column — a to-do to someone else, a question to Decided, a decision back to Open, a question to someone as a to-do — or click ☐ to check a to-do off; the cards slide to their places, and **Propose to the note** sends the changes back as a red pen proposal to review (`y` `n` `A` `a`), like your own suggestions: the wall never writes the note itself. **Copy PNG** (`c`) copies the wall as a picture, drawn sharp, for a chat or a slide. Esc closes.
+
+Not built, for now: tidying a whiteboard sketch into a flow beside it, and replaying how the note grew during the meeting.
+
 ### Recipes: your own tasks as commands
 
 A recipe is a task for the agent written once and run by name — the agent takes the place Emacs gives to elisp, and like everything an agent does, what it changes comes back as a run to review. Recipes are text only: a name, what to ask, which notes to share. No code runs and there are no plugins.

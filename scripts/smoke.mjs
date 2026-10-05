@@ -1785,6 +1785,94 @@ await check('beside a note (experimental): a paragraph locked, a scrap set aside
   if (!good) { console.log(JSON.stringify({ t, locks, drawer })); failed = true; }
 }
 
+fs.writeFileSync(path.join(ws, 'sub', 'weekly 2026-10-05.md'), '# Weekly\n\n## Status (5m)\n\nBeta is out.\n\nWe ship on Friday\n\n## Hiring (10m)\n\n- [ ] Post the role @ann\n');
+await check('meetings (experimental): the rail gathers a decision (a key) and a question (typed "? "), wrap up writes the next meeting, its card says what was handed out; a card dragged on the wall is a proposal', `
+  const mac = navigator.platform.startsWith('Mac');
+  const command = async (name) => {
+    document.body.dispatchEvent(new KeyboardEvent('keydown', { code: 'KeyP', key: 'p', bubbles: true, cancelable: true, metaKey: mac, ctrlKey: !mac }));
+    const input = await until(() => !$('#overlay').hidden && $('#overlay input'));
+    input.value = '>' + name;
+    input.dispatchEvent(new Event('input'));
+    await sleep(100);
+    input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }));
+  };
+  let ta = await openNote('sub/weekly 2026-10-05.md');
+  await command('Meeting rail:');
+  await until(() => $('.mrail .mrail-item'));
+  ta = $$('.editor-wrap textarea').find((t) => t.offsetParent);
+  ta.focus();
+  const at = ta.value.indexOf('We ship') + 3;
+  ta.setSelectionRange(at, at);
+  await command('Meeting: mark the line a decision');
+  await sleep(100);
+  const end = ta.value.indexOf('Beta is out.') + 12;
+  ta.setSelectionRange(end, end);
+  document.execCommand('insertText', false, '\\n? Do we need a beta');
+  ta.dispatchEvent(new InputEvent('input', { inputType: 'insertLineBreak', bubbles: true }));
+  await sleep(100);
+  ta.setRangeText('\\n', ta.selectionStart, ta.selectionStart, 'end');
+  ta.dispatchEvent(new InputEvent('input', { inputType: 'insertLineBreak', bubbles: true }));
+  await until(() => $$('.mrail-card').length === 3, 3000);
+  const cards = $$('.mrail-card').map((c) => c.className.match(/m-(\\w+)/)[1] + ':' + c.querySelector('.m-text').textContent);
+  const agenda = $$('.mrail-item .mrail-title').map((x) => x.textContent);
+  const text = ta.value;
+  await sleep(1200);
+  button('Wrap up', $('.mrail')).click();
+  const task = await until(() => !$('#overlay').hidden && $('#overlay textarea'));
+  const asked = /^Wrap up this meeting/.test(task.value) && task.value.includes('sub/weekly 2026-10-12.md');
+  button('Run on staged copy', $('#overlay')).click();
+  await until(() => /2 files changed/.test($('.review')?.textContent || ''), 20000);
+  await sleep(300);
+  $('.review').focus();
+  key('A'); await sleep(200);
+  key('a');
+  await until(() => /Applied/.test($('.review')?.textContent || ''), 10000);
+  await sleep(300);
+  await openNote('sub/weekly 2026-10-12.md');
+  const since = (await until(() => $('.since')))?.innerText.replace(/\\s+/g, ' ');
+  await openNote('sub/weekly 2026-10-05.md');
+  await sleep(300);
+  await command('Meeting: decision wall');
+  const wall = await until(() => $('.wall .wall-card'));
+  await sleep(700);
+  const cols = $$('.wall-col').map((c) => c.dataset.col + ':' + c.querySelectorAll('.wall-card').length).join(' ');
+  const card = $$('.wall-card').find((c) => c.textContent.includes('Post the role'));
+  const r = card.getBoundingClientRect();
+  const to = $('.wall-col[data-col="decided"]').getBoundingClientRect();
+  card.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, button: 0, clientX: r.left + 20, clientY: r.top + 20 }));
+  window.dispatchEvent(new PointerEvent('pointermove', { clientX: r.left + 40, clientY: r.top + 40 }));
+  window.dispatchEvent(new PointerEvent('pointermove', { clientX: to.left + 30, clientY: to.top + 40 }));
+  window.dispatchEvent(new PointerEvent('pointerup', { clientX: to.left + 30, clientY: to.top + 40 }));
+  await sleep(500);
+  const moved = $('.wall-count').textContent;
+  button('Propose to the note', $('.wall')).click();
+  await until(() => !$('.wall') && /Your suggestions/.test($('.review')?.textContent || ''), 8000);
+  const proposed = $$('.pen-card').length;
+  button('Discard', $('#main')).click();
+  await sleep(300);
+  if (!$('#overlay').hidden) button('Discard', $('#overlay'))?.click();
+  await sleep(300);
+  await command('Meeting rail:');
+  await sleep(200);
+  document.body.dispatchEvent(new KeyboardEvent('keydown', { code: 'KeyM', key: 'M', shiftKey: true, bubbles: true, cancelable: true, metaKey: mac, ctrlKey: !mac }));
+  await sleep(200);
+  return { cards, agenda, text, asked, since, cols, moved, proposed, rail: !!$('.mrail'), meeting: !!$('.meeting') };
+`, (v) => (v?.cards?.join('|') === 'decision:We ship on Friday|todo:Post the role|question:Do we need a beta' && v.agenda.join() === 'Status,Hiring'
+  && v.text.includes('Beta is out.\n\n> [!question] Do we need a beta\n\n') && v.text.includes('\n> [!decision] We ship on Friday\n') && v.asked
+  && /Since last time weekly 2026-10-05 · 0 of 1 to-do done · 1 open question/.test(v.since) && v.cols === 'decided:1 open:1 @ann:1 nobody:0'
+  && v.moved === '1 change to propose' && v.proposed >= 1 && !v.rail && !v.meeting ? null : `got ${JSON.stringify(v)}`));
+{
+  const t = fs.readFileSync(path.join(ws, 'sub', 'weekly 2026-10-05.md'), 'utf8');
+  const next = fs.readFileSync(path.join(ws, 'sub', 'weekly 2026-10-12.md'), 'utf8');
+  const good = /\n## Wrap-up\n/.test(t) && /\*\*@ann\*\*\n\n- \[ \] Post the role @ann\n/.test(t) && /Next meeting: \[\[weekly 2026-10-12\]\]\n$/.test(t)
+    && next === '# weekly 2026-10-12\n\nPrevious meeting: [[weekly 2026-10-05]]\n\n## Status (5m)\n\n> [!question] Do we need a beta\n\n## Hiring (10m)\n';
+  console.log(`${good ? '✓' : '✗'} the wrap-up at the end of the meeting's note (the to-do under its owner), the next meeting with the open question carried over; the wall's proposal discarded`);
+  if (!good) { console.log(JSON.stringify({ t, next })); failed = true; }
+  // Out of the way of the checks after (the tasks of all notes).
+  for (const f of ['weekly 2026-10-05.md', 'weekly 2026-10-12.md']) fs.rmSync(path.join(ws, 'sub', f), { force: true });
+  await sleep(800);
+}
+
 await check('history shows the version from before the agent changes, and restores it', `
   const mac = navigator.platform.startsWith('Mac');
   await openNote('sub/messy.md');

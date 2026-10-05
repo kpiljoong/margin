@@ -192,7 +192,7 @@ function renderBlocks(src, offset) {
 // Types are grouped by colour; an unknown one is a note with its own name.
 const CALLOUTS = {
   note: 'note', info: 'note', todo: 'note', abstract: 'note', summary: 'note', tldr: 'note',
-  tip: 'tip', hint: 'tip', success: 'tip', check: 'tip', done: 'tip',
+  tip: 'tip', hint: 'tip', success: 'tip', check: 'tip', done: 'tip', decision: 'tip', decided: 'tip',
   important: 'important', question: 'important', help: 'important', faq: 'important', example: 'important',
   warning: 'warning', caution: 'warning', attention: 'warning',
   danger: 'danger', error: 'danger', bug: 'danger', failure: 'danger', fail: 'danger', missing: 'danger',

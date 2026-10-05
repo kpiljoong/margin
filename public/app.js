@@ -1735,13 +1735,17 @@ function renderContent(g = S.focus) {
   const banner = h('div', { class: 'banner-slot' });
   tab.previewEl = preview;
   tab.bannerEl = banner;
-  c.replaceChildren(toolbar, banner, tab.drawerOpen && besideMod && tab.drawer ? h('div', { class: 'with-drawer' }, wrap, drawerFor(tab)) : wrap);
+  let body = tab.drawerOpen && besideMod && tab.drawer ? h('div', { class: 'with-drawer' }, wrap, drawerFor(tab)) : wrap;
+  if (railOn(tab)) body = h('div', { class: 'with-rail' }, body, railFor(tab));
+  else tab.railEl = null;
+  c.replaceChildren(toolbar, banner, body);
   attachedByGroup[g] = tab;
   renderPreview(tab);
   // Finding in the preview: only while it is shown in this pane.
   for (const t of S.tabs) if (t.pfind?.open && t.group === g && t !== tab) t.pfind.close();
   if (tab.pfind) { if (mode === 'preview') tab.pfind.mount(wrap, preview); else tab.pfind.close(); }
   renderBanner(tab);
+  if (meetRail && isNote(tab.path) && PREVIOUS_LINE.test(tab.content.slice(0, 3000))) loadSince(tab);
   requestAnimationFrame(() => {
     if (!isAttached(tab)) return;
     ed.scrollTop = want;
@@ -1755,7 +1759,7 @@ function renderContent(g = S.focus) {
 function editorFor(tab) {
   if (tab.editor) return tab.editor;
   const ed = new MarkdownEditor({
-    onChange: (v) => { tab.content = v; onEdit(tab); drawNotesSoon(tab); },
+    onChange: (v) => { tab.content = v; onEdit(tab); drawNotesSoon(tab); if (tab.railEl) railSoon(tab); },
     onScroll: () => { if (isAttached(tab) && !tab.restoring) { tab.scroll = ed.scrollTop; syncScroll(tab); } },
     onCursor: renderStatus,
     complete: completeFor,
@@ -1771,6 +1775,11 @@ function editorFor(tab) {
   ed.ta.addEventListener('mousemove', (e) => editorLinkHover(e, ed, tab));
   ed.ta.addEventListener('click', (e) => editorLinkClick(e, ed, tab));
   ed.ta.addEventListener('mouseleave', () => { if (linkPop.el || linkPop.timer) leaveLinkPreview(); });
+  // In a meeting with the rail: a line typed as "! …", "? …" or "[] …" is a
+  // decision, a question or a to-do once it ends.
+  ed.ta.addEventListener('input', (e) => { if (/^insert(LineBreak|Paragraph)$/.test(e.inputType) && railOn(tab)) meetTyped(tab); });
+  ed.ta.addEventListener('keyup', () => { if (tab.railEl) clockStep(tab, true); });
+  ed.ta.addEventListener('click', () => { if (tab.railEl) clockStep(tab, true); });
   // Words dragged out of the note say where they came from (the drawer).
   ed.ta.addEventListener('dragstart', (e) => {
     e.dataTransfer?.setData('text/x-margin-from', JSON.stringify({ path: tab.path, line: ed.value.slice(0, ed.selectionStart).split('\n').length - 1 }));
@@ -3044,6 +3053,9 @@ function renderBanner(tab = fileTab()) {
       h('span', { class: 'grow' }, 'This file changed on disk while you had unsaved edits.'),
       h('button', { class: 'btn small', onclick: () => reloadTab(tab).then(() => renderBanner(tab)) }, 'Load disk version'),
       h('button', { class: 'btn small danger', onclick: () => saveTab(tab, { force: true }) }, 'Keep mine & overwrite')));
+  } else if (tab.since && meetMod && meetRail) {
+    const since = tab.since;
+    slot.replaceChildren(meetMod.sinceCard({ name: stem(since.path), items: since.items, open: (it) => openAt(since.path, it.text), close: () => { tab.since = null; tab.sinceOff = true; renderBanner(tab); } }));
   } else slot.replaceChildren();
 }
 
@@ -3339,6 +3351,13 @@ const COMMANDS = [
   ['Origin: where this note\u2019s paragraphs came from (experimental)', () => setTimeout(originView, 0)],
   ['Drawer: this note\u2019s scraps (experimental)', () => setTimeout(() => toggleDrawer(), 0)],
   ['Drawer: set the selection aside (experimental)', () => setTimeout(setAside, 0)],
+  ['Meeting rail: the agenda, decisions, to-dos and questions beside the note (experimental)', () => setTimeout(toggleRail, 0)],
+  ['Meeting: mark the line a decision (experimental)', () => classifyHere('decision'), { key: 'meeting-decision' }],
+  ['Meeting: mark the line a to-do (experimental)', () => classifyHere('todo'), { key: 'meeting-todo' }],
+  ['Meeting: mark the line a question (experimental)', () => classifyHere('question'), { key: 'meeting-question' }],
+  ['Meeting: next agenda item (experimental)', () => nextAgendaItem(), { key: 'meeting-next' }],
+  ['Meeting: wrap up \u2014 minutes, to-dos by owner, the next meeting (experimental)\u2026', () => setTimeout(() => wrapUp(), 0)],
+  ['Meeting: decision wall (experimental)', () => setTimeout(() => wallView(), 0)],
   ['Describe a key…', () => describeKey()],
   ['Describe a command…', () => setTimeout(describeCommand, 0)],
   ['Dired: edit a folder as text…', () => setTimeout(pickDiredFolder, 0)],
@@ -5822,6 +5841,185 @@ async function gatherView() {
   });
 }
 
+// ---- Meetings (experimental, meeting.js): the rail beside the note in
+// meeting mode (the agenda's clock; decisions, to-dos and questions as they
+// are written), the wrap-up (a run: minutes, to-dos by owner, the next
+// meeting's note) and the decision wall. What a meeting decides is written in
+// the note, as callouts and to-dos; a change on the wall is a proposal.
+let meetMod = null;
+const loadMeet = async () => (meetMod ||= await import('./meeting.js'));
+let meetRail = store.getItem('an.meetRail') === '1';
+const PREVIOUS_LINE = /^\s*(?:\*\*)?Previous meeting/im;
+const railOn = (tab) => !!(S.meeting && meetRail && meetMod && tab?.kind === 'file' && isNote(tab.path));
+const noteText = (tab) => (tab.editor?.tracking ? tab.editor.trackTexts().proposed : tab.editor?.value ?? tab.content);
+
+async function toggleRail() {
+  await loadMeet();
+  meetRail = !meetRail;
+  store.setItem('an.meetRail', meetRail ? '1' : '0');
+  if (meetRail && !S.meeting) { toggleMeeting(); return; }
+  renderContent(S.focus);
+  focusEditor();
+  toast(meetRail ? 'The meeting rail: ! decision · [] to-do · ? question at the start of a line' : 'Meeting rail off');
+}
+
+function railFor(tab) {
+  const go = (pos) => { const ed = tab.editor; ed.selectRange(pos, pos); ed.focus(); clockStep(tab, true); };
+  tab.railEl = meetMod.railPane({
+    go: (it) => go(it.to),
+    goLine: (line) => { const ls = tab.editor.value.split('\n'); go(ls.slice(0, line + 1).join('\n').length); },
+    wrapUp: () => wrapUp(tab),
+    wall: () => wallView(tab),
+    hint: `${kbd('meeting-decision')} a decision · ${kbd('meeting-todo')} a to-do · ${kbd('meeting-question')} a question, or start a line with ! [] ? · ${kbd('meeting-next')} the next item`,
+  });
+  tab.railKeys = null;
+  requestAnimationFrame(() => refreshRail(tab));
+  return tab.railEl;
+}
+function railSoon(tab) {
+  clearTimeout(tab.railTimer);
+  tab.railTimer = setTimeout(() => refreshRail(tab), 180);
+}
+// The rail as the note is now; a new item flies to it from its line.
+function refreshRail(tab) {
+  if (!tab.railEl?.isConnected) return;
+  const text = noteText(tab);
+  const items = meetMod.meetingItems(text);
+  const agenda = meetMod.agendaOf(text);
+  const keys = new Set(items.map((i) => i.key));
+  let from = null;
+  const fresh = tab.railKeys ? items.filter((i) => !tab.railKeys.has(i.key)) : [];
+  if (fresh.length === 1 && !tab.editor.tracking) {
+    const it = fresh[0];
+    const ed = tab.editor;
+    const at = ed._caretCoords(it.from);
+    const r = ed.ta.getBoundingClientRect();
+    const top = r.top + at.top - ed.ta.scrollTop;
+    if (top > r.top - 10 && top < r.bottom) from = { line: it.line, text: it.body, rect: { left: r.left + at.left, top, width: r.width * 0.7 } };
+  }
+  tab.railKeys = keys;
+  clockStep(tab);
+  tab.railEl.railUpdate(items, agenda, agendaCur(tab, agenda), agendaTimes(tab, agenda), from);
+}
+
+// The agenda's clock: the item the cursor is in runs while in a meeting.
+function clockStep(tab, redraw = false) {
+  const m = (tab.meet ||= { spent: {}, cur: null, since: Date.now() });
+  const now = Date.now();
+  if (m.cur) m.spent[m.cur] = (m.spent[m.cur] || 0) + (now - m.since);
+  m.since = now;
+  m.cur = null;
+  if (!S.meeting || !meetMod || !tab.editor) return;
+  const agenda = meetMod.agendaOf(noteText(tab));
+  const k = meetMod.agendaAt(agenda, tab.editor.selectionStart);
+  m.cur = k >= 0 ? agenda[k].title : null;
+  if (redraw && tab.railEl?.isConnected) tab.railEl.railTick(k, agendaTimes(tab, agenda));
+}
+const agendaCur = (tab, agenda) => agenda.findIndex((a) => a.title === tab.meet?.cur);
+const agendaTimes = (tab, agenda) => agenda.map((a) => tab.meet?.spent[a.title] || 0);
+setInterval(() => {
+  const tab = fileTab();
+  if (!tab?.railEl?.isConnected || !S.meeting) return;
+  clockStep(tab, true);
+}, 1000);
+
+function meetTyped(tab) {
+  const ed = tab.editor;
+  if (ed.tracking) return;
+  const v = ed.value;
+  const s = ed.selectionStart;
+  if (s !== ed.selectionEnd || v[s - 1] !== '\n') return;
+  const start = v.lastIndexOf('\n', s - 2) + 1;
+  const kind = meetMod.typedKind(v.slice(start, s - 1));
+  if (!kind) return;
+  const e = meetMod.classifyLine(v, start, kind);
+  if (!e) return;
+  // A blank line after it, so the next words aren't part of it.
+  const insert = `${e.insert.replace(/\n$/, '')}\n\n`;
+  ed.replace(e.from, s, insert, e.from + insert.length);
+  refreshRail(tab);
+}
+
+async function classifyHere(kind) {
+  const tab = fileTab();
+  if (!tab || !isNote(tab.path) || !tab.editor) { toast('Open a note first.', 'error'); return; }
+  await loadMeet();
+  const ed = tab.editor;
+  if (ed.tracking) { toast('Not while suggesting: stop suggesting first.', 'error'); return; }
+  const e = meetMod.classifyLine(ed.value, ed.selectionStart, kind);
+  if (!e) { toast('Put the cursor on a line with words first.', 'error'); return; }
+  ed.replace(e.from, e.to, e.insert, e.caret);
+  ed.focus();
+  if (tab.railEl) refreshRail(tab);
+  else toast(e.kind ? `Marked a ${{ decision: 'decision', todo: 'to-do', question: 'question' }[e.kind]}` : 'Plain words again');
+}
+
+async function nextAgendaItem() {
+  const tab = fileTab();
+  if (!tab || !isNote(tab.path) || !tab.editor) { toast('Open a note first.', 'error'); return; }
+  await loadMeet();
+  const ed = tab.editor;
+  const e = meetMod.nextAgendaEdit(ed.value, ed.selectionStart);
+  if (!e) { toast(meetMod.agendaOf(ed.value).length ? 'That was the last item on the agenda.' : 'No agenda: headings with minutes, like “## Status (5m)”, are its items.'); return; }
+  ed.replace(e.from, e.to, e.insert, e.caret);
+  ed.focus();
+  clockStep(tab, true);
+  toast(`Next: ${e.title}`);
+}
+
+async function wrapUp(tab = fileTab()) {
+  if (!tab || !isNote(tab.path)) { toast('Wrap up is for a meeting’s note: open it first.', 'error'); return; }
+  await loadMeet();
+  clockStep(tab);
+  const agenda = meetMod.agendaOf(noteText(tab));
+  const times = agenda.map((a) => ({ title: a.title, budget: a.budget, ms: tab.meet?.spent[a.title] || 0 }));
+  if (tab.editor) { const at = tab.editor.selectionStart; tab.editor.selectRange(at, at, false); }
+  openTaskDialog(meetMod.wrapTask(tab.path, meetMod.nextMeetingPath(tab.path), times), { scope: 'file', recipe: 'Wrap up' });
+}
+
+async function wallView(tab = fileTab()) {
+  if (!tab || !isNote(tab.path)) { toast('The wall shows a meeting’s note: open it first.', 'error'); return; }
+  await loadMeet();
+  if (tab.editor?.tracking) { toast('Stop suggesting first: the wall proposes its own changes.', 'error'); return; }
+  await flushAutosave(tab);
+  meetMod.openWall({
+    path: tab.path, title: stem(tab.path), text: tab.content,
+    render: (text) => renderMarkdown(text, { image: (url) => localImage(url, tab.path) }),
+    propose: (text) => proposeText(tab, text),
+    copyPng: (png) => copyPicture({ png: () => png, what: () => 'the wall' }),
+    close: () => focusEditor(),
+  });
+}
+// The note as the wall left it: a proposal of yours, to settle in the red
+// pen review (y n A a), as suggestions are.
+async function proposeText(tab, text) {
+  await flushAutosave(tab);
+  if (tab.conflict || tab.content !== tab.saved) { toast('Save the note first: the proposal starts from the note on disk.', 'error'); throw new Error('unsaved'); }
+  let r;
+  try { r = await api('POST', '/api/proofs', { path: tab.path }); } catch (e) { toast(e.message, 'error', e.data?.id ? { label: 'Review', run: () => openReview(e.data.id) } : null); throw e; }
+  await api('PUT', `/api/proofs/${r.id}`, { text: toDisk(text, tab.eol) });
+  await loadRuns();
+  openReview(r.id);
+  toast('The wall’s changes, proposed: y / A to accept, a to apply.');
+}
+
+// "Since last time": the previous meeting's to-dos and decisions, on the
+// note that names it ("Previous meeting: [[…]]").
+async function loadSince(tab) {
+  if (tab.sinceOff || tab.sinceLoading) return;
+  await loadMeet();
+  const name = meetMod.previousOf(tab.content);
+  const path = name && resolveLink(name, tab.path);
+  if (!path) return;
+  tab.sinceLoading = true;
+  try {
+    const open = S.tabs.find((t) => t.kind === 'file' && t.path === path);
+    const text = open ? open.content : (await api('GET', `/api/file?path=${encodeURIComponent(path)}`)).content;
+    tab.since = { path, items: meetMod.meetingItems(text) };
+  } catch { tab.since = null; } finally { tab.sinceLoading = false; }
+  renderBanner(tab);
+}
+
 // ---- Beside a note (experimental, beside.js): the paragraphs you locked,
 // the note's drawer of scraps, and where its paragraphs came from. Kept
 // beside the note (server.js), never in it.
@@ -7631,6 +7829,7 @@ function toggleMeeting() {
   const t = fileTab();
   if (t?.editor && editorShown(t)) t.editor.focus();
   toast(S.meeting ? `Meeting mode · ${kbd('meeting') || '⌥X p m'} to leave` : 'Meeting mode off');
+  if (meetRail) loadMeet().then(() => { const r = fileTab(); if (r) clockStep(r); renderContent(S.focus); });
 }
 
 // ---------------- narrowing (editor.js narrow, narrow.js): only the section
@@ -7706,6 +7905,10 @@ const ACTIONS = {
   'replace-sel': () => replaceSel(),
   comment: () => commentHere(),
   meeting: toggleMeeting,
+  'meeting-decision': () => classifyHere('decision'),
+  'meeting-todo': () => classifyHere('todo'),
+  'meeting-question': () => classifyHere('question'),
+  'meeting-next': () => nextAgendaItem(),
 };
 
 // ---------------------------------------------------------------- keyboard
@@ -7855,6 +8058,13 @@ function defaultLeaderTree() {
       { key: 's', label: 'Sketch: a board to draw on', cmd: 'Sketch: a blank board to draw on, below the cursor', when: () => note, run: () => newSketchHere(tab) },
       { key: 'f', label: 'Sketch → flow', cmd: 'Sketch: read it as a flow (below it)', when: () => note, run: () => sketchToFlowHere(tab) },
       { key: 'm', label: S.meeting ? 'Leave meeting mode' : 'Meeting mode', cmd: 'Meeting mode (large text, for sharing the screen)', run: toggleMeeting },
+      { key: 'M', label: meetRail ? 'Meeting rail: off' : 'Meeting rail (experimental)', cmd: 'Meeting rail: the agenda, decisions, to-dos and questions beside the note (experimental)', when: () => note, run: () => toggleRail() },
+      { key: '1', label: 'The line: a decision', cmd: 'Meeting: mark the line a decision (experimental)', when: () => note, run: () => classifyHere('decision') },
+      { key: '2', label: 'The line: a to-do', cmd: 'Meeting: mark the line a to-do (experimental)', when: () => note, run: () => classifyHere('todo') },
+      { key: '3', label: 'The line: a question', cmd: 'Meeting: mark the line a question (experimental)', when: () => note, run: () => classifyHere('question') },
+      { key: 'g', label: 'Next agenda item', cmd: 'Meeting: next agenda item (experimental)', when: () => note, run: () => nextAgendaItem() },
+      { key: 'w', label: 'Wrap up the meeting…', cmd: 'Meeting: wrap up \u2014 minutes, to-dos by owner, the next meeting (experimental)\u2026', when: () => note, run: () => wrapUp() },
+      { key: 'b', label: 'Decision wall', cmd: 'Meeting: decision wall (experimental)', when: () => note, run: () => wallView() },
     ] },
     { key: 'q', label: 'macro', items: [
       { key: 'q', label: macros.recording ? 'Stop recording' : 'Start recording', cmd: 'Macro: start / stop recording', emacs: 'kmacro-start-macro', run: toggleRecording },
