@@ -1779,8 +1779,11 @@ function editorFor(tab) {
   // In a meeting with the rail: a line typed as "! …", "? …" or "[] …" is a
   // decision, a question or a to-do once it ends.
   ed.ta.addEventListener('input', (e) => { if (/^insert(LineBreak|Paragraph)$/.test(e.inputType) && railOn(tab)) meetTyped(tab); });
-  ed.ta.addEventListener('keyup', () => { if (tab.railEl) clockStep(tab, true); });
-  ed.ta.addEventListener('click', () => { if (tab.railEl) clockStep(tab, true); });
+  ed.ta.addEventListener('keyup', () => { if (tab.railEl) clockStep(tab, true); if (tab.live) liveOfferSoon(tab); });
+  ed.ta.addEventListener('click', () => { if (tab.railEl) clockStep(tab, true); if (tab.live) liveOfferSoon(tab); });
+  // The live margin: each line's minutes as it is written; Tab keeps them.
+  ed.ta.addEventListener('input', (e) => liveInput(tab, e));
+  ed.keyHook = (e) => liveKey(tab, e);
   // Words dragged out of the note say where they came from (the drawer).
   ed.ta.addEventListener('dragstart', (e) => {
     e.dataTransfer?.setData('text/x-margin-from', JSON.stringify({ path: tab.path, line: ed.value.slice(0, ed.selectionStart).split('\n').length - 1 }));
@@ -3361,6 +3364,7 @@ const COMMANDS = [
   ['Meeting: decision wall (experimental)', () => setTimeout(() => wallView(), 0)],
   ['Meeting: depth stage \u2014 the rail behind the note, the agenda on the floor (experimental)', () => setTimeout(toggleStage, 0)],
   ['Meeting: decision orbit \u2014 the wall in space (experimental)', () => setTimeout(() => wallView(fileTab(), true), 0)],
+  ['Meeting: live margin \u2014 each line\u2019s minutes beside it as you write (experimental, sends lines to Claude)', () => setTimeout(toggleLive, 0)],
   ['Describe a key…', () => describeKey()],
   ['Describe a command…', () => setTimeout(describeCommand, 0)],
   ['Dired: edit a folder as text…', () => setTimeout(pickDiredFolder, 0)],
@@ -5961,6 +5965,294 @@ setInterval(() => {
   clockStep(tab, true);
 }, 1000);
 
+// ---- The live margin (experimental, live.js): in a meeting, each line's
+// minutes beside it as it is written — a chip by rule at once, then a fast
+// model's sentence, streamed (server.js /api/live → the claude CLI). A line
+// goes when typing stops for a moment or the line ends; a line still being
+// answered is let go when it changes. Tab keeps the minutes (the line
+// becomes them), Esc lets them go. Off unless turned on.
+let liveMod = null;
+const loadLive = async () => (liveMod ||= await import('./live.js'));
+let liveOn = store.getItem('an.liveMargin') === '1';
+const LIVE_PAUSE = 600;
+const liveActive = (tab) => !!(liveOn && liveMod && meetMod && S.meeting && tab?.kind === 'file' && isNote(tab.path) && tab.editor && !tab.editor.tracking);
+
+async function toggleLive() {
+  await Promise.all([loadMeet(), loadLive()]);
+  liveOn = !liveOn;
+  store.setItem('an.liveMargin', liveOn ? '1' : '0');
+  const tab = fileTab();
+  if (!liveOn) {
+    liveStop();
+    if (tab) drawNotes(tab);
+    toast('Live margin off');
+    return;
+  }
+  if (!S.meeting) toggleMeeting();
+  if (tab) liveStart(tab);
+  toast('Live margin: each line you write goes to Claude (Haiku) · Tab keeps its minutes · Esc lets them go');
+}
+
+function liveState(tab) {
+  return (tab.live ||= { entries: new Map(), queue: [], inflight: null, times: [], cost: 0, calls: 0, cancelled: 0, last: null, timer: null, offerTimer: null, started: false, hud: null, note: '' });
+}
+
+async function liveStart(tab) {
+  const st = liveState(tab);
+  drawNotes(tab);
+  if (st.started) return;
+  st.started = true;
+  st.note = 'starting…';
+  liveHudShow(tab);
+  try {
+    const r = await api('POST', '/api/live/start', { path: tab.path });
+    st.note = r.ready ? '' : `${r.agent}: warming up…`;
+  } catch (e) {
+    st.started = false;
+    st.note = e.message;
+    toast(e.message, 'error');
+  }
+  liveHudShow(tab);
+}
+
+function liveStop() {
+  for (const t of S.tabs) {
+    const st = t.live;
+    if (!st) continue;
+    st.inflight?.ctl.abort();
+    st.queue = [];
+    clearTimeout(st.timer);
+    st.started = false;
+    st.hud?.remove();
+  }
+  api('POST', '/api/live/stop').catch(() => {});
+}
+
+const lineNoAt = (v, pos) => { let n = 0; for (let i = v.indexOf('\n'); i >= 0 && i < pos; i = v.indexOf('\n', i + 1)) n++; return n; };
+
+function liveInput(tab, e) {
+  if (!liveActive(tab)) return;
+  const st = liveState(tab);
+  if (!st.started) liveStart(tab);
+  const now = performance.now();
+  const ed = tab.editor;
+  const cur = lineNoAt(ed.value, ed.selectionStart);
+  // The line being answered changed: that answer is old.
+  if (st.inflight && st.inflight.lineNo === cur) st.inflight.ctl.abort();
+  st.queue = st.queue.filter((q) => q.lineNo !== cur);
+  // A line ended: it goes now (after the meeting's own Enter, ! [] ?).
+  if (/^insert(LineBreak|Paragraph)$/.test(e?.inputType)) {
+    setTimeout(() => {
+      const lines = noteText(tab).split('\n');
+      let i = lineNoAt(ed.value, ed.selectionStart) - 1;
+      while (i >= 0 && !lines[i].trim()) i--;
+      if (i >= 0) liveEnqueue(tab, i, lines[i], now, 'enter');
+    }, 0);
+  }
+  st.lastInput = now;
+  clearTimeout(st.timer);
+  st.timer = setTimeout(() => livePause(tab), LIVE_PAUSE);
+}
+
+// Typing stopped: the line the cursor is on goes as it is.
+function livePause(tab) {
+  if (!liveActive(tab)) return;
+  const ed = tab.editor;
+  const v = ed.value;
+  const i = lineNoAt(v, ed.selectionStart);
+  liveEnqueue(tab, i, v.split('\n')[i] || '', tab.live.lastInput, 'pause');
+}
+
+function liveEnqueue(tab, lineNo, text, stop, why) {
+  const st = liveState(tab);
+  const key = text.trim();
+  if (!liveMod.wanted(text)) return;
+  const had = st.entries.get(key);
+  if ((had && had.state !== 'wait') || st.inflight?.key === key) return;
+  st.queue = st.queue.filter((q) => q.lineNo !== lineNo && q.key !== key);
+  const entry = had || { key, line: text, ...liveMod.ruleOf(text), sentence: '', state: 'wait', t: {}, card: liveMod.liveCard() };
+  entry.t = { stop };
+  entry.why = why;
+  st.entries.set(key, entry);
+  // Old lines' minutes nobody kept, beyond a long meeting's worth.
+  if (st.entries.size > 600) for (const [k, en] of st.entries) { if (st.entries.size <= 500) break; if (en.state !== 'stream') st.entries.delete(k); }
+  st.queue.push({ lineNo, key, text, entry });
+  drawNotes(tab);
+  livePump(tab);
+}
+
+function livePump(tab) {
+  const st = tab.live;
+  if (st.inflight || !st.queue.length || !liveActive(tab)) return;
+  const q = st.queue.shift();
+  const lines = noteText(tab).split('\n');
+  const at = lines.findIndex((l, i) => l.trim() === q.key && Math.abs(i - q.lineNo) < 50);
+  if (at < 0) { if (q.entry.state === 'wait') st.entries.delete(q.key); drawNotes(tab); livePump(tab); return; }
+  liveSend(tab, { ...q, lineNo: at }, lines);
+}
+
+async function liveSend(tab, q, lines) {
+  const st = tab.live;
+  const e = q.entry;
+  const ctl = new AbortController();
+  st.inflight = { ...q, ctl };
+  st.calls++;
+  e.state = 'stream';
+  e.t.send = performance.now();
+  const text = lines.join('\n');
+  const agenda = meetMod.agendaOf(text);
+  const pos = lines.slice(0, q.lineNo).reduce((n, l) => n + l.length + 1, 0);
+  const item = agenda[meetMod.agendaAt(agenda, pos)]?.title || '';
+  const title = /^#\s+(.+)$/m.exec(text)?.[1] || tab.path.replace(/^.*\//, '').replace(/\.\w+$/, '');
+  const today = liveMod.weekAhead();
+  e.card.show(e);
+  liveHudShow(tab);
+  let said = '';
+  try {
+    const res = await fetch('/api/live/line', {
+      method: 'POST', signal: ctl.signal,
+      headers: { 'content-type': 'application/json', 'x-agent-notes-token': token },
+      body: JSON.stringify({ path: tab.path, title, agenda: agenda.map((a) => a.title), item, line: q.text.trim(), today }),
+    });
+    if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || res.statusText);
+    const reader = res.body.getReader();
+    const dec = new TextDecoder();
+    let buf = '';
+    for (;;) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      buf += dec.decode(value, { stream: true });
+      for (let i = buf.indexOf('\n'); i >= 0; i = buf.indexOf('\n')) {
+        const msg = JSON.parse(buf.slice(0, i));
+        buf = buf.slice(i + 1);
+        if (msg.t != null) {
+          said += msg.t;
+          const r = liveMod.parseReply(said);
+          if (!r.head || !r.sentence) continue;
+          if (!e.t.first) e.t.first = performance.now();
+          if (r.kind && !e.fixed) e.kind = r.kind;
+          if (r.owner) e.owner = r.owner;
+          // Dates by rule first: a model counts weekdays less well.
+          if (e.kind === 'todo') e.due = liveMod.dueOf(e.line) || r.due || e.due;
+          e.sentence = r.sentence;
+          e.card.show(e);
+          liveNotesSoon(tab);
+        } else if (msg.end) liveEnd(tab, e, msg.end);
+      }
+    }
+  } catch (err) {
+    if (ctl.signal.aborted) {
+      st.cancelled++;
+      if (e.state === 'stream') st.entries.delete(e.key);
+    } else {
+      e.state = 'error';
+      e.error = err.message;
+    }
+  } finally {
+    if (st.inflight?.ctl === ctl) st.inflight = null;
+    drawNotes(tab);
+    livePump(tab);
+  }
+}
+
+function liveEnd(tab, e, info) {
+  const st = tab.live;
+  e.t.done = performance.now();
+  e.state = info.ok && e.sentence.trim() ? 'done' : 'error';
+  if (!info.ok) e.error = info.error;
+  st.cost += info.cost || 0;
+  if (e.state !== 'done') return;
+  const t = { first: e.t.first - e.t.stop, line: e.t.done - e.t.stop, model: e.t.first - e.t.send, why: e.why, cold: !!info.cold,
+    serverFirst: info.firstMs, serverDone: info.doneMs, inTokens: info.inTokens, outTokens: info.outTokens, cacheRead: info.cacheRead, cost: info.cost };
+  st.times.push(t);
+  st.last = t;
+}
+
+// Its minutes beside each line that has them; the newest near the cursor
+// is the one Tab keeps.
+function liveNotes(tab) {
+  const st = liveState(tab);
+  const offer = liveOffer(tab);
+  const out = [];
+  let at = 0;
+  for (const l of noteText(tab).split('\n')) {
+    const e = l.trim() && st.entries.get(l.trim());
+    if (e && e.state !== 'gone') {
+      e.offer = offer?.entry === e;
+      e.card.show(e);
+      out.push({ from: at, to: at, el: e.card });
+    }
+    at += l.length + 1;
+  }
+  return out;
+}
+function liveNotesSoon(tab) {
+  if (tab.live.placing) return;
+  tab.live.placing = true;
+  requestAnimationFrame(() => { tab.live.placing = false; tab.editor?.placeNotes(); });
+}
+function liveOfferSoon(tab) {
+  clearTimeout(tab.live.offerTimer);
+  tab.live.offerTimer = setTimeout(() => { if (liveActive(tab)) drawNotes(tab); }, 150);
+}
+
+// The minutes Tab would keep: the last answered line at or above the
+// cursor (a few lines up at most), with the cursor at a line's end.
+function liveOffer(tab) {
+  const st = tab.live;
+  const ed = tab.editor;
+  if (!st || !ed) return null;
+  const v = ed.value;
+  const s = ed.selectionStart;
+  const nl = v.indexOf('\n', s);
+  if (v.slice(s, nl < 0 ? v.length : nl).trim()) return null;
+  const lines = v.split('\n');
+  for (let i = lineNoAt(v, s), seen = 0; i >= 0 && seen < 4; i--) {
+    const k = lines[i].trim();
+    if (!k) continue;
+    seen++;
+    const e = st.entries.get(k);
+    if (e?.state === 'done') return { i, entry: e };
+  }
+  return null;
+}
+
+function liveKey(tab, e) {
+  if (!liveActive(tab) || e.metaKey || e.ctrlKey || e.altKey || e.shiftKey || (e.key !== 'Tab' && e.key !== 'Escape')) return false;
+  const ed = tab.editor;
+  if (ed.selectionStart !== ed.selectionEnd || ed.find.open) return false;
+  const o = liveOffer(tab);
+  if (!o) return false;
+  e.stopPropagation();
+  if (e.key === 'Escape') {
+    o.entry.state = 'gone';
+    drawNotes(tab);
+    return true;
+  }
+  const { from, to, insert } = liveMod.keepEdit(ed.value, o.i, o.entry);
+  const s = ed.selectionStart;
+  const caret = s > to ? s + insert.length - (to - from) : s;
+  ed.closeStep();
+  ed.replace(from, to, insert, caret);
+  ed.closeStep();
+  const st = tab.live;
+  st.entries.delete(o.entry.key);
+  const kept = { ...o.entry, key: liveMod.keptLine(o.entry).trim(), state: 'kept', offer: false };
+  st.entries.set(kept.key, kept);
+  setTimeout(() => { if (kept.state === 'kept') { kept.state = 'gone'; drawNotes(tab); } }, 1600);
+  drawNotes(tab);
+  if (tab.railEl) refreshRail(tab);
+  return true;
+}
+
+function liveHudShow(tab) {
+  const st = tab.live;
+  if (!st || !tab.editor) return;
+  st.hud ||= liveMod.liveHud();
+  if (st.hud.parentNode !== tab.editor.el) tab.editor.el.append(st.hud);
+  st.hud.show({ times: st.times, cost: st.cost, last: st.last, note: st.note, busy: !!st.inflight, calls: st.calls, cancelled: st.cancelled });
+}
+
 function meetTyped(tab) {
   const ed = tab.editor;
   if (ed.tracking) return;
@@ -7656,10 +7948,14 @@ function drawNotes(tab) {
   if (!ed || tab.draft) return;
   if (!tab.comments) { if (isNote(tab.path)) loadComments(tab); return; }
   const text = ed.value;
-  ed.setNotes(tab.comments.filter((c) => !c.resolved || tab.showResolved).map((c) => {
+  const live = liveActive(tab);
+  ed.el.classList.toggle('live', live);
+  ed.setNotes([...tab.comments.filter((c) => !c.resolved || tab.showResolved).map((c) => {
     const at = anchorOf(text, c);
     return { from: at ? at[0] : 0, to: at ? at[1] : 0, el: noteCard(tab, c, !at), cur: tab.noteCur === c.id };
-  }));
+  }), ...(live ? liveNotes(tab) : [])]);
+  if (live) liveHudShow(tab);
+  else tab.live?.hud?.remove();
 }
 
 function noteCard(tab, c, lost) {
@@ -7880,6 +8176,15 @@ function toggleMeeting() {
   if (t?.editor && editorShown(t)) t.editor.focus();
   toast(S.meeting ? `Meeting mode · ${kbd('meeting') || '⌥X p m'} to leave` : 'Meeting mode off');
   if (meetRail) Promise.all([loadMeet(), meetStage && loadStage()]).then(() => { const r = fileTab(); if (r) clockStep(r); renderContent(S.focus); });
+  // The live margin goes with the meeting.
+  if (liveOn) {
+    Promise.all([loadMeet(), loadLive()]).then(() => {
+      const r = fileTab();
+      if (!S.meeting) liveStop();
+      else if (r && isNote(r.path)) liveStart(r);
+      if (r?.editor) drawNotes(r);
+    });
+  }
 }
 
 // ---------------- narrowing (editor.js narrow, narrow.js): only the section
@@ -8117,6 +8422,7 @@ function defaultLeaderTree() {
       { key: 'b', label: 'Decision wall', cmd: 'Meeting: decision wall (experimental)', when: () => note, run: () => wallView() },
       { key: 'D', label: meetStage ? 'Depth stage: off' : 'Depth stage (experimental)', cmd: 'Meeting: depth stage \u2014 the rail behind the note, the agenda on the floor (experimental)', when: () => note, run: () => toggleStage() },
       { key: 'o', label: 'Decision orbit', cmd: 'Meeting: decision orbit \u2014 the wall in space (experimental)', when: () => note, run: () => wallView(tab, true) },
+      { key: 'l', label: liveOn ? 'Live margin: off' : 'Live margin (experimental)', cmd: 'Meeting: live margin \u2014 each line\u2019s minutes beside it as you write (experimental, sends lines to Claude)', when: () => note, run: () => toggleLive() },
     ] },
     { key: 'q', label: 'macro', items: [
       { key: 'q', label: macros.recording ? 'Stop recording' : 'Start recording', cmd: 'Macro: start / stop recording', emacs: 'kmacro-start-macro', run: toggleRecording },

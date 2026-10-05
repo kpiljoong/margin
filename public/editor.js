@@ -742,6 +742,8 @@ export class MarkdownEditor {
     this._placeNotes();
   }
 
+  placeNotes() { this._placeNotes(); }
+
   _placeNotes() {
     if (!this.notes.length || !this.el.isConnected) return;
     let y = 0;
@@ -895,6 +897,8 @@ export class MarkdownEditor {
     if (e.isComposing || e.keyCode === 229) return;
     if (!this.popup.hidden && this._popupKeys(e)) return;
     if (this.query && this._queryKey(e)) return;
+    // A key the page takes first (the live margin's Tab and Esc).
+    if (this.keyHook?.(e)) { e.preventDefault(); return; }
     if (this.emacs.key(e)) return;
     const ta = this.ta;
     // Undo and redo: the editor's own history (undo.js).

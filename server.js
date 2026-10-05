@@ -14,6 +14,7 @@ const { loadIgnore, isPrivateNote } = require('./lib/privacy');
 const { parseAgentLog } = require('./lib/agentlog');
 const { picturesIn, pictureSize, hiddenIn } = require('./lib/pictures');
 const { lockRanges, lockedHunks, drawerText, drawerScraps, addedLines } = require('./lib/beside');
+const { liveMargin } = require('./lib/live');
 
 const APP_DIR = __dirname;
 const PUBLIC_DIR = path.join(APP_DIR, 'public');
@@ -2120,6 +2121,8 @@ async function routeApi(method, url, body) {
   if (method === 'GET' && p === '/api/comments') return getComments(q('path'));
   if (method === 'PUT' && p === '/api/comments') return saveComments(body || {});
   if (method === 'POST' && p === '/api/proofs') return openProof(body || {});
+  if (method === 'POST' && p === '/api/live/start') { const key = liveFor(String((body || {}).path || '')); return { ...live.start(key), agent: liveAgent().label }; }
+  if (method === 'POST' && p === '/api/live/stop') { live?.stop(); return { ok: true }; }
   if ((m = p.match(/^\/api\/proofs\/([\w-]+)$/)) && method === 'PUT') return saveProof(m[1], body || {});
   if (method === 'POST' && p === '/api/runs') return { ...startRun(body || {}), command: undefined };
   if ((m = p.match(/^\/api\/runs\/([\w-]+)$/)) && method === 'GET') {
@@ -2161,6 +2164,38 @@ const SECURITY_HEADERS = {
   'Referrer-Policy': 'no-referrer',
   'Cache-Control': 'no-store',
 };
+
+// The live margin (experimental, lib/live.js): a meeting note's lines, a
+// few at a time, to a fast model through the signed-in claude CLI; its
+// minutes come back as they are written (NDJSON), and nothing is saved.
+let live = null;
+function liveAgent() {
+  return AGENT?.kind === 'claude' ? AGENT : AGENTS.find((a) => a.kind === 'claude') || null;
+}
+function liveFor(rel) {
+  const agent = liveAgent();
+  if (!agent) throw httpError(400, 'The live margin needs the Claude Code agent (Settings → Agents).');
+  const abs = workspacePath(rel);
+  if (!NOTE_EXT.has(extOf(abs))) throw httpError(400, 'The live margin is for notes.');
+  if (fs.existsSync(abs) && isPrivateNote(abs)) throw httpError(403, 'This note is private (front matter): its lines are not sent.');
+  if (!live) {
+    const env = { ...process.env };
+    delete env.ELECTRON_RUN_AS_NODE;
+    live = liveMargin({ bin: agent.command.trim().split(/\s+/)[0], env });
+  }
+  return relOf(abs);
+}
+function liveLine(req, res, body) {
+  const key = liveFor(String(body.path || ''));
+  const text = (v, n) => String(v || '').slice(0, n);
+  res.writeHead(200, { ...SECURITY_HEADERS, 'Content-Type': 'application/x-ndjson; charset=utf-8' });
+  let over = false;
+  const cancel = live.line({
+    key, title: text(body.title, 200), item: text(body.item, 200), line: text(body.line, 2000), today: text(body.today, 300),
+    agenda: Array.isArray(body.agenda) ? body.agenda.slice(0, 30).map((a) => text(a, 120)) : [],
+  }, (t) => res.write(`${JSON.stringify({ t })}\n`), (info) => { over = true; res.end(`${JSON.stringify({ end: info })}\n`); });
+  res.on('close', () => { if (!over) cancel(); });
+}
 
 function send(res, status, obj) {
   res.writeHead(status, { ...SECURITY_HEADERS, 'Content-Type': 'application/json; charset=utf-8' });
@@ -2243,6 +2278,7 @@ const server = http.createServer(async (req, res) => {
     if (!tokenOk(req.headers['x-agent-notes-token'])) {
       return send(res, 401, { error: 'Missing session token. Open the URL printed in the terminal.' });
     }
+    if (req.method === 'POST' && url.pathname === '/api/live/line') return liveLine(req, res, await readBody(req, 64 * 1024));
     const body = req.method === 'POST' || req.method === 'PUT'
       ? await readBody(req, url.pathname === '/api/asset' || (url.pathname === '/api/file' && req.method === 'PUT') || (url.pathname === '/api/runs' && req.method === 'POST') ? 40 * 1024 * 1024 : undefined) : null;
     send(res, 200, await routeApi(req.method, url, body));
@@ -2284,6 +2320,7 @@ startWatcher();
 listen(opts.port);
 
 function shutdown() {
+  live?.stop();
   for (const id of running.keys()) { try { cancelRun(id, 'server stopped'); } catch { /* ignore */ } }
   process.exit(0);
 }

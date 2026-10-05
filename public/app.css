@@ -1607,3 +1607,31 @@ li.callout-hot { background: color-mix(in srgb, var(--accent) 16%, transparent);
 .orb-ghost { position: fixed; z-index: 70; pointer-events: none; box-shadow: 0 0 0 2px var(--m), 0 0 40px var(--m), 0 18px 40px rgba(0, 0, 0, .45); }
 .orb-ghost.orb-flying { transition: left .42s cubic-bezier(.5, 0, .2, 1), top .42s cubic-bezier(.5, 0, .2, 1), transform .42s ease-in, opacity .42s ease-in; }
 @media (prefers-reduced-motion: reduce) { .m-stage-col .mrail, .m-stage-col .mrail-lane, .m-stage-col .mrail-foot, .m-stage-col .mrail-hint { transform: none !important; animation: none; } .m-tunnel { display: none; } }
+
+/* The live margin (live.js): each line's minutes in the margin, in red pen,
+   as they are written; the corner says how quick */
+.ed.live { --notes-w: clamp(300px, 40vw, 640px); --m-decision: var(--ok); --m-question: var(--accent-2); --m-todo: var(--accent); --m-note: var(--fg-faint); }
+.live-note { border-left-color: color-mix(in srgb, var(--pen) 70%, transparent); background: color-mix(in srgb, var(--pen) 5%, var(--bg)); cursor: default; padding: 3px 88px 3px 10px; transition: background .2s, box-shadow .2s; }
+.live-note.k-decision { --m: var(--m-decision); } .live-note.k-question { --m: var(--m-question); } .live-note.k-todo { --m: var(--m-todo); } .live-note.k-note { --m: var(--m-note); }
+.live-body { color: var(--pen); font: 16px/1.35 var(--hand); min-height: 21px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.live-note.offer .live-body, .live-note.s-error .live-body { white-space: normal; overflow-wrap: anywhere; }
+.live-chip, .live-who, .live-due, .live-ms { display: inline-block; margin-right: 5px; font: 600 10.5px/1 var(--sans); vertical-align: 2px; }
+.live-chip { text-transform: uppercase; letter-spacing: .05em; color: var(--m); padding: 3px 6px; border-radius: 4px; background: color-mix(in srgb, var(--m) 16%, transparent); }
+.live-who { color: var(--fg); } .live-who:empty, .live-due:empty, .live-ms:empty { display: none; }
+.live-due { color: var(--fg-dim); font-weight: 500; }
+.live-ms { position: absolute; top: 8px; right: 8px; margin: 0; color: var(--fg-faint); font-weight: 500; font-variant-numeric: tabular-nums; }
+.live-note.s-wait .live-text::after { content: ""; display: inline-block; width: 120px; height: 12px; border-radius: 6px; vertical-align: middle; background: linear-gradient(90deg, color-mix(in srgb, var(--pen) 25%, transparent), transparent); animation: live-wait 1.2s ease-in-out infinite; }
+.live-note.s-stream .live-text::after { content: ""; display: inline-block; width: 2px; height: 16px; margin-left: 2px; vertical-align: -2px; background: var(--pen); animation: live-caret .8s steps(1) infinite; }
+.live-note.s-error .live-body { color: var(--fg-faint); font: 12px var(--sans); }
+.live-note.s-kept { opacity: .55; border-left-color: var(--ok); }
+.live-note.s-kept .live-chip { --m: var(--ok); }
+.live-note.offer { background: color-mix(in srgb, var(--pen) 12%, var(--bg)); box-shadow: 0 0 0 1px color-mix(in srgb, var(--pen) 45%, transparent), 0 0 22px color-mix(in srgb, var(--pen) 22%, transparent); }
+.live-keys { margin-top: 2px; font: 11px var(--sans); color: var(--fg-faint); }
+.live-hud { position: absolute; right: 14px; top: 8px; z-index: 4; display: flex; align-items: center; gap: 10px; max-width: calc(100% - 28px); padding: 4px 10px; border-radius: 12px; background: color-mix(in srgb, var(--bg) 88%, transparent); border: 1px solid var(--border); font: 11px var(--sans); color: var(--fg-dim); font-variant-numeric: tabular-nums; pointer-events: none; white-space: nowrap; overflow: hidden; }
+.live-hud b { color: var(--fg); font-weight: 600; }
+.live-hud-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--pen); opacity: .5; }
+.live-hud.busy .live-hud-dot { opacity: 1; box-shadow: 0 0 8px var(--pen); }
+.live-hud-stats { color: var(--fg-faint); }
+@keyframes live-wait { 50% { opacity: .35; } }
+@keyframes live-caret { 50% { opacity: 0; } }
+@media (prefers-reduced-motion: reduce) { .live-note.s-wait .live-text::after, .live-note.s-stream .live-text::after { animation: none; } }
