@@ -9,7 +9,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { parseDesk, stringifyDesk, stackOnto, groupAround, childrenOf, groupAt, removeCards, parseGroups, parseLinks, parseQuestions, groupLayout, nearest, cardTitle, edgePath, STEP, EMPTY_DESK } from '../public/desk.js';
+import { parseDesk, stringifyDesk, stackOnto, groupAround, childrenOf, groupAt, removeCards, parseGroups, parseLinks, parseQuestions, groupLayout, nearest, cardTitle, edgePath, STEP, EMPTY_DESK, noteDesk, linksOf, fromState } from '../public/desk.js';
 
 const require = createRequire(import.meta.url);
 const { requestText } = require('../lib/desk.js');
@@ -160,4 +160,46 @@ test('the server: the cards it sends, numbered; a private note never', { skip: p
   assert.equal((await ask({ path: 'd.canvas', task: 'rm', cards })).at(-1).end.ok, false);
   fs.writeFileSync(path.join(ws, '.agentnotesignore'), 'hidden.md\nd.canvas\n');
   assert.equal((await ask({ path: 'd.canvas', task: 'summary', cards })).status, 403);
+});
+
+test('a note on a desk: the note, its open questions and to-dos not done (each knowing its line), the notes it links to; the card says when the note moves on', () => {
+  const note = [
+    '# Weekly',
+    '',
+    'Previous meeting: [[Weekly 09-28]]',
+    '',
+    '## Launch (10m)',
+    '',
+    '> [!question] Do we need a beta?',
+    '> [!decision] We ship on Friday.',
+    '- [ ] Draft the notes @ann',
+    '- [x] Book the room',
+    '> [!question] \uc608\uc0b0\uc740 \uc5b4\ub5bb\uac8c \ud558\uc9c0? \uc5ec\ud589 \uacbd\ube44\uc640 \uc219\uc18c\ub97c \ub2e4\uc2dc \ubcf4\uace0 \uc815\ud558\uc790',
+    'See [[Pricing|the prices]] and [[Pricing#Tiers]], ![[chart.png]], `[[not a link]]`.',
+    '```',
+    '[[Nor this]]',
+    '```',
+  ].join('\n');
+  assert.deepEqual(linksOf(note), ['Weekly 09-28', 'Pricing']);
+  const d = noteDesk('m/Weekly.md', note, ['m/Weekly 09-28.md', 'Pricing.md'], '2026-10-06');
+  const groups = d.nodes.filter((n) => n.type === 'group');
+  assert.deepEqual(groups.map((g) => g.label), ['Open questions', 'To do', 'Linked notes']);
+  const qs = childrenOf(d, groups[0]);
+  assert.deepEqual(qs.map((n) => n.text), ['Do we need a beta?', note.split('\n')[10].replace('> [!question] ', '')]);
+  assert.deepEqual(qs[0].from, { file: 'm/Weekly.md', line: 6, kind: 'question', key: qs[0].from.key, at: '2026-10-06' });
+  assert.ok(qs[1].height > qs[0].height, 'wide letters: a taller card');
+  assert.deepEqual(childrenOf(d, groups[1]).map((n) => n.text), ['Draft the notes @ann']);
+  assert.deepEqual(childrenOf(d, groups[2]).map((n) => n.file), ['m/Weekly 09-28.md', 'Pricing.md']);
+  const self = d.nodes.find((n) => n.type === 'file' && n.file === 'm/Weekly.md');
+  assert.ok(self && !groupAt(d, self), 'the note itself, outside the groups');
+  for (const g of groups) assert.ok(g.x >= self.x + self.width, 'the groups beside the note');
+  // The note, later: the question settled (a plain line now), the to-do ticked, lines moved.
+  const later = `# Weekly\n\nAdded a line.\n\n${note.replace('> [!question] Do we need a beta?', '- Do we need a beta? (no)').replace('- [ ] Draft', '- [x] Draft').split('\n').slice(2).join('\n')}`;
+  assert.equal(fromState(qs[0].from, later).state, 'gone');
+  const todo = childrenOf(d, groups[1])[0].from;
+  assert.deepEqual(fromState(todo, later), { state: 'done', line: 10 });
+  assert.deepEqual(fromState(qs[1].from, later), { state: 'open', line: 12 });
+  // A note with nothing of a meeting: just itself, and what it links to.
+  const plain = noteDesk('a.md', 'Just words.', [], '');
+  assert.deepEqual(plain.nodes.map((n) => n.type), ['file']);
 });

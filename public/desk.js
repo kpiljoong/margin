@@ -6,6 +6,8 @@
 // you; the depth is for what is lifted, stacked or being thought about.
 // What the margin writes stays beside the cards until it is kept (Tab).
 
+import { meetingItems } from './meeting.js';
+
 // ---------------------------------------------------------------- the file
 
 export const EMPTY_DESK = '{\n\t"nodes":[],\n\t"edges":[]\n}\n';
@@ -181,6 +183,60 @@ export function edgePath(a, b, fromSide, toSide) {
   return { d: `M${r(x1)},${r(y1)} C${r(x1 + p1)},${r(y1 + q1)} ${r(x2 + p2)},${r(y2 + q2)} ${r(x2)},${r(y2)}`, mid: [r((x1 + x2) / 2 + (p1 + p2) / 8), r((y1 + y2) / 2 + (q1 + q2) / 8)] };
 }
 
+// ---------------------------------------------------------------- a note on a desk
+
+// A note laid out to think about (a meeting's, mostly): the note in the
+// middle; its open questions and its to-dos not done as cards beside it, each
+// knowing where it came from (from: the note, the line, what it was, when it
+// was taken) so it can go back there, and say when the note has moved on;
+// and the notes it links to. links: their paths, found already. → a desk.
+export function noteDesk(file, text, links = [], at = '') {
+  const items = meetingItems(text);
+  const size = (s) => {
+    // Its height, from its words: wide letters (Korean, Chinese, Japanese) take two.
+    const w = [...s].reduce((sum, c) => sum + (c.codePointAt(0) > 0x2e80 ? 2 : 1), 0);
+    return 74 + 21 * Math.max(1, Math.ceil(w / 40));
+  };
+  const card = (i) => ({ id: newId(), type: 'text', text: i.text, x: 0, y: 0, width: 320, height: size(i.text), from: { file, line: i.line, kind: i.kind, key: i.key, at } });
+  const groups = [
+    { name: 'Open questions', cards: items.filter((i) => i.kind === 'question').map(card) },
+    { name: 'To do', cards: items.filter((i) => i.kind === 'todo' && !i.done).map(card) },
+    { name: 'Linked notes', cards: links.map((p) => ({ id: newId(), type: 'file', file: p, x: 0, y: 0, width: 340, height: 260 })) },
+  ].filter((g) => g.cards.length);
+  const nodes = [];
+  const cards = [];
+  for (const g of groupLayout(groups, 540, 0)) {
+    nodes.push({ id: newId(), type: 'group', label: g.name, ...g.box });
+    const these = groups.find((x) => x.name === g.name).cards;
+    for (const p of g.at) { const c = these.find((x) => x.id === p.id); cards.push({ ...c, x: p.x, y: p.y }); }
+  }
+  return { nodes: [...nodes, { id: newId(), type: 'file', file, x: 0, y: 0, width: 480, height: 680 }, ...cards], edges: [] };
+}
+
+// The notes a note links to ([[…]], not ![[…]] nor in code), once each, as written.
+export function linksOf(text) {
+  const out = [];
+  let fence = false;
+  for (const l of String(text).split('\n')) {
+    if (/^\s*(```|~~~)/.test(l)) { fence = !fence; continue; }
+    if (fence) continue;
+    for (const m of l.replace(/`[^`]*`/g, '').matchAll(/(!?)\[\[([^\]|#^]+)(?:[#^][^\]|]*)?(?:\|[^\]]*)?\]\]/g)) {
+      const t = m[2].trim();
+      if (!m[1] && t && !out.includes(t)) out.push(t);
+    }
+  }
+  return out;
+}
+
+// A card taken from a note (from), and the note now: what it is there.
+// → { state: 'open' | 'done' (a to-do ticked) | 'gone' (settled, or
+// changed), line: where it is now (or was) }
+export function fromState(from, text) {
+  const it = meetingItems(text).find((i) => i.key === from.key);
+  if (!it) return { state: 'gone', line: from.line };
+  return { state: from.kind === 'todo' && it.done ? 'done' : 'open', line: it.line };
+}
+
 // ---------------------------------------------------------------- the view
 
 function el(tag, cls, ...kids) {
@@ -207,9 +263,10 @@ const ACTIONS = [
 ];
 
 // opts: { text, path, render(md) → html, readNote(path) → Promise<text>,
-// imageUrl(path), openNote(path), pickNote() → Promise<path>, makeNote(md)
+// imageUrl(path), openNote(path, line), pickNote() → Promise<path>, makeNote(md)
 // → Promise<path>, ask({ task, cards, question, talk }, onText) →
-// Promise<{ said, end, withheld }>, onChange(text), toast(msg, kind), reduced }
+// Promise<{ said, end, withheld }>, privateOf(paths) → Promise<{ path: why }>,
+// onChange(text), toast(msg, kind), reduced, dockMin, onDock(min) }
 export class Desk {
   constructor(opts) {
     this.opts = opts;
@@ -218,6 +275,8 @@ export class Desk {
     this.sel = new Set();
     this.els = new Map();
     this.html = new Map(); // a note's card: its rendered text
+    this.notes = new Map(); // a note cards were taken from: its text now
+    this.priv = new Map(); // a note's card: why it is private ('' if not)
     this.ai = []; // what the margin wrote, not kept yet
     this.proposal = null; // { kind: 'group' | 'links', ... }
     this.undo = [];
@@ -249,7 +308,7 @@ export class Desk {
     this.marquee = el('div', 'desk-marquee');
     this.marquee.hidden = true;
     this.dock = this.buildDock();
-    this.hint = el('div', 'desk-hint', 'Double-click: a card · drag a note from the tree · drop a card on a card: a group · drop cards on the margin, or s q o l m · / talk · z all');
+    this.hint = el('div', 'desk-hint', 'Double-click: a card · Space: read one · drag a note from the tree · drop a card on a card: a group · drop cards on the margin, or s q o l m · / talk · z all');
     this.el = el('div', 'desk', this.grid, this.world, this.marquee, this.dock, this.hint);
     this.el.tabIndex = 0;
     this.el.desk = this; // for tests
@@ -257,7 +316,14 @@ export class Desk {
     this.el.addEventListener('wheel', (e) => this.wheel(e), { passive: false });
     this.el.addEventListener('dblclick', (e) => this.dbl(e));
     this.el.addEventListener('keydown', (e) => this.key(e));
-    this.el.addEventListener('keyup', (e) => { if (e.key === ' ') this.space = false; });
+    this.el.addEventListener('keyup', (e) => {
+      if (e.key !== ' ') return;
+      this.space = false;
+      // Space pressed and let go, the desk not moved: read the card.
+      const tap = this.spaceTap && performance.now() - this.spaceTap < 400;
+      this.spaceTap = 0;
+      if (tap && e.target === this.el) this.focusOn(this.focusFirst());
+    });
     // "#2" in what the margin wrote: that card, shown.
     this.el.addEventListener('click', (e) => {
       const t = e.target.closest?.('a.tag');
@@ -296,11 +362,19 @@ export class Desk {
       if (e.key === 'Escape') { e.preventDefault(); this.el.focus(); }
     });
     this.status = el('span', 'desk-status');
-    const dock = el('div', 'desk-dock', el('div', 'desk-dock-head', el('b', null, 'Margin'), this.status), this.ctx, this.actions, this.log, this.input);
+    const fold = button('–', 'Fold the panel to its buttons (or open it again)', () => this.foldDock(!dock.classList.contains('min')), 'desk-fold');
+    const dock = el('div', 'desk-dock', el('div', 'desk-dock-head', el('b', null, 'Margin'), this.status, fold), this.ctx, this.actions, this.log, this.input);
+    this.foldBtn = fold;
     dock.addEventListener('pointerdown', (e) => { e.stopPropagation(); this.pressed('dock'); });
     dock.addEventListener('wheel', (e) => e.stopPropagation());
     dock.addEventListener('dblclick', (e) => e.stopPropagation());
+    if (this.opts.dockMin) { dock.classList.add('min'); fold.textContent = '+'; }
     return dock;
+  }
+  foldDock(min) {
+    this.dock.classList.toggle('min', min);
+    this.foldBtn.textContent = min ? '+' : '–';
+    this.opts.onDock?.(min);
   }
 
   // ---- the plane
@@ -422,6 +496,12 @@ export class Desk {
       this.world.append(e);
     }
     for (const [id, e] of this.els) if (!keep.has(id)) { e.remove(); this.els.delete(id); }
+    // Which notes on it are private: shown, but never sent.
+    const ask = [...new Set(this.d.nodes.filter((n) => n.type === 'file' && !this.priv.has(n.file)).map((n) => n.file))];
+    if (ask.length && this.opts.privateOf) {
+      for (const p of ask) this.priv.set(p, '');
+      this.opts.privateOf(ask).then((m) => { let any = false; for (const [p, why] of Object.entries(m || {})) if (why) { this.priv.set(p, why); any = true; } if (any) this.render(); }, () => {});
+    }
     this.drawEdges();
     this.camera();
     this.dockShow();
@@ -434,7 +514,13 @@ export class Desk {
     e.body = el('div', 'desk-body md');
     e.grip = el('div', 'desk-grip');
     e.num = el('span', 'desk-num');
-    e.append(e.head, e.body, e.grip, e.num);
+    e.from = el('div', 'desk-from');
+    e.from.hidden = true;
+    e.from.addEventListener('pointerdown', (ev) => { if (ev.target.closest('a')) ev.stopPropagation(); });
+    e.from.addEventListener('click', (ev) => { const a = ev.target.closest('a'); if (a) { ev.preventDefault(); this.goFrom(this.d.nodes.find((x) => x.id === e.dataset.id)); } });
+    e.priv = el('span', 'desk-private');
+    e.priv.hidden = true;
+    e.append(e.head, e.body, e.from, e.grip, e.num, e.priv);
     return e;
   }
   fill(e, n) {
@@ -450,6 +536,10 @@ export class Desk {
     e.num.textContent = this.nums?.has(n.id) ? `#${this.nums.get(n.id)}` : '';
     const title = cardTitle(n);
     if (n.type === 'group') { e.head.textContent = title; e.body.replaceChildren(); return; }
+    e.priv.hidden = !(n.type === 'file' && this.priv.get(n.file));
+    e.priv.textContent = e.priv.hidden ? '' : 'private · not sent';
+    e.priv.title = e.priv.hidden ? '' : `Shown here; never sent to the margin (${this.priv.get(n.file)})`;
+    this.fillFrom(e, n);
     if (n.type === 'file') {
       e.head.textContent = title;
       e.head.title = n.file;
@@ -525,7 +615,43 @@ export class Desk {
     this.html.clear();
     this.render();
   }
-  refreshNote(path) { if (this.html.has(path)) { this.html.delete(path); this.render(); } }
+  refreshNote(path) {
+    if (!this.html.has(path) && !this.notes.has(path)) return;
+    this.html.delete(path);
+    this.notes.delete(path);
+    this.render();
+  }
+  // A card taken from a note: where from, and whether the note has moved on.
+  fillFrom(e, n) {
+    const f = n.type === 'text' && n.from && typeof n.from.file === 'string' ? n.from : null;
+    e.from.hidden = !f;
+    e.classList.toggle('stale', false);
+    if (!f) return;
+    const text = this.notes.get(f.file);
+    if (text === undefined) {
+      this.notes.set(f.file, null);
+      this.opts.readNote(f.file).then((t) => { this.notes.set(f.file, t); this.render(); }, () => { this.notes.set(f.file, ''); this.render(); });
+    }
+    const now = typeof text === 'string' && text ? fromState(f, text) : null;
+    const was = { question: 'Question', todo: 'To do' }[f.kind] || 'From';
+    const said = !now ? '' : now.state === 'done' ? 'done in the note' : now.state === 'gone' ? 'no longer open in the note' : '';
+    const key = `${was}|${f.file}|${said}|${f.at}`;
+    if (e.from.key !== key) {
+      const link = el('a', null, `${f.file.split('/').pop().replace(/\.(md|markdown)$/i, '')} \u2197`);
+      link.href = '#';
+      link.title = `Open ${f.file} there${f.at ? ` — this card is as it was written on ${f.at}` : ''}`;
+      e.from.replaceChildren(...[el('span', null, `${was} · `), link, said && el('span', 'desk-from-state', said)].filter(Boolean));
+      e.from.key = key;
+    }
+    e.classList.toggle('stale', !!said);
+  }
+  goFrom(n) {
+    const f = n?.from;
+    if (!f) return;
+    const text = this.notes.get(f.file);
+    // (Lines counted from 0 here, from 1 in the editor.)
+    this.opts.openNote(f.file, (typeof text === 'string' && text ? fromState(f, text).line : f.line) + 1);
+  }
   back(redo = false) {
     const from = redo ? this.redo : this.undo;
     if (!from.length) return;
@@ -596,6 +722,7 @@ export class Desk {
     const sx = e.clientX;
     const sy = e.clientY;
     if (!id || e.button === 1 || this.space) {
+      if (this.space) this.spaceTap = 0; // a move, not a tap
       if (e.button === 1 || this.space || e.altKey) return this.drag(e, (ev) => { this.cam = { ...this.cam, x: this.cam.x + ev.movementX, y: this.cam.y + ev.movementY }; this.camera(); });
       // A box drawn on the plane: what is in it is selected.
       const add = e.shiftKey ? new Set(this.sel) : new Set();
@@ -741,7 +868,8 @@ export class Desk {
     const k = e.key;
     const one = this.sel.size === 1 ? this.d.nodes.find((n) => this.sel.has(n.id)) : null;
     const handled = () => { e.preventDefault(); e.stopPropagation(); };
-    if (k === ' ') { this.space = true; handled(); return; }
+    if (this.focused) { this.focusKey(e, handled); return; }
+    if (k === ' ') { handled(); if (!e.repeat) { this.space = true; this.spaceTap = performance.now(); } return; }
     if (mod && k.toLowerCase() === 'z') { handled(); this.back(e.shiftKey); return; }
     if (mod && k.toLowerCase() === 'a') { handled(); this.sel = new Set(this.d.nodes.filter((n) => n.type !== 'group').map((n) => n.id)); this.paintSel(); this.dockShow(); return; }
     if (mod || e.altKey) return;
@@ -773,9 +901,88 @@ export class Desk {
     if (k === 'z') { handled(); this.fit(); return; }
     if (k === '=' || k === '+' || k === '-') { handled(); const r = this.el.getBoundingClientRect(); this.zoomAt((r.width - this.side()) / 2, r.height / 2, k === '-' ? 1 / 1.2 : 1.2, true); return; }
     if (k === '1') { handled(); const r = this.el.getBoundingClientRect(); const c = center(); this.goTo({ z: 1, x: (r.width - this.side()) / 2 - c.x, y: r.height / 2 - c.y }); return; }
-    if (k === '/') { handled(); this.input.focus(); return; }
+    if (k === '/') { handled(); if (this.dock.classList.contains('min')) this.foldDock(false); this.input.focus(); return; }
     const act = ACTIONS.find((a) => a[2] === k);
     if (act) { handled(); this.act(act[0]); }
+  }
+
+  // ---- reading one card (Space): large, in the middle of the desk; ← →
+  // the one before or after it in its group (or among the cards in none),
+  // in reading order, so where it goes is known.
+  ring(n) {
+    const g = groupAt(this.d, n);
+    const pool = this.d.nodes.filter((c) => c.type !== 'group' && groupAt(this.d, c) === g);
+    const top = Math.min(...pool.map((c) => c.y));
+    return pool.sort((a, b) => Math.floor((a.y - top) / 50) - Math.floor((b.y - top) / 50) || a.x - b.x);
+  }
+  // The card to read: the one selected (a group: its first), or the one
+  // nearest the middle of the view.
+  focusFirst() {
+    const one = this.sel.size === 1 ? this.d.nodes.find((n) => this.sel.has(n.id)) : null;
+    if (one && one.type !== 'group') return one;
+    if (one) { const first = childrenOf(this.d, one).find((c) => c.type !== 'group'); return first ? this.ring(first)[0] : null; }
+    const r = this.el.getBoundingClientRect();
+    const m = this.toWorld(r.left + (r.width - this.side()) / 2, r.top + r.height / 2);
+    const d = (n) => Math.hypot(n.x + n.width / 2 - m.x, n.y + n.height / 2 - m.y);
+    return this.d.nodes.filter((n) => n.type !== 'group').sort((a, b) => d(a) - d(b))[0] || null;
+  }
+  focusOn(n) {
+    if (!n) return;
+    const ring = this.ring(n);
+    const g = groupAt(this.d, n);
+    this.focused = n;
+    this.sel = new Set([n.id]);
+    this.paintSel();
+    this.dockShow();
+    const body = el('div', 'desk-focus-body md');
+    if (n.type === 'file' && /\.(png|jpe?g|gif|webp|avif|svg|bmp)$/i.test(n.file)) { const img = el('img'); img.src = this.opts.imageUrl(n.file); img.alt = cardTitle(n); body.append(img); } else if (n.type === 'file') {
+      const html = this.html.get(n.file);
+      if (html) body.innerHTML = html;
+      else { body.textContent = 'Loading…'; this.opts.readNote(n.file).then((t) => { if (this.focused === n) body.innerHTML = this.opts.render(t.replace(/^\uFEFF?---\r?\n[\s\S]*?\r?\n---\r?\n?/, ''), n.file); }, () => { body.textContent = 'Not found'; }); }
+    } else if (n.type === 'link') body.textContent = n.url || '';
+    else body.innerHTML = this.opts.render(n.text || '');
+    const from = this.els.get(n.id)?.from;
+    const where = `${g ? `${g.label || 'Group'} · ` : ''}${ring.indexOf(n) + 1} / ${ring.length}`;
+    const head = el('div', 'desk-focus-head', el('b', null, n.type === 'text' ? '' : cardTitle(n)), el('span', 'desk-focus-where', where));
+    const foot = el('div', 'desk-focus-foot', `${ring.length > 1 ? '← → the next · ' : ''}Enter ${n.type === 'text' ? 'writes in it' : n.type === 'file' ? 'opens it beside' : ''} · Esc or Space back`);
+    const card = el('div', `desk-focus-card t-${n.type}`, head, body, from && !from.hidden ? from.cloneNode(true) : null, foot);
+    card.querySelector('.desk-from a')?.addEventListener('click', (ev) => { ev.preventDefault(); this.goFrom(n); });
+    if (!this.focusEl) {
+      this.focusEl = el('div', 'desk-focus');
+      this.focusEl.addEventListener('pointerdown', (ev) => { ev.stopPropagation(); if (ev.target === this.focusEl) this.focusOff(); });
+      this.focusEl.addEventListener('wheel', (ev) => ev.stopPropagation());
+      this.focusEl.addEventListener('dblclick', (ev) => ev.stopPropagation());
+      this.el.append(this.focusEl);
+    }
+    this.focusEl.replaceChildren(card);
+    this.el.classList.add('focusing');
+    this.el.focus({ preventScroll: true });
+    this.show(n); // behind it, the desk goes there too
+  }
+  focusOff() {
+    this.focusEl?.remove();
+    this.focusEl = null;
+    this.focused = null;
+    this.el.classList.remove('focusing');
+    this.el.focus({ preventScroll: true });
+  }
+  focusKey(e, handled) {
+    const n = this.focused;
+    const k = e.key;
+    if (e.metaKey || e.ctrlKey || e.altKey) return;
+    handled();
+    if (k === 'Escape' || k === ' ') { this.focusOff(); return; }
+    if (k === 'ArrowLeft' || k === 'ArrowRight' || k === 'ArrowUp' || k === 'ArrowDown') {
+      const ring = this.ring(n);
+      const i = ring.indexOf(n) + (k === 'ArrowLeft' || k === 'ArrowUp' ? -1 : 1);
+      if (i >= 0 && i < ring.length) this.focusOn(ring[i]);
+      return;
+    }
+    if (k === 'Enter') {
+      this.focusOff();
+      if (n.type === 'text') this.edit(n.id);
+      else if (n.type === 'file') this.opts.openNote(n.file);
+    }
   }
 
   // ---- the margin

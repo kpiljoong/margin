@@ -1971,6 +1971,43 @@ await check('the desk: a .canvas opens as cards; a card dropped on another makes
     ? null : `the desk did not pile the cards: ${JSON.stringify(v)} ${JSON.stringify(d)}`;
 });
 
+fs.writeFileSync(path.join(ws, 'standup.md'), '# standup\n\n> [!question] Who reviews the launch post?\n\n- [ ] Draft the post @ann\n- [x] Pick a date\n\nSee [[flow]].\n');
+await check('a note on a desk: its open questions and to-dos as cards that link back, the notes it links to; Space reads a card; a to-do ticked in the note says so on the desk', `
+  await openNote('standup.md');
+  const mac = navigator.platform.startsWith('Mac');
+  document.body.dispatchEvent(new KeyboardEvent('keydown', { code: 'KeyP', key: 'p', bubbles: true, cancelable: true, metaKey: mac, ctrlKey: !mac }));
+  const input = await until(() => !$('#overlay').hidden && $('#overlay input'));
+  input.value = '>Open on a desk';
+  input.dispatchEvent(new Event('input'));
+  await sleep(100);
+  input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }));
+  await until(() => $('.tab.active')?.textContent.includes('standup desk.canvas') && $$('.desk-card').length >= 6);
+  const D = $('.desk');
+  const d = D.desk;
+  const q = d.d.nodes.find((n) => n.from?.kind === 'question');
+  d.sel = new Set([q.id]);
+  D.focus();
+  D.dispatchEvent(new KeyboardEvent('keydown', { key: ' ', bubbles: true, cancelable: true }));
+  D.dispatchEvent(new KeyboardEvent('keyup', { key: ' ', bubbles: true, cancelable: true }));
+  const read = (await until(() => $('.desk-focus')))?.textContent;
+  D.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }));
+  const closed = !$('.desk-focus');
+  await until(() => $$('.desk-from:not([hidden])').length === 2);
+  return { read, closed, from: $$('.desk-from:not([hidden])').map((f) => f.textContent) };
+`, (v) => {
+  let d = null;
+  try { d = JSON.parse(fs.readFileSync(path.join(ws, 'standup desk.canvas'), 'utf8')); } catch { /* not yet */ }
+  const groups = d?.nodes.filter((n) => n.type === 'group').map((n) => n.label).join();
+  const files = d?.nodes.filter((n) => n.type === 'file').map((n) => n.file).sort().join();
+  return v?.read?.includes('Who reviews the launch post?') && v.read.includes('Open questions') && v.closed && v.from.length === 2
+    && groups === 'Open questions,To do,Linked notes' && files === 'flow.md,standup.md' && d.nodes.find((n) => n.from?.kind === 'todo')?.text === 'Draft the post @ann'
+    ? null : `got ${JSON.stringify({ v, groups, files })}`;
+});
+fs.writeFileSync(path.join(ws, 'standup.md'), '# standup\n\n> [!question] Who reviews the launch post?\n\n- [x] Draft the post @ann\n- [x] Pick a date\n\nSee [[flow]].\n');
+await check('…and when the note ticks the to-do, its card on the desk says so', `
+  return (await until(() => $$('.desk-from-state').map((s) => s.textContent).join(), 10000)) || '';
+`, (v) => (v === 'done in the note' ? null : `got ${JSON.stringify(v)}`));
+
 fs.writeFileSync(path.join(ws, 'sub', 'space 2026-10-05.md'), '# space 2026-10-05\n\n## Status (1m)\n\n> [!decision] Beta stays open.\n\n- [ ] Send the survey @ann\n\n## Launch (1m)\n\n> [!question] A press kit?\n');
 await check('meetings in space (experimental): the depth stage (the note flat, the agenda on the floor), the tunnel to the next item, a card thrown in the decision orbit is a change to propose', `
   const mac = navigator.platform.startsWith('Mac');

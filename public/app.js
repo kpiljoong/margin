@@ -3434,6 +3434,7 @@ const COMMANDS = [
   ['Toggle sidebar', toggleSidebar, { key: 'sidebar' }],
   ['New drawing (Excalidraw)…', () => newDrawing()],
   ['New desk \u2014 notes and cards laid out to think with, and the margin to sort, question and merge them (experimental)…', () => newDesk()],
+  ['Open on a desk \u2014 this note, its open questions and to-dos as cards that know where they came from, and the notes it links to (experimental)', () => noteOnDesk()],
   ['New Mermaid diagram file (.mmd)…', () => setTimeout(() => newMermaidFile(), 0)],
   ['Reload files from disk', () => loadTree().then(syncOpenTabs)],
   ...(desktop ? [
@@ -4363,6 +4364,24 @@ async function newDesk(folder) {
   } catch (e) { toast(e.message, 'error'); }
 }
 
+// A note on a desk of its own, beside it ("<note> desk.canvas"): the note,
+// its open questions and to-dos not done as cards that know where they came
+// from, and the notes it links to. Made once; after that, the same desk opens.
+async function noteOnDesk() {
+  const tab = activeTab();
+  if (tab?.kind !== 'file' || !isNote(tab.path)) { toast('Open a note first'); return; }
+  const dir = dirname(tab.path);
+  const name = `${dir ? `${dir}/` : ''}${stem(tab.path)} desk.canvas`;
+  if (S.files.some((f) => f.path === name)) { openFile(name); return; }
+  try {
+    const { noteDesk, linksOf, stringifyDesk } = await loadDesk();
+    const links = [...new Set(linksOf(tab.content).map((t) => resolveLink(t, tab.path)).filter((p) => p && p !== tab.path && isNote(p)))].slice(0, 12);
+    const r = await api('PUT', '/api/file', { path: name, content: stringifyDesk(noteDesk(tab.path, tab.content, links, today())) });
+    await loadTree();
+    openFile(r.path);
+  } catch (e) { toast(e.message, 'error'); }
+}
+
 // One request to the desk's margin; its reply as it is written.
 async function deskStream(body, onText) {
   const res = await fetch('/api/desk/ask', {
@@ -4439,7 +4458,10 @@ function deskView(tab, c) {
           return open ? open.content : (await api('GET', `/api/file?path=${encodeURIComponent(p)}`)).content.replace(/\r\n/g, '\n');
         },
         imageUrl: (p) => `/api/raw?path=${encodeURIComponent(p)}&t=${token}`,
-        openNote: (p) => openFile(p, { side: true }),
+        openNote: (p, line) => openFile(p, { side: true, line }),
+        privateOf: async (paths) => (await api('POST', '/api/private', { paths })).private || {},
+        dockMin: store.getItem('an.deskDock') === 'min',
+        onDock: (min) => store.setItem('an.deskDock', min ? 'min' : ''),
         pickNote: () => new Promise((resolve) => {
           const files = S.files.filter((f) => (f.note && !isTemplate(f.path)) || IMAGE_FILE.test(f.path));
           picker({

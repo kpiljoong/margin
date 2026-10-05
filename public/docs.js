@@ -51,6 +51,7 @@ const DOCS = {
   'Print / save note as PDF…': 'Prints the note’s preview (or saves it as PDF).',
   'Copy note for GitHub (flows as Mermaid)': 'Copies the note with its flows written as Mermaid, for GitHub and the like.',
   'New drawing (Excalidraw)…': 'A new Excalidraw drawing, saved as a file next to your notes.',
+  'Open on a desk \u2014 this note, its open questions and to-dos as cards that know where they came from, and the notes it links to (experimental)': 'A desk beside the note (its name and \u201c desk.canvas\u201d): the note in the middle, its open questions and the to-dos not done as cards \u2014 each with a link back to its line, and a word when the note has settled or ticked it since \u2014 and the notes it links to. Made once; after that, the same desk opens.',
   'New desk \u2014 notes and cards laid out to think with, and the margin to sort, question and merge them (experimental)…': 'A desk: a plane (a JSON Canvas file, as Obsidian writes them) to lay notes and cards of your own on, pile and link them, and give them to the margin to sum up, question, sort, link or merge — its cards only beside yours until you keep them (Tab).',
   'New Mermaid diagram file (.mmd)…': 'A new Mermaid diagram as a file of its own.',
   'Reload files from disk': 'Reads the workspace again (the tree and the notes open), if something was missed.',
