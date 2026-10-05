@@ -9,7 +9,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { parseDesk, stringifyDesk, stackOnto, groupAround, childrenOf, groupAt, removeCards, parseGroups, parseLinks, parseQuestions, groupLayout, nearest, cardTitle, edgePath, STEP, EMPTY_DESK, noteDesk, linksOf, fromState } from '../public/desk.js';
+import { parseDesk, stringifyDesk, stackOnto, groupAround, childrenOf, groupAt, removeCards, parseGroups, parseLinks, parseQuestions, groupLayout, nearest, cardTitle, edgePath, STEP, EMPTY_DESK, noteDesk, linksOf, fromState, toNote } from '../public/desk.js';
 
 const require = createRequire(import.meta.url);
 const { requestText } = require('../lib/desk.js');
@@ -202,4 +202,15 @@ test('a note on a desk: the note, its open questions and to-dos not done (each k
   // A note with nothing of a meeting: just itself, and what it links to.
   const plain = noteDesk('a.md', 'Just words.', [], '');
   assert.deepEqual(plain.nodes.map((n) => n.type), ['file']);
+});
+
+test('what the desk asks of a note: a to-do ticked, a question decided (in other words, or as asked), every line of it (a wrap-up repeats it); the rest as it was', () => {
+  const note = '# M\n\n> [!question] Do we need a beta?\n\n> [!question] Which day?\n\n- [ ] Draft the notes @ann\n- [ ] Book the room\n\n## Wrap-up\n\n### Open questions\n\n> [!question] Do we need a beta?\n';
+  const d = noteDesk('m.md', note, [], '2026-10-06');
+  const card = (words) => d.nodes.find((n) => n.text === words);
+  const set = (n, to) => ({ ...n, from: { ...n.from, to } });
+  const out = toNote(note, [set(card('Do we need a beta?'), { decided: 'No beta: we ship to everyone.' }), set(card('Which day?'), { decided: '' }), set(card('Draft the notes @ann'), { done: true }), card('Book the room')]);
+  assert.equal(out, '# M\n\n> [!decision] No beta: we ship to everyone.\n\n> [!decision] Which day?\n\n- [x] Draft the notes @ann\n- [ ] Book the room\n\n## Wrap-up\n\n### Open questions\n\n> [!decision] No beta: we ship to everyone.\n');
+  // Gone from the note since: nothing asked of it.
+  assert.equal(toNote('# M\n', [set(card('Which day?'), { decided: 'Friday' })]), '# M\n');
 });

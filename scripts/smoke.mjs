@@ -2007,6 +2007,46 @@ fs.writeFileSync(path.join(ws, 'standup.md'), '# standup\n\n> [!question] Who re
 await check('…and when the note ticks the to-do, its card on the desk says so', `
   return (await until(() => $$('.desk-from-state').map((s) => s.textContent).join(), 10000)) || '';
 `, (v) => (v === 'done in the note' ? null : `got ${JSON.stringify(v)}`));
+await check('…a question decided on the desk is proposed to the note in red pen; Enter in a card read large writes in the note', `
+  const D = $('.desk');
+  const d = D.desk;
+  const press = (k, o = {}) => D.dispatchEvent(new KeyboardEvent('keydown', { key: k, bubbles: true, cancelable: true, ...o }));
+  D.focus();
+  d.sel = new Set([d.d.nodes.find((n) => n.from?.kind === 'question').id]);
+  press('d');
+  const input = await until(() => $('.desk-from-input'));
+  input.value = 'Ann reviews it';
+  input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }));
+  const asks = (await until(() => $('.desk-from-asks')))?.textContent;
+  const propose = await until(() => $$('.desk-asks button').find((b) => b.textContent.includes('standup')));
+  propose.click();
+  const review = !!(await until(() => $('.tab.active')?.textContent.includes('Review'), 8000));
+  $$('.tab').find((t) => t.textContent.includes('standup desk.canvas')).click();
+  await until(() => $('.desk-from-sent'));
+  const sent = $('.desk-from-sent').textContent;
+  D.focus();
+  d.sel = new Set([d.d.nodes.find((n) => n.file === 'standup.md').id]);
+  press(' ');
+  D.dispatchEvent(new KeyboardEvent('keyup', { key: ' ', bubbles: true, cancelable: true }));
+  await until(() => $('.desk-focus'));
+  press('Enter');
+  const box = await until(() => $('.desk-focus-edit'));
+  box.value += 'Written on the desk.\\n';
+  box.dispatchEvent(new Event('input'));
+  box.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }));
+  await until(() => !$('.desk-focus-edit') && $('.desk-focus-body')?.textContent.includes('Written on the desk.'));
+  press('Escape');
+  await sleep(1500); // autosave
+  return { asks, review, sent };
+`, (v) => {
+  const runs = path.join(ws, '.agent-notes', 'runs');
+  let proposed = '';
+  try { for (const r of fs.readdirSync(runs)) { const f = path.join(runs, r, 'work', 'standup.md'); if (fs.existsSync(f)) proposed = fs.readFileSync(f, 'utf8'); } } catch { /* none */ }
+  const note = fs.readFileSync(path.join(ws, 'standup.md'), 'utf8');
+  return v?.asks === '\u2192 decided: \u201cAnn reviews it\u201d' && v.review && v.sent === 'proposed' && proposed.includes('> [!decision] Ann reviews it') && !proposed.includes('[!question]')
+    && note.includes('Written on the desk.') && note.includes('[!question] Who reviews')
+    ? null : `got ${JSON.stringify({ v, proposed, note })}`;
+});
 
 fs.writeFileSync(path.join(ws, 'sub', 'space 2026-10-05.md'), '# space 2026-10-05\n\n## Status (1m)\n\n> [!decision] Beta stays open.\n\n- [ ] Send the survey @ann\n\n## Launch (1m)\n\n> [!question] A press kit?\n');
 await check('meetings in space (experimental): the depth stage (the note flat, the agenda on the floor), the tunnel to the next item, a card thrown in the decision orbit is a change to propose', `

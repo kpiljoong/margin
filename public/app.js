@@ -4460,6 +4460,42 @@ function deskView(tab, c) {
         imageUrl: (p) => `/api/raw?path=${encodeURIComponent(p)}&t=${token}`,
         openNote: (p, line) => openFile(p, { side: true, line }),
         privateOf: async (paths) => (await api('POST', '/api/private', { paths })).private || {},
+        // A note written in from the desk (its card read large): through its
+        // tab when it is open (the editor follows, autosave saves); else read
+        // and saved as a tab is, against the version read — never over a newer one.
+        noteEdit: async (p) => {
+          const t = S.tabs.find((x) => x.kind === 'file' && x.path === p);
+          if (t) {
+            if (t.editor?.tracking) throw new Error('The note is in suggesting mode: write in it there.');
+            if (t.conflict) throw new Error('The note has a conflict to settle first (its banner).');
+            return { text: t.content, save: async (text) => {
+              t.content = text;
+              if (t.editor) { const at = t.editor.selectionStart; t.editor.loadText(text); t.editor.setSelection(Math.min(at, text.length)); }
+              onEdit(t);
+              if (isAttached(t)) renderPreview(t);
+            } };
+          }
+          const f = await api('GET', `/api/file?path=${encodeURIComponent(p)}`);
+          const disk = fromDisk(f.content);
+          let hash = f.hash;
+          return { text: disk.content, save: async (text) => {
+            try { hash = (await api('PUT', '/api/file', { path: p, content: toDisk(text, disk.eol), baseHash: hash })).hash; } catch (e) {
+              throw new Error(e.status === 409 ? 'The note changed on disk since you began: not saved over it. Open it to see both.' : `Save failed: ${e.message}`);
+            }
+          } };
+        },
+        // What the cards ask of a note, proposed: its red pen review, as the wall's are.
+        proposeNote: async (p, make) => {
+          if (!S.tabs.some((x) => x.kind === 'file' && x.path === p)) await openFile(p, { side: true, focus: false });
+          const t = S.tabs.find((x) => x.kind === 'file' && x.path === p);
+          if (!t) throw new Error('not open');
+          if (t.editor?.tracking) { toast('Stop suggesting in the note first: the desk proposes its own changes.', 'error'); throw new Error('suggesting'); }
+          await flushAutosave(t);
+          const next = make(t.content);
+          if (next === t.content) { toast('Nothing to change: the note says so already.'); return false; }
+          await proposeText(t, next, 'The desk\u2019s changes, proposed: y / A to accept, a to apply.');
+          return true;
+        },
         dockMin: store.getItem('an.deskDock') === 'min',
         onDock: (min) => store.setItem('an.deskDock', min ? 'min' : ''),
         pickNote: () => new Promise((resolve) => {

@@ -1722,6 +1722,17 @@ li.callout-hot { background: color-mix(in srgb, var(--accent) 16%, transparent);
 .desk-from a:hover { color: var(--accent); text-decoration: underline; }
 .desk-from-state { color: var(--warn); }
 .desk-card.stale .desk-body { opacity: .55; }
+.desk-from-act { margin-left: auto; padding: 0 8px; border: 1px solid var(--border); border-radius: 8px; background: none; color: var(--fg-dim); font: inherit; cursor: pointer; }
+.desk-from-act:hover { border-color: var(--accent-2); color: var(--accent-2); }
+.desk-from-asks { margin-left: auto; color: var(--accent-2); }
+.desk-from-asks + .desk-from-act { margin-left: 0; }
+.desk-from-sent { color: var(--fg-dim); font-style: italic; }
+.desk-from-input { flex: 1; min-width: 0; padding: 2px 6px; border: 1px solid var(--accent-2); border-radius: 6px; background: var(--bg); color: var(--fg); font: inherit; font-size: 12px; outline: none; }
+.desk-card.asks { border-color: color-mix(in srgb, var(--accent-2) 60%, var(--card)); }
+.desk-asks:empty { display: none; }
+.desk-asks { display: flex; flex-direction: column; gap: 6px; }
+.desk-focus-edit { display: block; width: 100%; min-height: 50vh; box-sizing: border-box; padding: 10px 12px; border: 1px solid var(--border); border-radius: 8px; background: var(--bg); color: var(--fg); font: 14px/1.6 var(--mono); resize: vertical; outline: none; }
+.desk-focus-edit:focus { border-color: var(--accent); }
 .desk.far .desk-from { visibility: hidden; }
 .desk-private { position: absolute; bottom: 8px; right: 10px; padding: 0 7px; border-radius: 8px; border: 1px solid var(--border); background: var(--bg); color: var(--fg-faint); font-size: 10px; line-height: 16px; }
 .desk.far .desk-private { display: none; }

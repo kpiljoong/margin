@@ -6,7 +6,7 @@
 // you; the depth is for what is lifted, stacked or being thought about.
 // What the margin writes stays beside the cards until it is kept (Tab).
 
-import { meetingItems } from './meeting.js';
+import { meetingItems, moveItem, bodyOf } from './meeting.js';
 
 // ---------------------------------------------------------------- the file
 
@@ -57,6 +57,7 @@ const HEAD = 60; // room for a group's label
 export const STEP = { x: 14, y: 56 };
 // Zoomed out from FAR[0] to FAR[1], cards go from their text to their titles.
 export const FAR = [0.6, 0.35];
+const NOTE = /\.(md|markdown|txt)$/i;
 export function stackOnto(d, ids, ontoId) {
   const onto = d.nodes.find((n) => n.id === ontoId);
   const moving = d.nodes.filter((n) => ids.includes(n.id) && n.id !== ontoId && n.type !== 'group');
@@ -228,6 +229,27 @@ export function linksOf(text) {
   return out;
 }
 
+// What the cards taken from a note ask of it (from.to: { done } — a to-do
+// ticked — or { decided: words } — a question decided, in those words, or
+// as it was asked with none), made on its text now → the text to propose
+// (in the red pen review; the note itself is not touched here).
+export function toNote(text, cards) {
+  const norm = (s) => s.replace(/\s+/g, ' ').trim().toLowerCase();
+  let t = text;
+  for (const c of cards) {
+    const to = c.from?.to;
+    const it = to && meetingItems(t).find((i) => i.key === c.from.key);
+    if (!it) continue;
+    if (to.done && it.kind === 'todo') t = moveItem(t, it, { done: true });
+    else if (to.decided != null && it.kind === 'question') {
+      t = moveItem(t, it, { kind: 'decision' });
+      const words = String(to.decided).trim();
+      if (words) t = t.split('\n').map((l) => { const m = /^(\s*>\s*\[!decision\][+-]?\s*)(.*)$/i.exec(l); return m && norm(bodyOf(m[2])) === norm(it.body) ? m[1] + words : l; }).join('\n');
+    }
+  }
+  return t;
+}
+
 // A card taken from a note (from), and the note now: what it is there.
 // → { state: 'open' | 'done' (a to-do ticked) | 'gone' (settled, or
 // changed), line: where it is now (or was) }
@@ -352,6 +374,7 @@ export class Desk {
   buildDock() {
     this.ctx = el('div', 'desk-ctx');
     this.actions = el('div', 'desk-actions', ...ACTIONS.map(([task, label, k, title]) => { const b = button(label, `${title} (${k}, or drop cards on it)`, () => this.act(task)); b.dataset.task = task; return b; }));
+    this.asksEl = el('div', 'desk-asks'); // shown folded too
     this.log = el('div', 'desk-log');
     this.input = el('textarea', 'desk-input');
     this.input.rows = 2;
@@ -363,7 +386,7 @@ export class Desk {
     });
     this.status = el('span', 'desk-status');
     const fold = button('–', 'Fold the panel to its buttons (or open it again)', () => this.foldDock(!dock.classList.contains('min')), 'desk-fold');
-    const dock = el('div', 'desk-dock', el('div', 'desk-dock-head', el('b', null, 'Margin'), this.status, fold), this.ctx, this.actions, this.log, this.input);
+    const dock = el('div', 'desk-dock', el('div', 'desk-dock-head', el('b', null, 'Margin'), this.status, fold), this.ctx, this.actions, this.asksEl, this.log, this.input);
     this.foldBtn = fold;
     dock.addEventListener('pointerdown', (e) => { e.stopPropagation(); this.pressed('dock'); });
     dock.addEventListener('wheel', (e) => e.stopPropagation());
@@ -481,19 +504,23 @@ export class Desk {
   // ---- the cards
   render() {
     const keep = new Set();
+    // In the file's order (groups first, under), moved only when out of it:
+    // a card moved loses the focus of what is being written in it.
+    let prev = this.labels;
+    const put = (e) => { if (prev.nextSibling !== e) prev.after(e); prev = e; };
     for (const n of this.d.nodes) {
       keep.add(n.id);
       let e = this.els.get(n.id);
       if (!e || e.kind !== n.type) { e?.remove(); e = this.card(n); this.els.set(n.id, e); }
       this.fill(e, n);
-      this.world.append(e); // in the file's order: groups first, under
+      put(e);
     }
     for (const a of this.ai) {
       keep.add(a.id);
       let e = this.els.get(a.id);
       if (!e) { e = this.aiCard(a); this.els.set(a.id, e); }
       e.show(a);
-      this.world.append(e);
+      put(e);
     }
     for (const [id, e] of this.els) if (!keep.has(id)) { e.remove(); this.els.delete(id); }
     // Which notes on it are private: shown, but never sent.
@@ -516,8 +543,15 @@ export class Desk {
     e.num = el('span', 'desk-num');
     e.from = el('div', 'desk-from');
     e.from.hidden = true;
-    e.from.addEventListener('pointerdown', (ev) => { if (ev.target.closest('a')) ev.stopPropagation(); });
-    e.from.addEventListener('click', (ev) => { const a = ev.target.closest('a'); if (a) { ev.preventDefault(); this.goFrom(this.d.nodes.find((x) => x.id === e.dataset.id)); } });
+    e.from.addEventListener('pointerdown', (ev) => { if (ev.target.closest('a, button, input')) ev.stopPropagation(); });
+    e.from.addEventListener('dblclick', (ev) => ev.stopPropagation());
+    e.from.addEventListener('click', (ev) => {
+      const n = this.d.nodes.find((x) => x.id === e.dataset.id);
+      const a = ev.target.closest('a, button');
+      if (!a || !n) return;
+      ev.preventDefault();
+      if (a.dataset.act) this.fromAct(n, a.dataset.act); else this.goFrom(n);
+    });
     e.priv = el('span', 'desk-private');
     e.priv.hidden = true;
     e.append(e.head, e.body, e.from, e.grip, e.num, e.priv);
@@ -635,15 +669,60 @@ export class Desk {
     const now = typeof text === 'string' && text ? fromState(f, text) : null;
     const was = { question: 'Question', todo: 'To do' }[f.kind] || 'From';
     const said = !now ? '' : now.state === 'done' ? 'done in the note' : now.state === 'gone' ? 'no longer open in the note' : '';
-    const key = `${was}|${f.file}|${said}|${f.at}`;
-    if (e.from.key !== key) {
+    // What it will ask of the note (to: shown, and sent with the others by
+    // the panel's Propose), or what it can: a question decided, a to-do done.
+    const to = f.to;
+    const asks = to?.done ? '\u2192 done' : to && to.decided != null ? `\u2192 decided${String(to.decided).trim() ? `: \u201c${to.decided}\u201d` : ''}` : '';
+    const key = `${was}|${f.file}|${said}|${f.at}|${asks}|${f.sent || ''}`;
+    if (e.from.key !== key && !e.from.querySelector('input')) {
       const link = el('a', null, `${f.file.split('/').pop().replace(/\.(md|markdown)$/i, '')} \u2197`);
       link.href = '#';
       link.title = `Open ${f.file} there${f.at ? ` — this card is as it was written on ${f.at}` : ''}`;
-      e.from.replaceChildren(...[el('span', null, `${was} · `), link, said && el('span', 'desk-from-state', said)].filter(Boolean));
+      const act = (label, name, title) => { const b = el('button', 'desk-from-act', label); b.dataset.act = name; b.title = title; return b; };
+      const can = said ? null
+        : asks ? [el('span', 'desk-from-asks', asks), act('\u00d7', 'undo', 'Not this (nothing is sent)')]
+          : f.kind === 'question' ? act('Decided\u2026', 'decide', 'Mark it decided (d): proposed to the note with the others, in the red pen review')
+            : f.kind === 'todo' ? act('Done', 'done', 'Mark it done (x): proposed to the note with the others, in the red pen review') : null;
+      e.from.replaceChildren(...[el('span', null, `${was} · `), link, said && el('span', 'desk-from-state', said), !said && !asks && f.sent && el('span', 'desk-from-sent', 'proposed'), can].flat().filter(Boolean));
       e.from.key = key;
     }
     e.classList.toggle('stale', !!said);
+    e.classList.toggle('asks', !!asks && !said);
+  }
+  // A card's ask of its note: set (to), or taken back.
+  fromAct(n, act) {
+    if (!n?.from) return;
+    const set = (to) => this.change({ ...this.d, nodes: this.d.nodes.map((x) => (x.id === n.id ? { ...x, from: { ...x.from, to } } : x)) });
+    if (act === 'undo') { set(undefined); return; }
+    if (act === 'done' && n.from.kind === 'todo') { set({ done: true }); return; }
+    if (act !== 'decide' || n.from.kind !== 'question') return;
+    // In what words: typed in the card (none: as it was asked).
+    const e = this.els.get(n.id);
+    const input = el('input', 'desk-from-input');
+    input.placeholder = 'Decided: in what words? (Enter; empty: as asked)';
+    e.from.replaceChildren(input);
+    input.focus();
+    let open = true; // (removing it blurs it: once)
+    const done = (save) => {
+      if (!open) return;
+      open = false;
+      input.remove();
+      e.from.key = null;
+      if (save) set({ decided: input.value.trim() }); else this.render();
+      this.el.focus({ preventScroll: true });
+    };
+    input.addEventListener('keydown', (ev) => { ev.stopPropagation(); if (ev.key === 'Enter' && !ev.isComposing) done(true); if (ev.key === 'Escape') done(false); });
+    input.addEventListener('blur', () => done(false));
+  }
+  // The asks of the cards from one note, proposed to it in one red pen review.
+  async sendToNote(file) {
+    const cards = this.d.nodes.filter((n) => n.from?.file === file && n.from.to);
+    if (!cards.length) return;
+    let ok;
+    try { ok = await this.opts.proposeNote(file, (text) => toNote(text, cards)); } catch { return; } // (said already)
+    if (ok === false) return;
+    const ids = new Set(cards.map((c) => c.id));
+    this.change({ ...this.d, nodes: this.d.nodes.map((n) => (ids.has(n.id) ? { ...n, from: { ...n.from, to: undefined, sent: true } } : n)) });
   }
   goFrom(n) {
     const f = n?.from;
@@ -849,8 +928,10 @@ export class Desk {
     e.head.replaceChildren(input);
     input.focus();
     input.select();
+    let open = true; // (removing it blurs it: once)
     const done = (save) => {
-      if (!input.isConnected) return;
+      if (!open) return;
+      open = false;
       input.remove();
       if (save && input.value.trim() !== (g.label || '')) this.change({ ...this.d, nodes: this.d.nodes.map((x) => (x.id === g.id ? { ...x, label: input.value.trim() } : x)) });
       else this.render();
@@ -897,6 +978,7 @@ export class Desk {
     const center = () => { const r = this.el.getBoundingClientRect(); return this.toWorld(r.left + (r.width - this.side()) / 2, r.top + r.height / 2); };
     if (k === 'n') { handled(); const c = center(); this.addText(c.x - 130, c.y - 70); return; }
     if (k === 'f') { handled(); this.opts.pickNote().then((p) => { if (p) { const c = center(); this.addFile(p, c.x - 200, c.y - 200); } }); return; }
+    if ((k === 'd' || k === 'x') && one?.from?.kind === (k === 'd' ? 'question' : 'todo')) { handled(); this.fromAct(one, k === 'd' ? 'decide' : 'done'); return; }
     if (k === 'g' && this.sel.size) { handled(); this.change(groupAround(this.d, [...this.sel])); return; }
     if (k === 'z') { handled(); this.fit(); return; }
     if (k === '=' || k === '+' || k === '-') { handled(); const r = this.el.getBoundingClientRect(); this.zoomAt((r.width - this.side()) / 2, r.height / 2, k === '-' ? 1 / 1.2 : 1.2, true); return; }
@@ -944,7 +1026,8 @@ export class Desk {
     const from = this.els.get(n.id)?.from;
     const where = `${g ? `${g.label || 'Group'} · ` : ''}${ring.indexOf(n) + 1} / ${ring.length}`;
     const head = el('div', 'desk-focus-head', el('b', null, n.type === 'text' ? '' : cardTitle(n)), el('span', 'desk-focus-where', where));
-    const foot = el('div', 'desk-focus-foot', `${ring.length > 1 ? '← → the next · ' : ''}Enter ${n.type === 'text' ? 'writes in it' : n.type === 'file' ? 'opens it beside' : ''} · Esc or Space back`);
+    const note = n.type === 'file' && NOTE.test(n.file);
+    const foot = el('div', 'desk-focus-foot', `${ring.length > 1 ? '← → the next · ' : ''}${n.type === 'text' || note ? 'Enter writes in it · ' : ''}${n.type === 'file' ? 'o opens it beside · ' : ''}Esc or Space back`);
     const card = el('div', `desk-focus-card t-${n.type}`, head, body, from && !from.hidden ? from.cloneNode(true) : null, foot);
     card.querySelector('.desk-from a')?.addEventListener('click', (ev) => { ev.preventDefault(); this.goFrom(n); });
     if (!this.focusEl) {
@@ -960,6 +1043,7 @@ export class Desk {
     this.show(n); // behind it, the desk goes there too
   }
   focusOff() {
+    this.focusDone?.();
     this.focusEl?.remove();
     this.focusEl = null;
     this.focused = null;
@@ -978,11 +1062,66 @@ export class Desk {
       if (i >= 0 && i < ring.length) this.focusOn(ring[i]);
       return;
     }
-    if (k === 'Enter') {
-      this.focusOff();
-      if (n.type === 'text') this.edit(n.id);
-      else if (n.type === 'file') this.opts.openNote(n.file);
-    }
+    if (k === 'Enter') { this.focusEdit(); return; }
+    if (k === 'o' && n.type === 'file') { this.focusOff(); this.opts.openNote(n.file); }
+  }
+  // Writing in the card read large: a card of your own, into the desk; a
+  // note, into the note (app.js noteEdit: through its tab when it is open,
+  // else saved as a tab is — never over a newer one on disk).
+  async focusEdit() {
+    const n = this.focused;
+    if (!n || this.focusEl?.querySelector('textarea')) return;
+    let text;
+    let save;
+    if (n.type === 'text') {
+      text = n.text || '';
+      save = async (t) => this.change({ ...this.d, nodes: this.d.nodes.map((x) => (x.id === n.id ? { ...x, text: t } : x)) });
+    } else if (n.type === 'file' && NOTE.test(n.file) && this.opts.noteEdit) {
+      try { ({ text, save } = await this.opts.noteEdit(n.file)); } catch (err) { this.opts.toast(err.message, 'error'); return; }
+    } else return;
+    if (this.focused !== n) return;
+    const ta = el('textarea', 'desk-focus-edit');
+    ta.value = text;
+    ta.spellcheck = false;
+    this.focusEl.querySelector('.desk-focus-body').replaceChildren(ta);
+    this.focusEl.querySelector('.desk-focus-foot').textContent = n.type === 'text' ? 'Esc or \u2318Enter: done' : 'Saved as you write \u00b7 Esc or \u2318Enter: done';
+    ta.focus();
+    let last = text;
+    let timer = 0;
+    let saving = Promise.resolve();
+    let failed = 0; // not saved: the words stay here until Esc twice
+    const flush = () => {
+      clearTimeout(timer);
+      if (ta.value === last) return saving;
+      const t = ta.value;
+      last = t;
+      saving = saving.then(() => save(t)).catch((err) => {
+        failed = 1;
+        this.opts.toast(err.message, 'error');
+        const foot = this.focusEl?.querySelector('.desk-focus-foot');
+        if (foot) foot.textContent = 'Not saved \u2014 copy what you wrote \u00b7 Esc again: leave it';
+      });
+      return saving;
+    };
+    // A note is saved as you write (as autosave does); a card of your own when you are done (one undo step).
+    if (n.type === 'file') ta.addEventListener('input', () => { clearTimeout(timer); timer = setTimeout(flush, 800); });
+    const done = async () => {
+      this.focusDone = null;
+      await flush();
+      if (n.type === 'file') this.refreshNote(n.file);
+    };
+    this.focusDone = done;
+    ta.addEventListener('keydown', async (ev) => {
+      ev.stopPropagation();
+      if (ev.key === 'Escape' || (ev.key === 'Enter' && (ev.metaKey || ev.ctrlKey))) {
+        ev.preventDefault();
+        await flush();
+        if (failed === 1) { failed = 2; return; }
+        await done();
+        const now = this.d.nodes.find((x) => x.id === n.id);
+        if (now && this.focused === n) this.focusOn(now);
+      }
+    });
   }
 
   // ---- the margin
@@ -1005,6 +1144,14 @@ export class Desk {
     const chosen = this.sel.size > 0;
     this.ctx.textContent = ns.length ? `${ns.length} card${ns.length === 1 ? '' : 's'} ${chosen ? 'selected' : 'in view'}` : 'No cards: double-click to write one, or drag notes here from the tree';
     if (this.withheld?.length) this.ctx.append(el('div', 'desk-withheld', `withheld (private): ${this.withheld.join(', ')}`));
+    // What the cards ask of their notes: one proposal for each note.
+    const asks = new Map();
+    for (const n of this.d.nodes) if (n.from?.to && typeof n.from.file === 'string') asks.set(n.from.file, (asks.get(n.from.file) || 0) + 1);
+    this.asksEl.replaceChildren();
+    for (const [file, count] of asks) {
+      const name = file.split('/').pop().replace(/\.(md|markdown)$/i, '');
+      this.asksEl.append(el('div', null, button(`Propose to ${name} (${count})`, `The ${count === 1 ? 'change' : `${count} changes`} the cards ask of ${file}, in its red pen review: nothing changes until you accept it there`, () => this.sendToNote(file), 'primary')));
+    }
     for (const b of this.actions.children) b.disabled = !ns.length || !!this.busy;
   }
   cardsFor(ns) { return ns.map((n) => (n.type === 'file' ? { key: n.id, file: n.file } : { key: n.id, text: n.text || '' })); }
