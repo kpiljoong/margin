@@ -7,7 +7,9 @@ import { createRequire } from 'node:module';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { wanted, ruleOf, dueOf, leadOf, parseReply, keptLine, keepEdit, keepAll, memoryOf, plainReply, asked, foldReply, quantile } from '../public/live.js';
+import { spawn } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
+import { wanted, ruleOf, dueOf, leadOf, parseReply, keptLine, keepEdit, keepAll, memoryOf, plainReply, asked, foldReply, projectMemory, snippetsFor, quantile } from '../public/live.js';
 
 const require = createRequire(import.meta.url);
 const server = require('../lib/live.js');
@@ -270,4 +272,63 @@ test('the resident session: the last meeting in its header; requests answered, n
     m.stop();
     fs.rmSync(dir, { recursive: true, force: true });
   }
+});
+
+test('the project a note names in its front matter: its other notes, as the margin is told them', () => {
+  assert.deepEqual(server.projectOf('---\nproject: "[[Launch]]"\ntags: [a, "#b"]\n---\n# x'), { project: ['launch'], tags: ['a', 'b'] });
+  assert.deepEqual(server.projectOf('\uFEFF---\nprojects:\n  - Launch\n  - Ops\ntags:\n---\n'), { project: ['launch', 'ops'], tags: [] });
+  assert.deepEqual(server.projectOf('# no front matter\nproject: x'), { project: [], tags: [] });
+  const notes = [
+    { name: 'Weekly 2026-09-21', text: '', items: [{ kind: 'decision', body: 'Launch on Oct 20' }, { kind: 'todo', body: 'Book the hall', owner: 'ann' }, { kind: 'todo', body: 'Old', done: true }] },
+    { name: 'Launch brief', text: '---\nproject: Launch\n---\n# Launch\n\nA bagel and taco tour, for 40 people.\n\nMore.', items: [] },
+    { name: 'Empty', text: '---\nproject: Launch\n---\n# Empty\n', items: [] },
+  ];
+  assert.equal(projectMemory('project launch', notes), 'Project notes (project launch), newest first:\n- Weekly 2026-09-21: Decided: Launch on Oct 20 | Open to-dos: Book the hall @ann\n- Launch brief: About: A bagel and taco tour, for 40 people.');
+  assert.equal(projectMemory('project launch', notes, 80), 'Project notes (project launch), newest first:\n- Weekly 2026-09-21: Decided: Launch on Oct 20 | Open to-dos: Book the hall @ann');
+  assert.equal(projectMemory('p', []), '');
+});
+
+test('snippetsFor: the lines most of a question\u2019s words are in, newest note first', () => {
+  const notes = [
+    { name: 'new', text: '---\nproject: x\n---\n# new\n\n- [ ] \uBCF4\uB3C4\uC790\uB8CC \uCD08\uC548 @\uBBFC\uC218\nnothing here' },
+    { name: 'old', text: '\uBCF4\uB3C4\uC790\uB8CC\uB294 \uBBFC\uC218\uAC00 \uB9E1\uB294\uB2E4\nthe hall is booked' },
+  ];
+  // "?? who is on the press kit?"
+  assert.equal(snippetsFor('?? \uBCF4\uB3C4\uC790\uB8CC\uB294 \uB204\uAC00 \uB9E1\uC558\uC9C0', notes), '- old: \uBCF4\uB3C4\uC790\uB8CC\uB294 \uBBFC\uC218\uAC00 \uB9E1\uB294\uB2E4\n- new: - [ ] \uBCF4\uB3C4\uC790\uB8CC \uCD08\uC548 @\uBBFC\uC218');
+  assert.equal(snippetsFor('?? hall booked?', notes), '- old: the hall is booked');
+  assert.equal(snippetsFor('?? ?', notes), '');
+});
+
+test('the project route: notes sharing the project, never private or ignored ones', { skip: process.platform === 'win32' }, async (t) => {
+  const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+  const ws = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'margin-proj-test-')));
+  t.after(() => fs.rmSync(ws, { recursive: true, force: true }));
+  const w = (f, s) => { fs.mkdirSync(path.dirname(path.join(ws, f)), { recursive: true }); fs.writeFileSync(path.join(ws, f), s); };
+  w('meet.md', '---\nproject: Launch\n---\n# meet\n');
+  w('a.md', '---\nproject: "[[Launch]]"\n---\n# a\n');
+  w('b.md', '---\nprojects: [launch]\nprivate: true\n---\n# b\n');
+  w('c.md', '---\nproject: Other\ntags: [launch]\n---\n# c\n');
+  w('skip/d.md', '---\nproject: launch\n---\n# d\n');
+  w('e.md', '# e\n\nproject: launch\n');
+  w('f.md', '---\nprojects:\n  - Ops\n  - Launch\n---\n# f\n');
+  w('.agentnotesignore', 'skip/\n');
+  const port = 20000 + Math.floor(Math.random() * 20000);
+  const proc = spawn(process.execPath, [path.join(ROOT, 'server.js'), ws, '--port', String(port), '--no-open', '--agent', 'claude -p'], { stdio: ['ignore', 'pipe', 'pipe'] });
+  t.after(() => proc.kill());
+  let out = '';
+  proc.stdout.on('data', (d) => { out += d; });
+  for (let i = 0; i < 100 && !/\?t=\w+/.test(out); i++) await new Promise((r) => setTimeout(r, 100));
+  const m = /http:\/\/127\.0\.0\.1:(\d+)\/\?t=(\w+)/.exec(out);
+  assert.ok(m, `the server started: ${out}`);
+  const ask = async (p) => (await fetch(`http://127.0.0.1:${m[1]}/api/live/project`, { method: 'POST', headers: { 'x-agent-notes-token': m[2], 'content-type': 'application/json' }, body: JSON.stringify({ path: p }) })).json();
+  const r = await ask('meet.md');
+  assert.equal(r.by, 'project');
+  assert.deepEqual(r.names, ['launch']);
+  assert.deepEqual(r.notes.map((n) => n.path).sort(), ['a.md', 'f.md']);
+  assert.equal(r.notes.find((n) => n.path === 'a.md').text, '---\nproject: "[[Launch]]"\n---\n# a\n');
+  // No project: by its tags.
+  const c = await ask('c.md');
+  assert.deepEqual([c.by, c.notes.map((n) => n.path)], ['project', []]);
+  assert.deepEqual((await ask('e.md')).by, null);
+  assert.match((await ask('b.md')).error, /private/);
 });

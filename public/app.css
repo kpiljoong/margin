@@ -1640,6 +1640,7 @@ li.callout-hot { background: color-mix(in srgb, var(--accent) 16%, transparent);
 .live-hud-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--pen); opacity: .5; }
 .live-hud.busy .live-hud-dot { opacity: 1; box-shadow: 0 0 8px var(--pen); }
 .live-hud-stats { color: var(--fg-faint); }
+.live-hud-ctx { color: var(--accent); } .live-hud-ctx:empty { display: none; }
 @keyframes live-wait { 50% { opacity: .35; } }
 @keyframes live-caret { 50% { opacity: 0; } }
 @media (prefers-reduced-motion: reduce) { .live-note.s-wait .live-text::after, .live-note.s-stream .live-text::after { animation: none; } }

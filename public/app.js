@@ -6126,24 +6126,50 @@ async function liveBody(tab, lines, lineNo) {
   };
 }
 
+// What the margin knows besides the meeting: the meeting before and the
+// project's other notes.
+async function liveMemory(tab, text) {
+  const prev = await livePrevious(tab, text);
+  const proj = await liveProject(tab, text);
+  return [prev.value, proj.value].filter(Boolean).join('\n\n');
+}
+
 // The meeting before ("Previous meeting: [[…]]"): what it decided and left
 // open, read once a note; nothing when it is private.
-async function liveMemory(tab, text) {
+async function livePrevious(tab, text) {
   const name = meetMod.previousOf(text);
   const path = name && resolveLink(name, tab.path);
-  if (!path) return '';
-  if (tab.liveMem?.path === path) return tab.liveMem.value;
+  if (!path) return (tab.liveMem = { path: null, value: '', text: '' });
+  if (tab.liveMem?.path === path) return tab.liveMem;
   let value = '';
+  let prev = '';
   try {
     const priv = (await api('POST', '/api/private', { paths: [path] })).private || {};
     if (!priv[path]) {
       const open = S.tabs.find((t) => t.kind === 'file' && t.path === path);
-      const prev = open ? open.content : (await api('GET', `/api/file?path=${encodeURIComponent(path)}`)).content;
+      prev = open ? open.content : (await api('GET', `/api/file?path=${encodeURIComponent(path)}`)).content;
       value = liveMod.memoryOf(stem(path), meetMod.meetingItems(prev));
     }
   } catch { /* gone: nothing to remember */ }
-  tab.liveMem = { path, value };
-  return value;
+  return (tab.liveMem = { path, value, text: prev });
+}
+
+// The project the note's front matter names ("project:", else "tags:"): its
+// other notes (not private ones, server.js), newest first — what they
+// decided and left open. Read again when the front matter changes, or after
+// a couple of minutes.
+const FRONT = /^\uFEFF?---\r?\n[\s\S]*?\r?\n---/;
+async function liveProject(tab, text) {
+  const fm = FRONT.exec(text)?.[0] || '';
+  const had = tab.liveProj;
+  if (had && had.fm === fm && (!fm || Date.now() - had.at < 120000)) return had;
+  let r = { by: null, names: [], notes: [] };
+  if (fm) try { r = await api('POST', '/api/live/project', { path: tab.path }); } catch { /* none */ }
+  const notes = r.notes.filter((n) => n.path !== tab.liveMem?.path).map((n) => ({ name: stem(n.path), text: n.text, items: meetMod.meetingItems(n.text) }));
+  const label = r.by ? `${r.by === 'project' ? 'project' : 'tags'} ${r.names.join(', ')}` : '';
+  tab.liveProj = { fm, at: Date.now(), notes, label, value: r.by ? liveMod.projectMemory(label, notes) : '' };
+  if (tab.live) { tab.live.context = notes.length ? `${label} \u00B7 ${notes.length} note${notes.length === 1 ? '' : 's'}` : ''; liveHudShow(tab); }
+  return tab.liveProj;
 }
 
 // One message to the margin; its reply as it is written: onText(all of it
@@ -6184,7 +6210,10 @@ async function liveSend(tab, q, lines) {
   try {
     const body = { ...(await liveBody(tab, lines, q.lineNo)), under: liveMod.leadOf(lines, q.lineNo) || '', line: q.text.trim() };
     // "?? …": a question to the margin, answered from the note and the last meeting.
-    if (e.kind === 'answer') Object.assign(body, { task: 'answer', note: lines.join('\n').slice(0, 16000) });
+    if (e.kind === 'answer') {
+      const notes = [...(tab.liveMem?.text ? [{ name: stem(tab.liveMem.path), text: tab.liveMem.text }] : []), ...(tab.liveProj?.notes || [])];
+      Object.assign(body, { task: 'answer', note: lines.join('\n').slice(0, 16000), found: liveMod.snippetsFor(q.text, notes) });
+    }
     const { end } = await liveStream(body, ctl.signal, (said) => {
       const r = e.kind === 'answer' ? { head: true, sentence: liveMod.plainReply(said) } : liveMod.parseReply(said);
       if (!r.head || !r.sentence) return;
@@ -6308,7 +6337,7 @@ function liveHudShow(tab) {
   if (!st || !tab.editor) return;
   st.hud ||= liveMod.liveHud();
   if (st.hud.parentNode !== tab.editor.el) tab.editor.el.append(st.hud);
-  st.hud.show({ times: st.times, cost: st.cost, last: st.last, note: st.note, busy: !!st.inflight, calls: st.calls, cancelled: st.cancelled });
+  st.hud.show({ times: st.times, cost: st.cost, last: st.last, note: st.note, context: st.context, busy: !!st.inflight, calls: st.calls, cancelled: st.cancelled });
 }
 
 function meetTyped(tab) {

@@ -129,6 +129,61 @@ export function remarkOf(said) {
 // A request's reply (an answer, a summary): its sentences, on one line.
 export const plainReply = (text) => text.replace(/^\s*\[[^\]\n]*\]\s*/, '').replace(/\s*\n+\s*/g, ' ').trim();
 
+// The project's other notes, as the margin is told them, newest first:
+// what each decided and left open; a note with none, its first words.
+// notes: [{ name, items, text }]. Up to max characters, whole notes only.
+export function projectMemory(label, notes, max = 3000) {
+  const say = (i) => `${i.body}${i.owner ? ` @${i.owner}` : ''}${i.due ? ` (due ${i.due})` : ''}`;
+  const out = [];
+  let size = 0;
+  for (const n of notes) {
+    const pick = (kind, f = () => true) => n.items.filter((i) => i.kind === kind && f(i)).map(say);
+    const parts = [['Decided', pick('decision')], ['Open to-dos', pick('todo', (i) => !i.done)], ['Open questions', pick('question')], ['Risks', pick('risk')]]
+      .filter(([, xs]) => xs.length).map(([h, xs]) => `${h}: ${xs.join('; ')}`);
+    const about = !parts.length && aboutOf(n.text);
+    if (!parts.length && !about) continue;
+    const line = `- ${n.name}: ${parts.length ? parts.join(' | ') : `About: ${about}`}`;
+    if (size + line.length > max) break;
+    out.push(line);
+    size += line.length + 1;
+  }
+  return out.length ? `Project notes (${label}), newest first:\n${out.join('\n')}` : '';
+}
+// A note's first words: its first paragraph that isn't a heading.
+function aboutOf(text) {
+  const body = (text || '').replace(/^\uFEFF?---\r?\n[\s\S]*?\r?\n---\r?\n?/, '');
+  const para = body.split(/\n\s*\n/).map((x) => x.trim()).find((x) => x && !/^(#|```|~~~|>|<!--)/.test(x) && /[\p{L}\p{N}]/u.test(x));
+  return para ? para.replace(/\s+/g, ' ').slice(0, 200) : '';
+}
+
+// Lines of the notes that may answer a question: those with most of its
+// words (a Korean word also without its last syllable, the particle).
+// notes: [{ name, text }], newest first. → "- name: line" lines, or ''.
+export function snippetsFor(question, notes, max = 8) {
+  const words = new Set();
+  for (const w of question.replace(/^\s*\?\?/, '').toLowerCase().match(/[\p{L}\p{N}]{2,}/gu) || []) {
+    words.add(w);
+    if (/[\uAC00-\uD7A3]$/.test(w) && w.length >= 3) words.add(w.slice(0, -1));
+  }
+  if (!words.size) return '';
+  const hits = [];
+  notes.forEach((n, k) => {
+    const body = (n.text || '').replace(/^\uFEFF?---\r?\n[\s\S]*?\r?\n---/, '');
+    for (const l of body.split('\n')) {
+      const t = l.trim();
+      if (t.length < 3 || /^(#|```|~~~|Previous meeting)/i.test(t)) continue;
+      const low = t.toLowerCase();
+      let score = 0;
+      for (const w of words) if (low.includes(w)) score++;
+      if (score) hits.push({ score, k, line: `- ${n.name}: ${t.slice(0, 240)}` });
+    }
+  });
+  hits.sort((a, b) => b.score - a.score || a.k - b.k);
+  const out = [];
+  for (const h of hits) { if (!out.includes(h.line)) out.push(h.line); if (out.length >= max) break; }
+  return out.join('\n');
+}
+
 // Fold's reply: the summary, then "Settled: 1, 3" — the questions (by
 // number, from 1) the meeting decided or answered. → { summary, settled: [index] }.
 export function foldReply(text, count) {
@@ -252,9 +307,12 @@ export function liveCard() {
 export function liveHud() {
   const last = el('span', 'live-hud-last');
   const stats = el('span', 'live-hud-stats');
-  const hud = el('div', 'live-hud', el('span', 'live-hud-dot'), el('b', null, 'Live margin'), last, stats);
+  const ctx = el('span', 'live-hud-ctx');
+  const hud = el('div', 'live-hud', el('span', 'live-hud-dot'), el('b', null, 'Live margin'), ctx, last, stats);
   hud.show = (s) => {
     hud.classList.toggle('busy', !!s.busy);
+    ctx.textContent = s.context ? `knows ${s.context}` : '';
+    ctx.title = s.context ? 'The other notes of this project the margin is told about (not private ones)' : '';
     last.textContent = s.last ? `first ${secs(s.last.first)} · line ${secs(s.last.line)}` : s.note || 'waiting for a line…';
     const firsts = s.times.map((x) => x.first);
     const lines = s.times.map((x) => x.line);

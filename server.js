@@ -14,7 +14,7 @@ const { loadIgnore, isPrivateNote } = require('./lib/privacy');
 const { parseAgentLog } = require('./lib/agentlog');
 const { picturesIn, pictureSize, hiddenIn } = require('./lib/pictures');
 const { lockRanges, lockedHunks, drawerText, drawerScraps, addedLines } = require('./lib/beside');
-const { liveMargin } = require('./lib/live');
+const { liveMargin, projectOf } = require('./lib/live');
 
 const APP_DIR = __dirname;
 const PUBLIC_DIR = path.join(APP_DIR, 'public');
@@ -2124,6 +2124,7 @@ async function routeApi(method, url, body) {
   if (method === 'POST' && p === '/api/live/start') { const key = liveFor(String((body || {}).path || '')); return { ...live.start(key), agent: liveAgent().label }; }
   if (method === 'POST' && p === '/api/live/warm') return { ...liveUp().warm(), agent: liveAgent().label };
   if (method === 'POST' && p === '/api/live/stop') { live?.stop(); return { ok: true }; }
+  if (method === 'POST' && p === '/api/live/project') return liveProject(String((body || {}).path || ''));
   if ((m = p.match(/^\/api\/proofs\/([\w-]+)$/)) && method === 'PUT') return saveProof(m[1], body || {});
   if (method === 'POST' && p === '/api/runs') return { ...startRun(body || {}), command: undefined };
   if ((m = p.match(/^\/api\/runs\/([\w-]+)$/)) && method === 'GET') {
@@ -2191,6 +2192,27 @@ function liveFor(rel) {
   if (fs.existsSync(abs) && isPrivateNote(abs)) throw httpError(403, 'This note is private (front matter): its lines are not sent.');
   return relOf(abs);
 }
+// The meeting's project (front matter "project:", else "tags:"): the other
+// notes that share it, newest first, for the margin to know — never a
+// private one or one .agentnotesignore names.
+function liveProject(rel) {
+  const key = liveFor(rel);
+  const mine = projectOf(cachedText(key)?.text);
+  const by = mine.project.length ? 'project' : mine.tags.length ? 'tags' : null;
+  if (!by) return { by: null, names: [], notes: [] };
+  const want = new Set(mine[by]);
+  const ignored = loadIgnore(ROOT);
+  const notes = [];
+  for (const f of workspaceFiles()) {
+    if (f === key || !NOTE_EXT.has(extOf(f)) || ignored(f)) continue;
+    const c = cachedText(f);
+    if (!c || !/^\uFEFF?---/.test(c.text) || !projectOf(c.text)[by].some((v) => want.has(v)) || isPrivateNote(path.join(ROOT, f))) continue;
+    notes.push({ path: f, mtime: c.mtimeMs, text: c.text.slice(0, 30000) });
+  }
+  notes.sort((a, b) => b.mtime - a.mtime);
+  return { by, names: mine[by], notes: notes.slice(0, 30) };
+}
+
 function liveLine(req, res, body) {
   const key = liveFor(String(body.path || ''));
   const text = (v, n) => String(v || '').slice(0, n);
@@ -2198,7 +2220,7 @@ function liveLine(req, res, body) {
   let over = false;
   const cancel = live.line({
     key, title: text(body.title, 200), item: text(body.item, 200), line: text(body.line, 2000), under: text(body.under, 300), today: text(body.today, 300),
-    memory: text(body.memory, 2000), task: ['answer', 'summary'].includes(body.task) ? body.task : null, note: body.task ? text(body.note, 16000) : '',
+    memory: text(body.memory, 6000), found: text(body.found, 3000), task: ['answer', 'summary'].includes(body.task) ? body.task : null, note: body.task ? text(body.note, 16000) : '',
     questions: Array.isArray(body.questions) ? body.questions.slice(0, 40).map((q) => text(q, 300)) : [],
     agenda: Array.isArray(body.agenda) ? body.agenda.slice(0, 30).map((a) => text(a, 120)) : [],
   }, (t) => res.write(`${JSON.stringify({ t })}\n`), (info) => { over = true; res.end(`${JSON.stringify({ end: info })}\n`); });
