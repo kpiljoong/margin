@@ -211,7 +211,7 @@ A comment may start with who said it, `@Mina …` (Tab completes a name used bef
 - **Meeting minutes** (⌥X r 9): clean minutes from the note, your corrections and comments folded in, with the decisions and the action items as tasks (`- [ ] what @owner 📅 date`), as red pen marks to accept.
 - **Apply my comments** (⌥X r 0): the agent revises the note as your comments ask, a mark for each.
 
-### Meetings: the rail, the wrap-up and the decision wall (experimental)
+### Meetings: the rail, the wrap-up, the decision wall, and in space (experimental)
 
 For a meeting run from the note: what it **decides**, leaves **open** and **hands out** is written in the note as plain Markdown any app reads —
 
@@ -244,7 +244,13 @@ With the rail on, a line started with `! ` (a decision), `[] ` (a to-do) or `? `
 
 **Decision wall** (the rail's **Wall ▦**, ⌥X p b, or M-x) shows the meeting on one screen: columns of cards — **Decided**, **Open questions**, one for **each owner**'s to-dos, and the to-dos with no owner — beside the note. Pointing at a card draws a thread to its paragraph in the note. **Drag** a card to another column — a to-do to someone else, a question to Decided, a decision back to Open, a question to someone as a to-do — or click ☐ to check a to-do off; the cards slide to their places, and **Propose to the note** sends the changes back as a red pen proposal to review (`y` `n` `A` `a`), like your own suggestions: the wall never writes the note itself. **Copy PNG** (`c`) copies the wall as a picture, drawn sharp, for a chat or a slide. Esc closes.
 
-Not built, for now: tidying a whiteboard sketch into a flow beside it, and replaying how the note grew during the meeting.
+**In space (experimental).** Three views give the meeting some depth, with CSS 3D only (no WebGL, nothing loaded): the words you read and write stay flat and face you, and with **reduce motion** on in the system settings, all three are flat — the rail and the wall as above.
+
+- **Depth stage** (M-x *Meeting: depth stage…*, ⌥X p D; it turns on the rail and meeting mode) puts the rail behind the note: its lanes are glass panels going back in depth, leaning a little as the pointer moves; a new decision, to-do or question flies back from its line into its lane; pointing at a lane brings it forward, flat, to read. The agenda's clock becomes an arc on the floor below — an item's share of the arc its minutes, filling as its time runs, red past it, with the item now and its time upright under it. The note itself never moves. Again to turn it off.
+- **Agenda tunnel**: on the stage, ⌘⌥↩ (the next agenda item) goes down a corridor of gates, one for each item, from the one you were in to the next — what the finished item decided and handed out on the walls on the way, a gate past its minutes glowing red — and back to the note in about a second and a half.
+- **Decision orbit** (the wall's **Orbit ◎** or `o`, ⌥X p o, or M-x *Meeting: decision orbit*) shows the wall's cards in space: the agenda items as sectors of a floor, the decisions high over the middle in their item's sector, the open questions going slowly round an outer ring, and a pillar for each owner with their to-dos up it (one for no owner). Drag the floor to turn it, pinch or scroll (or `+` `−`) to come nearer, `←` `→` to turn, `1`–`9` to fly to an agenda item, `0` for all of it. Pointing at a card draws a beam down to its place on the floor and shows its line as written. **Throw** a card — at a pillar (that person's to-do), the middle (decided) or the ring (open) — and it lands there: the same change as dragging it on the wall, proposed to the note with **Propose to the note**. Copy PNG (`c`) draws the orbit as the camera sees it; Esc goes back to the wall. The cards are flat and only moved and scaled, so their words stay sharp; with very many, each part shows as many as fit (a pillar 8, decisions 14, questions 18) and how many more.
+
+Not built, for now: tidying a whiteboard sketch into a flow beside it, replaying how the note grew during the meeting, the chain of meetings in depth, and the review as layers apart.
 
 ### Recipes: your own tasks as commands
 

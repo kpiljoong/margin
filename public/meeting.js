@@ -349,7 +349,8 @@ export function railPane(opts) {
 function fly(from, card) {
   const to = card.getBoundingClientRect();
   if (!to.width || !from?.rect) { card.classList.add('m-new'); return; }
-  const ghost = el('div', `m-fly m-${card.className.match(/m-(decision|todo|question)/)?.[1] || 'todo'}`, from.text);
+  const stage = !!card.closest('.m-stage');
+  const ghost = el('div', `m-fly m-${card.className.match(/m-(decision|todo|question)/)?.[1] || 'todo'}${stage ? ' m-fly-stage' : ''}`, from.text);
   ghost.style.left = `${from.rect.left}px`;
   ghost.style.top = `${from.rect.top}px`;
   ghost.style.width = `${Math.min(from.rect.width, 520)}px`;
@@ -358,8 +359,9 @@ function fly(from, card) {
   requestAnimationFrame(() => requestAnimationFrame(() => {
     ghost.style.transform = `translate(${to.left - from.rect.left}px, ${to.top - from.rect.top}px) scale(${Math.max(0.5, to.width / Math.max(1, Math.min(from.rect.width, 520)))})`;
     ghost.style.opacity = '0.2';
+    ghost.classList.add('away');
   }));
-  setTimeout(() => { ghost.remove(); card.classList.remove('m-landing'); card.classList.add('m-landed'); }, 620);
+  setTimeout(() => { ghost.remove(); card.classList.remove('m-landing'); card.classList.add('m-landed'); }, stage ? 770 : 620);
 }
 
 // "Since last time": the previous meeting's to-dos, how many are done, and
@@ -390,7 +392,8 @@ export function sinceCard(opts) {
 // ---------------------------------------------------------------- the wall
 
 // opts: { path, title, text, render(md) → html, propose(text) → Promise,
-// copyPng(blobPromise) → Promise, close() }.
+// copyPng(blobPromise) → Promise, close(), orbit(sceneOpts) → the decision
+// orbit (stage.js; none: no orbit), orbiting: open in it }.
 export function openWall(opts) {
   const original = opts.text;
   let text = original;
@@ -402,12 +405,14 @@ export function openWall(opts) {
   const count = el('span', 'wall-count');
   const propose = btn('Propose to the note', () => send(), 'primary');
   const reset = btn('Reset', () => { text = original; draw(true); });
+  const orbitBtn = opts.orbit ? btn('Orbit ◎', () => orbit(!scene)) : null;
+  const badge = el('span', 'wall-badge', 'Decision wall · experimental');
   const root = el('div', 'wall',
     el('div', 'wall-head',
-      el('div', 'wall-titles', el('span', 'wall-badge', 'Decision wall · experimental'), el('h1', 'wall-title', opts.title)),
-      count, el('span', 'grow'), reset, propose, btn('Copy PNG', () => copy()), btn('×', () => close(), 'wall-x')),
+      el('div', 'wall-titles', badge, el('h1', 'wall-title', opts.title)),
+      count, el('span', 'grow'), reset, propose, orbitBtn, btn('Copy PNG', () => copy()), btn('×', () => close(), 'wall-x')),
     el('div', 'wall-body', el('div', 'wall-note', el('div', 'wall-note-head', 'The note'), doc), cols),
-    el('div', 'wall-hint', 'Drag a card: a to-do to someone else, a question to Decided, a decision back to Open, a question to someone as a to-do · a click on ☐ checks it off · the changes come back to the note as a proposal to review · c copies the wall as a picture · Esc closes'),
+    el('div', 'wall-hint', `Drag a card: a to-do to someone else, a question to Decided, a decision back to Open, a question to someone as a to-do · a click on ☐ checks it off · the changes come back to the note as a proposal to review · c copies the wall as a picture · ${opts.orbit ? 'o: the decision orbit · ' : ''}Esc closes`),
     threads);
   root.tabIndex = 0;
 
@@ -474,6 +479,7 @@ export function openWall(opts) {
       }
     }
     drawDoc();
+    scene?.update(columns, agendaOf(text));
     const n = changes();
     count.textContent = n ? `${n} change${n === 1 ? '' : 's'} to propose` : wallSummary(columns);
     count.classList.toggle('changed', !!n);
@@ -575,6 +581,34 @@ export function openWall(opts) {
     window.addEventListener('pointerup', up);
   }
 
+  // The decision orbit: the same cards (and the same changes), in space.
+  let scene = null;
+  function orbit(on) {
+    if (on === !!scene) return;
+    if (on) {
+      scene = opts.orbit({
+        move: (it, to) => change(it, to),
+        lineOf: (it) => text.split('\n')[it.line] ?? '',
+        accepts: (it, t) => (t.kind === 'todo' ? !(it.kind === 'todo' && (it.owner ?? null) === (t.owner ?? null)) : it.kind !== t.kind),
+        colorOf: ownerColor,
+      });
+      root.querySelector('.wall-body').after(scene);
+      scene.update(wallOf(text), agendaOf(text));
+      scene.start();
+      lit = null;
+      thread();
+    } else {
+      scene.destroy();
+      scene = null;
+      draw(true);
+    }
+    root.classList.toggle('wall-orbit', !!scene);
+    orbitBtn.classList.toggle('wall-orbit-on', !!scene);
+    orbitBtn.textContent = scene ? 'Wall ▦' : 'Orbit ◎';
+    badge.textContent = scene ? 'Decision orbit · experimental' : 'Decision wall · experimental';
+    root.focus({ preventScroll: true });
+  }
+
   async function send() {
     if (text === original) return;
     propose.disabled = true;
@@ -584,10 +618,11 @@ export function openWall(opts) {
     const flash = el('div', 'wall-flash');
     root.append(flash);
     setTimeout(() => flash.remove(), 700);
-    await opts.copyPng(wallPng(opts.title, wallOf(text)));
+    await opts.copyPng(scene ? scene.png(opts.title, wallSummary(wallOf(text))) : wallPng(opts.title, wallOf(text)));
   }
   function close() {
     if (!root.isConnected) return;
+    scene?.destroy();
     ro.disconnect();
     root.remove();
     opts.close();
@@ -595,16 +630,19 @@ export function openWall(opts) {
   root.addEventListener('keydown', (e) => {
     if (e.metaKey || e.ctrlKey || e.altKey || e.isComposing) return;
     e.stopPropagation();
-    if (e.key === 'Escape' || e.key === 'q') { e.preventDefault(); close(); } else if (e.key === 'c') { e.preventDefault(); copy(); }
+    if (scene && e.key === 'Escape') { e.preventDefault(); orbit(false); } else if (e.key === 'Escape' || e.key === 'q') { e.preventDefault(); close(); } else if (e.key === 'c') { e.preventDefault(); copy(); } else if (e.key === 'o' && opts.orbit) { e.preventDefault(); orbit(!scene); } else if (scene?.key(e)) e.preventDefault();
   });
   doc.addEventListener('scroll', () => requestAnimationFrame(thread));
   cols.addEventListener('scroll', () => requestAnimationFrame(thread));
   const ro = new ResizeObserver(() => thread());
   ro.observe(root);
   root.closeWall = close;
+  root.orbit = orbit;
+  root.scene = () => scene;
   document.body.append(root);
   draw(true);
   root.focus({ preventScroll: true });
+  if (opts.orbiting && opts.orbit) orbit(true);
   return root;
 }
 

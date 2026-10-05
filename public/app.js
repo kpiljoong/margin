@@ -1736,7 +1736,8 @@ function renderContent(g = S.focus) {
   tab.previewEl = preview;
   tab.bannerEl = banner;
   let body = tab.drawerOpen && besideMod && tab.drawer ? h('div', { class: 'with-drawer' }, wrap, drawerFor(tab)) : wrap;
-  if (railOn(tab)) body = h('div', { class: 'with-rail' }, body, railFor(tab));
+  tab.gaugeEl = null;
+  if (railOn(tab)) body = stageOn(tab) ? stageFor(tab, body) : h('div', { class: 'with-rail' }, body, railFor(tab));
   else tab.railEl = null;
   c.replaceChildren(toolbar, banner, body);
   attachedByGroup[g] = tab;
@@ -3358,6 +3359,8 @@ const COMMANDS = [
   ['Meeting: next agenda item (experimental)', () => nextAgendaItem(), { key: 'meeting-next' }],
   ['Meeting: wrap up \u2014 minutes, to-dos by owner, the next meeting (experimental)\u2026', () => setTimeout(() => wrapUp(), 0)],
   ['Meeting: decision wall (experimental)', () => setTimeout(() => wallView(), 0)],
+  ['Meeting: depth stage \u2014 the rail behind the note, the agenda on the floor (experimental)', () => setTimeout(toggleStage, 0)],
+  ['Meeting: decision orbit \u2014 the wall in space (experimental)', () => setTimeout(() => wallView(fileTab(), true), 0)],
   ['Describe a key…', () => describeKey()],
   ['Describe a command…', () => setTimeout(describeCommand, 0)],
   ['Dired: edit a folder as text…', () => setTimeout(pickDiredFolder, 0)],
@@ -5853,8 +5856,42 @@ const PREVIOUS_LINE = /^\s*(?:\*\*)?Previous meeting/im;
 const railOn = (tab) => !!(S.meeting && meetRail && meetMod && tab?.kind === 'file' && isNote(tab.path));
 const noteText = (tab) => (tab.editor?.tracking ? tab.editor.trackTexts().proposed : tab.editor?.value ?? tab.content);
 
+// The depth stage (stage.js): the rail as glass panels behind the note, the
+// agenda's clock on the floor, the tunnel from one item to the next. Only
+// with the rail, in meeting mode, and not with reduced motion.
+let stageMod = null;
+const loadStage = async () => (stageMod ||= await import('./stage.js'));
+let meetStage = store.getItem('an.meetStage') === '1';
+const stageOn = (tab) => !!(meetStage && stageMod && railOn(tab) && !stageMod.reduced());
+
+async function toggleStage() {
+  await Promise.all([loadMeet(), loadStage()]);
+  meetStage = !meetStage;
+  store.setItem('an.meetStage', meetStage ? '1' : '0');
+  if (meetStage && stageMod.reduced()) toast('Reduced motion is on: the rail stays flat.');
+  if (meetStage && !meetRail) { toggleRail(); return; }
+  if (meetStage && !S.meeting) { toggleMeeting(); return; }
+  renderContent(S.focus);
+  focusEditor();
+  toast(meetStage ? 'The depth stage: the rail behind the note, the agenda on the floor' : 'Depth stage off');
+}
+function stageFor(tab, body) {
+  const rail = railFor(tab);
+  tab.gaugeEl = stageMod.stageGauge();
+  tab.gaugeKey = null;
+  const wrap = h('div', { class: 'with-rail m-stage' }, body, h('div', { class: 'm-stage-col' }, rail, tab.gaugeEl));
+  stageMod.parallax(wrap);
+  return wrap;
+}
+function gaugeUpdate(tab, agenda) {
+  if (!tab.gaugeEl?.isConnected) return;
+  const key = agenda.map((a) => `${a.title}|${a.budget}`).join('\n');
+  if (key !== tab.gaugeKey) { tab.gaugeKey = key; tab.gaugeEl.draw(agenda); }
+  tab.gaugeEl.tick(agendaCur(tab, agenda), agendaTimes(tab, agenda));
+}
+
 async function toggleRail() {
-  await loadMeet();
+  await Promise.all([loadMeet(), meetStage && loadStage()]);
   meetRail = !meetRail;
   store.setItem('an.meetRail', meetRail ? '1' : '0');
   if (meetRail && !S.meeting) { toggleMeeting(); return; }
@@ -5900,6 +5937,7 @@ function refreshRail(tab) {
   tab.railKeys = keys;
   clockStep(tab);
   tab.railEl.railUpdate(items, agenda, agendaCur(tab, agenda), agendaTimes(tab, agenda), from);
+  gaugeUpdate(tab, agenda);
 }
 
 // The agenda's clock: the item the cursor is in runs while in a meeting.
@@ -5913,7 +5951,7 @@ function clockStep(tab, redraw = false) {
   const agenda = meetMod.agendaOf(noteText(tab));
   const k = meetMod.agendaAt(agenda, tab.editor.selectionStart);
   m.cur = k >= 0 ? agenda[k].title : null;
-  if (redraw && tab.railEl?.isConnected) tab.railEl.railTick(k, agendaTimes(tab, agenda));
+  if (redraw && tab.railEl?.isConnected) { tab.railEl.railTick(k, agendaTimes(tab, agenda)); gaugeUpdate(tab, agenda); }
 }
 const agendaCur = (tab, agenda) => agenda.findIndex((a) => a.title === tab.meet?.cur);
 const agendaTimes = (tab, agenda) => agenda.map((a) => tab.meet?.spent[a.title] || 0);
@@ -5961,9 +5999,17 @@ async function nextAgendaItem() {
   const ed = tab.editor;
   const e = meetMod.nextAgendaEdit(ed.value, ed.selectionStart);
   if (!e) { toast(meetMod.agendaOf(ed.value).length ? 'That was the last item on the agenda.' : 'No agenda: headings with minutes, like “## Status (5m)”, are its items.'); return; }
+  const from = meetMod.agendaAt(meetMod.agendaOf(ed.value), ed.selectionStart);
   ed.replace(e.from, e.to, e.insert, e.caret);
   ed.focus();
   clockStep(tab, true);
+  // On the stage: down the tunnel to it.
+  const stage = stageOn(tab) && tab.railEl?.closest('.with-rail');
+  if (stage) {
+    const agenda = meetMod.agendaOf(ed.value);
+    const to = agenda.findIndex((a, k) => a.title === e.title && k > from);
+    if (to >= 0) { stageMod.agendaTunnel(stage.getBoundingClientRect(), { agenda, from, to, times: agendaTimes(tab, agenda), items: meetMod.meetingItems(ed.value) }); return; }
+  }
   toast(`Next: ${e.title}`);
 }
 
@@ -5977,9 +6023,11 @@ async function wrapUp(tab = fileTab()) {
   openTaskDialog(meetMod.wrapTask(tab.path, meetMod.nextMeetingPath(tab.path), times), { scope: 'file', recipe: 'Wrap up' });
 }
 
-async function wallView(tab = fileTab()) {
+async function wallView(tab = fileTab(), orbiting = false) {
   if (!tab || !isNote(tab.path)) { toast('The wall shows a meeting’s note: open it first.', 'error'); return; }
-  await loadMeet();
+  await Promise.all([loadMeet(), loadStage()]);
+  const space = !stageMod.reduced();
+  if (orbiting && !space) toast('Reduced motion is on: the wall, flat.');
   if (tab.editor?.tracking) { toast('Stop suggesting first: the wall proposes its own changes.', 'error'); return; }
   await flushAutosave(tab);
   meetMod.openWall({
@@ -5988,6 +6036,8 @@ async function wallView(tab = fileTab()) {
     propose: (text) => proposeText(tab, text),
     copyPng: (png) => copyPicture({ png: () => png, what: () => 'the wall' }),
     close: () => focusEditor(),
+    orbit: space ? (o) => stageMod.orbitScene(o) : null,
+    orbiting,
   });
 }
 // The note as the wall left it: a proposal of yours, to settle in the red
@@ -7829,7 +7879,7 @@ function toggleMeeting() {
   const t = fileTab();
   if (t?.editor && editorShown(t)) t.editor.focus();
   toast(S.meeting ? `Meeting mode · ${kbd('meeting') || '⌥X p m'} to leave` : 'Meeting mode off');
-  if (meetRail) loadMeet().then(() => { const r = fileTab(); if (r) clockStep(r); renderContent(S.focus); });
+  if (meetRail) Promise.all([loadMeet(), meetStage && loadStage()]).then(() => { const r = fileTab(); if (r) clockStep(r); renderContent(S.focus); });
 }
 
 // ---------------- narrowing (editor.js narrow, narrow.js): only the section
@@ -8065,6 +8115,8 @@ function defaultLeaderTree() {
       { key: 'g', label: 'Next agenda item', cmd: 'Meeting: next agenda item (experimental)', when: () => note, run: () => nextAgendaItem() },
       { key: 'w', label: 'Wrap up the meeting…', cmd: 'Meeting: wrap up \u2014 minutes, to-dos by owner, the next meeting (experimental)\u2026', when: () => note, run: () => wrapUp() },
       { key: 'b', label: 'Decision wall', cmd: 'Meeting: decision wall (experimental)', when: () => note, run: () => wallView() },
+      { key: 'D', label: meetStage ? 'Depth stage: off' : 'Depth stage (experimental)', cmd: 'Meeting: depth stage \u2014 the rail behind the note, the agenda on the floor (experimental)', when: () => note, run: () => toggleStage() },
+      { key: 'o', label: 'Decision orbit', cmd: 'Meeting: decision orbit \u2014 the wall in space (experimental)', when: () => note, run: () => wallView(tab, true) },
     ] },
     { key: 'q', label: 'macro', items: [
       { key: 'q', label: macros.recording ? 'Stop recording' : 'Start recording', cmd: 'Macro: start / stop recording', emacs: 'kmacro-start-macro', run: toggleRecording },

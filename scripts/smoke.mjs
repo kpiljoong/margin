@@ -1873,6 +1873,68 @@ await check('meetings (experimental): the rail gathers a decision (a key) and a 
   await sleep(800);
 }
 
+fs.writeFileSync(path.join(ws, 'sub', 'space 2026-10-05.md'), '# space 2026-10-05\n\n## Status (1m)\n\n> [!decision] Beta stays open.\n\n- [ ] Send the survey @ann\n\n## Launch (1m)\n\n> [!question] A press kit?\n');
+await check('meetings in space (experimental): the depth stage (the note flat, the agenda on the floor), the tunnel to the next item, a card thrown in the decision orbit is a change to propose', `
+  const mac = navigator.platform.startsWith('Mac');
+  const command = async (name) => {
+    document.body.dispatchEvent(new KeyboardEvent('keydown', { code: 'KeyP', key: 'p', bubbles: true, cancelable: true, metaKey: mac, ctrlKey: !mac }));
+    const input = await until(() => !$('#overlay').hidden && $('#overlay input'));
+    input.value = '>' + name;
+    input.dispatchEvent(new Event('input'));
+    await sleep(100);
+    input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }));
+  };
+  const reduced = matchMedia('(prefers-reduced-motion: reduce)').matches;
+  let ta = await openNote('sub/space 2026-10-05.md');
+  await command('Meeting: depth stage');
+  await until(() => $('.mrail'));
+  await sleep(400);
+  ta = $$('.editor-wrap textarea').find((t) => t.offsetParent);
+  const flat = [ta, ...$$('*')].filter((e) => e.contains(ta)).every((e) => getComputedStyle(e).transform === 'none');
+  const stage = !!$('.m-stage .m-gauge');
+  const arcs = $$('.m-gauge .g-seg').length;
+  ta.focus();
+  ta.setSelectionRange(ta.value.indexOf('Beta'), ta.value.indexOf('Beta'));
+  await command('Meeting: next agenda item');
+  const tunnel = !!(await until(() => $('.m-tunnel'), 1500));
+  await until(() => !$('.m-tunnel'), 5000);
+  await command('Meeting: decision orbit');
+  await until(() => $('.orb .orb-card'));
+  await sleep(1800);
+  const orbit = $$('.orb-card').length + ' cards, ' + $$('.orb-head').length + ' pillars';
+  const card = $$('.orb-card').find((c) => c.textContent.includes('Send the survey'));
+  const r = card.getBoundingClientRect();
+  const hub = $('.orb-hub').getBoundingClientRect();
+  card.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, button: 0, clientX: r.left + r.width / 2, clientY: r.top + 10 }));
+  window.dispatchEvent(new PointerEvent('pointermove', { clientX: r.left + r.width / 2 + 20, clientY: r.top + 20 }));
+  window.dispatchEvent(new PointerEvent('pointermove', { clientX: hub.left + hub.width / 2, clientY: hub.bottom + 10 }));
+  window.dispatchEvent(new PointerEvent('pointerup', { clientX: hub.left + hub.width / 2, clientY: hub.bottom + 10 }));
+  await sleep(800);
+  const moved = $('.wall-count').textContent;
+  const decided = $$('.orb-card.m-decision').map((c) => c.querySelector('.orb-card-text').textContent).sort().join('|');
+  $('.wall').dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }));
+  await sleep(200);
+  const wall = !$('.orb') && !!$('.wall .wall-card');
+  $('.wall').dispatchEvent(new KeyboardEvent('keydown', { key: 'q', bubbles: true, cancelable: true }));
+  await sleep(200);
+  await command('Meeting: depth stage');
+  await sleep(200);
+  await command('Meeting rail:');
+  await sleep(200);
+  document.body.dispatchEvent(new KeyboardEvent('keydown', { code: 'KeyM', key: 'M', shiftKey: true, bubbles: true, cancelable: true, metaKey: mac, ctrlKey: !mac }));
+  await sleep(200);
+  return { reduced, flat, stage, arcs, tunnel, orbit, moved, decided, wall, after: !!$('.wall') || !!$('.mrail') || !!$('.meeting') };
+`, (v) => (v?.reduced || (v?.flat && v.stage && v.arcs === 2 && v.tunnel && v.orbit === '3 cards, 1 pillars' && v.moved === '1 change to propose'
+  && v.decided === 'Beta stays open.|Send the survey' && v.wall && !v.after) ? null : `got ${JSON.stringify(v)}`));
+{
+  const t = fs.readFileSync(path.join(ws, 'sub', 'space 2026-10-05.md'), 'utf8');
+  const good = t.includes('- [ ] Send the survey @ann\n') && !t.includes('[!decision] Send the survey');
+  console.log(`${good ? '✓' : '✗'} the orbit's change was not written to the note (it is a proposal)`);
+  if (!good) { console.log(JSON.stringify({ t })); failed = true; }
+  fs.rmSync(path.join(ws, 'sub', 'space 2026-10-05.md'), { force: true });
+  await sleep(800);
+}
+
 await check('history shows the version from before the agent changes, and restores it', `
   const mac = navigator.platform.startsWith('Mac');
   await openNote('sub/messy.md');
