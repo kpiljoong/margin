@@ -6050,8 +6050,13 @@ function liveInput(tab, e) {
   // The line being answered changed: that answer is old.
   if (st.inflight && st.inflight.lineNo === cur) st.inflight.ctl.abort();
   st.queue = st.queue.filter((q) => q.lineNo !== cur);
-  // A line ended: it goes now (after the meeting's own Enter, ! [] ?).
-  if (/^insert(LineBreak|Paragraph)$/.test(e?.inputType)) {
+  // A line ended: it goes now (after the meeting's own Enter, ! [] ?) —
+  // known by a line more, as a list's Enter (the next "- " written for you)
+  // comes as plain inserted text.
+  const count = lineNoAt(ed.value, ed.value.length);
+  const more = st.lineCount != null && count > st.lineCount;
+  st.lineCount = count;
+  if (more || /^insert(LineBreak|Paragraph)$/.test(e?.inputType)) {
     setTimeout(() => {
       const lines = noteText(tab).split('\n');
       let i = lineNoAt(ed.value, ed.selectionStart) - 1;
@@ -6064,13 +6069,19 @@ function liveInput(tab, e) {
   st.timer = setTimeout(() => livePause(tab), LIVE_PAUSE);
 }
 
-// Typing stopped: the line the cursor is on goes as it is.
+// Typing stopped: the line the cursor is on goes as it is — or, on a line
+// just begun (nothing, or a list's "- "), the one above if it hasn't gone.
 function livePause(tab) {
   if (!liveActive(tab)) return;
   const ed = tab.editor;
-  const v = ed.value;
-  const i = lineNoAt(v, ed.selectionStart);
-  liveEnqueue(tab, i, v.split('\n')[i] || '', tab.live.lastInput, 'pause');
+  const lines = ed.value.split('\n');
+  let i = lineNoAt(ed.value, ed.selectionStart);
+  if (!liveMod.wanted(lines[i] || '')) {
+    i--;
+    while (i >= 0 && !lines[i].trim()) i--;
+    if (i < 0 || tab.live.entries.has(lines[i].trim())) return;
+  }
+  liveEnqueue(tab, i, lines[i] || '', tab.live.lastInput, 'pause');
 }
 
 function liveEnqueue(tab, lineNo, text, stop, why) {
@@ -6080,7 +6091,7 @@ function liveEnqueue(tab, lineNo, text, stop, why) {
   const had = st.entries.get(key);
   if ((had && had.state !== 'wait') || st.inflight?.key === key) return;
   st.queue = st.queue.filter((q) => q.lineNo !== lineNo && q.key !== key);
-  const entry = had || { key, line: text, ...liveMod.ruleOf(text), sentence: '', state: 'wait', t: {}, card: liveMod.liveCard() };
+  const entry = had || { key, line: text, ...liveMod.ruleOf(text, new Date(), liveMod.leadOf(noteText(tab).split('\n'), lineNo)), sentence: '', state: 'wait', t: {}, card: liveMod.liveCard() };
   entry.t = { stop };
   entry.why = why;
   st.entries.set(key, entry);
@@ -6122,7 +6133,7 @@ async function liveSend(tab, q, lines) {
     const res = await fetch('/api/live/line', {
       method: 'POST', signal: ctl.signal,
       headers: { 'content-type': 'application/json', 'x-agent-notes-token': token },
-      body: JSON.stringify({ path: tab.path, title, agenda: agenda.map((a) => a.title), item, line: q.text.trim(), today }),
+      body: JSON.stringify({ path: tab.path, title, agenda: agenda.map((a) => a.title), item, under: liveMod.leadOf(lines, q.lineNo) || '', line: q.text.trim(), today }),
     });
     if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || res.statusText);
     const reader = res.body.getReader();

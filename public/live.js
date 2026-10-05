@@ -27,6 +27,10 @@ const DO = /^\s*(?:\[\]|todo\b|action\b)|\b(?:will|needs? to|follow up|send|draf
 const RISK = /\b(?:risks?|risky|blockers?|blocked|concerns?|worried|might slip|may slip)\b|\uC704\uD5D8|\uB9AC\uC2A4\uD06C|\uC6B0\uB824|\uAC71\uC815|\uB9C9\uD798|\uB9C9\uD600/i;
 const IDEA = /\b(?:idea|what if|how about|maybe we|could we|proposal|propose)\b|\uC544\uC774\uB514\uC5B4|\uC5B4\uB54C|\uC5B4\uB5A8\uAE4C|\uC81C\uC548|\uD574\uBCF4\uBA74|\uD574 \uBCF4\uBA74/i;
 const LATER = /(?:^|\s)#next\b|\bnext (?:meeting|time)\b|\bpark(?:ed|ing lot)?\b|\btable (?:it|this)\b|\uB2E4\uC74C\s?\uD68C\uC758|\uB2E4\uC74C\uC5D0|\uB098\uC911\uC5D0|\uBCF4\uB958/i;
+// A list's lead-in line saying what follows is to be done ("to do before
+// the launch:", "\uADF8\uC804\uC5D0 \uC644\uB8CC\uD574\uC57C \uD560 \uAC83:").
+const LEAD_DO = /\b(?:to ?dos?|action items?|next steps|needs? to|to be done|before)\b|\uD574\uC57C|\uD560 \uAC83|\uD560 \uC77C|\uC644\uB8CC|\uC804\uC5D0|\uAE4C\uC9C0/i;
+const LIST = /^\s*(?:[-*+]|\d+[.)])\s+/;
 const DAYS = [/\bsun(?:day)?\b|\uC77C\uC694\uC77C/i, /\bmon(?:day)?\b|\uC6D4\uC694\uC77C/i, /\btue(?:s|sday)?\b|\uD654\uC694\uC77C/i, /\bwed(?:nesday)?\b|\uC218\uC694\uC77C/i,
   /\bthu(?:r|rs|rsday)?\b|\uBAA9\uC694\uC77C/i, /\bfri(?:day)?\b|\uAE08\uC694\uC77C/i, /\bsat(?:urday)?\b|\uD1A0\uC694\uC77C/i];
 
@@ -40,10 +44,17 @@ export function weekAhead(today = new Date()) {
 
 export const isoDay = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 
-// By when, if the line says: a weekday (the next one), tomorrow, 10/15 or 2026-10-15.
+// By when, if the line says: a weekday (the next one), tomorrow, 10/15,
+// 2026-10-15, or "2026\uB144 10\uC6D4 15\uC77C" / "10\uC6D4 15\uC77C".
 export function dueOf(line, today = new Date()) {
   const iso = /\b(\d{4}-\d{2}-\d{2})\b/.exec(line);
   if (iso) return iso[1];
+  const ko = /(?:(\d{4})\s*\uB144\s*)?(\d{1,2})\s*\uC6D4\s*(\d{1,2})\s*\uC77C/.exec(line);
+  if (ko) {
+    const d = new Date(ko[1] ? Number(ko[1]) : today.getFullYear(), Number(ko[2]) - 1, Number(ko[3]));
+    if (!ko[1] && d < new Date(today.getFullYear(), today.getMonth(), today.getDate())) d.setFullYear(d.getFullYear() + 1);
+    return isoDay(d);
+  }
   const md = /(?:^|\s)(\d{1,2})\/(\d{1,2})(?:\s|$)/.exec(line);
   if (md) {
     const d = new Date(today.getFullYear(), Number(md[1]) - 1, Number(md[2]));
@@ -58,9 +69,19 @@ export function dueOf(line, today = new Date()) {
   return isoDay(d);
 }
 
+// A list item's lead-in: the line with words above the list it is in
+// (not a heading), or null.
+export function leadOf(lines, i) {
+  if (!LIST.test(lines[i] || '')) return null;
+  let k = i - 1;
+  while (k >= 0 && LIST.test(lines[k])) k--;
+  const t = (lines[k] || '').trim();
+  return t && !/^#{1,6}\s/.test(t) && !/^>/.test(t) ? t : null;
+}
+
 // What a line is, at once, before any model: { kind, fixed (written as
-// one already), owner, due }.
-export function ruleOf(line, today = new Date()) {
+// one already), owner, due }. lead: its list's lead-in.
+export function ruleOf(line, today = new Date(), lead = null) {
   const c = CALL.exec(line);
   const t = !c && TASK.exec(line);
   const owner = AT.exec(line)?.[1] || WHO.exec(line)?.[1]?.toLowerCase() || null;
@@ -68,6 +89,7 @@ export function ruleOf(line, today = new Date()) {
   const later = !c && !t && /(?:^|\s)#next\b/i.test(line);
   if (c) kind = callKind(c[1]);
   else if (t) kind = 'todo';
+  else if (lead && LEAD_DO.test(lead) && /:\s*$/.test(lead)) kind = 'todo';
   else if (LATER.test(line)) kind = 'next';
   else if (RISK.test(line)) kind = 'risk';
   else if (IDEA.test(line)) kind = 'idea';
@@ -75,7 +97,7 @@ export function ruleOf(line, today = new Date()) {
   else if (DECIDE.test(line)) kind = 'decision';
   else if (DO.test(line) || owner) kind = 'todo';
   else kind = 'note';
-  return { kind, fixed: !!(c || t || later), owner: kind === 'todo' || kind === 'question' ? owner : null, due: kind === 'todo' ? dueOf(line, today) : null };
+  return { kind, fixed: !!(c || t || later), owner: kind === 'todo' || kind === 'question' ? owner : null, due: kind === 'todo' ? dueOf(line, today) || (lead ? dueOf(lead, today) : null) : null };
 }
 
 // The model's reply as it streams: "[todo @bob 2026-10-15] Draft the notes."

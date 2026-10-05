@@ -7,7 +7,7 @@ import { createRequire } from 'node:module';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { wanted, ruleOf, dueOf, parseReply, keptLine, keepEdit, quantile } from '../public/live.js';
+import { wanted, ruleOf, dueOf, leadOf, parseReply, keptLine, keepEdit, quantile } from '../public/live.js';
 
 const require = createRequire(import.meta.url);
 const server = require('../lib/live.js');
@@ -41,6 +41,20 @@ test('dueOf: the next such weekday, tomorrow, a month/day', () => {
   assert.equal(dueOf('due 1/5', MON), '2027-01-05');
   assert.equal(dueOf('2026-11-02', MON), '2026-11-02');
   assert.equal(dueOf('this month', MON), null);
+  assert.equal(dueOf('\uB9B4\uB9AC\uC988 \uC77C\uC2DC: 2026\uB144 10\uC6D4 10\uC77C', MON), '2026-10-10');
+  assert.equal(dueOf('3\uC6D4 2\uC77C\uAE4C\uC9C0', MON), '2027-03-02');
+});
+
+test('a list item: its lead-in says what the items are', () => {
+  // "Release: 2026-10-10 / Before that, to finish: / - QA? / - the tool / - Gmarket"
+  const lines = ['## Plan (10m)', '\uB9B4\uB9AC\uC988 \uC77C\uC2DC: 2026\uB144 10\uC6D4 10\uC77C', '\uADF8\uC804\uC5D0 \uC644\uB8CC \uD574\uC57C \uD560 \uAC83:', '- QA \uD544\uC694\uD55C\uC9C0 \uACB0\uC815', '- \uD234 \uBC30\uD3EC', '- \uC9C0\uB9C8\uCF13 \uC9C0\uC6D0'];
+  assert.equal(leadOf(lines, 4), lines[2]);
+  assert.equal(leadOf(lines, 2), null);
+  assert.equal(leadOf(['## Plan', '- a'], 1), null);
+  for (const i of [3, 4, 5]) assert.equal(ruleOf(lines[i], MON, leadOf(lines, i)).kind, 'todo');
+  assert.equal(ruleOf('- book the venue', MON, 'To do before Oct 30:').kind, 'todo');
+  assert.equal(ruleOf('- the venue', MON, 'We talked about:').kind, 'note');
+  assert.equal(ruleOf('- book the venue', MON, 'to do by 2026-10-30:').due, '2026-10-30');
 });
 
 test('parseReply: the head once its bracket closes, then the sentence (both sides)', () => {
@@ -139,10 +153,10 @@ test('the resident session: one meeting, another, the swap, up again after it en
     await sleep(60);
     assert.equal(m.state().ready, true);
     assert.equal((await ask('A', 'one')).ok, true);
-    assert.equal((await ask('A', 'two')).ok, true);
+    assert.equal((await new Promise((done) => m.line({ key: 'A', title: 'A', agenda: [], line: 'two', under: 'to do:', today: 'T' }, () => {}, done))).ok, true);
     let s = sent();
     assert.equal(s[0].text, "Meeting: A\nToday: T\n\nItem: (none)\nLine: one");
-    assert.equal(s[1].text, 'Item: (none)\nLine: two');
+    assert.equal(s[1].text, 'Item: (none)\nUnder: to do:\nLine: two');
     // Another meeting: told so at once, then a fresh session told its minutes.
     assert.equal((await ask('B', 'three')).ok, true);
     s = sent();

@@ -2197,7 +2197,7 @@ function liveLine(req, res, body) {
   res.writeHead(200, { ...SECURITY_HEADERS, 'Content-Type': 'application/x-ndjson; charset=utf-8' });
   let over = false;
   const cancel = live.line({
-    key, title: text(body.title, 200), item: text(body.item, 200), line: text(body.line, 2000), today: text(body.today, 300),
+    key, title: text(body.title, 200), item: text(body.item, 200), line: text(body.line, 2000), under: text(body.under, 300), today: text(body.today, 300),
     agenda: Array.isArray(body.agenda) ? body.agenda.slice(0, 30).map((a) => text(a, 120)) : [],
   }, (t) => res.write(`${JSON.stringify({ t })}\n`), (info) => { over = true; res.end(`${JSON.stringify({ end: info })}\n`); });
   res.on('close', () => { if (!over) cancel(); });
