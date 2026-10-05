@@ -475,6 +475,30 @@ export class MarkdownEditor {
     this._renderFind();
   }
 
+  // Paragraphs you locked (beside.js): a band behind their words, in a
+  // layer of its own made the first time (until the next setLocks).
+  setLocks(ranges) {
+    if (!ranges.length && !this.locks?.length) return;
+    this.locks = ranges;
+    if (!this.lockLayer) {
+      this.lockLayer = h('div', 'ed-layer ed-lock-layer');
+      this.el.insertBefore(this.lockLayer, this.findLayer);
+    }
+    const o = this._off;
+    const text = this.ta.value;
+    let html = '';
+    let pos = 0;
+    for (const [a0, b0] of [...ranges].sort((x, y) => x[0] - y[0])) {
+      const a = Math.max(pos, a0 - o);
+      const b = Math.min(text.length, b0 - o);
+      if (b <= a) continue;
+      html += `${esc(text.slice(pos, a))}<mark class="locked">${esc(text.slice(a, b))}</mark>`;
+      pos = b;
+    }
+    this.lockLayer.innerHTML = `${html}${esc(text.slice(pos))}\n `;
+    this.lockLayer.scrollTop = this.ta.scrollTop;
+  }
+
   _renderFind() {
     const { index } = this.find;
     const marks = [];
@@ -502,6 +526,7 @@ export class MarkdownEditor {
   _syncScroll() {
     this.hlLayer.scrollTop = this.ta.scrollTop;
     this.findLayer.scrollTop = this.ta.scrollTop;
+    if (this.lockLayer) this.lockLayer.scrollTop = this.ta.scrollTop;
     this.notesCol.style.transform = `translateY(${-this.ta.scrollTop}px)`;
     if (!this.curLine.hidden) this.curLine.style.transform = `translateY(${-this.ta.scrollTop}px)`;
     this.onScroll();

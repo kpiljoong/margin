@@ -1735,7 +1735,7 @@ function renderContent(g = S.focus) {
   const banner = h('div', { class: 'banner-slot' });
   tab.previewEl = preview;
   tab.bannerEl = banner;
-  c.replaceChildren(toolbar, banner, wrap);
+  c.replaceChildren(toolbar, banner, tab.drawerOpen && besideMod && tab.drawer ? h('div', { class: 'with-drawer' }, wrap, drawerFor(tab)) : wrap);
   attachedByGroup[g] = tab;
   renderPreview(tab);
   // Finding in the preview: only while it is shown in this pane.
@@ -1771,6 +1771,10 @@ function editorFor(tab) {
   ed.ta.addEventListener('mousemove', (e) => editorLinkHover(e, ed, tab));
   ed.ta.addEventListener('click', (e) => editorLinkClick(e, ed, tab));
   ed.ta.addEventListener('mouseleave', () => { if (linkPop.el || linkPop.timer) leaveLinkPreview(); });
+  // Words dragged out of the note say where they came from (the drawer).
+  ed.ta.addEventListener('dragstart', (e) => {
+    e.dataTransfer?.setData('text/x-margin-from', JSON.stringify({ path: tab.path, line: ed.value.slice(0, ed.selectionStart).split('\n').length - 1 }));
+  });
   return ed;
 }
 
@@ -3331,6 +3335,10 @@ const COMMANDS = [
   ['Lens: decisions and open questions (experimental)…', () => setTimeout(() => lensRun('decisions'), 0)],
   ['Forks: this paragraph, other ways (experimental)…', () => setTimeout(forkRun, 0)],
   ['Gather: pieces of notes into one (experimental)', () => setTimeout(gatherView, 0)],
+  ['Lock this paragraph (experimental)', () => setTimeout(toggleLock, 0)],
+  ['Origin: where this note\u2019s paragraphs came from (experimental)', () => setTimeout(originView, 0)],
+  ['Drawer: this note\u2019s scraps (experimental)', () => setTimeout(() => toggleDrawer(), 0)],
+  ['Drawer: set the selection aside (experimental)', () => setTimeout(setAside, 0)],
   ['Describe a key…', () => describeKey()],
   ['Describe a command…', () => setTimeout(describeCommand, 0)],
   ['Dired: edit a folder as text…', () => setTimeout(pickDiredFolder, 0)],
@@ -5802,7 +5810,7 @@ async function gatherView() {
       const name = await askText({ title: 'Make a note of the pieces', label: 'Path relative to the workspace. “.md” is added if missing. The notes they come from stay as they are.', value: `${base ? `${base}/` : ''}Gathered`, okLabel: 'Create' });
       if (!name?.trim() || name.endsWith('/')) return false;
       try {
-        const f = await api('POST', '/api/file', { path: name.trim(), content: textFor(basename(name.trim()).replace(/\.md$/i, '')) });
+        const f = await api('POST', '/api/file', { path: name.trim(), content: textFor(basename(name.trim()).replace(/\.md$/i, '')), gathered: gatherPile.map((p) => ({ from: p.path, line: p.line, text: p.text })) });
         await loadTree();
         await openFile(f.path);
         toast(`Made ${f.path} of the pieces.`);
@@ -5812,6 +5820,123 @@ async function gatherView() {
     copy: (text) => navigator.clipboard.writeText(text).then(() => toast('The pieces copied as Markdown')),
     close: () => focusEditor(),
   });
+}
+
+// ---- Beside a note (experimental, beside.js): the paragraphs you locked,
+// the note's drawer of scraps, and where its paragraphs came from. Kept
+// beside the note (server.js), never in it.
+let besideMod = null;
+const loadBeside = async () => (besideMod ||= await import('./beside.js'));
+
+async function locksOf(tab) {
+  if (!tab.locks) {
+    tab.locks = [];
+    try { tab.locks = (await api('GET', `/api/locks?path=${encodeURIComponent(tab.path)}`)).locks; } catch { /* none */ }
+  }
+  return tab.locks;
+}
+// The locked paragraphs, banded in the editor (only notes that have some).
+async function drawLocks(tab) {
+  if (!isNote(tab.path) || tab.kind !== 'file') return;
+  const locks = await locksOf(tab);
+  if (!locks.length && !tab.editor.locks?.length) return;
+  await loadBeside();
+  tab.editor.setLocks(besideMod.lockSpans(tab.editor.value, locks));
+}
+async function saveLocksOf(tab, locks) {
+  tab.locks = (await api('PUT', '/api/locks', { path: tab.path, locks })).locks;
+  drawLocks(tab);
+}
+async function toggleLock() {
+  const tab = fileTab();
+  if (!tab || !isNote(tab.path)) { toast('Locking is for a paragraph of a note: open one first.', 'error'); return; }
+  await loadBeside();
+  const locks = await locksOf(tab);
+  const ed = tab.editor;
+  const { quote, on } = besideMod.lockAt(ed.value, ed.selectionStart, ed.selectionEnd, locks);
+  if (!quote) { toast('Put the cursor in a paragraph (or select one) to lock it.', 'error'); return; }
+  try { await saveLocksOf(tab, on ? locks.filter((q) => q !== quote) : [...locks, quote]); } catch (e) { toast(e.message, 'error'); return; }
+  toast(on ? 'Unlocked: the agent\u2019s changes to it can be applied again.' : 'Locked: an agent\u2019s change to this paragraph won\u2019t be applied.');
+}
+
+// A note opened with these words selected (where something came from).
+async function openAt(path, text) {
+  if (!S.files.some((f) => f.path === path)) { toast(`${path} isn\u2019t there any more.`, 'error'); return; }
+  await openFile(path);
+  const t = S.tabs.find((x) => x.kind === 'file' && x.path === path);
+  const i = t?.editor ? t.editor.value.indexOf(text) : -1;
+  if (i >= 0) t.editor.selectRange(i, i + text.length);
+  else toast('Those words aren\u2019t in that note as they were any more.');
+}
+
+async function originView() {
+  const tab = fileTab();
+  if (!tab || !isNote(tab.path)) { toast('Origin shows where a note\u2019s paragraphs came from: open a note first.', 'error'); return; }
+  await loadBeside();
+  let origin;
+  try { origin = await api('GET', `/api/origin?path=${encodeURIComponent(tab.path)}`); } catch (e) { toast(e.message, 'error'); return; }
+  tab.locks = origin.locks;
+  let view = null;
+  const leave = () => view?.closeOrigin();
+  view = besideMod.openOrigin({
+    path: tab.path, text: tab.content, origin,
+    render: (text) => renderMarkdown(text, { image: (url) => localImage(url, tab.path) }),
+    openRun: (id) => { leave(); openReview(id); },
+    openAt: (path, text) => { leave(); openAt(path, text); },
+    lock: (q) => saveLocksOf(tab, [...tab.locks, q]).catch((e) => toast(e.message, 'error')),
+    unlock: (q) => saveLocksOf(tab, tab.locks.filter((x) => x !== q)).catch((e) => toast(e.message, 'error')),
+    close: () => focusEditor(),
+  });
+}
+
+async function toggleDrawer(open) {
+  const tab = fileTab();
+  if (!tab || !isNote(tab.path)) { toast('A drawer is a note\u2019s: open a note first.', 'error'); return; }
+  await loadBeside();
+  if (!tab.drawer) {
+    try { tab.drawer = (await api('GET', `/api/drawer?path=${encodeURIComponent(tab.path)}`)).scraps; } catch (e) { toast(e.message, 'error'); return; }
+  }
+  tab.drawerOpen = open ?? !tab.drawerOpen;
+  renderContent(tab.group);
+  focusEditor();
+}
+async function setAside() {
+  const tab = fileTab();
+  const ed = tab?.editor;
+  if (!ed || ed.selectionStart === ed.selectionEnd) { toast('Select the words to set aside first.', 'error'); return; }
+  const text = ed.value.slice(ed.selectionStart, ed.selectionEnd);
+  const line = ed.value.slice(0, ed.selectionStart).split('\n').length - 1;
+  await toggleDrawer(true);
+  if (!tab.drawer) return;
+  tab.drawer.push({ text, from: tab.path, line, at: new Date().toISOString().slice(0, 16) });
+  keepDrawer(tab);
+  tab.drawerEl?.drawerRedraw(tab.drawer.length - 1);
+  toast('Set aside in the drawer.');
+}
+function keepDrawer(tab) {
+  api('PUT', '/api/drawer', { path: tab.path, scraps: tab.drawer }).catch((e) => toast(`Drawer not kept: ${e.message}`, 'error'));
+}
+function drawerFor(tab) {
+  tab.drawerEl = besideMod.drawerPane({
+    path: tab.path, scraps: tab.drawer,
+    render: (text) => renderMarkdown(text, { image: (url) => localImage(url, tab.path) }),
+    save: () => keepDrawer(tab),
+    insert: (text) => {
+      const ed = tab.editor;
+      const p = besideMod.placeScrap(ed.value, ed.selectionEnd, text);
+      ed.replace(p.from, p.to, p.insert, p.at, p.at + text.trim().length);
+      ed.focus();
+    },
+    openAt,
+    selection: () => {
+      const ed = tab.editor;
+      if (ed.selectionStart === ed.selectionEnd) return null;
+      return { text: ed.value.slice(ed.selectionStart, ed.selectionEnd), from: tab.path, line: ed.value.slice(0, ed.selectionStart).split('\n').length - 1 };
+    },
+    tabPath: (id) => (id ? tabById(id)?.path : null),
+    close: () => toggleDrawer(false),
+  });
+  return tab.drawerEl;
 }
 
 // ---- Lens (experimental, lens.js): what the agent sees in a note, on it.
@@ -7277,6 +7402,7 @@ function anchorOf(text, c) {
 
 const drawNotesSoon = debounce((tab) => drawNotes(tab), 120);
 function drawNotes(tab) {
+  if (tab?.editor) drawLocks(tab);
   if (tab?.comments) canvasComments(tab);
   const ed = tab?.editor;
   if (!ed || tab.draft) return;

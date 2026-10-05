@@ -13,6 +13,7 @@ const { buildHunks, applyHunks, mergeHunks } = require('./lib/diff');
 const { loadIgnore, isPrivateNote } = require('./lib/privacy');
 const { parseAgentLog } = require('./lib/agentlog');
 const { picturesIn, pictureSize, hiddenIn } = require('./lib/pictures');
+const { lockRanges, lockedHunks, drawerText, drawerScraps, addedLines } = require('./lib/beside');
 
 const APP_DIR = __dirname;
 const PUBLIC_DIR = path.join(APP_DIR, 'public');
@@ -268,13 +269,14 @@ function saveFile({ path: relPath, content, baseHash, force, reason }) {
 }
 
 // content: the new note's text (from a template); a title heading otherwise.
-function createFile({ path: relPath, content }) {
+function createFile({ path: relPath, content, gathered }) {
   if (!NOTE_EXT.has(extOf(relPath || ''))) relPath = `${relPath}.md`;
   const abs = workspacePath(relPath);
   if (fs.existsSync(abs)) throw httpError(409, 'A file with that name already exists');
   const title = path.basename(relPath).replace(/\.[^.]+$/, '');
   writeFileAtomic(abs, typeof content === 'string' ? content : `# ${title}\n\n`);
   treeCache = null; // in the tree at once, not when the watcher tells
+  keepGathered(relOf(abs), gathered);
   return getFile(relOf(abs));
 }
 
@@ -721,6 +723,139 @@ function commentsForAgent(rel) {
   return `The user's own margin comments on ${rel} (kept beside the note, not in its text):\n${open.slice(0, 200).map(line).join('\n')}`;
 }
 
+// ---------------------------------------------------------------- beside a note (experimental)
+
+// Kept beside a note, never in it (lib/beside.js): the paragraphs you
+// locked (DATA_DIR/locks/<note>.json, each a paragraph as written — an
+// agent's change to one is never applied), its drawer of scraps set aside
+// for it (DATA_DIR/drawer/<note>.md, Markdown), and for a note made with
+// Gather, the pieces it was made of (DATA_DIR/gathered/<note>.json).
+const LOCKS_DIR = path.join(DATA_DIR, 'locks');
+const DRAWER_DIR = path.join(DATA_DIR, 'drawer');
+const GATHERED_DIR = path.join(DATA_DIR, 'gathered');
+const locksOf = (rel) => `${resolveInside(LOCKS_DIR, rel)}.json`;
+const drawerOf = (rel) => `${resolveInside(DRAWER_DIR, rel)}.md`;
+const gatheredOf = (rel) => `${resolveInside(GATHERED_DIR, rel)}.json`;
+const readJson = (file, fallback) => { try { return JSON.parse(fs.readFileSync(file, 'utf8')); } catch { return fallback; } };
+const cleanStr = (v, max) => (typeof v === 'string' ? v.slice(0, max) : '');
+
+function noteLocks(rel) {
+  const list = readJson(locksOf(rel), []);
+  return Array.isArray(list) ? list.filter((q) => typeof q === 'string' && q.trim()) : [];
+}
+function saveLocks({ path: relPath, locks }) {
+  const rel = relOf(workspacePath(relPath));
+  if (!Array.isArray(locks) || locks.length > 500) throw httpError(400, 'locks should be a list');
+  const clean = [...new Set(locks.map((q) => cleanStr(q, 20000)).filter((q) => q.trim()))];
+  const file = locksOf(rel);
+  if (!clean.length) fs.rmSync(file, { force: true });
+  else { ensureDataDir(); fs.mkdirSync(path.dirname(file), { recursive: true }); writeFileAtomic(file, JSON.stringify(clean, null, 2)); }
+  return { path: rel, locks: clean };
+}
+
+function noteDrawer(rel) {
+  try { return drawerScraps(fs.readFileSync(drawerOf(rel), 'utf8')); } catch { return []; }
+}
+function saveDrawer({ path: relPath, scraps }) {
+  const rel = relOf(workspacePath(relPath));
+  if (!Array.isArray(scraps) || scraps.length > 500) throw httpError(400, 'scraps should be a list');
+  const clean = scraps.map((s) => ({
+    text: cleanStr(s?.text, 50000).replace(/<!-- scrap/g, '<!--  scrap').trim(),
+    from: cleanStr(s?.from, 1000).replace(/["\n]/g, '') || undefined,
+    line: Number.isInteger(s?.line) && s.line >= 0 ? s.line : undefined,
+    at: cleanStr(s?.at, 40).replace(/["\n]/g, '') || undefined,
+  })).filter((s) => s.text);
+  const file = drawerOf(rel);
+  if (!clean.length) fs.rmSync(file, { force: true });
+  else { ensureDataDir(); fs.mkdirSync(path.dirname(file), { recursive: true }); writeFileAtomic(file, drawerText(clean)); }
+  return { path: rel, scraps: noteDrawer(rel) };
+}
+
+function keepGathered(rel, pieces) {
+  if (!Array.isArray(pieces) || !pieces.length) return;
+  const clean = pieces.slice(0, 500).map((p) => ({ from: cleanStr(p?.from, 1000), line: Number.isInteger(p?.line) ? p.line : undefined, text: cleanStr(p?.text, 50000) })).filter((p) => p.from && p.text.trim());
+  if (!clean.length) return;
+  ensureDataDir();
+  const file = gatheredOf(rel);
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  writeFileAtomic(file, JSON.stringify({ at: new Date().toISOString(), pieces: clean }, null, 2));
+}
+
+// Where a note's paragraphs came from: the lines each applied run put in it
+// (and what it was asked), the pieces it was gathered from, the drawer's
+// scraps from other notes, and the notes its own paragraphs were gathered
+// into. The app finds them on the note as it is now.
+function originOf(relPath) {
+  const rel = relOf(workspacePath(relPath));
+  let ids = [];
+  try { ids = fs.readdirSync(RUNS_DIR).filter((n) => /^[\w-]+$/.test(n)).sort(); } catch { /* none yet */ }
+  const runs = [];
+  for (const id of ids) {
+    let meta;
+    try { meta = readMeta(id); } catch { continue; }
+    const f = meta.status === 'applied' && meta.kind !== 'proof' ? meta.applied?.files?.find((x) => x.path === rel) : null;
+    if (!f || f.status === 'deleted') continue;
+    let lines = [];
+    try {
+      const work = fs.readFileSync(path.join(runDir(id), 'work', rel), 'utf8');
+      if (f.status === 'added') lines = work.split('\n').filter((l) => l.trim());
+      else lines = addedLines(buildHunks(fs.readFileSync(path.join(runDir(id), 'base', rel), 'utf8'), work), f.hunks || []);
+    } catch { continue; }
+    if (lines.length) runs.push({ id, task: meta.originalTask || meta.task, last: meta.task, round: meta.round || 1, recipe: meta.recipe || '', agent: meta.agent, at: meta.applied.at, lines });
+  }
+  const made = readJson(gatheredOf(rel), null);
+  const usedIn = [];
+  for (const file of fs.existsSync(GATHERED_DIR) ? walk(GATHERED_DIR) : []) {
+    if (!file.endsWith('.json')) continue;
+    const into = file.slice(0, -5);
+    if (into === rel || !fs.existsSync(path.join(ROOT, into))) continue;
+    const rec = readJson(path.join(GATHERED_DIR, file), null);
+    for (const p of rec?.pieces || []) if (p.from === rel) usedIn.push({ into, text: p.text, at: rec.at });
+  }
+  return {
+    path: rel, runs, usedIn, locks: noteLocks(rel),
+    gathered: (made?.pieces || []).map((p) => ({ ...p, at: made.at })),
+    drawer: noteDrawer(rel).filter((s) => s.from && s.from !== rel),
+  };
+}
+
+// What an agent is told of them: the locked paragraphs of the notes it
+// sees, and the drawer of the note in view (its scraps from notes it may
+// not see left out).
+function besideForAgent(files, focus) {
+  const out = [];
+  const locked = [];
+  for (const f of files.slice(0, 2000)) {
+    const locks = noteLocks(f);
+    if (!locks.length) continue;
+    let text = '';
+    try { text = fs.readFileSync(path.join(ROOT, f), 'utf8'); } catch { continue; }
+    for (const q of locks) if (text.includes(q)) locked.push(`In ${f}:\n<<<\n${q}\n>>>`);
+  }
+  if (locked.length) out.push(`The user locked these paragraphs. Leave each exactly as it is — Margin will not apply a change to them:\n${locked.slice(0, 100).join('\n')}`);
+  if (focus) {
+    const ignored = loadIgnore(ROOT);
+    const scraps = noteDrawer(focus).filter((s) => !s.from || (!ignored(s.from) && !isPrivateNote(path.join(ROOT, s.from))));
+    if (scraps.length) {
+      out.push(`The user's drawer for ${focus}: material they set aside for this note, not in it. Use it where the task calls for it; it is not a file to edit.\n${scraps.slice(0, 100).map((s) => `<<<${s.from ? ` (from ${s.from})` : ''}\n${s.text.slice(0, 8000)}\n>>>`).join('\n')}`);
+    }
+  }
+  return out.join('\n\n');
+}
+
+// A note moved: what is beside it goes with it.
+function moveBeside(fromRel, toRel) {
+  for (const of of [locksOf, drawerOf, gatheredOf]) {
+    try {
+      const from = of(fromRel);
+      if (!fs.existsSync(from)) continue;
+      const to = of(toRel);
+      fs.mkdirSync(path.dirname(to), { recursive: true });
+      if (!fs.existsSync(to)) fs.renameSync(from, to);
+    } catch { /* keep it where it was */ }
+  }
+}
+
 // ---------------------------------------------------------------- your suggestions
 
 // Your suggestions on a note (suggesting, as tracked changes): a run like an
@@ -914,7 +1049,7 @@ function renamePath({ from, to }) {
   ours(fromRel, toRel, ...moved.keys(), ...moved.values());
   fs.renameSync(src, dst);
   treeCache = null;
-  for (const [a, b] of moved) { moveHistory(a, b); moveComments(a, b); }
+  for (const [a, b] of moved) { moveHistory(a, b); moveComments(a, b); moveBeside(a, b); }
 
   const updated = [];
   for (const f of all) {
@@ -1394,6 +1529,8 @@ function startRun({ task, scope, focus, selection, agentId, model, recipe, maske
   const mine = focusShared ? commentsForAgent(focusShared) : '';
   if (mine) prompt += `\n\n${mine}`;
   if (sel) prompt += `\n\nThe user selected this passage in ${focusShared}; focus the task on it:\n<<<\n${sel}\n>>>`;
+  const beside = scope === 'commands' ? '' : besideForAgent(included, focusShared);
+  if (beside) prompt += `\n\n${beside}`;
   return launchAgent(meta, prompt);
 }
 
@@ -1430,7 +1567,7 @@ function followUpRun(prevId, { task }) {
     '',
     `This is round ${round}. Your earlier edits are already in this directory and are still pending human review.`,
     `The reviewer's follow-up: ${task}`,
-  ].join('\n');
+  ].join('\n') + (meta.commands ? '' : (() => { const b = besideForAgent(meta.files || [], meta.focus); return b ? `\n\n${b}` : ''; })());
   const started = launchAgent(meta, prompt);
   prev.status = 'superseded';
   prev.child = id;
@@ -1720,6 +1857,8 @@ function runReport(id) {
 // flag files that changed in the real workspace meanwhile ("stale").
 function computeChanges(id) {
   const dir = runDir(id);
+  let mine = false;
+  try { mine = readMeta(id).kind === 'proof'; } catch { /* no meta */ }
   const baseDir = path.join(dir, 'base');
   const workDir = path.join(dir, 'work');
   const paths = new Set([...walk(baseDir), ...walk(workDir)]);
@@ -1751,6 +1890,16 @@ function computeChanges(id) {
       change.conflicts = mergeHunks(b.toString('utf8'), current.toString('utf8'), change.hunks).conflicts;
       change.mergeable = change.conflicts.length < change.hunks.length;
     }
+    // An agent's changes to a paragraph you locked can't be applied.
+    const locks = !mine && change.hunks ? noteLocks(rel) : [];
+    if (locks.length) {
+      const locked = lockedHunks(change.hunks, lockRanges(b.toString('utf8'), locks));
+      if (locked.length) {
+        change.locked = locked;
+        change.conflicts = [...new Set([...(change.conflicts || []), ...locked])].sort((x, y) => x - y);
+        change.problems = Object.fromEntries(locked.map((i) => [i, 'in a paragraph you locked']));
+      }
+    }
     changes.push(change);
   }
   return changes;
@@ -1773,7 +1922,9 @@ function applyRun(id, decisions) {
     const target = workspacePath(c.path);
     if (c.status === 'modified' && !c.binary) {
       const sel = new Set((d.hunks || []).filter((n) => Number.isInteger(n) && n >= 0 && n < c.hunks.length));
-      if (!sel.size) continue;
+      // Never a change to a paragraph you locked, whatever was asked.
+      for (const n of c.locked || []) sel.delete(n);
+      if (!sel.size) { if (d.hunks?.length) skipped.push({ path: c.path, reason: 'only changes to paragraphs you locked' }); continue; }
       const base = fs.readFileSync(path.join(dir, 'base', c.path), 'utf8');
       const before = fs.readFileSync(target);
       let out = applyHunks(base, c.hunks, sel);
@@ -1797,6 +1948,7 @@ function applyRun(id, decisions) {
       writeFileAtomic(target, data);
       applied.push({ path: c.path, status: c.status, hash: hashOf(data) });
     } else if (d.file && c.status === 'deleted') {
+      if (noteLocks(c.path).length) { skipped.push({ path: c.path, reason: 'it has paragraphs you locked' }); continue; }
       // Never hard-delete: move into the run's trash so it can be restored.
       const trash = path.join(DATA_DIR, 'trash', id, c.path);
       fs.mkdirSync(path.dirname(trash), { recursive: true });
@@ -1960,6 +2112,11 @@ async function routeApi(method, url, body) {
     const list = await Promise.all(AGENTS.map(async (a) => ({ id: a.id, ...(await agentStatus(a, fresh)) })));
     return { agents: list };
   }
+  if (method === 'GET' && p === '/api/locks') return { path: relOf(workspacePath(q('path'))), locks: noteLocks(relOf(workspacePath(q('path')))) };
+  if (method === 'PUT' && p === '/api/locks') return saveLocks(body || {});
+  if (method === 'GET' && p === '/api/drawer') return { path: relOf(workspacePath(q('path'))), scraps: noteDrawer(relOf(workspacePath(q('path')))) };
+  if (method === 'PUT' && p === '/api/drawer') return saveDrawer(body || {});
+  if (method === 'GET' && p === '/api/origin') return originOf(q('path'));
   if (method === 'GET' && p === '/api/comments') return getComments(q('path'));
   if (method === 'PUT' && p === '/api/comments') return saveComments(body || {});
   if (method === 'POST' && p === '/api/proofs') return openProof(body || {});

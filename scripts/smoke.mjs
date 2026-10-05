@@ -69,6 +69,7 @@ for (let i = 0; i < 12; i++) fs.writeFileSync(path.join(ws, 'hits', `h${i}.md`),
 const filler = (p) => Array.from({ length: 10 }, (_, i) => `${p} ${i}`);
 fs.writeFileSync(path.join(ws, 'sub', 'proof.md'), '# Proof\n\nThis is a very good plan for the the team.\n\nWe ship on Friday.\n');
 fs.writeFileSync(path.join(ws, 'sub', 'lens.md'), '# Lens\n\nWe ship on Friday.\n\nEveryone obviously wants a very dark theme.\n\nThe launch is on Monday.\n');
+fs.writeFileSync(path.join(ws, 'sub', 'locked.md'), '# Locked\n\nThe team is very ready.\n\nWe want a very dark theme.\n');
 fs.writeFileSync(path.join(ws, 'sub', 'fork.md'), '# Fork\n\nWe ship on Friday. The team is ready.\n\nThe end.\n');
 fs.writeFileSync(path.join(ws, 'sub', 'drawn.md'), '# Drawn\n\n```flow\nOrder -> Pay -> Ship\n```\n\n![Screen](../assets/screen.svg)\n\n```ink\nbox blue: 10,10 50x40\n```\n');
 fs.writeFileSync(path.join(ws, 'sub', 'meet.md'), '# Meet\n\nWe ship on Monday.\nDocs by Friday.\n');
@@ -1724,6 +1725,64 @@ await check('gather (experimental): blocks of two notes pulled down into the tra
   const good = kept && made === '# gathered\n\nThe end.\n\nWe ship on Friday.\n\n---\nGathered from [[fork]], [[lens]].\n';
   console.log(`${good ? '✓' : '✗'} the gathered note is the pieces in the tray's order, the notes as they were`);
   if (!good) { console.log(JSON.stringify(made)); failed = true; }
+}
+
+await check('beside a note (experimental): a paragraph locked, a scrap set aside in the drawer; the red pen’s change to the locked one can’t be applied, the other is; origin shows where each came from', `
+  const mac = navigator.platform.startsWith('Mac');
+  const command = async (name) => {
+    document.body.dispatchEvent(new KeyboardEvent('keydown', { code: 'KeyP', key: 'p', bubbles: true, cancelable: true, metaKey: mac, ctrlKey: !mac }));
+    const input = await until(() => !$('#overlay').hidden && $('#overlay input'));
+    input.value = '>' + name;
+    input.dispatchEvent(new Event('input'));
+    await sleep(100);
+    input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }));
+  };
+  const ta = await openNote('sub/locked.md');
+  ta.focus();
+  const dark = ta.value.indexOf('dark');
+  ta.setSelectionRange(dark, dark);
+  await command('Lock this paragraph');
+  const band = await until(() => $('.ed-lock-layer mark.locked'));
+  const locked = band?.textContent;
+  const ready = ta.value.indexOf('The team');
+  ta.setSelectionRange(ready, ready + 'The team is very ready.'.length);
+  await command('Drawer: set the selection aside');
+  const scrap = await until(() => $('.drawer .drawer-scrap'));
+  const scraps = $$('.drawer .drawer-scrap').map((x) => x.textContent);
+  $$('#main button').find((b) => b.textContent.includes('Ask agent')).click();
+  const task = await until(() => !$('#overlay').hidden && $('#overlay textarea'));
+  task.value = 'Red pen: proofread';
+  task.dispatchEvent(new Event('input'));
+  button('Run on staged copy', $('#overlay')).click();
+  await until(() => $$('.review .pen-card').length === 2, 20000);
+  await sleep(300);
+  $('.review').focus();
+  const why = $$('.pen-card').map((c) => c.textContent.includes('in a paragraph you locked'));
+  key('A'); await sleep(200);
+  const apply = button('Apply', $('#main')).textContent;
+  key('a');
+  await until(() => /Applied/.test($('.review')?.textContent || ''), 10000);
+  await sleep(200);
+  await openNote('sub/locked.md');
+  await sleep(300);
+  await command('Origin:');
+  const o = await until(() => $('.origin'));
+  await sleep(300);
+  const chips = $$('.origin-chip').map((c) => c.firstChild.textContent);
+  const blocks = $$('.origin-block').map((b) => $$('.origin-bar', b).map((x) => x.className.replace('origin-bar ', '')).join('+'));
+  key('Escape', {}, o); await sleep(100);
+  return { locked, scraps, why, apply, chips, blocks, closed: !$('.origin') };
+`, (v) => (v?.locked === 'We want a very dark theme.' && v.scraps.length === 1 && /The team is very ready\./.test(v.scraps[0]) && v.why.join() === 'false,true' && v.apply === 'Apply 1 accepted'
+  && v.chips.join('|') === 'Agent \u00b7 Red pen: proofread|Locked' && v.blocks.join('|') === '|o-agent|o-locked' && v.closed ? null : `got ${JSON.stringify(v)}`));
+{
+  const t = fs.readFileSync(path.join(ws, 'sub', 'locked.md'), 'utf8');
+  const beside = path.join(ws, '.agent-notes');
+  const locks = JSON.parse(fs.readFileSync(path.join(beside, 'locks', 'sub', 'locked.md.json'), 'utf8'));
+  const drawer = fs.readFileSync(path.join(beside, 'drawer', 'sub', 'locked.md.md'), 'utf8');
+  const good = t === '# Locked\n\nThe team is ready.\n\nWe want a very dark theme.\n' && locks.join() === 'We want a very dark theme.'
+    && /^<!-- scrap from="sub\/locked\.md" line="2" at="[^"]+" -->\nThe team is very ready\.\n$/.test(drawer);
+  console.log(`${good ? '✓' : '✗'} the locked paragraph as it was, the other changed; the lock and the drawer kept beside the note`);
+  if (!good) { console.log(JSON.stringify({ t, locks, drawer })); failed = true; }
 }
 
 await check('history shows the version from before the agent changes, and restores it', `

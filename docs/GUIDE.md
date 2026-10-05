@@ -170,6 +170,18 @@ In the tray the pieces stay in the order you put them; drag one sideways (or `<`
 
 No agent is involved: it is a way of putting your own notes together by hand. It works with the trackpad, the mouse and the keys only — there is no camera and no hand tracking (Margin doesn't ask for the camera, and a model to follow hands would be a large dependency for less precise, more tiring work than a trackpad), and no free 3D space of notes to fly through (text is read best flat and in front, so the depth only shows where a card is in the row).
 
+### Beside a note: locked paragraphs, the drawer, origin (experimental)
+
+Three things Margin keeps **beside** a note, never in it — the note stays plain Markdown. They live in `.agent-notes/` (`locks/`, `drawer/`, `gathered/`, under the note's path) and go along when the note is renamed.
+
+**Lock this paragraph** (M-x or the palette) locks the paragraph at the cursor, or the selection; again, it unlocks it. A locked paragraph has a faint red band in the editor. The agent is told which paragraphs are locked and to leave them, but that is not what holds them: whatever the agent does, Margin **won't apply a change to a locked paragraph** — in the review its mark says *in a paragraph you locked* and can't be accepted, `A` passes it by, and a run that would delete the note is not applied. Lines put in before or after it are fine. The lock is the paragraph as written: change it yourself and it is free again (lock it again if you want).
+
+**Drawer: this note's scraps** opens a column beside the editor: things you set aside **for this note** — a quote, a link, a paragraph of another note — that aren't in it yet. **Drawer: set the selection aside** (or **+ Selection** in the drawer) puts the selected words in it; text, a link, or a tab (as a `[[link]]`) can be dropped on it, and words dragged from another note's editor keep where they came from (**from …** opens it there). **Insert** — or dragging a scrap into the editor — puts it in the note as a paragraph of its own; × takes it out of the drawer. The drawer is a plain Markdown file (`.agent-notes/drawer/<note>.md`), and the agent sees it when it works on the note, as material, not as a file to edit.
+
+**Origin: where this note's paragraphs came from** shows the note with a coloured bar by each paragraph for each place it came from, as far as Margin knows: **the agent** (the lines an applied run put in, with what it was asked — *changed since* when you have edited them), **gathered from** a note (made with Gather), **the drawer** (a scrap from another note), **gathered into** another note, and **locked**. The card on the right says where the current paragraph came from, a thread joining them; the chips at the top are the sources — pointing at one lights its paragraphs and draws a thread to each. `j` `k` go through the paragraphs, `J` `K` only the ones with an origin, Enter (or the card's button) opens the run or the note there, `l` locks or unlocks, Esc closes. It only shows: nothing in it changes the note. What you wrote yourself, or pasted, has no bar — Margin doesn't watch the clipboard or other apps.
+
+Not built, on purpose: a timeline of a note's whole life (Origin, Film and History each cover a part of it, and one more view of the same history would add little) and a wide-screen centre-and-periphery layout (it would mean another layout of the whole window, for wide screens only, for little gain over the drawer and split view).
+
 ### Suggesting: your own red pen, in a meeting
 
 Margin's red pen is for you too, as tracked changes are in a word processor: made for leading a meeting with the note on a shared screen and correcting it as people talk. Only you write; it is not shared editing.
