@@ -1709,9 +1709,11 @@ li.callout-hot { background: color-mix(in srgb, var(--accent) 16%, transparent);
 @keyframes desk-breathe { 50% { box-shadow: 0 0 0 4px color-mix(in srgb, var(--accent-2) 30%, transparent), 0 12px 32px color-mix(in srgb, var(--accent-2) 35%, transparent); } }
 
 /* Far away: titles only, large enough to read. */
-.desk.far .desk-card:not(.t-group):not(.t-ai) .desk-body { visibility: hidden; }
+.desk.far .desk-card:not(.t-group):not(.t-ai) .desk-body { opacity: calc(1 - var(--far, 1)); }
+.desk.farthest .desk-card:not(.t-group):not(.t-ai) .desk-body { visibility: hidden; }
 .desk-card.t-text .desk-head, .desk-card.t-link .desk-head { display: none; }
 .desk.far .desk-card:not(.t-group) .desk-head { display: block; font-size: min(calc(15px * var(--iz, 1)), 72px); padding: calc(6px * var(--iz, 1)) calc(8px * var(--iz, 1)); white-space: normal; line-height: 1.25; }
+.desk.far .desk-card.t-text .desk-head, .desk.far .desk-card.t-link .desk-head { position: absolute; top: 0; left: 0; right: 0; opacity: var(--far, 1); background: inherit; border-radius: inherit; }
 .desk.far .desk-card.t-group .desk-head { font-size: min(calc(15px * var(--iz, 1)), 44px); line-height: 1.1; top: 4px; padding: 0 8px; }
 
 .desk-marquee { position: absolute; border: 1px solid var(--accent); background: color-mix(in srgb, var(--accent) 10%, transparent); pointer-events: none; }

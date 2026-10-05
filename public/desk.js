@@ -53,6 +53,8 @@ const HEAD = 60; // room for a group's label
 // before so the titles show, in a group — or onto the pile that card is in.
 // → the desk, changed.
 export const STEP = { x: 14, y: 56 };
+// Zoomed out from FAR[0] to FAR[1], cards go from their text to their titles.
+export const FAR = [0.6, 0.35];
 export function stackOnto(d, ids, ontoId) {
   const onto = d.nodes.find((n) => n.id === ontoId);
   const moving = d.nodes.filter((n) => ids.includes(n.id) && n.id !== ontoId && n.type !== 'group');
@@ -318,8 +320,13 @@ export class Desk {
     this.grid.style.setProperty('--gy2', `${y * 0.45}px`);
     this.grid.style.setProperty('--gs', `${24 * z}px`);
     this.grid.style.setProperty('--gs2', `${48 * Math.max(0.5, z * 0.6)}px`);
-    this.el.classList.toggle('far', z < 0.45);
-    this.world.style.setProperty('--iz', String(1 / z)); // far away: titles kept a readable size
+    // Going away, little by little (0.6 to 0.35): the text of the cards fades,
+    // and their titles grow to a size kept readable from afar.
+    const f = Math.min(1, Math.max(0, (FAR[0] - z) / (FAR[0] - FAR[1])));
+    this.el.classList.toggle('far', f > 0);
+    this.el.classList.toggle('farthest', f >= 1);
+    this.world.style.setProperty('--far', f.toFixed(3));
+    this.world.style.setProperty('--iz', String(1 + (1 / z - 1) * f));
     // What the margin would be given ("in view") follows the camera.
     if (!this.dockQ) this.dockQ = requestAnimationFrame(() => { this.dockQ = 0; this.dockShow(); });
   }
@@ -333,6 +340,7 @@ export class Desk {
     this.goTo({ x: (w - b.width * z) / 2 - b.x * z, y: (r.height - b.height * z) / 2 - b.y * z, z }, animate);
   }
   goTo(cam, animate = true) {
+    this.zoomGoal = null;
     if (!animate || this.opts.reduced) { this.cam = cam; this.camera(); return; }
     const from = { ...this.cam };
     const t0 = performance.now();
@@ -362,12 +370,38 @@ export class Desk {
     e.preventDefault();
     if (e.ctrlKey || e.metaKey) {
       const r = this.el.getBoundingClientRect();
-      const px = e.clientX - r.left;
-      const py = e.clientY - r.top;
-      const z = Math.max(0.1, Math.min(2.5, this.cam.z * Math.exp(-e.deltaY * 0.01)));
-      this.cam = { x: px - ((px - this.cam.x) * z) / this.cam.z, y: py - ((py - this.cam.y) * z) / this.cam.z, z };
-    } else this.cam = { ...this.cam, x: this.cam.x - e.deltaX, y: this.cam.y - e.deltaY };
+      const dy = e.deltaY * (e.deltaMode === 1 ? 16 : e.deltaMode === 2 ? r.height : 1);
+      // A pinch (ctrl, in small steps) follows the fingers. ⌘ and the wheel, or
+      // ⌘ and two fingers, come in bigger, uneven steps: smaller ones, eased.
+      const pinch = e.ctrlKey && !e.metaKey && Math.abs(dy) < 50;
+      const f = Math.exp(-Math.max(-50, Math.min(50, dy)) * (pinch ? 0.01 : 0.004));
+      this.zoomAt(e.clientX - r.left, e.clientY - r.top, f, !pinch);
+      return;
+    }
+    this.cam = { ...this.cam, x: this.cam.x - e.deltaX, y: this.cam.y - e.deltaY };
     this.camera();
+  }
+  // Zoom by f around a point of the desk (what is under it stays); eased: toward it over a few frames.
+  zoomAt(px, py, f, eased = false) {
+    const clamp = (z) => Math.max(0.1, Math.min(2.5, z));
+    const at = (z) => {
+      this.cam = { x: px - ((px - this.cam.x) * z) / this.cam.z, y: py - ((py - this.cam.y) * z) / this.cam.z, z };
+      this.camera();
+    };
+    if (!eased || this.opts.reduced) { this.zoomGoal = null; at(clamp(this.cam.z * f)); return; }
+    this.zoomGoal = clamp((this.zoomGoal ?? this.cam.z) * f);
+    this.zoomAround = { px, py };
+    if (this.zoomQ) return;
+    const step = () => {
+      this.zoomQ = 0;
+      if (this.zoomGoal == null) return;
+      ({ px, py } = this.zoomAround);
+      const gap = Math.log(this.zoomGoal / this.cam.z);
+      if (Math.abs(gap) < 0.002) { at(this.zoomGoal); this.zoomGoal = null; return; }
+      at(this.cam.z * Math.exp(gap * 0.3));
+      this.zoomQ = requestAnimationFrame(step);
+    };
+    this.zoomQ = requestAnimationFrame(step);
   }
 
   // ---- the cards
@@ -737,6 +771,7 @@ export class Desk {
     if (k === 'f') { handled(); this.opts.pickNote().then((p) => { if (p) { const c = center(); this.addFile(p, c.x - 200, c.y - 200); } }); return; }
     if (k === 'g' && this.sel.size) { handled(); this.change(groupAround(this.d, [...this.sel])); return; }
     if (k === 'z') { handled(); this.fit(); return; }
+    if (k === '=' || k === '+' || k === '-') { handled(); const r = this.el.getBoundingClientRect(); this.zoomAt((r.width - this.side()) / 2, r.height / 2, k === '-' ? 1 / 1.2 : 1.2, true); return; }
     if (k === '1') { handled(); const r = this.el.getBoundingClientRect(); const c = center(); this.goTo({ z: 1, x: (r.width - this.side()) / 2 - c.x, y: r.height / 2 - c.y }); return; }
     if (k === '/') { handled(); this.input.focus(); return; }
     const act = ACTIONS.find((a) => a[2] === k);
