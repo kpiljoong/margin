@@ -7,6 +7,7 @@
 // What the margin writes stays beside the cards until it is kept (Tab).
 
 import { meetingItems, moveItem, bodyOf } from './meeting.js';
+import { IMAGE_FILE, rectFrom, regionsOf, threadOf, regionNote, cropParts } from './regions.js';
 
 // ---------------------------------------------------------------- the file
 
@@ -58,6 +59,14 @@ export const STEP = { x: 14, y: 56 };
 // Zoomed out from FAR[0] to FAR[1], cards go from their text to their titles.
 export const FAR = [0.6, 0.35];
 const NOTE = /\.(md|markdown|txt)$/i;
+const IMAGE = IMAGE_FILE;
+const today = () => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; };
+// A picture's card: 400 wide at most, and as tall as the picture is then (and its title).
+export function pictureSize(w, h) {
+  if (!(w > 0 && h > 0)) return { width: 400, height: 300 };
+  const width = Math.round(Math.min(400, Math.max(160, w)));
+  return { width, height: Math.round(Math.min(720, Math.max(100, (width - 24) * h / w + 52))) };
+}
 export function stackOnto(d, ids, ontoId) {
   const onto = d.nodes.find((n) => n.id === ontoId);
   const moving = d.nodes.filter((n) => ids.includes(n.id) && n.id !== ontoId && n.type !== 'group');
@@ -285,7 +294,8 @@ const ACTIONS = [
 ];
 
 // opts: { text, path, render(md) → html, readNote(path) → Promise<text>,
-// imageUrl(path), openNote(path, line), pickNote() → Promise<path>, makeNote(md)
+// imageUrl(path), addImages(files) → Promise<[{ path, file }]>, openNote(path,
+// line), pickNote() → Promise<path>, makeNote(md)
 // → Promise<path>, ask({ task, cards, question, talk }, onText) →
 // Promise<{ said, end, withheld }>, privateOf(paths) → Promise<{ path: why }>,
 // onChange(text), toast(msg, kind), reduced, dockMin, onDock(min) }
@@ -330,7 +340,7 @@ export class Desk {
     this.marquee = el('div', 'desk-marquee');
     this.marquee.hidden = true;
     this.dock = this.buildDock();
-    this.hint = el('div', 'desk-hint', 'Double-click: a card · Space: read one · drag a note from the tree · drop a card on a card: a group · drop cards on the margin, or s q o l m · / talk · z all');
+    this.hint = el('div', 'desk-hint', 'Double-click: a card · Space: read one · drag a note from the tree, or a picture (or paste one) · drop a card on a card: a group · drop cards on the margin, or s q o l m · / talk · z all');
     this.el = el('div', 'desk', this.grid, this.world, this.marquee, this.dock, this.hint);
     this.el.tabIndex = 0;
     this.el.desk = this; // for tests
@@ -361,13 +371,26 @@ export class Desk {
       this.dockShow();
       this.show(card, true);
     }, true);
-    this.el.addEventListener('dragover', (e) => { if ([...e.dataTransfer.types].includes('text/x-margin-path')) { e.preventDefault(); e.dataTransfer.dropEffect = 'copy'; } });
+    this.el.addEventListener('dragover', (e) => { const t = [...e.dataTransfer.types]; if (t.includes('text/x-margin-path') || t.includes('Files')) { e.preventDefault(); e.dataTransfer.dropEffect = 'copy'; } });
     this.el.addEventListener('drop', (e) => {
       const p = e.dataTransfer.getData('text/x-margin-path');
-      if (!p) return;
-      e.preventDefault();
       const w = this.toWorld(e.clientX, e.clientY);
-      this.addFile(p, w.x - 200, w.y - 40);
+      if (p) { e.preventDefault(); this.addFile(p, w.x - 200, w.y - 40); return; }
+      // Pictures from outside (the Finder, a browser).
+      if (!e.dataTransfer.files?.length) return;
+      e.preventDefault();
+      this.addPictures([...e.dataTransfer.files], w);
+    });
+    // A picture pasted (a screenshot): where the pointer is, or in the middle.
+    this.el.addEventListener('pointermove', (e) => { this.pointerAt = { x: e.clientX, y: e.clientY }; });
+    this.el.addEventListener('paste', (e) => {
+      if (e.target !== this.el) return; // writing in a card
+      const files = [...(e.clipboardData?.files || [])];
+      if (!files.length) return;
+      e.preventDefault();
+      const r = this.el.getBoundingClientRect();
+      const at = this.pointerAt && this.pointerAt.x > r.left && this.pointerAt.x < r.right - this.side() && this.pointerAt.y > r.top && this.pointerAt.y < r.bottom ? this.pointerAt : { x: r.left + (r.width - this.side()) / 2, y: r.top + r.height / 2 };
+      this.addPictures(files, this.toWorld(at.x, at.y));
     });
   }
 
@@ -577,8 +600,18 @@ export class Desk {
     if (n.type === 'file') {
       e.head.textContent = title;
       e.head.title = n.file;
-      if (/\.(png|jpe?g|gif|webp|avif|svg|bmp)$/i.test(n.file)) {
-        if (e.src !== n.file) { const img = el('img'); img.src = this.opts.imageUrl(n.file); img.alt = title; e.body.replaceChildren(img); e.src = n.file; }
+      if (IMAGE.test(n.file)) {
+        if (e.src !== n.file) {
+          const img = el('img');
+          img.src = this.opts.imageUrl(n.file);
+          img.alt = title;
+          img.draggable = false;
+          img.addEventListener('load', () => { this.placeMarks(e, n.file); this.drawEdges(); });
+          e.marks = el('div', 'desk-marks');
+          e.body.replaceChildren(img, e.marks);
+          e.src = n.file;
+        }
+        this.placeMarks(e, n.file);
         return;
       }
       const html = this.html.get(n.file);
@@ -611,6 +644,23 @@ export class Desk {
       if (label) { const l = el('div', `desk-edge-label${cls.endsWith('ghost') ? ' ghost' : ''}`, label); l.style.left = `${mid[0]}px`; l.style.top = `${mid[1]}px`; this.labels.append(l); }
     };
     for (const e of this.d.edges) draw(by.get(e.fromNode), by.get(e.toNode), e.label, 'desk-edge', e);
+    // A mark's line: from its part of the picture to its card.
+    for (const m of this.d.nodes) {
+      const f = m.from;
+      if (f?.kind !== 'region' || !Array.isArray(f.rect)) continue;
+      const pic = this.d.nodes.find((x) => x.type === 'file' && x.file === f.file);
+      const pe = pic && this.els.get(pic.id);
+      const img = pe?.body.querySelector('img');
+      if (!img?.naturalWidth) continue;
+      const [x, y, w, h] = f.rect;
+      const ax = pic.x + pe.body.offsetLeft + img.offsetLeft + ((x + w) / img.naturalWidth) * img.offsetWidth;
+      const ay = pic.y + pe.body.offsetTop + img.offsetTop + ((y + h / 2) / img.naturalHeight) * img.offsetHeight;
+      const bx = m.x > ax ? m.x : m.x + m.width;
+      const by2 = m.y + 18;
+      const p = svg('path', `desk-edge mark${this.spotId === m.id ? ' spot' : ''}`);
+      p.setAttribute('d', `M${ax},${ay} C${(ax + bx) / 2},${ay} ${(ax + bx) / 2},${by2} ${bx},${by2}`);
+      this.edgeG.append(p);
+    }
     if (this.proposal?.kind === 'links') for (const l of this.proposal.links) draw(by.get(l.from), by.get(l.to), l.label, 'desk-edge ghost', { toEnd: 'none' });
     let w = 4000;
     let h = 4000;
@@ -660,7 +710,9 @@ export class Desk {
     const f = n.type === 'text' && n.from && typeof n.from.file === 'string' ? n.from : null;
     e.from.hidden = !f;
     e.classList.toggle('stale', false);
+    e.classList.toggle('t-mark', f?.kind === 'region');
     if (!f) return;
+    if (f.kind === 'region' || f.kind === 'answer') { this.fillMark(e, n, f); return; }
     const text = this.notes.get(f.file);
     if (text === undefined) {
       this.notes.set(f.file, null);
@@ -692,6 +744,9 @@ export class Desk {
   // A card's ask of its note: set (to), or taken back.
   fromAct(n, act) {
     if (!n?.from) return;
+    if (act === 'ask') { this.act('region', [n]); return; }
+    if (act === 'note') { this.noteMark(n); return; }
+    if (act === 'noted') { if (n.from.noted) this.opts.openNote(n.from.noted); return; }
     const set = (to) => this.change({ ...this.d, nodes: this.d.nodes.map((x) => (x.id === n.id ? { ...x, from: { ...x.from, to } } : x)) });
     if (act === 'undo') { set(undefined); return; }
     if (act === 'done' && n.from.kind === 'todo') { set({ done: true }); return; }
@@ -714,6 +769,159 @@ export class Desk {
     input.addEventListener('keydown', (ev) => { ev.stopPropagation(); if (ev.key === 'Enter' && !ev.isComposing) done(true); if (ev.key === 'Escape') done(false); });
     input.addEventListener('blur', () => done(false));
   }
+  // ---- marks on a picture: a part of it, and what is written about it
+  // (a card of its own beside the picture). Asked about (a), made a note
+  // of (with the part and where it came from), gone through (j k).
+  placeMarks(e, file) {
+    const img = e.body.querySelector('img');
+    if (!img?.naturalWidth || !e.marks) return;
+    Object.assign(e.marks.style, { left: `${img.offsetLeft}px`, top: `${img.offsetTop}px`, width: `${img.offsetWidth}px`, height: `${img.offsetHeight}px` });
+    const W = img.naturalWidth;
+    const H = img.naturalHeight;
+    const marks = regionsOf(this.d.nodes, file);
+    const key = `${W}x${H}|${this.spotId || ''}|${marks.map((m) => `${m.id}:${m.from.rect.join(',')}:${(m.text || '').slice(0, 60)}`).join('|')}`;
+    if (e.marks.key === key) return;
+    e.marks.key = key;
+    e.marks.replaceChildren(...marks.map((m, i) => {
+      const [x, y, w, h] = m.from.rect;
+      const b = el('div', `desk-mark${this.sel.has(m.id) ? ' sel' : ''}${this.spotId === m.id ? ' spot' : ''}`, el('span', null, String(i + 1)));
+      Object.assign(b.style, { left: `${(x / W) * 100}%`, top: `${(y / H) * 100}%`, width: `${(w / W) * 100}%`, height: `${(h / H) * 100}%` });
+      b.dataset.mark = m.id;
+      b.title = (m.text || '').split('\n')[0] || 'A marked part (nothing written yet)';
+      return b;
+    }));
+  }
+  fillMark(e, n, f) {
+    const pic = f.file.split('/').pop();
+    const key = `${f.kind}|${f.file}|${f.noted || ''}|${f.rect}`;
+    if (e.from.key === key) return;
+    e.from.key = key;
+    const link = el('a', null, `${pic} \u2197`);
+    link.href = '#';
+    link.title = `The part of ${f.file} it is about (j / k: the other marks)`;
+    const act = (label, name, title) => { const b = el('button', 'desk-from-act', label); b.dataset.act = name; b.title = title; return b; };
+    const noted = f.noted ? el('a', 'desk-from-noted', `in ${f.noted.split('/').pop().replace(/\.md$/i, '')} \u2197`) : null;
+    if (noted) { noted.href = '#'; noted.dataset.act = 'noted'; noted.title = `The note made of it: ${f.noted}`; }
+    e.from.replaceChildren(...[el('span', null, `${f.kind === 'region' ? 'Marked' : 'Answer'} \u00b7 `), link, noted && el('span', null, ' \u00b7 '), noted,
+      f.kind === 'region' && act('Ask', 'ask', 'Ask the margin about this part of the picture (a): its answer comes beside it'),
+      f.kind === 'region' && act('Note\u2026', 'note', 'A new note of it: the part of the picture, what is written here, the answers kept, and where it came from')].filter(Boolean));
+  }
+  markMode(id) {
+    this.marking = id;
+    this.el.classList.toggle('marking', !!id);
+    for (const [cid, e] of this.els) e.classList.toggle('marking', cid === id);
+    if (id) this.opts.toast('Drag over the picture to mark a part of it (Esc: not now). \u2325 and a drag marks at any time.');
+  }
+  markDown(e, n) {
+    const card = this.els.get(n.id);
+    const img = card?.body.querySelector('img');
+    if (!img?.naturalWidth) return;
+    e.stopPropagation();
+    this.sel = new Set([n.id]);
+    this.paintSel();
+    const W = img.naturalWidth;
+    const H = img.naturalHeight;
+    const ir = img.getBoundingClientRect();
+    const at = (ev) => ({ x: ((ev.clientX - ir.left) / ir.width) * W, y: ((ev.clientY - ir.top) / ir.height) * H });
+    const a = at(e);
+    let b = a;
+    const box = el('div', 'desk-mark drawing');
+    card.marks.append(box);
+    this.drag(e, (ev) => {
+      b = at(ev);
+      const r = rectFrom(a, b, W, H, 0);
+      if (r) Object.assign(box.style, { left: `${(r[0] / W) * 100}%`, top: `${(r[1] / H) * 100}%`, width: `${(r[2] / W) * 100}%`, height: `${(r[3] / H) * 100}%` });
+    }, () => {
+      box.remove();
+      this.markMode(null);
+      const rect = rectFrom(a, b, W, H, Math.max(4, Math.min(W, H) / 100));
+      if (rect) this.addMark(n, rect, (img.offsetTop + card.body.offsetTop + (rect[1] / H) * img.offsetHeight));
+    });
+  }
+  // The mark's card: beside the picture, level with the part, clear of the others there.
+  addMark(n, rect, dy = 40) {
+    const m = { id: newId(), type: 'text', text: '', x: Math.round(n.x + n.width + 60), y: Math.round(n.y + dy - 20), width: 280, height: 110, from: { file: n.file, kind: 'region', rect, at: today() } };
+    const others = this.d.nodes.filter((x) => x.type !== 'group');
+    for (let i = 0; i < 40; i++) {
+      const hit = others.find((x) => x.x < m.x + m.width + 10 && x.x + x.width + 10 > m.x && x.y < m.y + m.height + 10 && x.y + x.height + 10 > m.y);
+      if (!hit) break;
+      m.y = hit.y + hit.height + 16;
+    }
+    this.sel = new Set([m.id]);
+    this.change({ ...this.d, nodes: [...this.d.nodes, m] });
+    this.edit(m.id);
+  }
+  // One mark in the light: its picture, it, its answers and its note; the
+  // rest of the desk dim. j k: the next; Esc (or a click on the plane): all.
+  spotMark(m) {
+    const f = m.from;
+    const pic = this.d.nodes.find((x) => x.type === 'file' && x.file === f.file);
+    const { answers, note } = threadOf(this.d.nodes, m);
+    const lit = [pic, m, ...answers, ...(note ? this.d.nodes.filter((x) => x.type === 'file' && x.file === note) : [])].filter(Boolean);
+    this.spotId = m.id;
+    this.el.classList.add('spotting');
+    const ids = new Set(lit.map((x) => x.id));
+    for (const [id, e] of this.els) e.classList.toggle('lit', ids.has(id));
+    this.sel = new Set([m.id]);
+    this.paintSel();
+    this.dockShow();
+    this.render();
+    this.fit(true, lit);
+  }
+  unspot() {
+    this.spotId = null;
+    this.el.classList.remove('spotting');
+    for (const e of this.els.values()) e.classList.remove('lit');
+    this.render();
+  }
+  // A note of the mark: made where you say, its card beside the mark (an
+  // arrow from it), and the mark knows it (noted).
+  async noteMark(n) {
+    const f = n.from;
+    const { answers } = threadOf(this.d.nodes, n);
+    const path = await this.opts.makeNote((notePath) => regionNote({ notePath, image: f.file, rect: f.rect, text: n.text, answers: answers.map((a) => a.text), desk: this.opts.path }));
+    if (!path) return;
+    const at = this.spot([n, ...answers], 400, 420);
+    const c = { id: newId(), type: 'file', file: path, x: at.x, y: at.y, width: 400, height: 420 };
+    this.sel = new Set([c.id]);
+    this.change({
+      ...this.d,
+      nodes: [...this.d.nodes.map((x) => (x.id === n.id ? { ...x, from: { ...x.from, noted: path } } : x)), c],
+      edges: [...this.d.edges, { id: newId(), fromNode: n.id, toNode: c.id }],
+    });
+  }
+  // A mark read large: what it became, one layer on another — the part of
+  // the picture, what was written, the answers kept, the note made — the
+  // latest in front, the earlier ones behind it (their names showing);
+  // ↑ ↓ bring an earlier one forward, or a later one back.
+  layersOf(n) {
+    const f = n.from;
+    const { answers, note } = threadOf(this.d.nodes, n);
+    const part = el('img');
+    part.src = `${this.opts.imageUrl(f.file)}#xywh=${f.rect.join(',')}`;
+    part.alt = f.file;
+    const md = (t) => { const d = el('div', 'md'); d.innerHTML = this.opts.render(t); return d; };
+    const steps = [
+      ['Marked', f.at, part],
+      ['Written', null, md(n.text || '*Nothing written yet: Enter writes in it.*')],
+      ...answers.map((a) => ['Answer kept', a.from?.at, md(a.text || '')]),
+    ];
+    if (note) { const a = el('a', null, `${note.split('/').pop().replace(/\.md$/i, '')} \u2197`); a.href = '#'; a.addEventListener('click', (ev) => { ev.preventDefault(); this.opts.openNote(note); }); steps.push(['Noted', null, el('div', null, 'Made a note: ', a)]); }
+    const box = el('div', 'desk-layers');
+    const layers = steps.map(([name, at, content], i) => el('div', 'desk-layer', el('div', 'desk-layer-name', `${i + 1} \u00b7 ${name}${at ? ` \u00b7 ${at}` : ''}`), content));
+    box.append(...layers);
+    cropParts(box);
+    let front = layers.length - 1;
+    const show = () => layers.forEach((l, i) => {
+      l.classList.toggle('ahead', i > front);
+      l.classList.toggle('front', i === front);
+      l.style.setProperty('--d', String(Math.max(0, front - i)));
+    });
+    show();
+    box.style.setProperty('--n', String(layers.length - 1));
+    this.layers = { go: (d) => { front = Math.max(0, Math.min(layers.length - 1, front + d)); show(); } };
+    return box;
+  }
   // The asks of the cards from one note, proposed to it in one red pen review.
   async sendToNote(file) {
     const cards = this.d.nodes.filter((n) => n.from?.file === file && n.from.to);
@@ -727,6 +935,7 @@ export class Desk {
   goFrom(n) {
     const f = n?.from;
     if (!f) return;
+    if (f.kind === 'region' || f.kind === 'answer') { const m = f.kind === 'region' ? n : this.d.nodes.find((x) => x.id === f.of); if (m) this.spotMark(m); return; }
     const text = this.notes.get(f.file);
     // (Lines counted from 0 here, from 1 in the editor.)
     this.opts.openNote(f.file, (typeof text === 'string' && text ? fromState(f, text).line : f.line) + 1);
@@ -741,11 +950,34 @@ export class Desk {
   }
 
   addFile(path, x, y) {
-    const image = /\.(png|jpe?g|gif|webp|avif|svg|bmp)$/i.test(path);
-    const n = { id: newId(), type: 'file', file: path, x: Math.round(x), y: Math.round(y), width: 400, height: image ? 300 : 400 };
-    this.sel = new Set([n.id]);
-    this.change({ ...this.d, nodes: [...this.d.nodes, n] });
-    this.el.focus();
+    const n = { id: newId(), type: 'file', file: path, x: Math.round(x), y: Math.round(y), width: 400, height: 400 };
+    if (!IMAGE.test(path)) { this.put([n]); return; }
+    // A picture: its card as tall as the picture is.
+    const img = new Image();
+    img.onload = () => this.put([{ ...n, ...pictureSize(img.naturalWidth, img.naturalHeight) }]);
+    img.onerror = () => this.put([{ ...n, height: 300 }]);
+    img.src = this.opts.imageUrl(path);
+  }
+  // Pictures from outside: saved beside the desk (app.js addImages), then
+  // their cards, a little apart, from `at` on — one step to undo.
+  async addPictures(files, at) {
+    const pics = files.filter((f) => /^image\//.test(f.type));
+    if (!pics.length) { this.opts.toast('Only pictures can be dropped here; a note, from the tree.', 'error'); return; }
+    if (!this.opts.addImages) return;
+    const saved = await this.opts.addImages(pics);
+    const nodes = await Promise.all(saved.map(async ({ path, file }, i) => {
+      let size = { width: 400, height: 300 };
+      try { const b = await createImageBitmap(file); size = pictureSize(b.width, b.height); b.close(); } catch { /* not one the browser reads: the default size */ }
+      return { id: newId(), type: 'file', file: path, x: Math.round(at.x - size.width / 2 + i * 40), y: Math.round(at.y - 30 + i * 40), ...size };
+    }));
+    if (nodes.length) this.put(nodes);
+  }
+  put(nodes) {
+    this.sel = new Set(nodes.map((n) => n.id));
+    this.change({ ...this.d, nodes: [...this.d.nodes, ...nodes] });
+    this.paintSel();
+    this.dockShow();
+    this.el.focus({ preventScroll: true });
   }
   addText(x, y, edit = true) {
     const n = { id: newId(), type: 'text', text: '', x: Math.round(x), y: Math.round(y), width: 260, height: 140 };
@@ -801,6 +1033,7 @@ export class Desk {
     const sx = e.clientX;
     const sy = e.clientY;
     if (!id || e.button === 1 || this.space) {
+      if (!id && this.spotId) this.unspot();
       if (this.space) this.spaceTap = 0; // a move, not a tap
       if (e.button === 1 || this.space || e.altKey) return this.drag(e, (ev) => { this.cam = { ...this.cam, x: this.cam.x + ev.movementX, y: this.cam.y + ev.movementY }; this.camera(); });
       // A box drawn on the plane: what is in it is selected.
@@ -821,6 +1054,12 @@ export class Desk {
     const n = this.d.nodes.find((x) => x.id === id);
     if (!n) return;
     if (e.target.classList.contains('desk-grip')) return this.resize(e, n);
+    // On a picture: a part marked (r, or ⌥ and a drag), or a mark chosen.
+    if (n.type === 'file' && IMAGE.test(n.file) && e.target.closest('.desk-body') && (this.marking === n.id || e.altKey)) return this.markDown(e, n);
+    const mk = e.target.closest('.desk-mark');
+    const m = mk && this.d.nodes.find((x) => x.id === mk.dataset.mark);
+    if (m) { e.stopPropagation(); this.spotMark(m); return; }
+    if (this.spotId && !this.els.get(id)?.classList.contains('lit')) this.unspot();
     if (e.shiftKey || e.metaKey) { if (this.sel.has(id)) this.sel.delete(id); else this.sel.add(id); this.paintSel(); this.dockShow(); return; }
     if (!this.sel.has(id)) { this.sel = new Set([id]); this.paintSel(); this.dockShow(); }
     // Moving: the selection, and what lies in a group that moves.
@@ -909,7 +1148,10 @@ export class Desk {
     target.addEventListener('pointerup', end);
     target.addEventListener('pointercancel', end);
   }
-  paintSel() { for (const [id, e] of this.els) e.classList.toggle('sel', this.sel.has(id)); }
+  paintSel() {
+    for (const [id, e] of this.els) e.classList.toggle('sel', this.sel.has(id));
+    for (const b of this.world.querySelectorAll('.desk-mark[data-mark]')) b.classList.toggle('sel', this.sel.has(b.dataset.mark));
+  }
   dbl(e) {
     if (e.target.closest?.('.desk-dock')) return;
     const id = this.hit(e);
@@ -957,6 +1199,8 @@ export class Desk {
     if (k === 'Tab') { handled(); if (this.proposal) this.take(); else this.keep(this.ai.at(-1)); return; }
     if (k === 'Escape') {
       handled();
+      if (this.marking) { this.markMode(null); return; }
+      if (this.spotId) { this.unspot(); return; }
       if (this.proposal) { this.proposal = null; this.render(); } else if (this.ai.length) this.drop(this.ai.at(-1)); else { this.sel.clear(); this.paintSel(); this.dockShow(); }
       return;
     }
@@ -979,6 +1223,19 @@ export class Desk {
     if (k === 'n') { handled(); const c = center(); this.addText(c.x - 130, c.y - 70); return; }
     if (k === 'f') { handled(); this.opts.pickNote().then((p) => { if (p) { const c = center(); this.addFile(p, c.x - 200, c.y - 200); } }); return; }
     if ((k === 'd' || k === 'x') && one?.from?.kind === (k === 'd' ? 'question' : 'todo')) { handled(); this.fromAct(one, k === 'd' ? 'decide' : 'done'); return; }
+    if (k === 'r' && one?.type === 'file' && IMAGE.test(one.file)) { handled(); this.markMode(this.marking === one.id ? null : one.id); return; }
+    if (k === 'a' && one?.from?.kind === 'region') { handled(); this.act('region', [one]); return; }
+    if ((k === 'j' || k === 'k') && one) {
+      const file = one.type === 'file' ? one.file : (one.from?.kind === 'region' || one.from?.kind === 'answer') ? one.from.file : null;
+      const marks = file ? regionsOf(this.d.nodes, file) : [];
+      if (marks.length) {
+        handled();
+        const mark = one.from?.kind === 'answer' ? marks.find((m) => m.id === one.from.of) : one;
+        const i = marks.indexOf(mark);
+        this.spotMark(marks[i < 0 ? (k === 'j' ? 0 : marks.length - 1) : (i + (k === 'j' ? 1 : -1) + marks.length) % marks.length]);
+        return;
+      }
+    }
     if (k === 'g' && this.sel.size) { handled(); this.change(groupAround(this.d, [...this.sel])); return; }
     if (k === 'z') { handled(); this.fit(); return; }
     if (k === '=' || k === '+' || k === '-') { handled(); const r = this.el.getBoundingClientRect(); this.zoomAt((r.width - this.side()) / 2, r.height / 2, k === '-' ? 1 / 1.2 : 1.2, true); return; }
@@ -1010,6 +1267,7 @@ export class Desk {
   }
   focusOn(n) {
     if (!n) return;
+    this.layers = null;
     const ring = this.ring(n);
     const g = groupAt(this.d, n);
     this.focused = n;
@@ -1022,14 +1280,23 @@ export class Desk {
       if (html) body.innerHTML = html;
       else { body.textContent = 'Loading…'; this.opts.readNote(n.file).then((t) => { if (this.focused === n) body.innerHTML = this.opts.render(t.replace(/^\uFEFF?---\r?\n[\s\S]*?\r?\n---\r?\n?/, ''), n.file); }, () => { body.textContent = 'Not found'; }); }
     } else if (n.type === 'link') body.textContent = n.url || '';
+    else if (n.from?.kind === 'region' && Array.isArray(n.from.rect)) body.append(this.layersOf(n));
     else body.innerHTML = this.opts.render(n.text || '');
     const from = this.els.get(n.id)?.from;
     const where = `${g ? `${g.label || 'Group'} · ` : ''}${ring.indexOf(n) + 1} / ${ring.length}`;
     const head = el('div', 'desk-focus-head', el('b', null, n.type === 'text' ? '' : cardTitle(n)), el('span', 'desk-focus-where', where));
     const note = n.type === 'file' && NOTE.test(n.file);
-    const foot = el('div', 'desk-focus-foot', `${ring.length > 1 ? '← → the next · ' : ''}${n.type === 'text' || note ? 'Enter writes in it · ' : ''}${n.type === 'file' ? 'o opens it beside · ' : ''}Esc or Space back`);
+    const foot = el('div', 'desk-focus-foot', `${this.layers ? '\u2191 \u2193 back and forth through what it became · ' : ''}${ring.length > 1 ? '← → the next · ' : ''}${n.type === 'text' || note ? 'Enter writes in it · ' : ''}${n.type === 'file' ? 'o opens it beside · ' : ''}Esc or Space back`);
     const card = el('div', `desk-focus-card t-${n.type}`, head, body, from && !from.hidden ? from.cloneNode(true) : null, foot);
-    card.querySelector('.desk-from a')?.addEventListener('click', (ev) => { ev.preventDefault(); this.goFrom(n); });
+    // Its footer, as on the card: the link back, and what it can do (the desk shown again first).
+    card.querySelector('.desk-from')?.addEventListener('click', (ev) => {
+      const a = ev.target.closest('a, button');
+      if (!a) return;
+      ev.preventDefault();
+      if (a.dataset.act === 'decide') return; // its words are written on the card itself
+      this.focusOff();
+      if (a.dataset.act) this.fromAct(n, a.dataset.act); else this.goFrom(n);
+    });
     if (!this.focusEl) {
       this.focusEl = el('div', 'desk-focus');
       this.focusEl.addEventListener('pointerdown', (ev) => { ev.stopPropagation(); if (ev.target === this.focusEl) this.focusOff(); });
@@ -1056,6 +1323,7 @@ export class Desk {
     if (e.metaKey || e.ctrlKey || e.altKey) return;
     handled();
     if (k === 'Escape' || k === ' ') { this.focusOff(); return; }
+    if (this.layers && (k === 'ArrowUp' || k === 'ArrowDown')) { this.layers.go(k === 'ArrowUp' ? -1 : 1); return; }
     if (k === 'ArrowLeft' || k === 'ArrowRight' || k === 'ArrowUp' || k === 'ArrowDown') {
       const ring = this.ring(n);
       const i = ring.indexOf(n) + (k === 'ArrowLeft' || k === 'ArrowUp' ? -1 : 1);
@@ -1154,7 +1422,42 @@ export class Desk {
     }
     for (const b of this.actions.children) b.disabled = !ns.length || !!this.busy;
   }
-  cardsFor(ns) { return ns.map((n) => (n.type === 'file' ? { key: n.id, file: n.file } : { key: n.id, text: n.text || '' })); }
+  // The cards as the margin is given them: a picture's card with the
+  // picture, a mark with its part and the whole (the server sends them only
+  // when the picture may be sent).
+  async cardsFor(ns) {
+    let room = 8;
+    return Promise.all(ns.map(async (n) => {
+      if (n.type === 'file') {
+        const picture = IMAGE.test(n.file) && room-- > 0 ? await this.picture(n.file) : null;
+        return { key: n.id, file: n.file, ...(picture ? { picture } : {}) };
+      }
+      const c = { key: n.id, text: n.text || '' };
+      const f = n.from;
+      if (f?.kind === 'region' && Array.isArray(f.rect) && (room -= 2) >= 0) {
+        const [picture, whole] = await Promise.all([this.picture(f.file, f.rect), this.picture(f.file)]);
+        if (picture) Object.assign(c, { region: { file: f.file, rect: f.rect }, picture, ...(whole ? { whole } : {}) });
+      }
+      return c;
+    }));
+  }
+  // A picture (or a part of one) as the model reads it: 1568 px at most on
+  // its long side, PNG (a part, for its letters) or JPEG.
+  async picture(file, rect = null) {
+    try {
+      const img = new Image();
+      img.src = this.opts.imageUrl(file);
+      await img.decode();
+      const [x, y, w, h] = rect || [0, 0, img.naturalWidth, img.naturalHeight];
+      const k = Math.min(1, 1568 / Math.max(w, h));
+      const c = document.createElement('canvas');
+      c.width = Math.max(1, Math.round(w * k));
+      c.height = Math.max(1, Math.round(h * k));
+      c.getContext('2d').drawImage(img, x, y, w, h, 0, 0, c.width, c.height);
+      const url = rect ? c.toDataURL('image/png') : c.toDataURL('image/jpeg', 0.85);
+      return { media: url.slice(5, url.indexOf(';')), data: url.slice(url.indexOf(',') + 1) };
+    } catch { return null; }
+  }
   // Where its cards go: to the right of the cards it was given, clear of
   // the cards there.
   spot(ns, width = 380, height = 240) {
@@ -1168,16 +1471,18 @@ export class Desk {
     }
     return at;
   }
-  async act(task) {
+  async act(task, given = null) {
     if (this.busy) return;
-    const ns = this.context();
+    const ns = given || this.context();
+    if (task === 'region' && !String(ns[0]?.text || '').trim()) { this.opts.toast('Write in the mark first what to ask, or what it says (Enter).'); this.edit(ns[0].id); return; }
     if (!ns.length) { this.opts.toast('No cards to give the margin: select some, or bring them into view.'); return; }
     if (task === 'group' && ns.length < 3) { this.opts.toast('Sorting needs three cards or more.'); return; }
     if (task === 'links' && ns.length < 2) { this.opts.toast('Links need two cards or more.'); return; }
     const wide = task === 'merge';
     const at = this.spot(ns, wide ? 520 : 380, wide ? 520 : task === 'questions' ? 560 : 240);
-    const label = ACTIONS.find((a) => a[0] === task)[1];
-    const card = (task === 'summary' || task === 'merge') ? this.addAi({ kind: task, x: at.x, y: at.y, width: wide ? 520 : 380, height: wide ? 520 : 200, text: '', title: label }) : null;
+    const label = ACTIONS.find((a) => a[0] === task)?.[1] || 'Ask';
+    const card = task === 'region' ? this.addAi({ kind: 'answer', of: ns[0].id, x: at.x, y: at.y, width: 380, height: 160, text: '', title: 'About the part' })
+      : (task === 'summary' || task === 'merge') ? this.addAi({ kind: task, x: at.x, y: at.y, width: wide ? 520 : 380, height: wide ? 520 : 200, text: '', title: label }) : null;
     this.busy = label;
     this.dockShow();
     this.status.textContent = `${label}…`;
@@ -1185,7 +1490,7 @@ export class Desk {
     for (const n of ns) this.els.get(n.id)?.classList.add('given');
     const t0 = performance.now();
     try {
-      const r = await this.opts.ask({ task, cards: this.cardsFor(ns) }, (said) => { if (card) { card.text = said; card.state = 'stream'; this.els.get(card.id)?.show(card); } });
+      const r = await this.opts.ask({ task, cards: await this.cardsFor(ns) }, (said) => { if (card) { card.text = said; card.state = 'stream'; this.els.get(card.id)?.show(card); } });
       this.withheld = r.withheld;
       this.nums = r.nums;
       this.render();
@@ -1281,8 +1586,11 @@ export class Desk {
     this.ai = this.ai.filter((x) => x !== a);
     const h = Math.round((this.els.get(a.id)?.offsetHeight || a.height));
     const n = { id: newId(), type: 'text', text: a.text, x: a.x, y: a.y, width: a.width, height: Math.max(60, h) };
+    // An answer about a marked part: it stays its answer (and an arrow from the mark says so).
+    const m = a.of && this.d.nodes.find((x) => x.id === a.of && x.from?.kind === 'region');
+    if (m) n.from = { file: m.from.file, kind: 'answer', rect: m.from.rect, of: m.id, at: today() };
     this.sel = new Set([n.id]);
-    this.change({ ...this.d, nodes: [...this.d.nodes, n] });
+    this.change({ ...this.d, nodes: [...this.d.nodes, n], edges: m ? [...this.d.edges, { id: newId(), fromNode: m.id, toNode: n.id }] : this.d.edges });
   }
   drop(a) { if (!a) return; this.ai = this.ai.filter((x) => x !== a); this.render(); }
   async makeNote(a) {
@@ -1310,7 +1618,7 @@ export class Desk {
     this.dockShow();
     this.el.classList.add('thinking');
     try {
-      const r = await this.opts.ask({ task: 'chat', cards: this.cardsFor(ns), question: q, talk: this.talkKey }, (said) => { row.innerHTML = this.opts.render(said); this.log.scrollTop = this.log.scrollHeight; });
+      const r = await this.opts.ask({ task: 'chat', cards: await this.cardsFor(ns), question: q, talk: this.talkKey }, (said) => { row.innerHTML = this.opts.render(said); this.log.scrollTop = this.log.scrollHeight; });
       this.withheld = r.withheld;
       this.nums = r.nums;
       this.render();

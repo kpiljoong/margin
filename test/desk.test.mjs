@@ -12,7 +12,7 @@ import { fileURLToPath } from 'node:url';
 import { parseDesk, stringifyDesk, stackOnto, groupAround, childrenOf, groupAt, removeCards, parseGroups, parseLinks, parseQuestions, groupLayout, nearest, cardTitle, edgePath, STEP, EMPTY_DESK, noteDesk, linksOf, fromState, toNote } from '../public/desk.js';
 
 const require = createRequire(import.meta.url);
-const { requestText } = require('../lib/desk.js');
+const { requestText, picturesOf } = require('../lib/desk.js');
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
@@ -112,7 +112,9 @@ process.stdin.on('data', (d) => {
     const j = JSON.parse(buf.slice(0, i)); buf = buf.slice(i + 1);
     if (j.type !== 'user') continue;
     const out = (o) => process.stdout.write(JSON.stringify(o) + '\\n');
-    out({ type: 'stream_event', event: { type: 'content_block_delta', delta: { text: j.message.content } } });
+    const c = j.message.content;
+    const text = Array.isArray(c) ? c.map((b) => (b.type === 'image' ? '[image ' + b.source.media_type + ' ' + b.source.data + ']' : b.text)).join('\\n') : c;
+    out({ type: 'stream_event', event: { type: 'content_block_delta', delta: { text } } });
     out({ type: 'result', subtype: 'success', total_cost_usd: 0.001, usage: { input_tokens: 10, output_tokens: 3 } });
   }
 });
@@ -156,6 +158,22 @@ test('the server: the cards it sends, numbered; a private note never', { skip: p
   r = await talk([{ key: 'y', text: 'two' }, { key: 'x', text: 'one' }], 'q2');
   assert.deepEqual(r[0].cards, [['y', 2], ['x', 1]]);
   assert.match(r.filter((l) => l.t).map((l) => l.t).join(''), /^Cards:\n#2 card:\ntwo\n\nAbout cards #2, #1\./);
+  // Pictures: a picture's card with it, a mark with its part and the whole —
+  // never one .agentnotesignore names, nor one that isn't a picture there.
+  fs.writeFileSync(path.join(ws, 'p.png'), 'png');
+  fs.writeFileSync(path.join(ws, 'hidden.png'), 'png');
+  fs.writeFileSync(path.join(ws, '.agentnotesignore'), 'hidden.md\nhidden.png\n');
+  const pic = (data) => ({ media: 'image/png', data });
+  r = await ask({ path: 'd.canvas', task: 'region', cards: [
+    { key: 'p', file: 'p.png', picture: pic('AAAA') },
+    { key: 'm', text: 'Is this right?', region: { file: 'p.png', rect: [1, 2, 3, 4] }, picture: pic('BBBB'), whole: pic('CCCC') },
+    { key: 'h', text: 'and this?', region: { file: 'hidden.png', rect: [1, 2, 3, 4] }, picture: pic('DDDD') },
+    { key: 'b', text: 'bad', region: { file: 'a.md', rect: [1, 2, 3, 4] }, picture: { media: 'text/html', data: 'EEEE' } },
+  ] });
+  assert.deepEqual(r[0].withheld, ['hidden.png']);
+  const sent = r.filter((l) => l.t).map((l) => l.t).join('');
+  assert.match(sent, /^\[image image\/png AAAA\]\n\[image image\/png BBBB\]\n\[image image\/png CCCC\]\nCards:\n#1 "p":\n\[picture 1: the picture p\.png\]\n\n#2 card:\nIs this right\?\n\[picture 2: the part of p\.png it marks \(x, y, width, height: 1, 2, 3, 4\)\]\n\[picture 3: the whole of p\.png\]\n\n#3 card:\nand this\?\n\n#4 card:\nbad\n\nRequest/);
+  assert.doesNotMatch(sent, /DDDD|EEEE/);
   // Not a request it knows; a desk in .agentnotesignore.
   assert.equal((await ask({ path: 'd.canvas', task: 'rm', cards })).at(-1).end.ok, false);
   fs.writeFileSync(path.join(ws, '.agentnotesignore'), 'hidden.md\nd.canvas\n');
@@ -213,4 +231,16 @@ test('what the desk asks of a note: a to-do ticked, a question decided (in other
   assert.equal(out, '# M\n\n> [!decision] No beta: we ship to everyone.\n\n> [!decision] Which day?\n\n- [x] Draft the notes @ann\n- [ ] Book the room\n\n## Wrap-up\n\n### Open questions\n\n> [!decision] No beta: we ship to everyone.\n');
   // Gone from the note since: nothing asked of it.
   assert.equal(toNote('# M\n', [set(card('Which day?'), { decided: 'Friday' })]), '# M\n');
+});
+
+test('requestText and picturesOf: the pictures of a card named in its text, sent in that order; a card seen in a talk, not again', () => {
+  const cards = [
+    { n: 1, key: 'a', title: 'shot', text: '', pictures: [{ media: 'image/jpeg', data: 'AA', what: 'the picture shot.png' }] },
+    { n: 2, key: 'b', title: '', text: 'Is this right?', pictures: [{ media: 'image/png', data: 'BB', what: 'the part of shot.png it marks' }, { media: 'image/jpeg', data: 'CC', what: 'the whole of shot.png' }] },
+  ];
+  assert.match(requestText('region', cards), /^Cards:\n#1 "shot":\n\[picture 1: the picture shot\.png\]\n\n#2 card:\nIs this right\?\n\[picture 2: the part of shot\.png it marks\]\n\[picture 3: the whole of shot\.png\]\n\nRequest \(cards #1, #2\): Each marked card/);
+  assert.deepEqual(picturesOf(cards).map((p) => p.data), ['AA', 'BB', 'CC']);
+  const seen = new Map([['a', '']]);
+  assert.deepEqual(picturesOf(cards, seen).map((p) => p.data), ['BB', 'CC']);
+  assert.match(requestText('chat', cards, 'why?', seen), /^Cards:\n#2 card:\nIs this right\?\n\[picture 1: the part/);
 });

@@ -1,4 +1,6 @@
 import { renderMarkdown, outline, slug } from './markdown.js';
+import { glide, hold, enter } from './motion.js';
+import { parseXywh, cropParts } from './regions.js';
 import { store } from './store.js';
 import { linkAt } from './links.js';
 import { PreviewFind } from './previewfind.js';
@@ -446,6 +448,8 @@ async function followLink(target, fromPath) {
   const { note, heading } = splitLink(target);
   const path = note ? resolveLink(note, fromPath) : (isNote(fromPath || '') ? fromPath : null);
   if (!path) return false;
+  // A picture (a part of it named: #xywh=…): shown, the part marked.
+  if (IMAGE_FILE.test(path)) { openImage(path, parseXywh(`#${heading}`)); return true; }
   if (path !== fileTab()?.path) await openFile(path);
   const tab = fileTab();
   if (!heading || tab?.path !== path) return true;
@@ -1076,6 +1080,7 @@ async function linkMention(target, mentionPath, line) {
 
 function renderActivity() {
   document.querySelectorAll('#activity [data-view]').forEach((b) => b.classList.toggle('active', b.dataset.view === S.view && !$('#app').classList.contains('no-sidebar')));
+  glide($('#activity'), $('#activity [data-view].active'), 'act-pill');
   const badge = $('#agent-badge');
   const running = S.runs.some((r) => r.status === 'running');
   const review = S.runs.some((r) => r.status === 'review');
@@ -1091,11 +1096,15 @@ function renderSidebar() {
   // A row focused from the keyboard keeps the focus.
   const fr = sb.contains(document.activeElement) && document.activeElement.closest?.(LIST_ROWS);
   const was = fr && { cls: fr.classList[0], id: fr.dataset.path || fr.dataset.bookmark || fr.title, text: fr.textContent };
+  const oldBody = sb.dataset.view === S.view && sb.querySelector('.panel-body');
+  if (oldBody) hold(oldBody, 'tree-pill', sb); else sb.glideAt = null;
   sb.dataset.view = S.view;
   sb.replaceChildren(...(S.view === 'search' ? searchPanel() : S.view === 'agent' ? agentPanel() : S.view === 'git' ? gitPanel() : filesPanel()));
   const body = sb.querySelector('.panel-body');
   if (body && keep) body.scrollTop = keep;
   if (shown && S.settings.followTab) sb.querySelector('.tree-row.active[data-path]')?.scrollIntoView({ block: 'nearest' });
+  enter(sb, S.view);
+  if (body) glide(body, body.querySelector('.tree-row.active'), 'tree-pill', sb);
   if (was) focusRow([...sb.querySelectorAll(LIST_ROWS)].find((r) => r.classList[0] === was.cls && (r.dataset.path || r.dataset.bookmark || r.title) === was.id && r.textContent === was.text));
   renderActivity();
 }
@@ -1541,6 +1550,7 @@ function renderTabs() {
   ensurePanes();
   S.groups.forEach((grp, g) => {
   const bar = paneEl(g).querySelector('.tabs');
+  hold(bar, 'tab-pill');
   bar.replaceChildren(...S.tabs.filter((t) => t.group === g).map((t) => {
     const dirty = (t.kind === 'file' && t.content !== t.saved) || (t.kind === 'drawing' && t.text !== t.saved);
     const label = SPECIAL[t.kind] ? SPECIAL[t.kind].name(t) : basename(t.path);
@@ -1583,6 +1593,7 @@ function renderTabs() {
     placeTab(t, g, target ? (before ? target : S.tabs.filter((x) => x.group === g)[S.tabs.filter((x) => x.group === g).indexOf(target) + 1] || null) : null);
   };
   bar.querySelector('.tab.active')?.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+  glide(bar, bar.querySelector('.tab.active'), 'tab-pill');
   });
 }
 
@@ -1688,13 +1699,24 @@ function renderContent(g = S.focus) {
   if (!pane) return;
   const c = pane.querySelector('.pane-content');
   const tab = activeIn(g);
+  enter(c, tab?.id ?? '');
   if (attachedByGroup[g] && attachedByGroup[g] !== tab) attachedByGroup[g] = null;
   if (!tab) { c.replaceChildren(g === 0 ? welcome() : h('div', { class: 'empty pane-empty' }, 'Open a note here with ', h('kbd', {}, kbd('quick-open') || 'the palette'), '.')); return; }
   if (SPECIAL[tab.kind]) { showSpecial(c, tab); return; }
   if (tab.kind === 'drawing') { drawingView(tab, c); return; }
   if (tab.kind === 'image') {
+    // A part of it named (a note's source link): marked on it.
+    const img = h('img', { src: `/api/raw?path=${encodeURIComponent(tab.path)}&t=${token}`, alt: tab.path });
+    const frame = h('div', { class: 'image-frame' }, img);
+    const r = tab.region;
+    if (r) {
+      const box = h('div', { class: 'image-region', title: `The part the link names (${r.join(', ')})` });
+      const place = () => { if (!img.naturalWidth) return; Object.assign(box.style, { left: `${(r[0] / img.naturalWidth) * 100}%`, top: `${(r[1] / img.naturalHeight) * 100}%`, width: `${(r[2] / img.naturalWidth) * 100}%`, height: `${(r[3] / img.naturalHeight) * 100}%` }); box.scrollIntoView({ block: 'center', inline: 'center' }); };
+      img.addEventListener('load', place);
+      frame.append(box);
+    }
     c.replaceChildren(h('div', { class: 'toolbar' }, ...navButtons(), h('span', { class: 'crumbs' }, tab.path.split('/').join('  ›  '))),
-      h('div', { class: 'image-view' }, h('img', { src: `/api/raw?path=${encodeURIComponent(tab.path)}&t=${token}`, alt: tab.path })));
+      h('div', { class: 'image-view' }, frame));
     return;
   }
 
@@ -1884,7 +1906,8 @@ function localImage(url, notePath) {
   const parts = (rel.startsWith('/') ? rel.slice(1) : [dirname(notePath), rel].filter(Boolean).join('/')).split('/');
   const out = [];
   for (const part of parts) { if (part === '..') out.pop(); else if (part && part !== '.') out.push(part); }
-  return `/api/raw?path=${encodeURIComponent(out.join('/'))}&t=${token}`;
+  const r = parseXywh(url); // a part of it (#xywh=): shown by cropParts
+  return `/api/raw?path=${encodeURIComponent(out.join('/'))}&t=${token}${r ? `#xywh=${r.join(',')}` : ''}`;
 }
 
 function welcome() {
@@ -1942,6 +1965,7 @@ function renderPreview(tab) {
     p.innerHTML = renderMarkdown(text, { image: (url) => localImage(url, tab.path), embed: (target, label) => fileEmbed(target, label, tab.path) });
     pen.decorate(p);
   } else p.innerHTML = renderMarkdown(tab.content, { image: (url) => localImage(url, tab.path), embed: (target, label) => fileEmbed(target, label, tab.path) });
+  cropParts(p);
   pairInk(p); // a picture and its ```ink marks: one figure, before the layout moves them
   if (p.querySelector('.note-embed.loading')) {
     fillNoteEmbeds(p).then(() => { // the ones read from disk: draw what's in them
@@ -4092,9 +4116,10 @@ async function newFolder(base = '') {
   } catch (e) { toast(e.message, 'error'); }
 }
 
-function openImage(p) {
+function openImage(p, region = null) {
   let tab = S.tabs.find((t) => t.kind === 'image' && t.path === p);
   if (!tab) { tab = { id: `i:${p}`, kind: 'image', path: p, group: S.focus }; S.tabs.push(tab); }
+  tab.region = region;
   activate(tab.id);
 }
 
@@ -4413,7 +4438,7 @@ async function deskStream(body, onText) {
 // The first time: what the desk's margin sends, and where.
 async function deskConsent() {
   if (store.getItem('an.deskMargin') === '1') return true;
-  const ok = await askConfirm('The desk’s margin sends the cards you give it (their text, and the notes they show) to Claude (Haiku) through your claude login. Notes marked private, and what .agentnotesignore names, are never sent. Nothing goes until you ask.', { okLabel: 'Send the cards' });
+  const ok = await askConfirm('The desk’s margin sends the cards you give it (their text, and the notes and pictures they show — a marked part of a picture with the whole of it) to Claude (Haiku) through your claude login. Notes marked private, and what .agentnotesignore names, are never sent. Nothing goes until you ask.', { okLabel: 'Send the cards' });
   if (ok) store.setItem('an.deskMargin', '1');
   return ok;
 }
@@ -4458,6 +4483,19 @@ function deskView(tab, c) {
           return open ? open.content : (await api('GET', `/api/file?path=${encodeURIComponent(p)}`)).content.replace(/\r\n/g, '\n');
         },
         imageUrl: (p) => `/api/raw?path=${encodeURIComponent(p)}&t=${token}`,
+        // Pictures dropped or pasted on the desk: kept in assets/ beside it, as a note's are.
+        addImages: async (files) => {
+          const out = [];
+          for (const file of files) {
+            if (file.size > 25 * 1024 * 1024) { toast(`${file.name} is larger than 25 MB`, 'error'); continue; }
+            try {
+              const ext = (file.type.split('/')[1] || 'png').replace('jpeg', 'jpg').replace('svg+xml', 'svg');
+              const res = await api('POST', '/api/asset', { note: tab.path, name: file.name || `pasted.${ext}`, data: await blobBase64(file) });
+              out.push({ path: res.workspacePath, file });
+            } catch (e) { toast(`Could not put ${file.name || 'the picture'} on the desk: ${e.message}`, 'error'); }
+          }
+          return out;
+        },
         openNote: (p, line) => openFile(p, { side: true, line }),
         privateOf: async (paths) => (await api('POST', '/api/private', { paths })).private || {},
         // A note written in from the desk (its card read large): through its
@@ -4506,7 +4544,9 @@ function deskView(tab, c) {
             onCancel: () => resolve(null),
           });
         }),
-        makeNote: async (md) => {
+        // md: the note, or a function making it for where it goes (its links are relative).
+        makeNote: async (make) => {
+          const md = typeof make === 'function' ? make('x.md') : make;
           const title = /^#\s+(.+)$/m.exec(md)?.[1]?.replace(/[\\/:*?"<>|#^[\]]/g, ' ').trim() || 'Merged';
           const base = dirname(tab.path);
           const name = await askText({ title: 'Make a note of it', label: 'Path relative to the workspace. “.md” is added if missing. The cards it comes from stay as they are.', value: `${base ? `${base}/` : ''}${title}`, okLabel: 'Create' });
@@ -4514,7 +4554,8 @@ function deskView(tab, c) {
           let p = name.trim();
           if (!/\.md$/i.test(p)) p = `${p}.md`;
           try {
-            const f = await api('POST', '/api/file', { path: p, content: md.endsWith('\n') ? md : `${md}\n` });
+            const text = typeof make === 'function' ? make(p) : md;
+            const f = await api('POST', '/api/file', { path: p, content: text.endsWith('\n') ? text : `${text}\n` });
             await loadTree();
             toast(`Made ${f.path}`);
             return f.path;

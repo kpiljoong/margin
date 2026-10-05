@@ -561,6 +561,7 @@ input[type=checkbox] { accent-color: var(--accent); }
 .toast-action { margin-left: 12px; border: 0; background: none; color: var(--accent); font-weight: 600; cursor: pointer; }
 .image-view { flex: 1; overflow: auto; display: flex; align-items: center; justify-content: center; padding: 24px; background: repeating-conic-gradient(var(--bg-2) 0 25%, var(--bg) 0 50%) 0 0 / 20px 20px; }
 .image-view img { max-width: 100%; max-height: 100%; box-shadow: 0 6px 30px var(--shadow); }
+.image-view .image-frame img { max-height: calc(100vh - 160px); }
 
 /* welcome */
 .welcome { margin: auto; width: min(720px, 92%); padding: 40px 0; color: var(--fg-dim); overflow: auto; }
@@ -1800,3 +1801,72 @@ li.callout-hot { background: color-mix(in srgb, var(--accent) 16%, transparent);
   .desk-hint { display: none; }
 }
 .desk.far .desk-card.t-group { border-width: calc(1.5px * var(--iz, 1)); }
+
+/* ---- motion (motion.js): the selected thing's highlight slides there; a note, a view, a dialog comes in */
+.glide { position: absolute; left: 0; top: 0; z-index: 0; pointer-events: none; transition: transform .34s cubic-bezier(.2, .9, .3, 1.12), width .34s cubic-bezier(.2, .9, .3, 1.12), height .34s cubic-bezier(.2, .9, .3, 1.12), opacity .15s; }
+.glide.still { transition: none; }
+.glide.off { opacity: 0; }
+.tabs.glides { position: relative; }
+.tabs.glides .tab { position: relative; z-index: 1; }
+.tabs.glides .tab.active { background: none; box-shadow: none; }
+.tab-pill { background: var(--bg); box-shadow: inset 0 2px 0 var(--accent); }
+#panes.split .pane:not(.focused) .tab-pill { box-shadow: inset 0 2px 0 var(--fg-faint); }
+#activity.glides { position: relative; }
+#activity.glides button { z-index: 1; }
+#activity.glides button.active { background: none; }
+.act-pill { background: var(--bg-3); border-radius: var(--radius); }
+.panel-body.glides { position: relative; }
+.panel-body.glides .tree-row { position: relative; z-index: 1; }
+.panel-body.glides .tree-row.active { background: none; }
+.tree-pill { background: var(--bg-3); }
+@keyframes enter-fade { from { opacity: 0; } }
+@keyframes enter-rise { from { opacity: 0; transform: translateY(8px); } }
+@keyframes enter-picture { from { opacity: 0; transform: translateY(16px) scale(.985); } }
+@keyframes pop-in { from { opacity: 0; transform: translateY(-6px) scale(.985); } }
+@keyframes toast-in { from { opacity: 0; transform: translate(-50%, 10px); } }
+.pane-content.entering > :not(.toolbar) { animation: enter-fade .18s ease-out; }
+.pane-content.entering .preview > * { animation: enter-rise .3s cubic-bezier(.2, .8, .3, 1) backwards; }
+.pane-content.entering .preview > :nth-child(2) { animation-delay: .03s; }
+.pane-content.entering .preview > :nth-child(3) { animation-delay: .06s; }
+.pane-content.entering .preview > :nth-child(4) { animation-delay: .09s; }
+.pane-content.entering .preview > :nth-child(5) { animation-delay: .12s; }
+.pane-content.entering .preview > :nth-child(6) { animation-delay: .15s; }
+.pane-content.entering .preview > :nth-child(n + 7) { animation-delay: .18s; }
+.pane-content.entering .preview img { animation: enter-picture .45s cubic-bezier(.2, .8, .3, 1) .14s backwards; }
+#sidebar.entering .panel-body { animation: enter-rise .2s ease-out; }
+#overlay:not([hidden]) .dialog { animation: pop-in .14s ease-out; }
+#toast:not([hidden]) { animation: toast-in .22s cubic-bezier(.2, .9, .3, 1.2); }
+.ctx-menu { animation: pop-in .12s ease-out; transform-origin: top left; }
+@media (prefers-reduced-motion: reduce) {
+  .pane-content.entering > *, .pane-content.entering .preview > *, .pane-content.entering .preview img, #sidebar.entering .panel-body, #overlay .dialog, #toast, .ctx-menu { animation: none !important; }
+}
+
+/* ---- marks on a picture (desk.js, regions.js): a part, its card, its line; one in the light; what it became, layer on layer */
+.desk-card.t-file .desk-body { position: relative; }
+.desk-marks { position: absolute; pointer-events: none; }
+.desk-mark { position: absolute; border: 2px solid var(--accent-2); border-radius: 4px; background: color-mix(in srgb, var(--accent-2) 10%, transparent); pointer-events: auto; cursor: pointer; }
+.desk-mark span { position: absolute; top: -9px; left: -9px; min-width: 16px; height: 16px; padding: 0 3px; border-radius: 8px; background: var(--accent-2); color: var(--bg); font-size: 10px; font-weight: 600; line-height: 16px; text-align: center; }
+.desk-mark.sel, .desk-mark.spot { border-width: 3px; background: color-mix(in srgb, var(--accent-2) 18%, transparent); box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent-2) 30%, transparent); }
+.desk-mark.drawing { border-style: dashed; pointer-events: none; }
+.desk.spotting .desk-mark:not(.spot) { opacity: .35; }
+.desk-card.marking .desk-body, .desk-card.marking .desk-body * { cursor: crosshair; }
+.desk-card.marking { box-shadow: 0 0 0 2px var(--accent-2), 0 10px 30px var(--shadow); }
+.desk-card.t-mark { border-left: 3px solid var(--accent-2); }
+.desk-edge.mark { stroke: var(--accent-2); stroke-width: 1.5; stroke-dasharray: 4 4; opacity: .7; }
+.desk-edge.mark.spot { stroke-width: 2.5; stroke-dasharray: none; opacity: 1; }
+.desk.spotting .desk-card:not(.lit) { opacity: .22; transition: opacity .25s; }
+.desk.spotting .desk-edge:not(.spot) { opacity: .25; }
+.desk-from-noted { color: var(--accent-2) !important; }
+.desk-layers { display: grid; padding-top: calc(var(--n, 0) * 26px); }
+.desk-layer { grid-area: 1 / 1; position: relative; z-index: calc(10 - var(--d, 0)); align-self: start; padding: 10px 14px 14px; border: 1px solid var(--border); border-radius: 10px; background: var(--bg-2); box-shadow: 0 6px 24px var(--shadow); transform: translateY(calc(var(--d, 0) * -26px)) scale(calc(1 - var(--d, 0) * .03)); transform-origin: top center; transition: transform .28s cubic-bezier(.2, .8, .3, 1), opacity .28s; }
+.desk-layer:not(.front) { opacity: calc(1 - var(--d, 0) * .18); }
+.desk-layer:not(.front) { max-height: 46px; overflow: hidden; }
+.desk-layer.ahead { opacity: 0; transform: translateY(24px) scale(1.02); pointer-events: none; }
+.desk-layer-name { margin-bottom: 6px; color: var(--fg-faint); font-size: 11px; letter-spacing: .02em; }
+.desk-layer.front .desk-layer-name { color: var(--accent-2); }
+.desk-layer img { display: block; max-width: 100%; max-height: 50vh; margin: 0 auto; border-radius: 6px; }
+img.part { border-radius: 6px; box-shadow: 0 0 0 1px var(--border); }
+.image-frame { position: relative; display: inline-block; max-width: 100%; max-height: 100%; }
+.image-frame img { display: block; }
+.image-region { position: absolute; border: 3px solid var(--accent-2); border-radius: 4px; box-shadow: 0 0 0 9999px rgba(0, 0, 0, .35); pointer-events: none; }
+@media (prefers-reduced-motion: reduce) { .desk-layer { transition: none; } }

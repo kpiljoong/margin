@@ -2229,29 +2229,59 @@ function deskUp() {
   }
   return desk;
 }
+// A picture the page sends with a card (a picture's card, scaled down; a
+// marked part of one): only of a picture in the workspace that may be sent,
+// and only as a picture.
+const DESK_PICTURE_TYPES = new Set(['image/png', 'image/jpeg', 'image/webp', 'image/gif']);
+const deskPicture = (p) => (p && DESK_PICTURE_TYPES.has(p.media) && typeof p.data === 'string' && p.data.length < 7_000_000 && /^[A-Za-z0-9+/]+=*$/.test(p.data) ? { media: p.media, data: p.data } : null);
 function deskCards(cards) {
   const ignored = loadIgnore(ROOT);
   const out = [];
   const withheld = [];
   let room = 40000;
+  let pictures = 0;
+  // A picture in the workspace that may be sent: its path from the root, or null.
+  const sendable = (file) => {
+    let abs;
+    try { abs = workspacePath(file); } catch { return null; }
+    const rel = relOf(abs);
+    if (!RAW_MIME[extOf(abs)] || !fs.existsSync(abs)) return null;
+    if (ignored(rel)) { withheld.push(rel); return null; }
+    return rel;
+  };
   for (const c of (Array.isArray(cards) ? cards : []).slice(0, 60)) {
     let title = '';
     let text = '';
+    const pics = [];
     if (c && typeof c.file === 'string') {
       let abs;
       try { abs = workspacePath(c.file); } catch { continue; }
       const rel = relOf(abs);
       if (ignored(rel) || (NOTE_EXT.has(extOf(abs)) && isPrivateNote(abs))) { withheld.push(rel); continue; }
       title = path.basename(rel).replace(/\.[^.]+$/, '');
-      if (!NOTE_EXT.has(extOf(abs))) text = '(a file that is not a note)';
+      const pic = RAW_MIME[extOf(abs)] && pictures < 8 && deskPicture(c.picture);
+      if (pic) pics.push({ ...pic, what: `the picture ${path.basename(rel)}` });
+      else if (!NOTE_EXT.has(extOf(abs))) text = '(a file that is not a note)';
       else text = cachedText(rel)?.text.replace(/^\uFEFF?---\r?\n[\s\S]*?\r?\n---\r?\n?/, '') ?? '(not found)';
-    } else if (c && typeof c.text === 'string') text = c.text;
-    else continue;
+    } else if (c && typeof c.text === 'string') {
+      text = c.text;
+      // A note on a marked part of a picture: the part, and the whole.
+      const r = c.region;
+      const rel = r && typeof r.file === 'string' && Array.isArray(r.rect) && sendable(r.file);
+      if (rel) {
+        const name = path.basename(rel);
+        const part = pictures < 8 && deskPicture(c.picture);
+        const whole = pictures < 7 && deskPicture(c.whole);
+        if (part) pics.push({ ...part, what: `the part of ${name} it marks (x, y, width, height: ${r.rect.slice(0, 4).map((v) => Math.round(Number(v) || 0)).join(', ')})` });
+        if (whole) pics.push({ ...whole, what: `the whole of ${name}` });
+      }
+    } else continue;
     text = text.trim().slice(0, Math.min(6000, Math.max(0, room)));
     room -= text.length;
-    out.push({ n: out.length + 1, key: String(c.key || c.file || out.length).slice(0, 200), title, text });
+    pictures += pics.length;
+    out.push({ n: out.length + 1, key: String(c.key || c.file || out.length).slice(0, 200), title, text, ...(pics.length ? { pictures: pics } : {}) });
   }
-  return { cards: out, withheld };
+  return { cards: out, withheld: [...new Set(withheld)] };
 }
 function deskAsk(req, res, body) {
   const canvas = workspacePath(String(body.path || ''));
@@ -2366,7 +2396,7 @@ const server = http.createServer(async (req, res) => {
       return send(res, 401, { error: 'Missing session token. Open the URL printed in the terminal.' });
     }
     if (req.method === 'POST' && url.pathname === '/api/live/line') return liveLine(req, res, await readBody(req, 128 * 1024));
-    if (req.method === 'POST' && url.pathname === '/api/desk/ask') return deskAsk(req, res, await readBody(req, 512 * 1024));
+    if (req.method === 'POST' && url.pathname === '/api/desk/ask') return deskAsk(req, res, await readBody(req, 40 * 1024 * 1024));
     const body = req.method === 'POST' || req.method === 'PUT'
       ? await readBody(req, url.pathname === '/api/asset' || (url.pathname === '/api/file' && req.method === 'PUT') || (url.pathname === '/api/runs' && req.method === 'POST') ? 40 * 1024 * 1024 : undefined) : null;
     send(res, 200, await routeApi(req.method, url, body));

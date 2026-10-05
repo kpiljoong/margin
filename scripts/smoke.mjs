@@ -437,7 +437,7 @@ await check('numbered dots on a picture: N puts the next number; its list item a
   t.dispatchEvent(new KeyboardEvent('keyup', { bubbles: true, key: 'ArrowRight' }));
   out.lit = (await until(() => $('.canvas-stage .ink-mark.ink-at'), 4000))?.dataset.num;
   button('Preview').click();
-  const li = await until(() => $('.preview li[data-callout="1"], .md li[data-callout="1"]'), 8000);
+  const li = await until(() => $$('.ink-mark[data-num="1"]').some((m) => !m.closest('.canvas-stage')) && $('.preview li[data-callout="1"], .md li[data-callout="1"]'), 8000);
   li?.dispatchEvent(new PointerEvent('pointerover', { bubbles: true }));
   await sleep(100);
   out.hot = $$('.ink-mark.ink-hot').map((g) => g.dataset.num).join();
@@ -2048,6 +2048,59 @@ await check('…a question decided on the desk is proposed to the note in red pe
     ? null : `got ${JSON.stringify({ v, proposed, note })}`;
 });
 
+await check('a picture pasted on the desk is a card; a part of it marked (r, a drag) and made a note shows that part, with a link back', `
+  $$('.tab').find((t) => t.textContent.includes('standup desk.canvas')).click();
+  const D = await until(() => $('.desk'));
+  const d = D.desk;
+  const press = (k, o = {}) => D.dispatchEvent(new KeyboardEvent('keydown', { key: k, bubbles: true, cancelable: true, ...o }));
+  const c = document.createElement('canvas');
+  c.width = 400;
+  c.height = 200;
+  c.getContext('2d').fillRect(0, 0, 400, 200);
+  const blob = await new Promise((r) => c.toBlob(r, 'image/png'));
+  const dt = new DataTransfer();
+  dt.items.add(new File([blob], 'shot.png', { type: 'image/png' }));
+  D.focus();
+  D.dispatchEvent(new ClipboardEvent('paste', { clipboardData: dt, bubbles: true, cancelable: true }));
+  const pic = await until(() => d.d.nodes.find((n) => n.type === 'file' && /\\.png$/.test(n.file)), 5000);
+  const img = await until(() => { const i = d.els.get(pic.id)?.body.querySelector('img'); return i?.naturalWidth ? i : null; }, 5000);
+  d.fit(false, [pic]);
+  await sleep(300);
+  d.sel = new Set([pic.id]);
+  press('r');
+  const r = img.getBoundingClientRect();
+  const at = (t, fx, fy) => new PointerEvent(t, { bubbles: true, cancelable: true, button: 0, pointerId: 1, clientX: r.left + r.width * fx, clientY: r.top + r.height * fy });
+  img.dispatchEvent(at('pointerdown', 0.25, 0.25));
+  D.dispatchEvent(at('pointermove', 0.5, 0.5));
+  D.dispatchEvent(at('pointermove', 0.75, 0.75));
+  D.dispatchEvent(at('pointerup', 0.75, 0.75));
+  const box = await until(() => $('.desk-card.editing textarea, .desk-edit'));
+  box.value = 'Why is it black?';
+  box.dispatchEvent(new Event('input'));
+  box.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', metaKey: true, bubbles: true, cancelable: true }));
+  await sleep(300);
+  const mark = d.d.nodes.find((n) => n.from?.kind === 'region');
+  const marks = $$('.desk-mark[data-mark]').length + ' marks, ' + $$('.desk-edge.mark').length + ' lines';
+  d.els.get(mark.id).from.querySelector('[data-act="note"]').click();
+  const input = await until(() => !$('#overlay').hidden && $('#overlay input'));
+  input.value = 'marked part';
+  input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }));
+  await until(() => d.d.nodes.find((n) => n.id === mark.id).from.noted, 5000);
+  const noted = d.d.nodes.find((n) => n.id === mark.id).from.noted;
+  const card = d.d.nodes.find((n) => n.file === noted);
+  const edge = d.d.edges.some((e) => e.fromNode === mark.id && e.toNode === card?.id);
+  return { pic: pic.file, rect: mark.from.rect, marks, noted, edge };
+`, (v) => {
+  let note = '';
+  try { note = fs.readFileSync(path.join(ws, 'marked part.md'), 'utf8'); } catch { /* none */ }
+  const near = (a, b) => Array.isArray(a) && a.length === b.length && a.every((x, i) => Math.abs(x - b[i]) <= 2);
+  const at = v?.pic && `${v.pic}#xywh=${(v.rect || []).join(',')}`;
+  return v && /^assets\/[^/]+\.png$/.test(v.pic) && fs.existsSync(path.join(ws, v.pic)) && near(v.rect, [100, 50, 200, 100]) && v.marks === '1 marks, 1 lines'
+    && v.noted === 'marked part.md' && v.edge && note.startsWith('# Why is it black?') && note.includes(`](${at})`) && note.includes('> [!question] Why is it black?')
+    && note.includes(`Source: [${v.pic.split('/').pop()}](${at}), marked on [standup desk](standup%20desk.canvas).`)
+    ? null : `got ${JSON.stringify({ v, note })}`;
+});
+
 fs.writeFileSync(path.join(ws, 'sub', 'space 2026-10-05.md'), '# space 2026-10-05\n\n## Status (1m)\n\n> [!decision] Beta stays open.\n\n- [ ] Send the survey @ann\n\n## Launch (1m)\n\n> [!question] A press kit?\n');
 await check('meetings in space (experimental): the depth stage (the note flat, the agenda on the floor), the tunnel to the next item, a card thrown in the decision orbit is a change to propose', `
   const mac = navigator.platform.startsWith('Mac');
@@ -2219,12 +2272,13 @@ await check('a run that ends while another note is open says so; its Review butt
   if (!t) return { error: 'no toast', toast: $('#toast').textContent };
   t.querySelector('.toast-action').click();
   const back = await until(() => $('.tab.active')?.textContent.includes('Review') && document.activeElement === $('.review'));
+  await until(() => button('Discard', $('.review'))); // the run as it ended, not as it ran
   key('d');
-  const ok = await until(() => button('Discard', $('.dialog.confirm')));
+  const ok = await until(() => $('.dialog.confirm') && button('Discard', $('.dialog.confirm')));
   ok?.click();
-  await until(() => /Discarded/.test($('.review')?.textContent || ''), 5000);
-  return { toast: t.textContent, back: !!back };
-`, (v) => (v?.back && /Review$/.test(v.toast) ? null : 'no word when the run ended'));
+  const gone = !!(await until(() => /Discarded/.test($('.review')?.textContent || ''), 5000));
+  return { toast: t.textContent, back: !!back, gone };
+`, (v) => (v?.back && /Review$/.test(v.toast) && v.gone ? null : `no word when the run ended: ${JSON.stringify(v)}`));
 
 await check('M-x (⌥X :) runs a recipe from RECIPES.md by name; the runs, the review and the messages are buffers with the same keys', `
   const press = (code, key, opts = {}) => document.activeElement.dispatchEvent(new KeyboardEvent('keydown', { code, key, bubbles: true, cancelable: true, ...opts }));
