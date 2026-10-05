@@ -194,7 +194,8 @@ const CALLOUTS = {
   note: 'note', info: 'note', todo: 'note', abstract: 'note', summary: 'note', tldr: 'note',
   tip: 'tip', hint: 'tip', success: 'tip', check: 'tip', done: 'tip', decision: 'tip', decided: 'tip',
   important: 'important', question: 'important', help: 'important', faq: 'important', example: 'important',
-  warning: 'warning', caution: 'warning', attention: 'warning',
+  warning: 'warning', caution: 'warning', attention: 'warning', risk: 'warning',
+  idea: 'idea',
   danger: 'danger', error: 'danger', bug: 'danger', failure: 'danger', fail: 'danger', missing: 'danger',
   quote: 'quote', cite: 'quote',
 };

@@ -141,3 +141,59 @@ test('the demo agent wraps a meeting up: to-dos by owner, decisions, the next me
     assert.deepEqual(agendaOf(next).map((a) => a.title), ['Status', 'Launch date']);
   } finally { fs.rmSync(ws, { recursive: true, force: true }); }
 });
+
+const MORE = [
+  '# Weekly 2026-10-05',
+  '',
+  '## Launch (10m)',
+  '',
+  '> [!warning] The store review may take a week.',
+  '',
+  '> [!idea] A first month free instead of a discount?',
+  '',
+  '- The offer range #next',
+  'Pricing for teams #next',
+  '- [ ] Ask legal #next @ann',
+  '',
+].join('\n');
+
+test('risks, ideas and topics for next time: read, marked, moved, on the wall', () => {
+  const items = meetingItems(MORE);
+  assert.deepEqual(items.map((i) => [i.kind, i.body]), [
+    ['risk', 'The store review may take a week.'],
+    ['idea', 'A first month free instead of a discount?'],
+    ['next', 'The offer range'],
+    ['next', 'Pricing for teams'],
+    ['todo', 'Ask legal #next'],
+  ]);
+  // Marked: a callout of its own, or "- … #next"; again: plain words.
+  const text = '## Launch (10m)\nreview may slip\noffer range\n';
+  const risk = classifyLine(text, text.indexOf('review'), 'risk');
+  assert.equal(risk.insert, '\n> [!warning] review may slip\n');
+  const later = classifyLine(text, text.indexOf('offer'), 'next');
+  assert.equal(later.insert, '- offer range #next');
+  assert.equal(classifyLine('- offer range #next', 3, 'next').insert, '- offer range');
+  assert.equal(classifyLine('> [!idea] free month', 3, 'idea').insert, 'free month');
+  // Moved on the wall: a risk decided, an idea for next time, a topic as a to-do.
+  assert.match(moveItem(MORE, items[0], { kind: 'decision' }), /> \[!decision\] The store review may take a week\./);
+  assert.match(moveItem(MORE, items[1], { kind: 'next' }), /\n- A first month free instead of a discount\? #next\n/);
+  assert.match(moveItem(MORE, items[2], { kind: 'todo', owner: 'bob' }), /\n- \[ \] The offer range @bob\n/);
+  assert.match(moveItem(MORE, items[2], { kind: 'risk' }), /\n> \[!warning\] The offer range\n/);
+  // The wall: risks after the questions, ideas and next time last; none, no column.
+  assert.deepEqual(wallOf(MORE).map((c) => [c.id, c.items.length]), [['decided', 0], ['open', 0], ['risks', 1], ['@ann', 1], ['nobody', 0], ['ideas', 1], ['later', 2]]);
+  assert.ok(!wallOf(NOTE).some((c) => ['risks', 'ideas', 'later'].includes(c.id)));
+  assert.match(wrapTask('W.md', 'W2.md', []), /### Risks/);
+});
+
+test('the demo agent carries risks and ideas into the wrap-up, and #next to the next meeting', () => {
+  const ws = fs.mkdtempSync(path.join(os.tmpdir(), 'margin-meeting-test-'));
+  try {
+    fs.writeFileSync(path.join(ws, 'Weekly 2026-10-05.md'), MORE);
+    const task = wrapTask('Weekly 2026-10-05.md', 'Weekly 2026-10-12.md', []);
+    execFileSync(process.execPath, [path.join(ROOT, 'scripts', 'demo-agent.js')], { cwd: ws, env: { ...process.env, AGENT_NOTES_TASK: task, AGENT_NOTES_FOCUS: 'Weekly 2026-10-05.md' }, stdio: 'pipe' });
+    const note = fs.readFileSync(path.join(ws, 'Weekly 2026-10-05.md'), 'utf8');
+    assert.match(note, /### Risks\n\n> \[!warning\] The store review may take a week\.\n\n### Ideas\n\n> \[!idea\] A first month free/);
+    const next = fs.readFileSync(path.join(ws, 'Weekly 2026-10-12.md'), 'utf8');
+    assert.match(next, /## Launch \(10m\)\n\n- The offer range\n- Pricing for teams\n/);
+  } finally { fs.rmSync(ws, { recursive: true, force: true }); }
+});

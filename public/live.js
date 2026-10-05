@@ -1,10 +1,10 @@
 // The live margin (experimental): while a meeting is written, its minutes
 // beside each line — a chip at once (by rule: a decision, a to-do, a
-// question, whose, by when), then a fast model's clean sentence, written in
+// question, a risk, an idea, one for next time, whose, by when), then a fast model's clean sentence, written in
 // as it comes (server.js → lib/live.js). It is only shown: Tab keeps it (the
 // line in the note becomes it, in the meeting's own Markdown), Esc lets it go.
 
-const KIND = { decision: 'Decided', question: 'Open', todo: 'To-do', note: 'Note' };
+const KIND = { decision: 'Decided', question: 'Open', todo: 'To-do', risk: 'Risk', idea: 'Idea', next: 'Next time', note: 'Note' };
 
 // Lines worth minutes: words, not a heading, a fence, a rule or the link
 // to the previous meeting.
@@ -15,7 +15,8 @@ export function wanted(line) {
   return /[\p{L}\p{N}]/u.test(t);
 }
 
-const CALL = /^\s*>\s*\[!(decision|decided|question)\][+-]?\s*(.*)$/i;
+const CALL = /^\s*>\s*\[!(decision|decided|question|warning|risk|idea)\][+-]?\s*(.*)$/i;
+const callKind = (type) => (/^q/i.test(type) ? 'question' : /^(warning|risk)$/i.test(type) ? 'risk' : /^idea$/i.test(type) ? 'idea' : 'decision');
 const TASK = /^\s*[-*+]\s+\[[ xX]\]\s+(.*)$/;
 const AT = /(?:^|[\s(])@([\p{L}\p{N}_][\p{L}\p{N}_.-]*)/u;
 // "ann: survey thurs": someone's.
@@ -23,6 +24,9 @@ const WHO = /^\s*([\p{L}][\p{L}\p{N}_.-]{1,20}):\s+\S/u;
 const DECIDE = /^\s*(?:!|→|->|=>)\s*|\b(?:decided|decision|agreed|go with|go w\/|approved|final)\b|\uACB0\uC815|\uD655\uC815|\uD558\uAE30\uB85C/i;
 const ASK = /\?\s*$|^\s*\?|\?\?|\uC9C8\uBB38/;
 const DO = /^\s*(?:\[\]|todo\b|action\b)|\b(?:will|needs? to|follow up|send|draft|book|write|fix|review|prepare|drafts|sends|reviews?)\b|\uD574\uC57C|\uBCF4\uB0B4|\uC791\uC131|\uC815\uB9AC/i;
+const RISK = /\b(?:risks?|risky|blockers?|blocked|concerns?|worried|might slip|may slip)\b|\uC704\uD5D8|\uB9AC\uC2A4\uD06C|\uC6B0\uB824|\uAC71\uC815|\uB9C9\uD798|\uB9C9\uD600/i;
+const IDEA = /\b(?:idea|what if|how about|maybe we|could we|proposal|propose)\b|\uC544\uC774\uB514\uC5B4|\uC5B4\uB54C|\uC5B4\uB5A8\uAE4C|\uC81C\uC548|\uD574\uBCF4\uBA74|\uD574 \uBCF4\uBA74/i;
+const LATER = /(?:^|\s)#next\b|\bnext (?:meeting|time)\b|\bpark(?:ed|ing lot)?\b|\btable (?:it|this)\b|\uB2E4\uC74C\s?\uD68C\uC758|\uB2E4\uC74C\uC5D0|\uB098\uC911\uC5D0|\uBCF4\uB958/i;
 const DAYS = [/\bsun(?:day)?\b|\uC77C\uC694\uC77C/i, /\bmon(?:day)?\b|\uC6D4\uC694\uC77C/i, /\btue(?:s|sday)?\b|\uD654\uC694\uC77C/i, /\bwed(?:nesday)?\b|\uC218\uC694\uC77C/i,
   /\bthu(?:r|rs|rsday)?\b|\uBAA9\uC694\uC77C/i, /\bfri(?:day)?\b|\uAE08\uC694\uC77C/i, /\bsat(?:urday)?\b|\uD1A0\uC694\uC77C/i];
 
@@ -61,13 +65,17 @@ export function ruleOf(line, today = new Date()) {
   const t = !c && TASK.exec(line);
   const owner = AT.exec(line)?.[1] || WHO.exec(line)?.[1]?.toLowerCase() || null;
   let kind;
-  if (c) kind = /^q/i.test(c[1]) ? 'question' : 'decision';
+  const later = !c && !t && /(?:^|\s)#next\b/i.test(line);
+  if (c) kind = callKind(c[1]);
   else if (t) kind = 'todo';
+  else if (LATER.test(line)) kind = 'next';
+  else if (RISK.test(line)) kind = 'risk';
+  else if (IDEA.test(line)) kind = 'idea';
   else if (ASK.test(line)) kind = 'question';
   else if (DECIDE.test(line)) kind = 'decision';
   else if (DO.test(line) || owner) kind = 'todo';
   else kind = 'note';
-  return { kind, fixed: !!(c || t), owner: kind === 'todo' || kind === 'question' ? owner : null, due: kind === 'todo' ? dueOf(line, today) : null };
+  return { kind, fixed: !!(c || t || later), owner: kind === 'todo' || kind === 'question' ? owner : null, due: kind === 'todo' ? dueOf(line, today) : null };
 }
 
 // The model's reply as it streams: "[todo @bob 2026-10-15] Draft the notes."
@@ -80,7 +88,7 @@ export function parseReply(text) {
   const owner = parts.find((p) => p.startsWith('@'))?.slice(1).replace(/[^\p{L}\p{N}_.-]/gu, '') || null;
   const due = parts.find((p) => /^\d{4}-\d{2}-\d{2}$/.test(p)) || null;
   // One head: a second one, or a second line, joins the sentence.
-  return { head: true, kind, owner, due, sentence: text.slice(m[0].length).replace(/\s*\n+\s*(?:\[[^\]\n]*\]\s*)?/g, ' ').replace(/\s*\[(?:decision|todo|question|note)\b[^\]\n]*\]\s*/gi, ' ').trimEnd() };
+  return { head: true, kind, owner, due, sentence: text.slice(m[0].length).replace(/\s*\n+\s*(?:\[[^\]\n]*\]\s*)?/g, ' ').replace(/\s*\[(?:decision|todo|question|risk|idea|next|note)\b[^\]\n]*\]\s*/gi, ' ').trimEnd() };
 }
 
 // The line as the meeting writes it down: a decision or question callout,
@@ -90,6 +98,9 @@ export function keptLine(e) {
   if (e.kind === 'decision') return `> [!decision] ${s}`;
   if (e.kind === 'question') return `> [!question] ${s}${e.owner && !s.includes(`@${e.owner}`) ? ` @${e.owner}` : ''}`;
   if (e.kind === 'todo') return `- [ ] ${s}${e.owner && !s.includes(`@${e.owner}`) ? ` @${e.owner}` : ''}${e.due ? ` \u{1F4C5} ${e.due}` : ''}`;
+  if (e.kind === 'risk') return `> [!warning] ${s}`;
+  if (e.kind === 'idea') return `> [!idea] ${s}`;
+  if (e.kind === 'next') return `- ${s.replace(/(^|\s)#next\b/gi, ' ').trim()} #next`;
   return s;
 }
 
@@ -103,7 +114,7 @@ export function keepEdit(text, i, e, at = -1) {
   let from = 0;
   for (let k = 0; k < i; k++) from += lines[k].length + 1;
   const to = from + lines[i].length;
-  const indent = e.kind === 'todo' || e.kind === 'note' ? /^\s*/.exec(lines[i])[0] : '';
+  const indent = e.kind === 'todo' || e.kind === 'next' || e.kind === 'note' ? /^\s*/.exec(lines[i])[0] : '';
   let insert = indent + keptLine(e);
   const callout = insert.startsWith('>');
   if (callout) {

@@ -2122,6 +2122,7 @@ async function routeApi(method, url, body) {
   if (method === 'PUT' && p === '/api/comments') return saveComments(body || {});
   if (method === 'POST' && p === '/api/proofs') return openProof(body || {});
   if (method === 'POST' && p === '/api/live/start') { const key = liveFor(String((body || {}).path || '')); return { ...live.start(key), agent: liveAgent().label }; }
+  if (method === 'POST' && p === '/api/live/warm') return { ...liveUp().warm(), agent: liveAgent().label };
   if (method === 'POST' && p === '/api/live/stop') { live?.stop(); return { ok: true }; }
   if ((m = p.match(/^\/api\/proofs\/([\w-]+)$/)) && method === 'PUT') return saveProof(m[1], body || {});
   if (method === 'POST' && p === '/api/runs') return { ...startRun(body || {}), command: undefined };
@@ -2167,22 +2168,27 @@ const SECURITY_HEADERS = {
 
 // The live margin (experimental, lib/live.js): a meeting note's lines, a
 // few at a time, to a fast model through the signed-in claude CLI; its
-// minutes come back as they are written (NDJSON), and nothing is saved.
+// minutes come back as they are written (NDJSON), and nothing is saved. Its
+// session stays up while the margin is on (warm, from the app's start).
 let live = null;
 function liveAgent() {
   return AGENT?.kind === 'claude' ? AGENT : AGENTS.find((a) => a.kind === 'claude') || null;
 }
-function liveFor(rel) {
+function liveUp() {
   const agent = liveAgent();
   if (!agent) throw httpError(400, 'The live margin needs the Claude Code agent (Settings → Agents).');
-  const abs = workspacePath(rel);
-  if (!NOTE_EXT.has(extOf(abs))) throw httpError(400, 'The live margin is for notes.');
-  if (fs.existsSync(abs) && isPrivateNote(abs)) throw httpError(403, 'This note is private (front matter): its lines are not sent.');
   if (!live) {
     const env = { ...process.env };
     delete env.ELECTRON_RUN_AS_NODE;
     live = liveMargin({ bin: agent.command.trim().split(/\s+/)[0], env });
   }
+  return live;
+}
+function liveFor(rel) {
+  liveUp();
+  const abs = workspacePath(rel);
+  if (!NOTE_EXT.has(extOf(abs))) throw httpError(400, 'The live margin is for notes.');
+  if (fs.existsSync(abs) && isPrivateNote(abs)) throw httpError(403, 'This note is private (front matter): its lines are not sent.');
   return relOf(abs);
 }
 function liveLine(req, res, body) {

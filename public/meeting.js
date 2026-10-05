@@ -5,13 +5,23 @@
 //   > [!decision] We ship on Friday.
 //   > [!question] Do we need a beta?
 //   - [ ] Draft the release notes @ann 📅 2026-10-09
+//   > [!warning] The store review may take a week.   (a risk)
+//   > [!idea] A first month free instead of a discount?
+//   - The offer range #next                         (for the next meeting)
 // The rail (beside the note in meeting mode) gathers them as they are
 // written, with the agenda's clock; the wall shows them after, in columns,
 // and a card moved there is a change proposed to the note, settled in the
 // red pen review. Nothing here writes a note by itself.
 import { blocksOf } from './gather.js';
 
-const CALL = /^\s*>\s*\[!(decision|decided|question)\][+-]?\s*(.*)$/i;
+const CALL = /^\s*>\s*\[!(decision|decided|question|warning|risk|idea)\][+-]?\s*(.*)$/i;
+const CALL_TYPE = /\[!(?:decision|decided|question|warning|risk|idea)\]/i;
+// The callout each kind is written as (a risk as GitHub's and Obsidian's own).
+const TYPE = { decision: 'decision', question: 'question', risk: 'warning', idea: 'idea' };
+const kindOf = (type) => (/^q/i.test(type) ? 'question' : /^(warning|risk)$/i.test(type) ? 'risk' : /^idea$/i.test(type) ? 'idea' : 'decision');
+// "- The offer range #next": a topic for the next meeting.
+const NEXT = /(^|\s)#next\b/i;
+const nextWords = (l) => l.replace(/^\s*(?:[-*+]\s+)?/, '').replace(/(^|\s)#next\b/gi, ' ').replace(/\s+/g, ' ').trim();
 const TASK = /^(\s*)[-*+]\s+\[([ xX])\]\s+(.*)$/;
 const OWNER = /(^|[\s(])@([\p{L}\p{N}_][\p{L}\p{N}_.-]*)/u;
 const OWNERS = /(^|[\s(])@([\p{L}\p{N}_][\p{L}\p{N}_.-]*)/gu;
@@ -31,7 +41,8 @@ function linesOf(text) {
   return out;
 }
 
-// The decisions, questions and to-dos of a note, in order (one of each
+// The decisions, questions, to-dos, risks, ideas and topics for next time
+// of a note, in order (one of each
 // wording: a wrap-up repeating a decision doesn't make it two).
 export function meetingItems(text) {
   const seen = new Set();
@@ -53,9 +64,10 @@ function everyItem(text) {
     if (hd) return;
     let item = null;
     const c = CALL.exec(l.text);
-    if (c) item = { kind: /^q/i.test(c[1]) ? 'question' : 'decision', text: c[2].trim() };
+    if (c) item = { kind: kindOf(c[1]), text: c[2].trim() };
     const t = !c && TASK.exec(l.text);
     if (t) item = { kind: 'todo', text: t[3].trim(), done: t[2] !== ' ' };
+    if (!c && !t && NEXT.test(l.text) && !/^\s*>/.test(l.text)) item = { kind: 'next', text: nextWords(l.text) };
     if (!item || !bodyOf(item.text)) return;
     const key = `${item.kind}:${norm(bodyOf(item.text))}`;
     out.push({ ...item, key, body: bodyOf(item.text), owner: OWNER.exec(item.text)?.[2], due: DUE.exec(item.text)?.[1], line: i, from: l.from, to: l.to, section });
@@ -100,9 +112,9 @@ export function nextAgendaEdit(text, pos) {
   return { from: at, to: at, insert: '\n\n', caret: at + 2, title: next.title };
 }
 
-// A line as a decision, a to-do or a question — or, the kind it is
-// already, plain words again. A decision or question is a callout of its
-// own (a blank line before and after). → { from, to, insert, caret } or null.
+// A line as a decision, a to-do, a question, a risk, an idea or a topic for
+// next time — or, the kind it is already, plain words again. A callout
+// stands on its own (a blank line before and after). → { from, to, insert, caret } or null.
 export function classifyLine(text, pos, kind) {
   const lines = linesOf(text);
   const i = lines.findIndex((l) => pos >= l.from && pos <= l.to);
@@ -110,14 +122,17 @@ export function classifyLine(text, pos, kind) {
   const l = lines[i];
   const c = CALL.exec(l.text);
   const t = !c && TASK.exec(l.text);
-  const was = c ? (/^q/i.test(c[1]) ? 'question' : 'decision') : t ? 'todo' : null;
+  const n = !c && !t && NEXT.test(l.text);
+  const was = c ? kindOf(c[1]) : t ? 'todo' : n ? 'next' : null;
   const indent = /^\s*/.exec(l.text)[0];
-  const words = (c ? c[2] : t ? t[3] : l.text.replace(/^\s*(?:(?:[-*+]|\d+[.)])\s+|>\s?|#{1,6}\s+)*(?:[!?]\s+|\[\]\s+)?/, '')).trim();
+  const words = (c ? c[2] : t ? t[3] : l.text.replace(/^\s*(?:(?:[-*+]|\d+[.)])\s+|>\s?|#{1,6}\s+)*(?:[!?]\s+|\[\]\s+)?/, '')).replace(/(^|\s)#next\b/gi, ' ').replace(/\s+/g, ' ').trim();
   if (!words) return null;
+  const listed = t || /^\s*[-*+]\s/.test(l.text);
   let line;
-  if (was === kind) line = `${indent}${words}`;
-  else if (kind === 'todo') line = `${t || /^\s*[-*+]\s/.test(l.text) ? indent : ''}- [ ] ${words}`;
-  else line = `> [!${kind}] ${words}`;
+  if (was === kind) line = `${indent}${kind === 'next' ? '- ' : ''}${words}`;
+  else if (kind === 'todo') line = `${listed ? indent : ''}- [ ] ${words}`;
+  else if (kind === 'next') line = `${listed ? indent : ''}- ${words} #next`;
+  else line = `> [!${TYPE[kind]}] ${words}`;
   let insert = line;
   let caret = line.length;
   if (line.startsWith('>')) {
@@ -134,8 +149,8 @@ export function typedKind(line) {
 }
 
 // A card moved on the wall: the note's text after it. to: { kind } — a
-// decision, a question, or a to-do of { owner } (null: nobody's) — or
-// { done }.
+// decision, a question, a risk, an idea, next time, or a to-do of { owner }
+// (null: nobody's) — or { done }.
 // Every line with its words changes (a wrap-up repeats a decision).
 export function moveItem(text, item, to) {
   const same = everyItem(text).filter((x) => x.key === item.key);
@@ -157,26 +172,34 @@ function moveOne(text, item, to) {
   } else if (to.kind === 'todo') {
     line = `- [ ] ${item.body}${to.owner ? ` @${to.owner}` : ''}${item.due ? ` \u{1F4C5} ${item.due}` : ''}`;
   } else if (to.kind !== item.kind) {
-    if (item.kind === 'todo') {
+    if (TYPE[item.kind] && TYPE[to.kind]) line = l.replace(CALL_TYPE, `[!${TYPE[to.kind]}]`);
+    else {
       const e = classifyLine(text, item.from, to.kind);
       return e ? text.slice(0, e.from) + e.insert + text.slice(e.to) : text;
     }
-    line = l.replace(/\[!(?:decision|decided|question)\]/i, `[!${to.kind}]`);
   } else return text;
   return text.slice(0, item.from) + line + text.slice(item.to);
 }
 
-// The wall's columns: decided, open, then a column for each owner (in the
-// order they come up) and the to-dos nobody has.
+// The wall's columns: decided, open, the risks, then a column for each
+// owner (in the order they come up) and the to-dos nobody has, then the
+// ideas and what is for next time (those three only when there are some).
 export function wallOf(text) {
   const items = meetingItems(text);
   const owners = [];
   for (const it of items) if (it.kind === 'todo' && it.owner && !owners.includes(it.owner)) owners.push(it.owner);
+  const some = (id, title, kind) => {
+    const mine = items.filter((i) => i.kind === kind);
+    return mine.length ? [{ id, title, kind, items: mine }] : [];
+  };
   return [
     { id: 'decided', title: 'Decided', kind: 'decision', items: items.filter((i) => i.kind === 'decision') },
     { id: 'open', title: 'Open questions', kind: 'question', items: items.filter((i) => i.kind === 'question') },
+    ...some('risks', 'Risks', 'risk'),
     ...owners.map((o) => ({ id: `@${o}`, title: `@${o}`, kind: 'todo', owner: o, items: items.filter((i) => i.kind === 'todo' && i.owner === o) })),
     { id: 'nobody', title: 'No owner', kind: 'todo', owner: null, items: items.filter((i) => i.kind === 'todo' && !i.owner) },
+    ...some('ideas', 'Ideas', 'idea'),
+    ...some('later', 'Next time', 'next'),
   ];
 }
 
@@ -213,10 +236,10 @@ export function wrapTask(path, next, times) {
   const said = times.filter((t) => t.ms > 0).map((t) => `${t.title} ${Math.max(1, Math.round(t.ms / 60000))}m of ${t.budget}m`);
   return [
     `Wrap up this meeting (${path}) for after it:`,
-    '1. At the end of the note, add a section "## Wrap-up": two or three sentences on what the meeting did; a line "**Time:** …" with each agenda item\'s minutes (below); "### To-dos by owner": move every to-do line of the note (`- [ ] …`) here, under a line **@owner** for each owner (**No owner** last), each kept as written with its @owner and \u{1F4C5} date; "### Decisions" and "### Open questions": each `> [!decision]` / `> [!question]` callout of the note again, one per line, a blank line after each. Leave the rest of the note as it is.',
-    `2. Create the next meeting's note, ${next}: "# " and its name, a line "Previous meeting: [[${stem}]]", then the same agenda headings with their minutes; under each, the open questions raised there, carried over as \`> [!question]\` callouts. Nothing else.`,
+    '1. At the end of the note, add a section "## Wrap-up": two or three sentences on what the meeting did; a line "**Time:** …" with each agenda item\'s minutes (below); "### To-dos by owner": move every to-do line of the note (`- [ ] …`) here, under a line **@owner** for each owner (**No owner** last), each kept as written with its @owner and \u{1F4C5} date; "### Decisions", "### Open questions", "### Risks" and "### Ideas": each `> [!decision]` / `> [!question]` / `> [!warning]` / `> [!idea]` callout of the note again, one per line, a blank line after each (a heading with none: leave it out). Leave the rest of the note as it is.',
+    `2. Create the next meeting's note, ${next}: "# " and its name, a line "Previous meeting: [[${stem}]]", then the same agenda headings with their minutes; under each, the open questions raised there, carried over as \`> [!question]\` callouts, and the lines marked \`#next\` there, as list items without the tag. Nothing else.`,
     said.length ? `Time on the agenda: ${said.join('; ')}.` : 'The agenda\'s clock was not kept: leave the time line out.',
-    'Keep it plain Markdown: decisions and questions as callouts, to-dos as `- [ ] what @owner \u{1F4C5} YYYY-MM-DD`.',
+    'Keep it plain Markdown: decisions, questions, risks and ideas as callouts, to-dos as `- [ ] what @owner \u{1F4C5} YYYY-MM-DD`.',
   ].join('\n');
 }
 
@@ -233,7 +256,7 @@ const btn = (text, run, cls = '') => {
   b.addEventListener('click', (e) => { e.stopPropagation(); run(e); });
   return b;
 };
-const KIND = { decision: 'Decided', question: 'Open', todo: 'To-do' };
+const KIND = { decision: 'Decided', question: 'Open', todo: 'To-do', risk: 'Risk', idea: 'Idea', next: 'Next time' };
 // An owner's colour, the same on the rail, the wall and its picture.
 const OWNER_COLORS = ['#e07a5f', '#5fa8d3', '#9b7fd4', '#e9b44c', '#4fb39a', '#d46a9f', '#7d93e8', '#a3b84f'];
 export function ownerColor(name) {
@@ -260,15 +283,18 @@ function chips(it) {
 export function railPane(opts) {
   const agendaEl = el('div', 'mrail-agenda');
   const lanes = {};
-  const lane = (kind, title) => {
+  // A lane of one kind, or of a few (each card says which; empty, it hides).
+  const lane = (kind, title, kinds = [kind]) => {
     const list = el('div', 'mrail-list');
     const n = el('span', 'mrail-n', '0');
-    lanes[kind] = { list, n, cards: new Map() };
-    return el('section', `mrail-lane m-${kind}`, el('div', 'mrail-head', el('span', 'mrail-dot'), title, n), list);
+    const sec = el('section', `mrail-lane m-${kind}`, el('div', 'mrail-head', el('span', 'mrail-dot'), title, n), list);
+    lanes[kind] = { list, n, cards: new Map(), kinds, sec };
+    return sec;
   };
   const root = el('aside', 'mrail',
     agendaEl,
     lane('decision', 'Decisions'), lane('todo', 'To-dos'), lane('question', 'Questions'),
+    lane('more', 'Risks \u00B7 ideas \u00B7 next time', ['risk', 'idea', 'next']),
     el('div', 'mrail-foot', btn('Wrap up ▸', () => opts.wrapUp(), 'primary'), btn('Wall ▦', () => opts.wall())),
     el('div', 'mrail-hint', opts.hint || 'Start a line with ! (a decision), [] (a to-do) or ? (a question)'));
   let agendaRows = [];
@@ -307,8 +333,8 @@ export function railPane(opts) {
     }
   }
 
-  function card(it) {
-    const c = el('div', `mrail-card m-${it.kind}${it.done ? ' done' : ''}`, el('span', 'm-text', it.body), chips(it));
+  function card(it, mixed) {
+    const c = el('div', `mrail-card m-${it.kind}${it.done ? ' done' : ''}`, mixed ? el('span', 'm-kind', KIND[it.kind]) : null, el('span', 'm-text', it.body), chips(it));
     c.title = 'Go to the line';
     c.addEventListener('click', () => opts.go(it));
     return c;
@@ -316,14 +342,14 @@ export function railPane(opts) {
   function update(items, agenda, cur, times, from) {
     drawAgenda(agenda, cur, times);
     for (const [kind, ln] of Object.entries(lanes)) {
-      const mine = items.filter((i) => i.kind === kind);
+      const mine = items.filter((i) => ln.kinds.includes(i.kind));
       ln.n.textContent = String(mine.length);
       const next = new Map();
       const kids = mine.map((it) => {
         const id = `${it.key}|${it.owner || ''}|${it.due || ''}|${it.done ? 1 : 0}`;
         let c = ln.cards.get(id);
         if (!c) {
-          c = card(it);
+          c = card(it, ln.kinds.length > 1);
           if (from && from.line === it.line) c.dataset.fly = '1';
           else if (ln.cards.size || from) c.classList.add('m-new');
         }
@@ -332,7 +358,8 @@ export function railPane(opts) {
         return c;
       });
       ln.list.replaceChildren(...kids);
-      if (!kids.length) ln.list.append(el('div', 'mrail-empty', { decision: 'Nothing decided yet.', todo: 'Nothing handed out yet.', question: 'Nothing left open yet.' }[kind]));
+      if (ln.kinds.length > 1) ln.sec.hidden = !kids.length;
+      else if (!kids.length) ln.list.append(el('div', 'mrail-empty', { decision: 'Nothing decided yet.', todo: 'Nothing handed out yet.', question: 'Nothing left open yet.' }[kind]));
       ln.cards = next;
     }
     // A new item flies from its line to its card.
@@ -350,7 +377,7 @@ function fly(from, card) {
   const to = card.getBoundingClientRect();
   if (!to.width || !from?.rect) { card.classList.add('m-new'); return; }
   const stage = !!card.closest('.m-stage');
-  const ghost = el('div', `m-fly m-${card.className.match(/m-(decision|todo|question)/)?.[1] || 'todo'}${stage ? ' m-fly-stage' : ''}`, from.text);
+  const ghost = el('div', `m-fly m-${card.className.match(/m-(decision|todo|question|risk|idea|next)\b/)?.[1] || 'todo'}${stage ? ' m-fly-stage' : ''}`, from.text);
   ghost.style.left = `${from.rect.left}px`;
   ghost.style.top = `${from.rect.top}px`;
   ghost.style.width = `${Math.min(from.rect.width, 520)}px`;
@@ -455,7 +482,7 @@ export function openWall(opts) {
     const columns = wallOf(text);
     cols.replaceChildren(...columns.map((col, ci) => {
       const head = el('div', 'wall-col-head', col.owner ? avatar(col.owner) : el('span', 'wall-dot'), el('span', 'wall-col-title', col.title), el('span', 'wall-n', String(col.items.length)));
-      const c = el('div', `wall-col wall-${col.id === 'decided' || col.id === 'open' ? col.id : 'owner'}`, head,
+      const c = el('div', `wall-col wall-${col.kind === 'todo' ? 'owner' : col.id}`, head,
         ...col.items.map((it, k) => cardOf(it, ci, k)),
         col.items.length ? null : el('div', 'wall-empty', 'Drop here'));
       if (col.owner) c.style.setProperty('--own', ownerColor(col.owner));
@@ -650,7 +677,7 @@ function wallSummary(columns) {
   const n = (id) => columns.find((c) => c.id === id)?.items.length || 0;
   const todos = columns.filter((c) => c.kind === 'todo').reduce((s, c) => s + c.items.length, 0);
   const people = columns.filter((c) => c.owner && c.items.length).length;
-  return `${n('decided')} decided · ${n('open')} open · ${todos} to-do${todos === 1 ? '' : 's'} for ${people} ${people === 1 ? 'person' : 'people'}`;
+  return `${n('decided')} decided · ${n('open')} open${n('risks') ? ` · ${n('risks')} risk${n('risks') === 1 ? '' : 's'}` : ''} · ${todos} to-do${todos === 1 ? '' : 's'} for ${people} ${people === 1 ? 'person' : 'people'}`;
 }
 
 // The wall as a picture: drawn, not photographed, so it is sharp and the
@@ -658,7 +685,7 @@ function wallSummary(columns) {
 export function wallPng(title, columns) {
   const css = getComputedStyle(document.documentElement);
   const v = (name, fb) => css.getPropertyValue(name).trim() || fb;
-  const C = { bg: v('--bg', '#1b1d23'), card: v('--bg-2', '#23262e'), fg: v('--fg', '#e6e6e6'), dim: v('--fg-dim', '#9aa0aa'), border: v('--border', '#30343d'), decision: v('--ok', '#9ece6a'), question: v('--accent-2', '#bb9af7'), todo: v('--accent', '#7aa2f7') };
+  const C = { bg: v('--bg', '#1b1d23'), card: v('--bg-2', '#23262e'), fg: v('--fg', '#e6e6e6'), dim: v('--fg-dim', '#9aa0aa'), border: v('--border', '#30343d'), decision: v('--ok', '#9ece6a'), question: v('--accent-2', '#bb9af7'), todo: v('--accent', '#7aa2f7'), risk: v('--warn', '#e0af68'), idea: v('--teal', '#73daca'), next: v('--fg-dim', '#9aa0aa') };
   const font = '-apple-system, "Segoe UI", "Apple SD Gothic Neo", "Noto Sans KR", sans-serif';
   const shown = columns.filter((c) => c.items.length || c.id === 'decided' || c.id === 'open');
   const W = 300;
@@ -704,7 +731,7 @@ export function wallPng(title, columns) {
   shown.forEach((col, ci) => {
     const x = PAD + ci * (W + GAP);
     let y = PAD + 70;
-    const color = col.owner ? ownerColor(col.owner) : col.id === 'decided' ? C.decision : col.id === 'open' ? C.question : C.dim;
+    const color = col.owner ? ownerColor(col.owner) : col.kind !== 'todo' ? C[col.kind] : C.dim;
     ctx.fillStyle = color;
     ctx.beginPath();
     ctx.arc(x + 9, y + 12, col.owner ? 11 : 5, 0, Math.PI * 2);
@@ -720,7 +747,7 @@ export function wallPng(title, columns) {
     y += 44;
     for (const it of col.items) {
       const hh = cardH(it);
-      const tint = it.kind === 'decision' ? C.decision : it.kind === 'question' ? C.question : it.owner ? ownerColor(it.owner) : C.todo;
+      const tint = it.kind !== 'todo' ? C[it.kind] : it.owner ? ownerColor(it.owner) : C.todo;
       round(x, y, W, hh, 10);
       ctx.fillStyle = C.card;
       ctx.fill();

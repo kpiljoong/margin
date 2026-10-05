@@ -1,9 +1,12 @@
 // node --test (npm test): the live margin (public/live.js, lib/live.js) — a
 // line's chip by rule, its date, the model's reply as it streams, and the
-// line the note gets when the minutes are kept.
+// line the note gets when the minutes are kept; the resident session.
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createRequire } from 'node:module';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 import { wanted, ruleOf, dueOf, parseReply, keptLine, keepEdit, quantile } from '../public/live.js';
 
 const require = createRequire(import.meta.url);
@@ -19,6 +22,15 @@ test('ruleOf: a chip at once, before any model', () => {
   assert.equal(ruleOf('beta 40 ppl, 92% done', MON).kind, 'note');
   assert.equal(ruleOf('\uCD9C\uC2DC\uC77C 20\uC77C\uB85C \uACB0\uC815', MON).kind, 'decision');
   assert.equal(ruleOf('\uBBFC\uC218: \uBAA9\uC694\uC77C\uAE4C\uC9C0 \uC124\uBB38 \uBCF4\uB0B4\uAE30', MON).due, '2026-10-15');
+  // A risk, an idea, one for next time.
+  assert.equal(ruleOf('store review might slip a week', MON).kind, 'risk');
+  assert.equal(ruleOf('\uC2EC\uC0AC \uC9C0\uC5F0 \uC704\uD5D8', MON).kind, 'risk');
+  assert.equal(ruleOf('what if the first month is free?', MON).kind, 'idea');
+  assert.equal(ruleOf('\uCCAB \uB2EC \uBB34\uB8CC\uB294 \uC5B4\uB54C?', MON).kind, 'idea');
+  assert.equal(ruleOf('\uC624\uD37C \uBC94\uC704\uB294 \uB2E4\uC74C \uD68C\uC758\uC5D0\uC11C', MON).kind, 'next');
+  assert.deepEqual(ruleOf('- offer range #next', MON), { kind: 'next', fixed: true, owner: null, due: null });
+  assert.equal(ruleOf('> [!warning] Review may slip', MON).kind, 'risk');
+  assert.equal(ruleOf('> [!idea] Free month', MON).fixed, true);
 });
 
 test('dueOf: the next such weekday, tomorrow, a month/day', () => {
@@ -47,6 +59,11 @@ test('keptLine and keepEdit: the line as the meeting writes it, a callout apart'
   assert.equal(keptLine({ kind: 'todo', sentence: 'Send the beta survey.', owner: 'ann', due: '2026-10-15' }), '- [ ] Send the beta survey. @ann \u{1F4C5} 2026-10-15');
   assert.equal(keptLine({ kind: 'decision', sentence: ' We  launch on the 20th. ' }), '> [!decision] We launch on the 20th.');
   assert.equal(keptLine({ kind: 'note', sentence: 'Beta is at 92%.' }), 'Beta is at 92%.');
+  assert.equal(keptLine({ kind: 'risk', sentence: 'The review may slip.' }), '> [!warning] The review may slip.');
+  assert.equal(keptLine({ kind: 'idea', sentence: 'A free first month.' }), '> [!idea] A free first month.');
+  assert.equal(keptLine({ kind: 'next', sentence: 'The offer range.' }), '- The offer range. #next');
+  assert.equal(parseReply('[risk] The review may slip.').kind, 'risk');
+  assert.equal(server.parseReply('[next] Later. [idea] x').sentence, 'Later. x');
   const text = '## Launch (5m)\n20th? mkt ok\n-> go w/ 20th\npress kit??\n';
   const e = keepEdit(text, 2, { kind: 'decision', sentence: 'We launch on October 20.' });
   const after = text.slice(0, e.from) + e.insert + text.slice(e.to);
@@ -81,4 +98,79 @@ test('wanted and quantile', () => {
   assert.equal(quantile([1, 2, 3, 4, 5, 6, 7, 8, 9, 10], 0.5), 5.5);
   assert.equal(quantile([1, 2, 3, 4, 5, 6, 7, 8, 9, 10], 0.9), 9.1);
   assert.equal(quantile([], 0.5), null);
+});
+
+// A stand-in for the claude CLI (stream-json in and out): it answers each
+// line with "[note] <the line>", writes what it was sent to a log, and ends
+// itself on a line "DIE".
+const FAKE = `#!/usr/bin/env node
+const fs = require('fs');
+let n = 0, buf = '';
+process.stdin.on('data', (d) => {
+  buf += d;
+  for (let i; (i = buf.indexOf('\\n')) >= 0;) {
+    const j = JSON.parse(buf.slice(0, i)); buf = buf.slice(i + 1);
+    if (j.type !== 'user') continue;
+    const text = j.message.content;
+    fs.appendFileSync(process.env.FAKE_LOG, JSON.stringify({ pid: process.pid, text }) + '\\n');
+    const line = /Line: (.*)$/.exec(text)[1];
+    if (line === 'DIE') process.exit(3);
+    n++;
+    const out = (o) => process.stdout.write(JSON.stringify(o) + '\\n');
+    out({ type: 'stream_event', event: { type: 'content_block_delta', delta: { text: '[note] ' + line } } });
+    out({ type: 'result', subtype: 'success', total_cost_usd: n / 1000, usage: { input_tokens: 10, output_tokens: 3 } });
+  }
+});
+`;
+
+test('the resident session: one meeting, another, the swap, up again after it ends, stopped', { skip: process.platform === 'win32' }, async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'margin-live-test-'));
+  const bin = path.join(dir, 'fake-claude');
+  fs.writeFileSync(bin, FAKE, { mode: 0o755 });
+  const log = path.join(dir, 'log');
+  const m = server.liveMargin({ bin, env: { ...process.env, FAKE_LOG: log }, warmMs: 30, retryMs: 50 });
+  const ask = (key, line) => new Promise((done) => m.line({ key, title: key, agenda: [], line, today: 'T' }, () => {}, done));
+  const sent = () => fs.readFileSync(log, 'utf8').trim().split('\n').map((l) => JSON.parse(l));
+  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+  try {
+    m.warm();
+    const first = m.session;
+    const cwds = [first.cwd];
+    await sleep(60);
+    assert.equal(m.state().ready, true);
+    assert.equal((await ask('A', 'one')).ok, true);
+    assert.equal((await ask('A', 'two')).ok, true);
+    let s = sent();
+    assert.equal(s[0].text, "Meeting: A\nToday: T\n\nItem: (none)\nLine: one");
+    assert.equal(s[1].text, 'Item: (none)\nLine: two');
+    // Another meeting: told so at once, then a fresh session told its minutes.
+    assert.equal((await ask('B', 'three')).ok, true);
+    s = sent();
+    assert.match(s[2].text, /^Another meeting now/);
+    assert.equal(s[2].pid, s[0].pid);
+    await sleep(60);
+    assert.equal((await ask('B', 'four')).ok, true);
+    s = sent();
+    assert.notEqual(s[3].pid, s[0].pid);
+    assert.match(s[3].text, /^Meeting: B[\s\S]*Minutes so far:\n- three\n\nItem: \(none\)\nLine: four$/);
+    assert.notEqual(m.session, first);
+    assert.equal(first.dead, true);
+    // It ends by itself: up again, and on.
+    const was = m.session;
+    cwds.push(was.cwd);
+    assert.equal((await ask('B', 'DIE')).ok, false);
+    await sleep(200);
+    assert.notEqual(m.session, was);
+    assert.equal(m.session.dead, false);
+    assert.equal((await ask('B', 'five')).ok, true);
+    cwds.push(m.session.cwd);
+    m.stop();
+    assert.equal(m.session, null);
+    await sleep(100);
+    // Their scratch folders are gone.
+    assert.deepEqual(cwds.filter((d) => fs.existsSync(d)), []);
+  } finally {
+    m.stop();
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
 });

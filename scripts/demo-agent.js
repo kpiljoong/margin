@@ -207,6 +207,8 @@ function wrapUp(f, text, rawTask) {
   const todos = [];
   const decisions = [];
   const questions = [];
+  const risks = [];
+  const ideas = [];
   const agenda = [];
   let section = '';
   let fence = false;
@@ -217,11 +219,15 @@ function wrapUp(f, text, rawTask) {
     const hd = /^#{1,6}\s+(.*?)\s*$/.exec(l);
     if (hd) {
       section = hd[1];
-      if (/\(\d+\s*(m|min|\uBD84)\)$/.test(section)) agenda.push({ head: l, questions: [] });
+      if (/\(\d+\s*(m|min|\uBD84)\)$/.test(section)) agenda.push({ head: l, questions: [], later: [] });
     }
     const call = /^\s*>\s*\[!(decision|question)\]\s*(.*)$/i.exec(l);
     if (call) once(call[1].toLowerCase() === 'decision' ? decisions : questions, call[2].trim());
     if (call && call[1].toLowerCase() === 'question' && agenda.length) agenda[agenda.length - 1].questions.push(call[2].trim());
+    const other = /^\s*>\s*\[!(warning|risk|idea)\]\s*(.*)$/i.exec(l);
+    if (other) once(/idea/i.test(other[1]) ? ideas : risks, other[2].trim());
+    // A topic for next time: under its item in the next meeting's note.
+    if (!/^\s*[-*+]\s+\[/.test(l) && !/^\s*>/.test(l) && /(^|\s)#next\b/i.test(l) && agenda.length) agenda[agenda.length - 1].later.push(l.replace(/^\s*(?:[-*+]\s+)?/, '').replace(/\s*#next\b/gi, '').trim());
     if (/^\s*[-*+]\s+\[[ xX]\]\s+\S/.test(l)) { todos.push(l.trim()); continue; }
     keep.push(l);
   }
@@ -238,10 +244,12 @@ function wrapUp(f, text, rawTask) {
   for (const o of owners) out.push('', o ? `**@${o}**` : '**No owner**', '', ...todos.filter((t) => owner(t) === o));
   if (decisions.length) out.push('', '### Decisions', '', ...decisions.flatMap((d) => [`> [!decision] ${d}`, '']));
   if (questions.length) out.push(...(decisions.length ? [] : ['']), '### Open questions', '', ...questions.flatMap((q) => [`> [!question] ${q}`, '']));
+  if (risks.length) out.push(...(out[out.length - 1] === '' ? [] : ['']), '### Risks', '', ...risks.flatMap((r) => [`> [!warning] ${r}`, '']));
+  if (ideas.length) out.push(...(out[out.length - 1] === '' ? [] : ['']), '### Ideas', '', ...ideas.flatMap((r) => [`> [!idea] ${r}`, '']));
   if (out[out.length - 1] !== '') out.push('');
   out.push(`Next meeting: [[${stem(next)}]]`, '');
   const nextText = [`# ${stem(next)}`, '', `Previous meeting: [[${stem(f)}]]`, '',
-    ...agenda.flatMap((a) => [a.head, '', ...a.questions.flatMap((q) => [`> [!question] ${q}`, ''])])].join('\n').replace(/\n+$/, '\n');
+    ...agenda.flatMap((a) => [a.head, '', ...a.questions.flatMap((q) => [`> [!question] ${q}`, '']), ...(a.later.length ? [...a.later.map((t) => `- ${t}`), ''] : [])])].join('\n').replace(/\n+$/, '\n');
   return [out.join('\n').replace(/\n{3,}/g, '\n\n'), { path: next, text: nextText }];
 }
 

@@ -3359,6 +3359,9 @@ const COMMANDS = [
   ['Meeting: mark the line a decision (experimental)', () => classifyHere('decision'), { key: 'meeting-decision' }],
   ['Meeting: mark the line a to-do (experimental)', () => classifyHere('todo'), { key: 'meeting-todo' }],
   ['Meeting: mark the line a question (experimental)', () => classifyHere('question'), { key: 'meeting-question' }],
+  ['Meeting: mark the line a risk (experimental)', () => classifyHere('risk'), { key: 'meeting-risk' }],
+  ['Meeting: mark the line an idea (experimental)', () => classifyHere('idea'), { key: 'meeting-idea' }],
+  ['Meeting: mark the line for next time (experimental)', () => classifyHere('next'), { key: 'meeting-later' }],
   ['Meeting: next agenda item (experimental)', () => nextAgendaItem(), { key: 'meeting-next' }],
   ['Meeting: wrap up \u2014 minutes, to-dos by owner, the next meeting (experimental)\u2026', () => setTimeout(() => wrapUp(), 0)],
   ['Meeting: decision wall (experimental)', () => setTimeout(() => wallView(), 0)],
@@ -5911,7 +5914,7 @@ function railFor(tab) {
     goLine: (line) => { const ls = tab.editor.value.split('\n'); go(ls.slice(0, line + 1).join('\n').length); },
     wrapUp: () => wrapUp(tab),
     wall: () => wallView(tab),
-    hint: `${kbd('meeting-decision')} a decision · ${kbd('meeting-todo')} a to-do · ${kbd('meeting-question')} a question, or start a line with ! [] ? · ${kbd('meeting-next')} the next item`,
+    hint: `${kbd('meeting-decision')} a decision · ${kbd('meeting-todo')} a to-do · ${kbd('meeting-question')} a question · ${kbd('meeting-risk')} a risk · ${kbd('meeting-idea')} an idea · ${kbd('meeting-later')} next time, or start a line with ! [] ? · ${kbd('meeting-next')} the next item`,
   });
   tab.railKeys = null;
   requestAnimationFrame(() => refreshRail(tab));
@@ -5983,11 +5986,12 @@ async function toggleLive() {
   store.setItem('an.liveMargin', liveOn ? '1' : '0');
   const tab = fileTab();
   if (!liveOn) {
-    liveStop();
+    liveStop(true);
     if (tab) drawNotes(tab);
     toast('Live margin off');
     return;
   }
+  liveWarm();
   if (!S.meeting) toggleMeeting();
   if (tab) liveStart(tab);
   toast('Live margin: each line you write goes to Claude (Haiku) · Tab keeps its minutes · Esc lets them go');
@@ -6015,7 +6019,9 @@ async function liveStart(tab) {
   liveHudShow(tab);
 }
 
-function liveStop() {
+// Out of the meeting: the notes' margins stop; the session stays up for the
+// next one unless the margin is turned off (server).
+function liveStop(server = false) {
   for (const t of S.tabs) {
     const st = t.live;
     if (!st) continue;
@@ -6025,7 +6031,11 @@ function liveStop() {
     st.started = false;
     st.hud?.remove();
   }
-  api('POST', '/api/live/stop').catch(() => {});
+  if (server) api('POST', '/api/live/stop').catch(() => {});
+}
+// With the app: the session up and warm before the first meeting.
+function liveWarm() {
+  if (liveOn) api('POST', '/api/live/warm').catch(() => {});
 }
 
 const lineNoAt = (v, pos) => { let n = 0; for (let i = v.indexOf('\n'); i >= 0 && i < pos; i = v.indexOf('\n', i + 1)) n++; return n; };
@@ -6207,12 +6217,13 @@ function liveOffer(tab) {
   const nl = v.indexOf('\n', s);
   if (v.slice(s, nl < 0 ? v.length : nl).trim()) return null;
   const lines = v.split('\n');
+  // Lines just kept don't count: Tab after Tab goes on up.
   for (let i = lineNoAt(v, s), seen = 0; i >= 0 && seen < 4; i--) {
     const k = lines[i].trim();
     if (!k) continue;
-    seen++;
     const e = st.entries.get(k);
     if (e?.state === 'done') return { i, entry: e };
+    if (!e?.wasKept) seen++;
   }
   return null;
 }
@@ -6235,7 +6246,7 @@ function liveKey(tab, e) {
   ed.closeStep();
   const st = tab.live;
   st.entries.delete(o.entry.key);
-  const kept = { ...o.entry, key: liveMod.keptLine(o.entry).trim(), state: 'kept', offer: false };
+  const kept = { ...o.entry, key: liveMod.keptLine(o.entry).trim(), state: 'kept', offer: false, wasKept: true };
   st.entries.set(kept.key, kept);
   setTimeout(() => { if (kept.state === 'kept') { kept.state = 'gone'; drawNotes(tab); } }, 1600);
   drawNotes(tab);
@@ -6279,7 +6290,7 @@ async function classifyHere(kind) {
   ed.replace(e.from, e.to, e.insert, e.caret);
   ed.focus();
   if (tab.railEl) refreshRail(tab);
-  else toast(e.kind ? `Marked a ${{ decision: 'decision', todo: 'to-do', question: 'question' }[e.kind]}` : 'Plain words again');
+  else toast(e.kind ? `Marked ${{ decision: 'a decision', todo: 'a to-do', question: 'a question', risk: 'a risk', idea: 'an idea', next: 'for next time' }[e.kind]}` : 'Plain words again');
 }
 
 async function nextAgendaItem() {
@@ -8261,6 +8272,9 @@ const ACTIONS = {
   'meeting-decision': () => classifyHere('decision'),
   'meeting-todo': () => classifyHere('todo'),
   'meeting-question': () => classifyHere('question'),
+  'meeting-risk': () => classifyHere('risk'),
+  'meeting-idea': () => classifyHere('idea'),
+  'meeting-later': () => classifyHere('next'),
   'meeting-next': () => nextAgendaItem(),
 };
 
@@ -8415,6 +8429,9 @@ function defaultLeaderTree() {
       { key: '1', label: 'The line: a decision', cmd: 'Meeting: mark the line a decision (experimental)', when: () => note, run: () => classifyHere('decision') },
       { key: '2', label: 'The line: a to-do', cmd: 'Meeting: mark the line a to-do (experimental)', when: () => note, run: () => classifyHere('todo') },
       { key: '3', label: 'The line: a question', cmd: 'Meeting: mark the line a question (experimental)', when: () => note, run: () => classifyHere('question') },
+      { key: '4', label: 'The line: a risk', cmd: 'Meeting: mark the line a risk (experimental)', when: () => note, run: () => classifyHere('risk') },
+      { key: '5', label: 'The line: an idea', cmd: 'Meeting: mark the line an idea (experimental)', when: () => note, run: () => classifyHere('idea') },
+      { key: '6', label: 'The line: for next time', cmd: 'Meeting: mark the line for next time (experimental)', when: () => note, run: () => classifyHere('next') },
       { key: 'g', label: 'Next agenda item', cmd: 'Meeting: next agenda item (experimental)', when: () => note, run: () => nextAgendaItem() },
       { key: 'w', label: 'Wrap up the meeting…', cmd: 'Meeting: wrap up \u2014 minutes, to-dos by owner, the next meeting (experimental)\u2026', when: () => note, run: () => wrapUp() },
       { key: 'b', label: 'Decision wall', cmd: 'Meeting: decision wall (experimental)', when: () => note, run: () => wallView() },
@@ -9113,6 +9130,7 @@ async function boot() {
   try { S.bookmarks = JSON.parse(store.getItem(`an.bookmarks.${S.info.root}`) || '[]').filter((p) => typeof p === 'string'); } catch { S.bookmarks = []; }
   await Promise.all([loadTree(), loadRuns(), loadTags(), loadGit(), loadOutside()]);
   loadRecipes().then(() => loadMacros()).then(loadLeaderKeys);
+  liveWarm();
   const saved = JSON.parse(store.getItem(`an.tabs.${S.info.root}`) || 'null');
   // v0.2 format was { open, active }; v0.3 stores one entry per pane.
   const groups = saved?.groups || (saved ? [{ open: saved.open, active: saved.active }] : []);

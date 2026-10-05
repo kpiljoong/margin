@@ -1873,6 +1873,42 @@ await check('meetings (experimental): the rail gathers a decision (a key) and a 
   await sleep(800);
 }
 
+fs.writeFileSync(path.join(ws, 'sub', 'kinds 2026-10-05.md'), '# kinds\n\n## Launch (5m)\n\nreview may slip\n\nfree first month\n\noffer range\n');
+await check('meetings: a line marked a risk, an idea, for next time (\u2318\u23254/5/6) \u2014 its own lane on the rail, plain Markdown in the note', `
+  const mac = navigator.platform.startsWith('Mac');
+  const command = async (name) => {
+    document.body.dispatchEvent(new KeyboardEvent('keydown', { code: 'KeyP', key: 'p', bubbles: true, cancelable: true, metaKey: mac, ctrlKey: !mac }));
+    const input = await until(() => !$('#overlay').hidden && $('#overlay input'));
+    input.value = '>' + name;
+    input.dispatchEvent(new Event('input'));
+    await sleep(100);
+    input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }));
+  };
+  await openNote('sub/kinds 2026-10-05.md');
+  await command('Meeting rail:');
+  await until(() => $('.mrail .mrail-item'));
+  const ta = $$('.editor-wrap textarea').find((t) => t.offsetParent);
+  const empty = $('.mrail-lane.m-more').hidden;
+  for (const [words, kind] of [['review may slip', 'a risk'], ['free first month', 'an idea'], ['offer range', 'for next time']]) {
+    ta.focus();
+    const at = ta.value.indexOf(words) + 2;
+    ta.setSelectionRange(at, at);
+    await command('Meeting: mark the line ' + kind);
+    await sleep(150);
+  }
+  await until(() => $$('.mrail-lane.m-more .mrail-card').length === 3, 3000);
+  const cards = $$('.mrail-lane.m-more .mrail-card').map((c) => c.className.match(/m-(\\w+)/)[1] + ':' + c.querySelector('.m-kind').textContent + ':' + c.querySelector('.m-text').textContent);
+  const text = ta.value;
+  await command('Meeting rail:');
+  await sleep(200);
+  document.body.dispatchEvent(new KeyboardEvent('keydown', { code: 'KeyM', key: 'M', shiftKey: true, bubbles: true, cancelable: true, metaKey: mac, ctrlKey: !mac }));
+  await sleep(200);
+  return { empty, cards, text, rail: !!$('.mrail'), meeting: !!$('.meeting') };
+`, (v) => (v?.empty && v.cards?.join('|') === 'risk:Risk:review may slip|idea:Idea:free first month|next:Next time:offer range'
+  && v.text === '# kinds\n\n## Launch (5m)\n\n> [!warning] review may slip\n\n> [!idea] free first month\n\n- offer range #next\n' && !v.rail && !v.meeting ? null : `got ${JSON.stringify(v)}`));
+fs.rmSync(path.join(ws, 'sub', 'kinds 2026-10-05.md'), { force: true });
+await sleep(500);
+
 fs.writeFileSync(path.join(ws, 'sub', 'space 2026-10-05.md'), '# space 2026-10-05\n\n## Status (1m)\n\n> [!decision] Beta stays open.\n\n- [ ] Send the survey @ann\n\n## Launch (1m)\n\n> [!question] A press kit?\n');
 await check('meetings in space (experimental): the depth stage (the note flat, the agenda on the floor), the tunnel to the next item, a card thrown in the decision orbit is a change to propose', `
   const mac = navigator.platform.startsWith('Mac');

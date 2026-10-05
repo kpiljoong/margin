@@ -2,7 +2,7 @@
   --bg: #1b1d23; --bg-2: #21242b; --bg-3: #282c34; --bg-hover: #2f333d;
   --fg: #d7dae0; --fg-dim: #8b919e; --fg-faint: #5c6370;
   --border: #30343d; --accent: #7aa2f7; --accent-2: #bb9af7;
-  --ok: #9ece6a; --warn: #e0af68; --bad: #f7768e;
+  --ok: #9ece6a; --warn: #e0af68; --bad: #f7768e; --teal: #73daca;
   --add-bg: rgba(158, 206, 106, .13); --del-bg: rgba(247, 118, 142, .13);
   --mono: ui-monospace, "SF Mono", "JetBrains Mono", Menlo, "Cascadia Mono", Consolas, "D2Coding", monospace;
   --sans: -apple-system, BlinkMacSystemFont, "Inter", "Segoe UI", "Apple SD Gothic Neo", "Malgun Gothic", sans-serif;
@@ -13,7 +13,7 @@
     --bg: #fbfbfa; --bg-2: #f3f3f1; --bg-3: #eaeae7; --bg-hover: #e4e4e0;
     --fg: #24262b; --fg-dim: #676b74; --fg-faint: #9a9ea6;
     --border: #dcdcd8; --accent: #3565d4; --accent-2: #7a4fd0;
-    --ok: #3f8a2c; --warn: #a86b00; --bad: #c8324f;
+    --ok: #3f8a2c; --warn: #a86b00; --bad: #c8324f; --teal: #1d8577;
     --add-bg: rgba(63, 138, 44, .12); --del-bg: rgba(200, 50, 79, .10);
   }
 }
@@ -175,6 +175,7 @@ kbd { font: 11px var(--mono); padding: 1px 5px; border: 1px solid var(--border);
 .md .callout-tip { --c: var(--ok); }
 .md .callout-important { --c: var(--accent-2); }
 .md .callout-warning { --c: var(--warn); }
+.md .callout-idea { --c: var(--teal); }
 .md .callout-danger { --c: var(--bad); }
 .md .callout-quote { --c: var(--fg-dim); }
 .md .callout-title { color: var(--c); font-weight: 600; }
@@ -1366,10 +1367,13 @@ li.callout-hot { background: color-mix(in srgb, var(--accent) 16%, transparent);
 /* Meetings (experimental, meeting.js): the rail, the "since last time" card
    and the decision wall. Decided is green, open questions violet (as their
    callouts), to-dos blue; an owner has a colour of their own (--own). */
-.mrail, .since, .wall, .m-fly, .wall-ghost { --m-decision: var(--ok); --m-question: var(--accent-2); --m-todo: var(--accent); }
+.mrail, .since, .wall, .m-fly, .wall-ghost { --m-decision: var(--ok); --m-question: var(--accent-2); --m-todo: var(--accent); --m-risk: var(--warn); --m-idea: var(--teal); --m-next: var(--fg-dim); }
 .m-decision { --m: var(--m-decision); }
 .m-question { --m: var(--m-question); }
 .m-todo { --m: var(--m-todo); }
+.m-risk { --m: var(--m-risk); } .m-idea { --m: var(--m-idea); } .m-next { --m: var(--m-next); }
+.mrail-lane.m-more { --m: var(--m-risk); }
+.mrail-card .m-kind { margin-right: 6px; font-size: 10px; font-weight: 700; letter-spacing: .05em; text-transform: uppercase; color: var(--m); }
 .with-rail { flex: 1; min-height: 0; display: grid; grid-template-columns: minmax(0, 1fr) 340px; }
 .with-rail > .editor-wrap, .with-rail > .with-drawer { min-width: 0; }
 .mrail { display: flex; flex-direction: column; gap: 10px; min-height: 0; overflow: auto; padding: 14px 12px 10px; border-left: 1px solid var(--border); background: var(--bg-2); font-size: 13.5px; animation: mrail-in .35s cubic-bezier(.2, .8, .2, 1); }
@@ -1456,6 +1460,7 @@ li.callout-hot { background: color-mix(in srgb, var(--accent) 16%, transparent);
 .wall-col { flex: 1 1 200px; min-width: 190px; max-width: 290px; display: flex; flex-direction: column; gap: 9px; padding: 10px; border-radius: 12px; border: 1px dashed transparent; min-height: 140px; transition: background .2s, border-color .2s; }
 .wall-decided { --m: var(--m-decision); }
 .wall-open { --m: var(--m-question); }
+.wall-risks { --m: var(--m-risk); } .wall-ideas { --m: var(--m-idea); } .wall-later { --m: var(--m-next); }
 .wall-owner { --m: var(--own, var(--m-todo)); }
 .wall-col-head { display: flex; align-items: center; gap: 7px; font-weight: 700; font-size: 14px; padding: 0 2px 4px; border-bottom: 2px solid var(--m); }
 .wall-dot { width: 10px; height: 10px; border-radius: 50%; background: var(--m); }
@@ -1497,7 +1502,7 @@ li.callout-hot { background: color-mix(in srgb, var(--accent) 16%, transparent);
    3D). The note is never turned; a card in the orbit is moved and scaled,
    not turned, so its words stay sharp. Reduced motion: none of it. */
 .mrail, .since, .wall, .m-fly, .wall-ghost, .orb-ghost, .m-tunnel, .m-stage-col { --holo: color-mix(in srgb, var(--accent) 45%, #5ee8ff); }
-.orb-ghost, .m-tunnel { --m-decision: var(--ok); --m-question: var(--accent-2); --m-todo: var(--accent); }
+.orb-ghost, .m-tunnel { --m-decision: var(--ok); --m-question: var(--accent-2); --m-todo: var(--accent); --m-risk: var(--warn); --m-idea: var(--teal); --m-next: var(--fg-dim); }
 .with-rail.m-stage { --px: 0; --py: 0; grid-template-columns: minmax(0, 1fr) 400px; }
 .m-stage-col { position: relative; display: flex; flex-direction: column; min-height: 0; overflow: hidden; perspective: 900px; perspective-origin: 0% 35%; border-left: 1px solid color-mix(in srgb, var(--holo) 25%, var(--border)); background: radial-gradient(120% 70% at 0% 30%, color-mix(in srgb, var(--holo) 10%, var(--bg)), var(--bg) 70%), var(--bg); }
 .m-stage-col::before { content: ""; position: absolute; inset: 0; pointer-events: none; background: repeating-linear-gradient(0deg, color-mix(in srgb, var(--holo) 5%, transparent) 0 1px, transparent 1px 4px); z-index: 2; }
@@ -1610,9 +1615,10 @@ li.callout-hot { background: color-mix(in srgb, var(--accent) 16%, transparent);
 
 /* The live margin (live.js): each line's minutes in the margin, in red pen,
    as they are written; the corner says how quick */
-.ed.live { --notes-w: clamp(300px, 40vw, 640px); --m-decision: var(--ok); --m-question: var(--accent-2); --m-todo: var(--accent); --m-note: var(--fg-faint); }
+.ed.live { --notes-w: clamp(300px, 40vw, 640px); --m-decision: var(--ok); --m-question: var(--accent-2); --m-todo: var(--accent); --m-note: var(--fg-faint); --m-risk: var(--warn); --m-idea: var(--teal); --m-next: var(--fg-dim); }
 .live-note { border-left-color: color-mix(in srgb, var(--pen) 70%, transparent); background: color-mix(in srgb, var(--pen) 5%, var(--bg)); cursor: default; padding: 3px 88px 3px 10px; transition: background .2s, box-shadow .2s; }
 .live-note.k-decision { --m: var(--m-decision); } .live-note.k-question { --m: var(--m-question); } .live-note.k-todo { --m: var(--m-todo); } .live-note.k-note { --m: var(--m-note); }
+.live-note.k-risk { --m: var(--m-risk); } .live-note.k-idea { --m: var(--m-idea); } .live-note.k-next { --m: var(--m-next); }
 .live-body { color: var(--pen); font: 16px/1.35 var(--hand); min-height: 21px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .live-note.offer .live-body, .live-note.s-error .live-body { white-space: normal; overflow-wrap: anywhere; }
 .live-chip, .live-who, .live-due, .live-ms { display: inline-block; margin-right: 5px; font: 600 10.5px/1 var(--sans); vertical-align: 2px; }
