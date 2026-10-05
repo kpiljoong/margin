@@ -194,6 +194,8 @@ function button(label, title, run, cls = '') {
   return b;
 }
 const SVG = 'http://www.w3.org/2000/svg';
+export const TILT = 40; // degrees the desk leans back, tilted
+const TILT_P = 1400; // the perspective it is seen in (px)
 const svg = (tag, cls) => { const e = document.createElementNS(SVG, tag); if (cls) e.setAttribute('class', cls); return e; };
 
 const ACTIONS = [
@@ -224,7 +226,7 @@ export class Desk {
     this.talkKey = newId();
     this.build();
     this.render();
-    requestAnimationFrame(() => this.fit(false));
+    requestAnimationFrame(() => { this.fit(false); if (opts.tilt && !opts.reduced) { this.tilt = TILT; this.applyTilt(); } });
   }
 
   // ---- the parts
@@ -244,11 +246,15 @@ export class Desk {
     this.edges.append(this.edgeG);
     this.labels = el('div', 'desk-labels');
     this.world = el('div', 'desk-world', this.edges, this.labels);
+    // The plane the cards lie on: flat, or tilted back like a desk seen
+    // from a chair (t); what is read stands up, facing you.
+    this.plane = el('div', 'desk-plane', this.grid, this.world);
     this.marquee = el('div', 'desk-marquee');
     this.marquee.hidden = true;
     this.dock = this.buildDock();
     this.hint = el('div', 'desk-hint', 'Double-click: a card · drag a note from the tree · drop a card on a card: a group · drop cards on the margin, or s q o l m · / talk · z all');
-    this.el = el('div', 'desk', this.grid, this.world, this.marquee, this.dock, this.hint);
+    this.el = el('div', 'desk', this.plane, this.marquee, this.dock, this.hint);
+    this.tilt = 0;
     this.el.tabIndex = 0;
     this.el.desk = this; // for tests
     this.el.addEventListener('pointerdown', (e) => this.down(e));
@@ -294,7 +300,8 @@ export class Desk {
       if (e.key === 'Escape') { e.preventDefault(); this.el.focus(); }
     });
     this.status = el('span', 'desk-status');
-    const dock = el('div', 'desk-dock', el('div', 'desk-dock-head', el('b', null, 'Margin'), this.status), this.ctx, this.actions, this.log, this.input);
+    this.tiltBtn = button('Tilt', 'Lean the desk back, the card you read standing up (t)', () => this.setTilt(this.tilt < TILT / 2), 'ghost desk-tilt');
+    const dock = el('div', 'desk-dock', el('div', 'desk-dock-head', el('b', null, 'Margin'), this.status, this.tiltBtn), this.ctx, this.actions, this.log, this.input);
     dock.addEventListener('pointerdown', (e) => { e.stopPropagation(); this.pressed('dock'); });
     dock.addEventListener('wheel', (e) => e.stopPropagation());
     dock.addEventListener('dblclick', (e) => e.stopPropagation());
@@ -304,9 +311,62 @@ export class Desk {
   // ---- the plane
   // The width the panel takes at the right (and its gap).
   side() { return this.dock.offsetLeft > this.el.clientWidth / 2 ? this.dock.offsetWidth + 24 : 0; } // (none when it is below, in a narrow pane)
+  // The tilt: the plane turned back by this.tilt degrees about a line
+  // across the desk (ox, oy), seen in perspective from the same point.
+  origin() { return { ox: (this.el.clientWidth - this.side()) / 2, oy: this.el.clientHeight * 0.62, p: TILT_P }; }
+  // A point of the desk (pixels from its corner) on the plane, untilted.
+  flatOf(px, py) {
+    if (!this.tilt) return { x: px, y: py };
+    const { ox, oy, p } = this.origin();
+    const a = (this.tilt * Math.PI) / 180;
+    const sy = py - oy;
+    const v = (sy * p) / Math.max(1, p * Math.cos(a) + sy * Math.sin(a));
+    const k = p / (p - v * Math.sin(a));
+    return { x: ox + (px - ox) / k, y: oy + v };
+  }
+  // …and back: where a point of the plane shows.
+  screenOf(fx, fy) {
+    if (!this.tilt) return { x: fx, y: fy };
+    const { ox, oy, p } = this.origin();
+    const a = (this.tilt * Math.PI) / 180;
+    const v = fy - oy;
+    const k = p / (p - v * Math.sin(a));
+    return { x: ox + (fx - ox) * k, y: oy + v * Math.cos(a) * k };
+  }
   toWorld(cx, cy) {
     const r = this.el.getBoundingClientRect();
-    return { x: (cx - r.left - this.cam.x) / this.cam.z, y: (cy - r.top - this.cam.y) / this.cam.z };
+    const f = this.flatOf(cx - r.left, cy - r.top);
+    return { x: (f.x - this.cam.x) / this.cam.z, y: (f.y - this.cam.y) / this.cam.z };
+  }
+  // A card's middle on the screen (from the desk's corner).
+  shownAt(n) { return this.screenOf(this.cam.x + (n.x + n.width / 2) * this.cam.z, this.cam.y + (n.y + n.height / 2) * this.cam.z); }
+  inView(n) {
+    const p = this.shownAt(n);
+    return p.x > 0 && p.y > 0 && p.x < this.el.clientWidth - this.side() && p.y < this.el.clientHeight;
+  }
+  setTilt(on) {
+    const to = on ? TILT : 0;
+    if (on && this.opts.reduced) { this.opts.toast('Reduced motion is on: the desk stays flat.'); return; }
+    this.opts.onTilt?.(on);
+    const from = this.tilt;
+    const t0 = performance.now();
+    const step = (t) => {
+      const k = Math.min(1, (t - t0) / 420);
+      this.tilt = from + (to - from) * (1 - (1 - k) ** 3);
+      this.applyTilt();
+      if (k < 1) requestAnimationFrame(step);
+    };
+    requestAnimationFrame(step);
+  }
+  applyTilt() {
+    const { ox, oy } = this.origin();
+    this.el.classList.toggle('tilted', this.tilt > 0.01);
+    this.el.style.setProperty('--tilt', String(this.tilt));
+    this.el.style.setProperty('--ox', `${ox}px`);
+    this.el.style.setProperty('--oy', `${oy}px`);
+    this.tiltBtn?.classList.toggle('on', this.tilt > TILT / 2);
+    this.paintSel();
+    this.dockShow();
   }
   camera() {
     const { x, y, z } = this.cam;
@@ -319,6 +379,7 @@ export class Desk {
     this.grid.style.setProperty('--gs', `${24 * z}px`);
     this.grid.style.setProperty('--gs2', `${48 * Math.max(0.5, z * 0.6)}px`);
     this.el.classList.toggle('far', z < 0.45);
+    if (this.tilt) { const { ox, oy } = this.origin(); this.el.style.setProperty('--ox', `${ox}px`); this.el.style.setProperty('--oy', `${oy}px`); }
     this.world.style.setProperty('--iz', String(1 / z)); // far away: titles kept a readable size
     // What the margin would be given ("in view") follows the camera.
     if (!this.dockQ) this.dockQ = requestAnimationFrame(() => { this.dockQ = 0; this.dockShow(); });
@@ -350,6 +411,13 @@ export class Desk {
     const r = this.el.getBoundingClientRect();
     const { x, y } = this.cam;
     const z = read ? Math.max(this.cam.z, Math.min(0.9, (r.width - this.side() - 60) / n.width)) : this.cam.z;
+    // Tilted, it stands on its lower edge: that edge low on the screen, where the plane is near.
+    if (this.tilt > 0.01) {
+      const p = this.shownAt(n);
+      if (!read && p.x > 40 && p.x < r.width - this.side() - 40 && p.y > r.height * 0.3 && p.y < r.height - 40) return;
+      this.goTo({ z, x: (r.width - this.side()) / 2 - (n.x + n.width / 2) * z, y: r.height * 0.9 - (n.y + Math.min(n.height, 700)) * z });
+      return;
+    }
     if (z !== this.cam.z) { this.goTo({ z, x: (r.width - this.side()) / 2 - (n.x + n.width / 2) * z, y: Math.min(r.height / 3, 80) - n.y * z }); return; }
     const sx = n.x * z + x;
     const sy = n.y * z + y;
@@ -362,8 +430,7 @@ export class Desk {
     e.preventDefault();
     if (e.ctrlKey || e.metaKey) {
       const r = this.el.getBoundingClientRect();
-      const px = e.clientX - r.left;
-      const py = e.clientY - r.top;
+      const { x: px, y: py } = this.flatOf(e.clientX - r.left, e.clientY - r.top);
       const z = Math.max(0.1, Math.min(2.5, this.cam.z * Math.exp(-e.deltaY * 0.01)));
       this.cam = { x: px - ((px - this.cam.x) * z) / this.cam.z, y: py - ((py - this.cam.y) * z) / this.cam.z, z };
     } else this.cam = { ...this.cam, x: this.cam.x - e.deltaX, y: this.cam.y - e.deltaY };
@@ -409,6 +476,7 @@ export class Desk {
     e.style.width = `${n.width}px`;
     e.style.height = `${n.height}px`;
     e.classList.toggle('sel', this.sel.has(n.id));
+    e.classList.toggle('stand', this.tilt > 0.01 && this.sel.size === 1 && this.sel.has(n.id) && n.type !== 'group');
     e.className = e.className.replace(/\bc-\S+/g, '').trim();
     if (/^[1-6]$/.test(String(n.color || ''))) e.classList.add(`c-${n.color}`);
     else if (/^#[0-9a-f]{3,8}$/i.test(String(n.color || ''))) { e.classList.add('c-hex'); e.style.setProperty('--card', n.color); }
@@ -562,7 +630,15 @@ export class Desk {
     const sx = e.clientX;
     const sy = e.clientY;
     if (!id || e.button === 1 || this.space) {
-      if (e.button === 1 || this.space || e.altKey) return this.drag(e, (ev) => { this.cam = { ...this.cam, x: this.cam.x + ev.movementX, y: this.cam.y + ev.movementY }; this.camera(); });
+      if (e.button === 1 || this.space || e.altKey) {
+        let last = this.toWorld(sx, sy);
+        return this.drag(e, (ev) => {
+          const w = this.toWorld(ev.clientX, ev.clientY);
+          this.cam = { ...this.cam, x: this.cam.x + (w.x - last.x) * this.cam.z, y: this.cam.y + (w.y - last.y) * this.cam.z };
+          this.camera();
+          last = this.toWorld(ev.clientX, ev.clientY);
+        });
+      }
       // A box drawn on the plane: what is in it is selected.
       const add = e.shiftKey ? new Set(this.sel) : new Set();
       const r = this.el.getBoundingClientRect();
@@ -571,10 +647,19 @@ export class Desk {
         const [x1, x2] = [Math.min(sx, ev.clientX), Math.max(sx, ev.clientX)];
         const [y1, y2] = [Math.min(sy, ev.clientY), Math.max(sy, ev.clientY)];
         Object.assign(this.marquee.style, { left: `${x1 - r.left}px`, top: `${y1 - r.top}px`, width: `${x2 - x1}px`, height: `${y2 - y1}px` });
-        const a = this.toWorld(x1, y1);
-        const b = this.toWorld(x2, y2);
         this.sel = new Set(add);
-        for (const n of this.d.nodes) if (n.type !== 'group' && n.x < b.x && n.x + n.width > a.x && n.y < b.y && n.y + n.height > a.y) this.sel.add(n.id);
+        if (this.tilt) {
+          // Tilted, a box on the screen is not one on the plane: the cards whose middle is in it.
+          for (const n of this.d.nodes) {
+            if (n.type === 'group') continue;
+            const m = this.shownAt(n);
+            if (m.x > x1 - r.left && m.x < x2 - r.left && m.y > y1 - r.top && m.y < y2 - r.top) this.sel.add(n.id);
+          }
+        } else {
+          const a = this.toWorld(x1, y1);
+          const b = this.toWorld(x2, y2);
+          for (const n of this.d.nodes) if (n.type !== 'group' && n.x < b.x && n.x + n.width > a.x && n.y < b.y && n.y + n.height > a.y) this.sel.add(n.id);
+        }
         this.paintSel();
       }, () => { this.marquee.hidden = true; this.dockShow(); });
     }
@@ -589,7 +674,7 @@ export class Desk {
       moving.set(s.id, { x: s.x, y: s.y });
       if (s.type === 'group') for (const c of childrenOf(this.d, s)) moving.set(c.id, { x: c.x, y: c.y });
     }
-    const z = this.cam.z;
+    const start = this.toWorld(sx, sy);
     let moved = false;
     let target = null;
     let overDock = false;
@@ -597,8 +682,9 @@ export class Desk {
     const ids = [...moving.keys()];
     const nodes = new Map(this.d.nodes.map((x) => [x.id, x]));
     this.drag(e, (ev) => {
-      const dx = (ev.clientX - sx) / z;
-      const dy = (ev.clientY - sy) / z;
+      const w = this.toWorld(ev.clientX, ev.clientY);
+      const dx = w.x - start.x;
+      const dy = w.y - start.y;
       if (!moved && Math.hypot(ev.clientX - sx, ev.clientY - sy) < 4) return;
       moved = true;
       for (const [mid, p] of moving) {
@@ -669,7 +755,11 @@ export class Desk {
     target.addEventListener('pointerup', end);
     target.addEventListener('pointercancel', end);
   }
-  paintSel() { for (const [id, e] of this.els) e.classList.toggle('sel', this.sel.has(id)); }
+  paintSel() {
+    // Tilted, the one card selected stands up to be read.
+    const stand = this.tilt > 0.01 && this.sel.size === 1 ? [...this.sel][0] : null;
+    for (const [id, e] of this.els) { e.classList.toggle('sel', this.sel.has(id)); e.classList.toggle('stand', id === stand && e.kind !== 'group'); }
+  }
   dbl(e) {
     if (e.target.closest?.('.desk-dock')) return;
     const id = this.hit(e);
@@ -737,6 +827,7 @@ export class Desk {
     if (k === 'f') { handled(); this.opts.pickNote().then((p) => { if (p) { const c = center(); this.addFile(p, c.x - 200, c.y - 200); } }); return; }
     if (k === 'g' && this.sel.size) { handled(); this.change(groupAround(this.d, [...this.sel])); return; }
     if (k === 'z') { handled(); this.fit(); return; }
+    if (k === 't') { handled(); this.setTilt(this.tilt < TILT / 2); return; }
     if (k === '1') { handled(); const r = this.el.getBoundingClientRect(); const c = center(); this.goTo({ z: 1, x: (r.width - this.side()) / 2 - c.x, y: r.height / 2 - c.y }); return; }
     if (k === '/') { handled(); this.input.focus(); return; }
     const act = ACTIONS.find((a) => a[2] === k);
@@ -749,12 +840,7 @@ export class Desk {
   context() {
     let ns = this.d.nodes.filter((n) => this.sel.has(n.id));
     ns = ns.flatMap((n) => (n.type === 'group' ? childrenOf(this.d, n).filter((c) => c.type !== 'group') : [n]));
-    if (!ns.length) {
-      const r = this.el.getBoundingClientRect();
-      const a = this.toWorld(r.left, r.top);
-      const b = this.toWorld(r.right - this.side(), r.bottom);
-      ns = this.d.nodes.filter((n) => n.type !== 'group' && n.x < b.x && n.x + n.width > a.x && n.y < b.y && n.y + n.height > a.y);
-    }
+    if (!ns.length) ns = this.d.nodes.filter((n) => n.type !== 'group' && this.inView(n));
     const seen = new Set();
     return ns.filter((n) => (n.type === 'text' || n.type === 'file') && !seen.has(n.id) && seen.add(n.id)).slice(0, 40);
   }
@@ -786,7 +872,7 @@ export class Desk {
     if (task === 'group' && ns.length < 3) { this.opts.toast('Sorting needs three cards or more.'); return; }
     if (task === 'links' && ns.length < 2) { this.opts.toast('Links need two cards or more.'); return; }
     const wide = task === 'merge';
-    const at = this.spot(ns, wide ? 520 : 380, wide ? 520 : task === 'questions' ? 560 : 240);
+    const at = this.spot(ns, wide ? 520 : 380, wide ? 520 : task === 'questions' ? (this.tilt > 0.01 ? 740 : 560) : 240);
     const label = ACTIONS.find((a) => a[0] === task)[1];
     const card = (task === 'summary' || task === 'merge') ? this.addAi({ kind: task, x: at.x, y: at.y, width: wide ? 520 : 380, height: wide ? 520 : 200, text: '', title: label }) : null;
     this.busy = label;
@@ -807,14 +893,16 @@ export class Desk {
       if (task === 'questions') {
         const qs = parseQuestions(r.said);
         if (!qs.length) throw new Error('No questions came back');
-        // One under another, as tall as they came out.
+        // One under another, as tall as they came out. Tilted they stand,
+        // so they go further apart, in rows like seats: each shows over the one before.
+        const apart = this.tilt > 0.01 ? 1 / Math.cos((this.tilt * Math.PI) / 180) : 1;
         let y = at.y;
         const cards = qs.map((q) => {
           const c = this.addAi({ kind: 'question', x: at.x, y, width: 340, height: 60, text: `? ${q}`, state: 'done' }, false);
-          y += (this.els.get(c.id)?.offsetHeight || 100) + 16;
+          y += Math.round(((this.els.get(c.id)?.offsetHeight || 100) + 20) * apart);
           return c;
         });
-        this.show(cards[0], true);
+        this.show(cards[this.tilt > 0.01 ? cards.length - 1 : 0], true);
       }
       // The numbers it answers with are the cards the server sent (private ones left out).
       const sent = r.keys ? r.keys.map((k) => ns.find((n) => n.id === k)).filter(Boolean) : ns;

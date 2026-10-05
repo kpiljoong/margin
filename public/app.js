@@ -4433,6 +4433,8 @@ function deskView(tab, c) {
         text: tab.text,
         path: tab.path,
         reduced: typeof matchMedia === 'function' && matchMedia('(prefers-reduced-motion: reduce)').matches,
+        tilt: store.getItem('an.deskTilt') === '1',
+        onTilt: (on) => store.setItem('an.deskTilt', on ? '1' : '0'),
         render: (md, from = tab.path) => renderMarkdown(md, { image: (url) => localImage(url, from), embed: () => null }),
         readNote: async (p) => {
           const open = S.tabs.find((x) => x.kind === 'file' && x.path === p);

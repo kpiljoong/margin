@@ -184,6 +184,8 @@ A **desk** is a plane to lay notes and thoughts out on, move them about, pile th
 
 Text on the desk is always flat and facing you; the depth is in the lift of what you move, the shadows of the cards and the two layers of dots under them, which move at two speeds.
 
+**Tilt** (`t`, or the panel's Tilt button) lays the desk back, like a table seen from a chair: the cards lie on it, far ones smaller, and the one selected and the margin's cards stand up facing you, so they read as before — a margin's questions stand in rows, each over the one in front. What is given to the margin lifts while it thinks. Moving, zooming and selecting work the same. It is remembered; with reduced motion the desk stays flat.
+
 ### Beside a note: locked paragraphs, the drawer, origin (experimental)
 
 Three things Margin keeps **beside** a note, never in it — the note stays plain Markdown. They live in `.agent-notes/` (`locks/`, `drawer/`, `gathered/`, under the note's path) and go along when the note is renamed.
