@@ -1534,6 +1534,9 @@ await check('red pen: the marks on the note, the reasons in the margin; y takes 
   if (!card) return { error: 'no red pen', page: $('.review')?.innerText.slice(0, 400) };
   const struck = $$('.pen-doc .pen-del').map((x) => x.textContent.trim());
   const notes = $$('.pen-card .pen-note').map((x) => x.textContent);
+  // How far each reaches into the note's words (lib/tiers.js): written over.
+  const tiers = $$('.pen-card .tier').map((x) => x.textContent);
+  const summary = $('.tier-summary')?.textContent || '';
   const none = button('Apply', $('#main')).textContent;
   key('j'); await sleep(50); key('y'); await sleep(200);
   const one = button('Apply', $('#main')).textContent;
@@ -1557,8 +1560,9 @@ await check('red pen: the marks on the note, the reasons in the margin; y takes 
   key('Escape', {}, asked); await sleep(150);
   key('a');
   await until(() => /Applied/.test($('.review')?.textContent || ''), 10000);
-  return { struck, notes, none, one, taken, count, marks, mine, back, said, applied: /Applied/.test($('.review').textContent) };
+  return { struck, notes, tiers, summary, none, one, taken, count, marks, mine, back, said, applied: /Applied/.test($('.review').textContent) };
 `, (v) => (v?.struck?.join() === 'very,the' && v.notes.includes('Repeated word.') && v.none === 'Apply 0 accepted' && v.one === 'Apply 1 accepted' && v.taken && v.applied ? null : 'the red pen did not work')
+  || (v.tiers.length && v.tiers.every((t) => /^T2(rewritten|deleted)$/.test(t)) && /T2\d+ changes? to your words/.test(v.summary) ? null : `the tiers did not show: ${JSON.stringify([v.tiers, v.summary])}`)
   || (v.count === '1 of 1 decided' && v.marks >= 2 && v.mine.join() === 'Keep the tone' && v.back && /proof\.md, at .+: Keep the tone/.test(v.said) ? null : `the space did not work: ${JSON.stringify(v)}`));
 {
   const t = fs.readFileSync(path.join(ws, 'sub', 'proof.md'), 'utf8');

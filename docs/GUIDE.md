@@ -95,6 +95,19 @@ The text is yours, the margin is the agent's. The review draws the agent's propo
 
 Clicking a mark picks its margin note; ✓ and ✗ on each note do what `y` and `n` do. A mark is one change of the run (a hunk): lines changed one for one, as in a proofread list, are a change each, while two edits on one line are one mark with both reasons in its note. Accepting and applying are exactly those of the diff: the same apply, undo and 3-way merge, no other way of writing. Marks still open are not applied. Changes that overlap your own edits are shown but can't be accepted. Code blocks show as code, and a change of only spaces or empty lines is marked with ¶.
 
+**How far each change reaches into your words.** Every change of a run carries a label, decided by fixed rules (`lib/tiers.js`), never by a model:
+
+| | |
+|---|---|
+| **T0** | nothing of yours changes: a note the agent made, a remark in the margin |
+| **T1** | added to your words, none taken away: new lines, a box ticked (`[ ]` → `[x]`), blank lines, or lines an agent wrote before (Origin's record of applied runs) |
+| **T2** | your words taken out or written over — read each one |
+| **T3** | in a paragraph you locked: not applied |
+
+The label is on each margin note and diff hunk, and the highest one on the note's head. Above the notes, one line sums the run up — the new notes and remarks, the additions quoted in short, how many changes reach your words, what is locked; a part of it goes to its first change. It is only a label: the keys, and what is accepted or applied, stay the same. (A key that takes the T1 changes at once is left for later: whether it saves anything has to be seen on real runs first, and `A` already means "all" in every review.)
+
+**As a proof.** Accepted, a mark's red ink is wet for a moment, then sets into the page. Rejected, the words that stay get the proofreader's dotted underline and its note says *stet* ("let it stand"). The agent writes in red in a hand; your own suggestions, comments and margin notes are in blue, typed. The current margin note, or the one under the pointer, lights its mark and the line between them, and the other lines step back. While a red pen page is in view, the app around it (activity bar, sidebar, tabs, status bar) dims, and comes back under the pointer. Motion in the app is in three lengths — 120, 200 and 320 ms; with reduced motion, the ink does not move.
+
 **On pictures.** A change inside a ` ```flow ` block, or inside the ` ```ink ` marks of a picture, is drawn on the picture instead of as text: the flow with the proposal in it, a new step or arrow ringed in red, a removed one crossed out; on a screenshot the new marks drawn on it, glowing, the removed ones dashed and faint. Its margin note says what changes (`+ Retry · − Fax · arrows +1 −1`, `+ box, “Too small”`). `y` and `n` work as for text — taken, a new step turns green and a removed one fades; left, a new one fades — and **Result** shows the picture as it will be. A change that also touches the lines around the block (or the fence itself) stays text. The red pen shows in dark and light themes alike and uses a handwriting font of the system (Bradley Hand, Segoe Print, Ink Free…, and Nanum Pen Script for Korean where it is installed, as on macOS); nothing is downloaded. A long margin note shows three lines until it is the one in view. Notes on overlapping words share a place in the margin.
 
 Two recipes ask the agent to write **in the margin only**, not in the note:

@@ -5885,6 +5885,7 @@ function hunkView(c, hunk, i, dec, lockedAll, tab) {
   return h('div', { class: `hunk kb-item${on ? '' : ' off'}`, 'data-path': c.path, 'data-hunk': i, 'data-line': hunk.baseStart + 1 },
     h('div', { class: 'hunk-head', onclick: toggle },
       h('input', { type: 'checkbox', checked: on, disabled: locked, onclick: (e) => e.stopPropagation(), onchange: toggle }),
+      tierChip(hunkTierOf(c, i)),
       h('span', {}, `Change ${i + 1} of ${c.hunks.length} · line ${hunk.baseStart + 1} · ${what}`),
       conflict ? h('span', { class: 'st-failed' }, `· ${c.problems?.[i] || 'overlaps your edit'} — cannot apply`) : null,
       c.says?.[i] ? h('span', { class: 'hunk-says' }, `· ${c.says[i]}`) : null),
@@ -5914,6 +5915,7 @@ function fileCard(c, tab, locked) {
     h('input', { type: 'checkbox', checked: selectedAll, indeterminate: !!c.hunks && dec.hunks.size > 0 && !selectedAll, disabled: lock, onchange: toggleFile }),
     h('span', { class: `badge st-${c.status}` }, c.badge || c.status),
     h('span', { class: 'path' }, c.path),
+    tierChip(c.tiers, false),
     c.hunks ? h('span', { class: 'meta' }, `${dec.hunks.size}/${c.hunks.length} changes`) : null,
     canPreview ? h('div', { class: 'seg' }, [...(penable(c) ? ['pen'] : []), 'diff', 'result'].map((v) => h('button', { class: view === v ? 'on' : '',
       onclick: () => { tab.views[c.path] = v; loadPen().then(() => renderContent(tab.group)); } }, { pen: 'Red pen', diff: 'Diff', result: 'Result' }[v]))) : null,
@@ -5968,6 +5970,58 @@ function markState(tab, path, m, lock) {
   return on ? 'y' : lock || said === 'n' ? 'n' : 'open';
 }
 
+// How far a change reaches into your words (lib/tiers.js, decided on the
+// server): T0 nothing of yours, T1 only added to, T2 written over or taken
+// out, T3 locked. A label only: the keys and what is taken stay the same.
+const TIER_WORD = { new: 'new', remark: 'remark', added: 'added', blank: 'blanks', ticked: 'ticked', agent: 'agent’s', rewritten: 'rewritten', deleted: 'deleted', whole: 'whole file', locked: 'locked' };
+const TIER_TITLE = ['T0 — nothing of yours changes', 'T1 — added to your words, none taken away', 'T2 — your words taken out or written over', 'T3 — in a paragraph you locked: not applied'];
+const TIER_WHY = { blank: 'only blank lines go', ticked: 'a box ticked', agent: 'over lines an agent wrote before' };
+const tierChip = (t, word = true) => (t ? h('span', { class: `tier tier-${t.tier}`, title: TIER_TITLE[t.tier] + (TIER_WHY[t.why] ? ` (${TIER_WHY[t.why]})` : '') },
+  `T${t.tier}`, word && TIER_WORD[t.why] ? h('span', { class: 'tier-why' }, TIER_WORD[t.why]) : null) : null);
+const hunkTierOf = (c, i) => c.tiers?.hunks?.[i] || null;
+
+// The run at a glance, above its notes: what is new, what is only added
+// (said in a line), what of yours it writes over (each in red pen), what is
+// locked. A part picks its first change.
+function tierSummary(tab) {
+  const run = tab.run;
+  const ch = run.changes.filter((c) => c.tiers);
+  if (!ch.length) return null;
+  const all = ch.flatMap((c) => (c.tiers.hunks.length ? c.tiers.hunks.map((t, i) => ({ c, i, t })) : [{ c, i: null, t: c.tiers }]));
+  const of = (n) => all.filter((x) => x.t.tier === n);
+  // Remarks only: the reasons beside changes are counted with them.
+  const notes = (run.comments || []).filter((x) => x.suggest == null && !x.layer).length;
+  const firstLine = (x) => {
+    if (x.i == null) return x.c.path.split('/').pop();
+    const hk = x.c.hunks[x.i];
+    const line = hk.added.find((l) => l.trim()) || '';
+    return line.replace(/^\s*(?:[-*+]|\d+[.)])\s+/, '').replace(/^\[[xX ]\]\s*/, x.t.why === 'ticked' ? '\u2611 ' : '').replace(/[*_`#>]/g, '').trim();
+  };
+  const go = (list) => (e) => {
+    e.preventDefault();
+    const x = list[0];
+    const wrap = bufferEl(tab);
+    if (!x || !wrap) return;
+    const card = wrap.querySelector(`.file-card[data-path="${CSS.escape(x.c.path)}"]`);
+    const el = x.i == null ? (card?.matches('.kb-item') ? card : card?.querySelector('.kb-item'))
+      : card?.querySelector(`.kb-item:is([data-hunk="h${x.i}"], [data-hunk="${x.i}"])`);
+    if (el) setReviewCur(tab, el);
+  };
+  const part = (n, list, text, rest = null) => h('a', { href: '#', class: `tier-part tier-${n}`, title: TIER_TITLE[n], onclick: go(list) },
+    h('span', { class: `tier tier-${n}` }, `T${n}`), text, rest);
+  const t0 = of(0); const t1 = of(1); const t2 = of(2); const t3 = of(3);
+  const plural = (n, one, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
+  const quote = (s) => (s.length > 24 ? `${s.slice(0, 23)}\u2026` : s);
+  const parts = [
+    t0.length || notes ? part(0, t0, [t0.length ? plural(t0.length, 'new note') : null, notes ? plural(notes, 'margin note') : null].filter(Boolean).join(' \u00b7 ')) : null,
+    t1.length ? part(1, t1, `${plural(t1.length, 'addition')}: `, h('span', { class: 'tier-gist' },
+      t1.slice(0, 3).map((x) => h('q', {}, quote(firstLine(x)) || 'a blank line')), t1.length > 3 ? ` +${t1.length - 3}` : null)) : null,
+    t2.length ? part(2, t2, `${plural(t2.length, 'change')} to your words \u2014 read each`) : null,
+    t3.length ? part(3, t3, `${t3.length} locked`) : null,
+  ].filter(Boolean);
+  return h('div', { class: 'tier-summary' }, parts);
+}
+
 // extra: the places of other layers (layers.js layerNotes), marked on the
 // note with the agent's notes but without cards of their own.
 function penPage(c, tab, lock, extra = []) {
@@ -5987,15 +6041,20 @@ function penPage(c, tab, lock, extra = []) {
   for (const m of marks.filter(theirs)) for (const el of doc.querySelectorAll(`[data-mark="${m.key}"]`)) el.classList.remove('pen-anchor');
   const cards = marks.filter((m) => !theirs(m)).map((m) => {
     const st = markState(tab, c.path, m, lock);
-    for (const el of doc.querySelectorAll(`[data-mark="${m.key}"]`)) el.classList.add(`pen-${st}`);
+    // Just decided: the ink is still wet (penDecide).
+    const wet = tab.inked?.path === c.path && tab.inked.key === m.key && performance.now() - tab.inked.at < 600 ? ' pen-wet' : '';
+    for (const el of doc.querySelectorAll(`[data-mark="${m.key}"]`)) el.className += ` pen-${st}${wet}`;
     const stuck = lock || conflicts.has(m.i);
+    const chip = m.kind === 'hunk' ? tierChip(hunkTierOf(c, m.i)) : c.tiers && own(m).length ? tierChip({ tier: 0, why: 'remark' }) : null;
+    // Left as it was: stet, the proofreader's "let it stand".
+    const stet = st === 'n' && m.kind === 'hunk' ? h('span', { class: 'pen-stet', title: 'Left as it was (stet)' }, 'stet') : null;
     const what = m.kind === 'note' ? ['Noted', 'Dismiss'] : tab.kind === 'outside' ? ['Keep', 'Undo'] : ['Accept', 'Reject'];
     const drawn = m.picture != null;
     m.what = drawn ? pictureSummary(pics[m.picture], m.i) : null;
-    return h('div', { class: `pen-card kb-item pen-${st}${own(m).length || drawn ? ' noted' : ''}`, 'data-path': c.path, 'data-hunk': m.key, 'data-mark': m.key, 'data-line': m.line + 1 },
-      stuck ? null : h('div', { class: 'pen-acts' },
-        h('button', { class: 'pen-yes', title: `${what[0]} (y)`, onclick: () => penDecide(tab, c.path, m.key, 'y', false) }, '✓'),
-        h('button', { class: 'pen-no', title: `${what[1]} (n)`, onclick: () => penDecide(tab, c.path, m.key, 'n', false) }, '✗')),
+    return h('div', { class: `pen-card kb-item pen-${st}${wet}${own(m).length || drawn ? ' noted' : ''}`, 'data-path': c.path, 'data-hunk': m.key, 'data-mark': m.key, 'data-line': m.line + 1 },
+      stuck && !chip ? null : h('div', { class: 'pen-acts' }, chip, stet,
+        stuck ? null : h('button', { class: 'pen-yes', title: `${what[0]} (y)`, onclick: () => penDecide(tab, c.path, m.key, 'y', false) }, '✓'),
+        stuck ? null : h('button', { class: 'pen-no', title: `${what[1]} (n)`, onclick: () => penDecide(tab, c.path, m.key, 'n', false) }, '✗')),
       drawn ? h('div', { class: 'pen-note pen-pic-what' }, pictureSummary(pics[m.picture], m.i)) : null,
       own(m).map((x) => h('div', { class: 'pen-note', title: x.comment || x.suggest },
         x.speaker ? h('span', { class: 'pen-who' }, `@${x.speaker}`) : null, x.time ? h('span', { class: 'pen-when' }, hhmm(x.time)) : null,
@@ -6009,6 +6068,12 @@ function penPage(c, tab, lock, extra = []) {
   const svg = document.createElementNS(SVG_NS, 'svg');
   svg.classList.add('pen-lines');
   page.querySelector('.pen-body').append(svg);
+  // A mark and its margin note go together: pointing at one lights the other.
+  const pair = (key, on) => {
+    for (const el of page.querySelectorAll(`.pen-doc [data-mark="${key}"], .pen-card[data-mark="${key}"], .pen-lines [data-mark="${key}"]`)) el.classList.toggle('pen-pair', on);
+  };
+  page.addEventListener('mouseover', (e) => { const k = e.target.closest?.('[data-mark]')?.dataset.mark; if (k && k !== page.paired) { if (page.paired) pair(page.paired, false); page.paired = k; pair(k, true); } });
+  page.addEventListener('mouseleave', () => { if (page.paired) pair(page.paired, false); page.paired = null; });
   // A mark picks its margin note; links here only show where they go.
   doc.addEventListener('click', (e) => {
     if (e.target.closest('a')) e.preventDefault();
@@ -7069,6 +7134,7 @@ function penDecide(tab, path, key, said, next = true) {
     if (said === 'y') d.hunks.add(i); else d.hunks.delete(i);
   }
   ((tab.pen ||= {})[path] ||= {})[key] = said;
+  tab.inked = { path, key, at: performance.now() };
   const wrap = bufferEl(tab);
   if (next && wrap) {
     const items = reviewItems(wrap);
@@ -8058,6 +8124,8 @@ function reviewView(tab) {
         h('button', { class: 'btn danger', onclick: () => discardRun(tab) }, 'Discard')));
     }
     const locked = !reviewable;
+    const sum = run.kind !== 'proof' && tierSummary(tab);
+    if (sum) wrap.append(sum);
     for (const c of run.changes) wrap.append(fileCard(c, tab, locked));
     for (const [p, base] of remarks) wrap.append(remarksCard(p, base, tab));
     // The lens and forks: layers on their note's page — one of its own when

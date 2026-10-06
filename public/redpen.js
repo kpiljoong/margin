@@ -210,6 +210,12 @@ export function layoutMargin(page) {
     dot.setAttribute('cx', x1);
     dot.setAttribute('cy', y1);
     dot.setAttribute('r', 2);
+    // Each line knows its mark: the one in view, or pointed at, stands out.
+    for (const el of [line, dot]) {
+      el.dataset.mark = card.dataset.mark;
+      if (card.classList.contains('kb-cur')) el.classList.add('pen-on');
+      if (card.classList.contains('pen-pair')) el.classList.add('pen-pair');
+    }
     svg.append(line, dot);
   }
   margin.style.minHeight = `${next}px`;

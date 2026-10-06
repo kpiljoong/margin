@@ -17,6 +17,7 @@ const { lockRanges, lockedHunks, drawerText, drawerScraps, addedLines } = requir
 const { liveMargin, projectOf } = require('./lib/live');
 const { deskMargin } = require('./lib/desk');
 const { OutsideStore, Seen, changedWhileAway } = require('./lib/outside');
+const { tiersOf, agentLines } = require('./lib/tiers');
 
 const APP_DIR = __dirname;
 const PUBLIC_DIR = path.join(APP_DIR, 'public');
@@ -1945,9 +1946,24 @@ function computeChanges(id) {
         change.problems = Object.fromEntries(locked.map((i) => [i, 'in a paragraph you locked']));
       }
     }
+    // How far it reaches into your words (lib/tiers.js): a label for the review.
+    if (!mine && !change.reserved) change.tiers = tiersOf(change, { agent: agentWrote(rel) });
     changes.push(change);
   }
   return changes;
+}
+
+// The lines agents wrote in a note, as Origin knows them (applied runs):
+// kept until a run is applied or reverted.
+const agentWroteCache = new Map();
+function agentWrote(rel) {
+  if (!agentWroteCache.has(rel)) {
+    let lines = new Set();
+    try { lines = agentLines(originOf(rel).runs); } catch { /* not a note of the workspace */ }
+    if (agentWroteCache.size > 500) agentWroteCache.clear();
+    agentWroteCache.set(rel, lines);
+  }
+  return agentWroteCache.get(rel);
 }
 
 function applyRun(id, decisions) {
@@ -2008,6 +2024,7 @@ function applyRun(id, decisions) {
   meta.status = 'applied';
   meta.applied = { at: new Date().toISOString(), files: applied, skipped };
   writeMeta(meta);
+  agentWroteCache.clear();
   return meta;
 }
 
@@ -2052,6 +2069,7 @@ function revertRun(id) {
   meta.status = 'reverted';
   meta.revertedAt = new Date().toISOString();
   writeMeta(meta);
+  agentWroteCache.clear();
   return { ...meta, reverted };
 }
 
