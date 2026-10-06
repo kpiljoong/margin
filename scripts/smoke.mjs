@@ -1888,14 +1888,14 @@ await check('meetings (experimental): the rail gathers a decision (a key) and a 
   await sleep(200);
   return { cards, agenda, text, asked, since, cols, moved, proposed, rail: !!$('.mrail'), meeting: !!$('.meeting') };
 `, (v) => (v?.cards?.join('|') === 'decision:We ship on Friday|todo:Post the role|question:Do we need a beta' && v.agenda.join() === 'Status,Hiring'
-  && v.text.includes('Beta is out.\n\n> [!question] Do we need a beta\n\n') && v.text.includes('\n> [!decision] We ship on Friday\n') && v.asked
+  && v.text.includes('Beta is out.\nDo we need a beta #question\n') && v.text.includes('\nWe ship on Friday #decision\n') && v.asked
   && /Since last time weekly 2026-10-05 · 0 of 1 to-do done · 1 open question/.test(v.since) && v.cols === 'decided:1 open:1 @ann:1 nobody:0'
   && v.moved === '1 change to propose' && v.proposed >= 1 && !v.rail && !v.meeting ? null : `got ${JSON.stringify(v)}`));
 {
   const t = fs.readFileSync(path.join(ws, 'sub', 'weekly 2026-10-05.md'), 'utf8');
   const next = fs.readFileSync(path.join(ws, 'sub', 'weekly 2026-10-12.md'), 'utf8');
   const good = /\n## Wrap-up\n/.test(t) && /\*\*@ann\*\*\n\n- \[ \] Post the role @ann\n/.test(t) && /Next meeting: \[\[weekly 2026-10-12\]\]\n$/.test(t)
-    && next === '# weekly 2026-10-12\n\nPrevious meeting: [[weekly 2026-10-05]]\n\n## Status (5m)\n\n> [!question] Do we need a beta\n\n## Hiring (10m)\n';
+    && next === '# weekly 2026-10-12\n\nPrevious meeting: [[weekly 2026-10-05]]\n\n## Status (5m)\n\n- Do we need a beta #question\n\n## Hiring (10m)\n';
   console.log(`${good ? '✓' : '✗'} the wrap-up at the end of the meeting's note (the to-do under its owner), the next meeting with the open question carried over; the wall's proposal discarded`);
   if (!good) { console.log(JSON.stringify({ t, next })); failed = true; }
   // Out of the way of the checks after (the tasks of all notes).
@@ -1903,8 +1903,8 @@ await check('meetings (experimental): the rail gathers a decision (a key) and a 
   await sleep(800);
 }
 
-fs.writeFileSync(path.join(ws, 'sub', 'kinds 2026-10-05.md'), '# kinds\n\n## Launch (5m)\n\nreview may slip\n\nfree first month\n\noffer range\n');
-await check('meetings: a line marked a risk, an idea, for next time (\u2318\u23254/5/6) \u2014 its own lane on the rail, plain Markdown in the note', `
+fs.writeFileSync(path.join(ws, 'sub', 'kinds 2026-10-05.md'), '# kinds\n\n## Launch (5m)\n\nreview may slip\n\nfree first month\n\n- pricing\n  - offer range\n');
+await check('meetings: a line marked a risk, an idea, for next time (\u2318\u23254/5/6) \u2014 its own lane on the rail, a tag at the end of the line, where it is', `
   const mac = navigator.platform.startsWith('Mac');
   const command = async (name) => {
     document.body.dispatchEvent(new KeyboardEvent('keydown', { code: 'KeyP', key: 'p', bubbles: true, cancelable: true, metaKey: mac, ctrlKey: !mac }));
@@ -1935,7 +1935,7 @@ await check('meetings: a line marked a risk, an idea, for next time (\u2318\u232
   await sleep(200);
   return { empty, cards, text, rail: !!$('.mrail'), meeting: !!$('.meeting') };
 `, (v) => (v?.empty && v.cards?.join('|') === 'risk:Risk:review may slip|idea:Idea:free first month|next:Next time:offer range'
-  && v.text === '# kinds\n\n## Launch (5m)\n\n> [!warning] review may slip\n\n> [!idea] free first month\n\n- offer range #next\n' && !v.rail && !v.meeting ? null : `got ${JSON.stringify(v)}`));
+  && v.text === '# kinds\n\n## Launch (5m)\n\nreview may slip #risk\n\nfree first month #idea\n\n- pricing\n  - offer range #next\n' && !v.rail && !v.meeting ? null : `got ${JSON.stringify(v)}`));
 fs.rmSync(path.join(ws, 'sub', 'kinds 2026-10-05.md'), { force: true });
 await sleep(500);
 
@@ -1968,7 +1968,7 @@ await check('meetings: fold (the rail\u2019s Fold) \u2014 to-dos under their own
 `, (v) => {
   const next = (() => { try { return fs.readFileSync(path.join(ws, 'sub', 'fold 2026-10-12.md'), 'utf8'); } catch { return null; } })();
   return v?.review && v.owner && /^Folded/.test(v.toast) && /made fold 2026-10-12/.test(v.toast)
-    && next === '# fold 2026-10-12\n\nPrevious meeting: [[fold 2026-10-05]]\n\n## Launch (5m)\n\n> [!question] A press kit?\n' ? null : `got ${JSON.stringify({ v, next })}`;
+    && next === '# fold 2026-10-12\n\nPrevious meeting: [[fold 2026-10-05]]\n\n## Launch (5m)\n\n- A press kit? #question\n' ? null : `got ${JSON.stringify({ v, next })}`;
 });
 for (const f of ['fold 2026-10-05.md', 'fold 2026-10-12.md']) fs.rmSync(path.join(ws, 'sub', f), { force: true });
 await sleep(500);

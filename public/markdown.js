@@ -8,6 +8,8 @@ import { highlightCode } from './codehl.js';
 let imageFor = null;
 let embedFor = null; // ![[target]] → HTML or null (then it renders as a link)
 const TAG_RE = /(^|[\s(])#((?=[\p{L}\p{N}_/-]*[\p{L}_])[\p{L}\p{N}_][\p{L}\p{N}_/-]*)/gu;
+// A meeting's marks (public/meeting.js): the callout colour each takes, and its word.
+const MARK_TAGS = { decision: ['tip', 'decided'], decided: ['tip', 'decided'], question: ['important', 'question'], risk: ['warning', 'risk'], idea: ['idea', 'idea'], next: ['note', 'next time'] };
 
 const unesc = (s) => s.replace(/&(amp|lt|gt|quot|#39);/g, (_, e) => ({ amp: '&', lt: '<', gt: '>', quot: '"', '#39': "'" }[e]));
 const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -60,7 +62,11 @@ function inline(src) {
   });
   s = s.replace(/(^|[\s(])(https?:\/\/[^\s<]+[^\s<.,;:!?)])/g, (_, pre, url) =>
     pre + stash(`<a href="${url}" target="_blank" rel="noopener noreferrer" class="external">${url}</a>`));
-  s = s.replace(TAG_RE, (_, pre, tag) => `${pre}${stash(`<a href="#" class="tag" data-tag="${tag}">#${tag}</a>`)}`);
+  s = s.replace(TAG_RE, (_, pre, tag) => {
+    // What a meeting's line is (#decision, #question…): a small mark in its colour.
+    const k = MARK_TAGS[tag.toLowerCase()];
+    return `${pre}${stash(k ? `<a href="#" class="tag mark-tag callout-${k[0]}" data-tag="${tag}" title="#${tag}">${k[1]}</a>` : `<a href="#" class="tag" data-tag="${tag}">#${tag}</a>`)}`;
+  });
   s = s.replace(/\*\*(?=\S)([\s\S]*?\S)\*\*/g, '<strong>$1</strong>');
   s = s.replace(/__(?=\S)([\s\S]*?\S)__/g, '<strong>$1</strong>');
   s = s.replace(/(^|[^*])\*(?=\S)([^*]*?\S)\*(?!\*)/g, '$1<em>$2</em>');

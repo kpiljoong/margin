@@ -221,13 +221,16 @@ function wrapUp(f, text, rawTask) {
       section = hd[1];
       if (/\(\d+\s*(m|min|\uBD84)\)$/.test(section)) agenda.push({ head: l, questions: [], later: [] });
     }
-    const call = /^\s*>\s*\[!(decision|question)\]\s*(.*)$/i.exec(l);
+    // Marked with a tag at the end ("- We ship Friday #decision"), or a callout.
+    const tagged = !/^\s*(?:>|[-*+]\s+\[)/.test(l) && /(?:^|\s)#(decision|question|risk|idea)\b/i.exec(l);
+    const words = tagged && l.replace(/^\s*(?:(?:[-*+]|\d+[.)])\s+)?/, '').replace(/\s*#(?:decision|question|risk|idea|next)\b/gi, '').trim();
+    const call = /^\s*>\s*\[!(decision|question)\]\s*(.*)$/i.exec(l) || (tagged && /^(decision|question)$/i.test(tagged[1]) ? [l, tagged[1], words] : null);
     if (call) once(call[1].toLowerCase() === 'decision' ? decisions : questions, call[2].trim());
     if (call && call[1].toLowerCase() === 'question' && agenda.length) agenda[agenda.length - 1].questions.push(call[2].trim());
-    const other = /^\s*>\s*\[!(warning|risk|idea)\]\s*(.*)$/i.exec(l);
+    const other = /^\s*>\s*\[!(warning|risk|idea)\]\s*(.*)$/i.exec(l) || (tagged && /^(risk|idea)$/i.test(tagged[1]) ? [l, tagged[1], words] : null);
     if (other) once(/idea/i.test(other[1]) ? ideas : risks, other[2].trim());
     // A topic for next time: under its item in the next meeting's note.
-    if (!/^\s*[-*+]\s+\[/.test(l) && !/^\s*>/.test(l) && /(^|\s)#next\b/i.test(l) && agenda.length) agenda[agenda.length - 1].later.push(l.replace(/^\s*(?:[-*+]\s+)?/, '').replace(/\s*#next\b/gi, '').trim());
+    if (!tagged && !/^\s*[-*+]\s+\[/.test(l) && !/^\s*>/.test(l) && /(^|\s)#next\b/i.test(l) && agenda.length) agenda[agenda.length - 1].later.push(l.replace(/^\s*(?:[-*+]\s+)?/, '').replace(/\s*#next\b/gi, '').trim());
     if (/^\s*[-*+]\s+\[[ xX]\]\s+\S/.test(l)) { todos.push(l.trim()); continue; }
     keep.push(l);
   }
@@ -242,14 +245,13 @@ function wrapUp(f, text, rawTask) {
   if (time) out.push('', `**Time:** ${time.split('; ').join(' · ')}`);
   out.push('', '### To-dos by owner');
   for (const o of owners) out.push('', o ? `**@${o}**` : '**No owner**', '', ...todos.filter((t) => owner(t) === o));
-  if (decisions.length) out.push('', '### Decisions', '', ...decisions.flatMap((d) => [`> [!decision] ${d}`, '']));
-  if (questions.length) out.push(...(decisions.length ? [] : ['']), '### Open questions', '', ...questions.flatMap((q) => [`> [!question] ${q}`, '']));
-  if (risks.length) out.push(...(out[out.length - 1] === '' ? [] : ['']), '### Risks', '', ...risks.flatMap((r) => [`> [!warning] ${r}`, '']));
-  if (ideas.length) out.push(...(out[out.length - 1] === '' ? [] : ['']), '### Ideas', '', ...ideas.flatMap((r) => [`> [!idea] ${r}`, '']));
+  for (const [head, xs, tag] of [['Decisions', decisions, 'decision'], ['Open questions', questions, 'question'], ['Risks', risks, 'risk'], ['Ideas', ideas, 'idea']]) {
+    if (xs.length) out.push(...(out[out.length - 1] === '' ? [] : ['']), `### ${head}`, '', ...xs.map((x) => `- ${x} #${tag}`), '');
+  }
   if (out[out.length - 1] !== '') out.push('');
   out.push(`Next meeting: [[${stem(next)}]]`, '');
   const nextText = [`# ${stem(next)}`, '', `Previous meeting: [[${stem(f)}]]`, '',
-    ...agenda.flatMap((a) => [a.head, '', ...a.questions.flatMap((q) => [`> [!question] ${q}`, '']), ...(a.later.length ? [...a.later.map((t) => `- ${t}`), ''] : [])])].join('\n').replace(/\n+$/, '\n');
+    ...agenda.flatMap((a) => [a.head, '', ...(a.questions.length || a.later.length ? [...a.questions.map((q) => `- ${q} #question`), ...a.later.map((t) => `- ${t}`), ''] : [])])].join('\n').replace(/\n+$/, '\n');
   return [out.join('\n').replace(/\n{3,}/g, '\n\n'), { path: next, text: nextText }];
 }
 

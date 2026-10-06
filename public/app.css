@@ -521,6 +521,8 @@ input[type=checkbox] { accent-color: var(--accent); }
 .preview { position: relative; }
 .md img { max-width: 100%; border-radius: 6px; }
 .md a.tag { color: var(--syn-tag); background: color-mix(in srgb, var(--syn-tag) 13%, transparent); padding: 0 6px; border-radius: 10px; font-size: .88em; text-decoration: none; }
+.md a.tag.mark-tag { color: var(--c, var(--fg-dim)); background: color-mix(in srgb, var(--c, var(--fg-dim)) 12%, transparent); font-size: .78em; padding: 0 6px 0 5px; vertical-align: .08em; }
+.md a.tag.mark-tag::before { content: ''; display: inline-block; width: 6px; height: 6px; margin-right: 4px; border-radius: 50%; background: var(--c, var(--fg-dim)); vertical-align: .1em; }
 .md pre { position: relative; }
 .md pre[data-lang]::after { content: attr(data-lang); position: absolute; top: 6px; right: 10px; font: 10.5px var(--sans); color: var(--fg-faint); text-transform: lowercase; }
 .tk-com { color: var(--syn-comment); font-style: italic; }

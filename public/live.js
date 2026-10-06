@@ -1,8 +1,10 @@
 // The live margin (experimental): while a meeting is written, its minutes
 // beside each line — a chip at once (by rule: a decision, a to-do, a
 // question, a risk, an idea, one for next time, whose, by when), then a fast model's clean sentence, written in
-// as it comes (server.js → lib/live.js). It is only shown: Tab keeps it (the
-// line in the note becomes it, in the meeting's own Markdown), Esc lets it go.
+// as it comes (server.js → lib/live.js). It is only shown: Tab keeps what
+// the line is (a tag at its end, a to-do's box; the words and the list as they
+// were written), Esc lets it go.
+import { markLine } from './meeting.js';
 
 const KIND = { decision: 'Decided', question: 'Open', todo: 'To-do', risk: 'Risk', idea: 'Idea', next: 'Next time', note: 'Note', answer: 'Answer' };
 // "?? when did we say": a question to the margin, not for the minutes.
@@ -20,7 +22,9 @@ export function wanted(line) {
 
 const CALL = /^\s*>\s*\[!(decision|decided|question|warning|risk|idea)\][+-]?\s*(.*)$/i;
 const callKind = (type) => (/^q/i.test(type) ? 'question' : /^(warning|risk)$/i.test(type) ? 'risk' : /^idea$/i.test(type) ? 'idea' : 'decision');
-const TASK = /^\s*[-*+]\s+\[[ xX]\]\s+(.*)$/;
+const TASK = /^\s*(?:[-*+]|\d+[.)])\s+\[[ xX]\]\s+(.*)$/;
+// "- We launch on the 20th #decision": marked already.
+const TAGGED = /(?:^|\s)#(decision|decided|question|risk|idea)\b/i;
 const AT = /(?:^|[\s(])@([\p{L}\p{N}_][\p{L}\p{N}_.-]*)/u;
 // "ann: survey thurs": someone's.
 const WHO = /^\s*([\p{L}][\p{L}\p{N}_.-]{1,20}):\s+\S/u;
@@ -88,11 +92,13 @@ export function ruleOf(line, today = new Date(), lead = null) {
   if (ASKED.test(line)) return { kind: 'answer', fixed: true, owner: null, due: null };
   const c = CALL.exec(line);
   const t = !c && TASK.exec(line);
+  const g = !c && !t && TAGGED.exec(line);
   const owner = AT.exec(line)?.[1] || WHO.exec(line)?.[1]?.toLowerCase() || null;
   let kind;
-  const later = !c && !t && /(?:^|\s)#next\b/i.test(line);
+  const later = !c && !t && !g && /(?:^|\s)#next\b/i.test(line);
   if (c) kind = callKind(c[1]);
   else if (t) kind = 'todo';
+  else if (g) kind = callKind(g[1]);
   else if (lead && LEAD_DO.test(lead) && /:\s*$/.test(lead)) kind = 'todo';
   else if (LATER.test(line)) kind = 'next';
   else if (RISK.test(line)) kind = 'risk';
@@ -101,7 +107,7 @@ export function ruleOf(line, today = new Date(), lead = null) {
   else if (DECIDE.test(line)) kind = 'decision';
   else if (DO.test(line) || owner) kind = 'todo';
   else kind = 'note';
-  return { kind, fixed: !!(c || t || later), owner: kind === 'todo' || kind === 'question' ? owner : null, due: kind === 'todo' ? dueOf(line, today) || (lead ? dueOf(lead, today) : null) : null };
+  return { kind, fixed: !!(c || t || g || later), owner: kind === 'todo' || kind === 'question' ? owner : null, due: kind === 'todo' ? dueOf(line, today) || (lead ? dueOf(lead, today) : null) : null };
 }
 
 // The model's reply as it streams: "[todo @bob 2026-10-15] Draft the notes."
@@ -205,17 +211,13 @@ export function memoryOf(name, items, max = 1500) {
   return s.length > max ? `${s.slice(0, max - 1)}\u2026` : s;
 }
 
-// The line as the meeting writes it down: a decision or question callout,
-// a to-do with its owner and date, or the sentence.
-export function keptLine(e) {
-  const s = e.sentence.trim().replace(/\s+/g, ' ');
-  if (e.kind === 'decision') return `> [!decision] ${s}`;
-  if (e.kind === 'question') return `> [!question] ${s}${e.owner && !s.includes(`@${e.owner}`) ? ` @${e.owner}` : ''}`;
-  if (e.kind === 'todo') return `- [ ] ${s}${e.owner && !s.includes(`@${e.owner}`) ? ` @${e.owner}` : ''}${e.due ? ` \u{1F4C5} ${e.due}` : ''}`;
-  if (e.kind === 'risk') return `> [!warning] ${s}`;
-  if (e.kind === 'idea') return `> [!idea] ${s}`;
-  if (e.kind === 'next') return `- ${s.replace(/(^|\s)#next\b/gi, ' ').trim()} #next`;
-  return s;
+// The line as the meeting keeps it: the words as they were written, in their
+// list, with what it is at the end (#decision, #question, #risk, #idea,
+// #next; a to-do gets its box, its owner and date). The margin's sentence
+// stays in the margin. An answer takes the question's place.
+export function keptLine(e, line) {
+  if (e.kind === 'answer') return `${/^\s*/.exec(line)[0]}${e.sentence.trim().replace(/\s+/g, ' ')}`;
+  return markLine(line, e.kind, e);
 }
 
 // Every line's minutes the margin wrote and nobody let go, kept (as Tab
@@ -232,29 +234,18 @@ export function keepAll(text, entries) {
   return text;
 }
 
-// Keeping it: the edit to the note — line i becomes the kept line; a
-// callout stands apart (a blank line before and after). With the cursor on
-// that line it goes to the kept line's end; on the empty line right under a
-// callout, one line further, so what comes next isn't part of it.
+// Keeping it: the edit to the note — line i becomes the kept line, where it
+// is. With the cursor on that line it goes to the kept line's end.
 // → { from, to, insert, caret }.
 export function keepEdit(text, i, e, at = -1) {
   const lines = text.split('\n');
   let from = 0;
   for (let k = 0; k < i; k++) from += lines[k].length + 1;
   const to = from + lines[i].length;
-  const indent = e.kind === 'todo' || e.kind === 'next' || e.kind === 'note' || e.kind === 'answer' ? /^\s*/.exec(lines[i])[0] : '';
-  let insert = indent + keptLine(e);
-  const callout = insert.startsWith('>');
-  if (callout) {
-    if (i > 0 && lines[i - 1].trim()) insert = `\n${insert}`;
-    if (i < lines.length - 1 && lines[i + 1].trim()) insert += '\n';
-  }
-  const end = from + insert.replace(/\n+$/, '').length;
-  let caret = end;
-  if (at > to) {
-    caret = at + insert.length - (to - from);
-    if (callout && at === to + 1 && !lines[i + 1]?.trim()) { insert += '\n'; caret++; }
-  } else if (at >= 0 && at < from) caret = at;
+  const insert = keptLine(e, lines[i]);
+  let caret = from + insert.length;
+  if (at > to) caret = at + insert.length - (to - from);
+  else if (at >= 0 && at < from) caret = at;
   return { from, to, insert, caret };
 }
 

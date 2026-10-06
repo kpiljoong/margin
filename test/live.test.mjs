@@ -17,6 +17,8 @@ const MON = new Date(2026, 9, 12); // Monday, October 12, 2026
 
 test('ruleOf: a chip at once, before any model', () => {
   assert.equal(ruleOf('-> go w/ 20th', MON).kind, 'decision');
+  assert.deepEqual([ruleOf('  - press kit?? #question', MON).kind, ruleOf('  - press kit?? #question', MON).fixed], ['question', true], 'marked already: as it is');
+  assert.equal(ruleOf('- slip #risk', MON).kind, 'risk');
   assert.equal(ruleOf('press kit?? bob unsure', MON).kind, 'question');
   assert.deepEqual(ruleOf('ann: survey thurs', MON), { kind: 'todo', fixed: false, owner: 'ann', due: '2026-10-15' });
   assert.deepEqual(ruleOf('- [ ] Draft the notes @bob', MON), { kind: 'todo', fixed: true, owner: 'bob', due: null });
@@ -116,40 +118,50 @@ test('keepAll: every line the margin answered, kept as Tab would, from the botto
     ['beta ok', { kind: 'note', state: 'gone', sentence: 'Beta is fine.' }],
     ['later', { kind: 'note', state: 'stream', sentence: 'La' }],
   ]);
-  assert.equal(keepAll(text, entries), '## Plan (10m)\n\n> [!decision] We launch on the 20th.\n\n- [ ] Draft @bob\n- [ ] Ann sends the survey. @ann \u{1F4C5} 2026-10-15\n?? when\nbeta ok\nlater');
+  assert.equal(keepAll(text, entries), '## Plan (10m)\nlaunch 20th ok #decision\n- [ ] Draft @bob\n- [ ] ann: survey thurs @ann \u{1F4C5} 2026-10-15\n?? when\nbeta ok\nlater');
 });
 
-test('keptLine and keepEdit: the line as the meeting writes it, a callout apart', () => {
-  assert.equal(keptLine({ kind: 'todo', sentence: 'Send the beta survey.', owner: 'ann', due: '2026-10-15' }), '- [ ] Send the beta survey. @ann \u{1F4C5} 2026-10-15');
-  assert.equal(keptLine({ kind: 'decision', sentence: ' We  launch on the 20th. ' }), '> [!decision] We launch on the 20th.');
-  assert.equal(keptLine({ kind: 'note', sentence: 'Beta is at 92%.' }), 'Beta is at 92%.');
-  assert.equal(keptLine({ kind: 'risk', sentence: 'The review may slip.' }), '> [!warning] The review may slip.');
-  assert.equal(keptLine({ kind: 'idea', sentence: 'A free first month.' }), '> [!idea] A free first month.');
-  assert.equal(keptLine({ kind: 'next', sentence: 'The offer range.' }), '- The offer range. #next');
+test('keptLine and keepEdit: the words as written, in their list, marked at the end', () => {
+  assert.equal(keptLine({ kind: 'todo', sentence: 'Send the beta survey.', owner: 'ann', due: '2026-10-15' }, 'ann: survey thurs'), '- [ ] ann: survey thurs @ann \u{1F4C5} 2026-10-15');
+  assert.equal(keptLine({ kind: 'decision', sentence: ' We  launch on the 20th. ' }, '-> go w/ 20th'), '-> go w/ 20th #decision');
+  assert.equal(keptLine({ kind: 'note', sentence: 'Beta is at 92%.' }, 'beta 92'), 'beta 92', 'a note: nothing to mark');
+  assert.equal(keptLine({ kind: 'risk', sentence: 'The review may slip.' }, '- review may slip'), '- review may slip #risk');
+  assert.equal(keptLine({ kind: 'idea', sentence: 'A free first month.' }, '1. free 1st month?'), '1. free 1st month? #idea');
+  assert.equal(keptLine({ kind: 'next', sentence: 'The offer range.' }, '- offer range later'), '- offer range later #next');
+  assert.equal(keptLine({ kind: 'question', sentence: 'Is a press kit needed?', owner: 'bob' }, 'press kit?? bob unsure'), 'press kit?? bob unsure #question');
+  // Marked already: left as it is, or as its own mark says.
+  assert.equal(keptLine({ kind: 'decision', sentence: 'x' }, '- 20th #idea'), '- 20th #idea');
+  assert.equal(keptLine({ kind: 'decision', sentence: 'x' }, '> [!question] 20th?'), '> [!question] 20th?');
+  assert.equal(keptLine({ kind: 'decision', sentence: 'x' }, '  - ? 20th or 27th'), '  - 20th or 27th #question');
+  assert.equal(keptLine({ kind: 'answer', sentence: ' Oct  20. ' }, '  ?? when'), '  Oct 20.');
   assert.equal(parseReply('[risk] The review may slip.').kind, 'risk');
   assert.equal(server.parseReply('[next] Later. [idea] x').sentence, 'Later. x');
-  const text = '## Launch (5m)\n20th? mkt ok\n-> go w/ 20th\npress kit??\n';
-  const e = keepEdit(text, 2, { kind: 'decision', sentence: 'We launch on October 20.' });
-  const after = text.slice(0, e.from) + e.insert + text.slice(e.to);
-  assert.equal(after, '## Launch (5m)\n20th? mkt ok\n\n> [!decision] We launch on October 20.\n\npress kit??\n');
+  // A list within a list: each line where it was, at its depth, nothing between.
+  const text = '## Launch (5m)\n- launch date\n  - 20th? mkt ok\n  - -> go w/ 20th\n    - ann: survey thurs\n- press kit??\n';
+  let after = text;
+  for (const [i, e] of [[3, { kind: 'decision', sentence: 'We launch on October 20.' }], [4, { kind: 'todo', sentence: 'Ann sends the survey.', owner: 'ann' }], [5, { kind: 'question', sentence: 'A press kit?' }]]) {
+    const k = keepEdit(after, i, e);
+    after = after.slice(0, k.from) + k.insert + after.slice(k.to);
+  }
+  assert.equal(after, '## Launch (5m)\n- launch date\n  - 20th? mkt ok\n  - -> go w/ 20th #decision\n    - [ ] ann: survey thurs @ann\n- press kit?? #question\n');
   const t = keepEdit('a\n  ann: survey thurs\n', 1, { kind: 'todo', sentence: 'Send the survey', owner: 'ann' });
-  assert.equal(t.insert, '  - [ ] Send the survey @ann');
+  assert.equal(t.insert, '  - [ ] ann: survey thurs @ann');
 });
 
 test('keepEdit: the cursor after the kept line, not in its middle', () => {
   const D = { kind: 'decision', sentence: 'We launch on October 20.' };
   const apply = (text, e) => text.slice(0, e.from) + e.insert + text.slice(e.to);
   const mark = (text, e) => { const a = apply(text, e); return a.slice(0, e.caret) + '|' + a.slice(e.caret); };
-  // On the line itself, at its end: the end of the kept sentence.
-  const one = '## Launch\nmkt ok\n-> go w/ 20th';
-  assert.equal(mark(one, keepEdit(one, 2, D, one.length)), '## Launch\nmkt ok\n\n> [!decision] We launch on October 20.|');
-  // On the empty line under it: a blank line between, then the cursor.
-  const two = '## Launch\n-> go w/ 20th\n\n## Next';
-  assert.equal(mark(two, keepEdit(two, 1, D, two.indexOf('\n\n') + 1)), '## Launch\n\n> [!decision] We launch on October 20.\n\n|\n## Next');
+  // On the line itself, at its end: the end of the kept line.
+  const one = '## Launch\nmkt ok\n- go w/ 20th';
+  assert.equal(mark(one, keepEdit(one, 2, D, one.length)), '## Launch\nmkt ok\n- go w/ 20th #decision|');
+  // On the line under it: where it was.
+  const two = '## Launch\n- go w/ 20th\n\n## Next';
+  assert.equal(mark(two, keepEdit(two, 1, D, two.indexOf('\n\n') + 1)), '## Launch\n- go w/ 20th #decision\n|\n## Next');
   // A to-do: the cursor at its end, the date included.
   const three = 'ann: survey thurs';
   const t = keepEdit(three, 0, { kind: 'todo', sentence: 'Send the survey', owner: 'ann', due: '2026-10-15' }, 5);
-  assert.equal(mark(three, t), '- [ ] Send the survey @ann \u{1F4C5} 2026-10-15|');
+  assert.equal(mark(three, t), '- [ ] ann: survey thurs @ann \u{1F4C5} 2026-10-15|');
   // Above the line: where it was.
   assert.equal(keepEdit(one, 2, D, 3).caret, 3);
 });

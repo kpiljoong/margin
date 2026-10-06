@@ -22,3 +22,12 @@ test('an ordinary quote stays a quote, and the type is escaped', () => {
   assert.match(renderMarkdown('> just [!note] words'), /^<blockquote/);
   assert.doesNotMatch(renderMarkdown('> [!x"onmouseover=y]'), /"onmouseover/);
 });
+
+test('a meeting\u2019s marks (#decision, #question\u2026): a small chip in the list item, the list as it is', () => {
+  const html = renderMarkdown('- launch\n  - go w/ 20th #decision\n  - press kit? #question\n- other #tag');
+  assert.match(html, /<li[^>]*>go w\/ 20th <a href="#" class="tag mark-tag callout-tip" data-tag="decision" title="#decision">decided<\/a><\/li>/);
+  assert.match(html, /class="tag mark-tag callout-important" data-tag="question" title="#question">question<\/a>/);
+  assert.match(html, /<a href="#" class="tag" data-tag="tag">#tag<\/a>/);
+  assert.equal((html.match(/<ul>/g) || []).length, 2, 'the inner list stays inside');
+  assert.ok(!html.includes('callout callout-'));
+});

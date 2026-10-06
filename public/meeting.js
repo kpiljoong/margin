@@ -1,13 +1,16 @@
 // Meetings (experimental): the rail, the wrap-up and the decision wall.
 //
 // What a meeting decides, leaves open and hands out is written in the note
-// itself, as plain Markdown any app reads:
-//   > [!decision] We ship on Friday.
-//   > [!question] Do we need a beta?
+// itself, as plain Markdown any app reads: the person's own line, where they
+// wrote it (in its list, at its depth), with a tag at its end saying what it is.
+//   - We ship on Friday #decision
+//     - Do we need a beta? #question
 //   - [ ] Draft the release notes @ann 📅 2026-10-09
-//   > [!warning] The store review may take a week.   (a risk)
-//   > [!idea] A first month free instead of a discount?
+//   - The store review may take a week #risk
+//   - A first month free instead of a discount? #idea
 //   - The offer range #next                         (for the next meeting)
+// Callouts (> [!decision] …, > [!question] …, > [!warning] …, > [!idea] …),
+// as earlier meetings were written, are read too.
 // The rail (beside the note in meeting mode) gathers them as they are
 // written, with the agenda's clock; the wall shows them after, in columns,
 // and a card moved there is a change proposed to the note, settled in the
@@ -16,13 +19,21 @@ import { blocksOf } from './gather.js';
 
 const CALL = /^\s*>\s*\[!(decision|decided|question|warning|risk|idea)\][+-]?\s*(.*)$/i;
 const CALL_TYPE = /\[!(?:decision|decided|question|warning|risk|idea)\]/i;
-// The callout each kind is written as (a risk as GitHub's and Obsidian's own).
+// The callout each kind was written as (a risk as GitHub's and Obsidian's own).
 const TYPE = { decision: 'decision', question: 'question', risk: 'warning', idea: 'idea' };
+// The tag each kind is marked with now, at the end of the line.
+const TAG = { decision: 'decision', question: 'question', risk: 'risk', idea: 'idea', next: 'next' };
+const TAGGED = /(^|\s)#(decision|decided|question|risk|idea)\b/i;
+const KIND_TAGS = /(^|\s+)#(?:decision|decided|question|risk|idea|next)\b/gi;
+// A line's head: its indent, a quote's >, a list's mark.
+const HEAD = /^\s*(?:>\s?)*(?:(?:[-*+]|\d+[.)])\s+)?/;
+// "! ", "? ", "[] " typed before the words: the kind they were given.
+const TYPED = /^(?:[!?]|\[\])\s+(?=\S)/;
 const kindOf = (type) => (/^q/i.test(type) ? 'question' : /^(warning|risk)$/i.test(type) ? 'risk' : /^idea$/i.test(type) ? 'idea' : 'decision');
 // "- The offer range #next": a topic for the next meeting.
 const NEXT = /(^|\s)#next\b/i;
 const nextWords = (l) => l.replace(/^\s*(?:[-*+]\s+)?/, '').replace(/(^|\s)#next\b/gi, ' ').replace(/\s+/g, ' ').trim();
-const TASK = /^(\s*)[-*+]\s+\[([ xX])\]\s+(.*)$/;
+const TASK = /^(\s*)([-*+]|\d+[.)])\s+\[([ xX])\]\s+(.*)$/;
 const OWNER = /(^|[\s(])@([\p{L}\p{N}_][\p{L}\p{N}_.-]*)/u;
 const OWNERS = /(^|[\s(])@([\p{L}\p{N}_][\p{L}\p{N}_.-]*)/gu;
 const DUE = /(?:\u{1F4C5}\s*|\bdue:\s*)(\d{4}-\d{2}-\d{2})/u;
@@ -66,8 +77,10 @@ function everyItem(text) {
     const c = CALL.exec(l.text);
     if (c) item = { kind: kindOf(c[1]), text: c[2].trim() };
     const t = !c && TASK.exec(l.text);
-    if (t) item = { kind: 'todo', text: t[3].trim(), done: t[2] !== ' ' };
-    if (!c && !t && NEXT.test(l.text) && !/^\s*>/.test(l.text)) item = { kind: 'next', text: nextWords(l.text) };
+    if (t) item = { kind: 'todo', text: t[4].trim(), done: t[3] !== ' ' };
+    const g = !c && !t && !/^\s*>\s*\[!/.test(l.text) && TAGGED.exec(l.text);
+    if (g) item = { kind: kindOf(g[2]), text: tagWords(l.text) };
+    if (!c && !t && !g && NEXT.test(l.text) && !/^\s*>/.test(l.text)) item = { kind: 'next', text: nextWords(l.text) };
     if (!item || !bodyOf(item.text)) return;
     const key = `${item.kind}:${norm(bodyOf(item.text))}`;
     out.push({ ...item, key, body: bodyOf(item.text), owner: OWNER.exec(item.text)?.[2], due: DUE.exec(item.text)?.[1], line: i, from: l.from, to: l.to, section });
@@ -112,39 +125,68 @@ export function nextAgendaEdit(text, pos) {
   return { from: at, to: at, insert: '\n\n', caret: at + 2, title: next.title };
 }
 
+// A line's words, without its head and the tags that say what it is.
+const tagWords = (l) => l.replace(HEAD, '').replace(KIND_TAGS, ' ').replace(/\s+/g, ' ').trim();
+
+// What a line is marked as (a callout, a box, a tag): its kind, or null.
+function markOf(line) {
+  const c = CALL.exec(line);
+  if (c) return kindOf(c[1]);
+  if (TASK.test(line)) return 'todo';
+  const g = TAGGED.exec(line);
+  if (g) return kindOf(g[2]);
+  return NEXT.test(line) ? 'next' : null;
+}
+
+// The line as `kind` (null: plain words again): its head and its words as
+// they were, a tag at its end; a to-do a box in its list item. A callout
+// becomes a plain line. → the line, or null when it has no words.
+function lineAs(line, kind) {
+  const c = CALL.exec(line);
+  const t = !c && TASK.exec(line);
+  let head = '';
+  let words;
+  if (c) words = c[2];
+  else if (t) { head = `${t[1]}${t[2]} `; words = t[4]; }
+  else { head = HEAD.exec(line)[0]; words = line.slice(head.length).replace(TYPED, ''); }
+  words = words.replace(KIND_TAGS, '').trim();
+  if (!words) return null;
+  if (c && (kind === 'todo' || kind === 'next')) head = '- ';
+  if (kind === 'todo') return /(?:[-*+]|\d+[.)])\s+$/.test(head) ? `${head}[ ] ${words}` : `${head}- [ ] ${words}`;
+  return kind ? `${head}${words} #${TAG[kind]}` : `${head}${words}`;
+}
+
 // A line as a decision, a to-do, a question, a risk, an idea or a topic for
-// next time — or, the kind it is already, plain words again. A callout
-// stands on its own (a blank line before and after). → { from, to, insert, caret } or null.
+// next time — or, the kind it is already, plain words again. It stays where
+// it is, in its list. → { from, to, insert, caret, kind } or null.
 export function classifyLine(text, pos, kind) {
   const lines = linesOf(text);
   const i = lines.findIndex((l) => pos >= l.from && pos <= l.to);
   if (i < 0) return null;
   const l = lines[i];
-  const c = CALL.exec(l.text);
-  const t = !c && TASK.exec(l.text);
-  const n = !c && !t && NEXT.test(l.text);
-  const was = c ? kindOf(c[1]) : t ? 'todo' : n ? 'next' : null;
-  const indent = /^\s*/.exec(l.text)[0];
-  const words = (c ? c[2] : t ? t[3] : l.text.replace(/^\s*(?:(?:[-*+]|\d+[.)])\s+|>\s?|#{1,6}\s+)*(?:[!?]\s+|\[\]\s+)?/, '')).replace(/(^|\s)#next\b/gi, ' ').replace(/\s+/g, ' ').trim();
-  if (!words) return null;
-  const listed = t || /^\s*[-*+]\s/.test(l.text);
-  let line;
-  if (was === kind) line = `${indent}${kind === 'next' ? '- ' : ''}${words}`;
-  else if (kind === 'todo') line = `${listed ? indent : ''}- [ ] ${words}`;
-  else if (kind === 'next') line = `${listed ? indent : ''}- ${words} #next`;
-  else line = `> [!${TYPE[kind]}] ${words}`;
-  let insert = line;
-  let caret = line.length;
-  if (line.startsWith('>')) {
-    if (i > 0 && lines[i - 1].text.trim()) { insert = `\n${insert}`; caret++; }
-    if (i < lines.length - 1 && lines[i + 1].text.trim()) insert += '\n';
-  }
-  return { from: l.from, to: l.to, insert, caret: l.from + caret, kind: was === kind ? null : kind };
+  const was = markOf(l.text);
+  const line = lineAs(l.text, was === kind ? null : kind);
+  if (line == null) return null;
+  return { from: l.from, to: l.to, insert: line, caret: l.from + line.length, kind: was === kind ? null : kind };
+}
+
+// A line kept from the live margin: marked as `kind`, its words as written
+// (the margin's sentence stays in the margin); a to-do with its owner and
+// date. A line marked already keeps its mark — one typed before it ("! …")
+// is written as such. → the line.
+export function markLine(line, kind, { owner = null, due = null } = {}) {
+  const typed = typedKind(line);
+  if (typed) return lineAs(line, typed) ?? line;
+  if (markOf(line) || !(TAG[kind] || kind === 'todo')) return line;
+  let out = lineAs(line, kind) ?? line;
+  if (kind === 'todo' && owner && !out.includes(`@${owner}`)) out += ` @${owner}`;
+  if (kind === 'todo' && due && !DUE.test(out)) out += ` \u{1F4C5} ${due}`;
+  return out;
 }
 
 // A line typed in a meeting starting with "! ", "? " or "[] ": what it is.
 export function typedKind(line) {
-  const m = /^\s*(?:[-*+]\s+)?(!|\?|\[\])\s+\S/.exec(line);
+  const m = /^\s*(?:(?:[-*+]|\d+[.)])\s+)?(!|\?|\[\])\s+\S/.exec(line);
   return m ? { '!': 'decision', '?': 'question', '[]': 'todo' }[m[1]] : null;
 }
 
@@ -169,13 +211,15 @@ function moveOne(text, item, to) {
       const due = DUE.exec(l);
       line = due ? `${l.slice(0, due.index).replace(/\s+$/, '')} @${to.owner} ${l.slice(due.index)}` : `${l.replace(/\s+$/, '')} @${to.owner}`;
     }
-  } else if (to.kind === 'todo') {
+  } else if (to.kind === 'todo' && CALL.test(l)) {
     line = `- [ ] ${item.body}${to.owner ? ` @${to.owner}` : ''}${item.due ? ` \u{1F4C5} ${item.due}` : ''}`;
   } else if (to.kind !== item.kind) {
-    if (TYPE[item.kind] && TYPE[to.kind]) line = l.replace(CALL_TYPE, `[!${TYPE[to.kind]}]`);
+    if (CALL.test(l) && TYPE[to.kind]) line = l.replace(CALL_TYPE, `[!${TYPE[to.kind]}]`);
     else {
-      const e = classifyLine(text, item.from, to.kind);
-      return e ? text.slice(0, e.from) + e.insert + text.slice(e.to) : text;
+      // In its place, in its list: the tag (or the box) changes.
+      line = lineAs(l, to.kind);
+      if (line == null) return text;
+      if (to.kind === 'todo' && to.owner && !OWNER.test(line)) line += ` @${to.owner}`;
     }
   } else return text;
   return text.slice(0, item.from) + line + text.slice(item.to);
@@ -236,10 +280,10 @@ export function wrapTask(path, next, times) {
   const said = times.filter((t) => t.ms > 0).map((t) => `${t.title} ${Math.max(1, Math.round(t.ms / 60000))}m of ${t.budget}m`);
   return [
     `Wrap up this meeting (${path}) for after it:`,
-    '1. At the end of the note, add a section "## Wrap-up": two or three sentences on what the meeting did; a line "**Time:** …" with each agenda item\'s minutes (below); "### To-dos by owner": move every to-do line of the note (`- [ ] …`) here, under a line **@owner** for each owner (**No owner** last), each kept as written with its @owner and \u{1F4C5} date; "### Decisions", "### Open questions", "### Risks" and "### Ideas": each `> [!decision]` / `> [!question]` / `> [!warning]` / `> [!idea]` callout of the note again, one per line, a blank line after each (a heading with none: leave it out). Leave the rest of the note as it is.',
-    `2. Create the next meeting's note, ${next}: "# " and its name, a line "Previous meeting: [[${stem}]]", then the same agenda headings with their minutes; under each, the open questions raised there, carried over as \`> [!question]\` callouts, and the lines marked \`#next\` there, as list items without the tag. Nothing else.`,
+    '1. At the end of the note, add a section "## Wrap-up": two or three sentences on what the meeting did; a line "**Time:** …" with each agenda item\'s minutes (below); "### To-dos by owner": move every to-do line of the note (`- [ ] …`) here, under a line **@owner** for each owner (**No owner** last), each kept as written with its @owner and \u{1F4C5} date; "### Decisions", "### Open questions", "### Risks" and "### Ideas": each line of the note marked `#decision` / `#question` / `#risk` / `#idea` (or written as a `> [!decision]` / `> [!question]` / `> [!warning]` / `> [!idea]` callout) again, as a list item `- … #decision` (and so on) (a heading with none: leave it out). Leave the rest of the note as it is.',
+    `2. Create the next meeting's note, ${next}: "# " and its name, a line "Previous meeting: [[${stem}]]", then the same agenda headings with their minutes; under each, the open questions raised there, carried over as list items ending in \`#question\`, and the lines marked \`#next\` there, as list items without the tag. Nothing else.`,
     said.length ? `Time on the agenda: ${said.join('; ')}.` : 'The agenda\'s clock was not kept: leave the time line out.',
-    'Keep it plain Markdown: decisions, questions, risks and ideas as callouts, to-dos as `- [ ] what @owner \u{1F4C5} YYYY-MM-DD`.',
+    'Keep it plain Markdown: decisions, questions, risks and ideas as lines ending in their tag (#decision, #question, #risk, #idea), to-dos as `- [ ] what @owner \u{1F4C5} YYYY-MM-DD`.',
   ].join('\n');
 }
 
@@ -300,8 +344,7 @@ export function foldNote(text, { path, next, summary = '', times = [], settled =
   for (const [head, kind] of [['Decisions', 'decision'], ['Open questions', 'question'], ['Risks', 'risk'], ['Ideas', 'idea']]) {
     const xs = items.filter((i) => i.kind === kind && !done.has(i.key));
     if (!xs.length) continue;
-    out.push(`### ${head}`, '');
-    for (const i of xs) out.push(`> [!${TYPE[kind]}] ${i.text}`, '');
+    out.push(`### ${head}`, '', ...xs.map((i) => `- ${i.text} #${TAG[kind]}`), '');
   }
   // Settled: plain lines, so they are no longer read as open.
   const gone = items.filter((i) => i.kind === 'question' && done.has(i.key));
@@ -318,17 +361,16 @@ export function nextNote(text, { path, next, settled = [] }) {
   const agenda = agendaOf(text);
   const done = new Set(settled);
   const items = meetingItems(text).filter((i) => (i.kind === 'question' && !done.has(i.key)) || i.kind === 'next');
-  const line = (i) => (i.kind === 'question' ? `> [!question] ${i.text}` : `- ${i.text}`);
-  const under = (xs) => xs.flatMap((i) => [line(i), ...(i.kind === 'question' ? [''] : [])]);
+  const under = (xs) => xs.map((i) => (i.kind === 'question' ? `- ${i.text} #question` : `- ${i.text}`));
   const out = [`# ${stem(next)}`, '', `Previous meeting: [[${stem(path)}]]`, ''];
   const titles = new Set(agenda.map((a) => a.title));
   for (const a of agenda) {
     out.push(`${'#'.repeat(a.level || 2)} ${a.title} (${a.budget}m)`, '');
     const xs = items.filter((i) => i.section === a.title);
-    if (xs.length) out.push(...under(xs), ...(xs.at(-1).kind === 'next' ? [''] : []));
+    if (xs.length) out.push(...under(xs), '');
   }
   const rest = items.filter((i) => !titles.has(i.section));
-  if (rest.length) out.push(...(agenda.length ? ['## Carried over', ''] : []), ...under(rest), ...(rest.at(-1).kind === 'next' ? [''] : []));
+  if (rest.length) out.push(...(agenda.length ? ['## Carried over', ''] : []), ...under(rest), '');
   return `${out.join('\n').replace(/\n+$/, '')}\n`;
 }
 

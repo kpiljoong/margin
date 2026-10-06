@@ -53,6 +53,26 @@ test('meetingItems: callouts and to-dos, with owner, date and section; one of ea
   assert.equal(bodyOf('Ask @bob about it \u{1F4C5} 2026-01-02'), 'Ask about it');
 });
 
+test('meetingItems: lines marked with a tag, at any depth of a list, read as callouts are', () => {
+  const text = [
+    '## Launch (10m)', '', '- launch date', '  - 20th? mkt ok', '  - -> go w/ 20th #decision', '    - [ ] ann: survey thurs @ann', '    1. press kit?? #question',
+    '- review may slip #risk', '  - free first month #idea', '- offer range #next', '> [!decision] An old one, as a callout.', 'see `#decision` and https://x.test/#risk',
+  ].join('\n');
+  assert.deepEqual(meetingItems(text).map((i) => [i.kind, i.body, i.section]), [
+    ['decision', '-> go w/ 20th', 'Launch'],
+    ['todo', 'ann: survey thurs', 'Launch'],
+    ['question', 'press kit??', 'Launch'],
+    ['risk', 'review may slip', 'Launch'],
+    ['idea', 'free first month', 'Launch'],
+    ['next', 'offer range', 'Launch'],
+    ['decision', 'An old one, as a callout.', 'Launch'],
+  ]);
+  // The wall moves it in its place: its depth and list kept.
+  const items = meetingItems(text);
+  assert.match(moveItem(text, items[0], { kind: 'question' }), /\n {2}- -> go w\/ 20th #question\n/);
+  assert.match(moveItem(text, items[2], { kind: 'todo', owner: 'bob' }), /\n {4}1\. \[ \] press kit\?\? @bob\n/);
+});
+
 test('agendaOf: headings with minutes, each to the next heading as high; the item at a place', () => {
   const agenda = agendaOf(NOTE);
   assert.deepEqual(agenda.map((a) => [a.title, a.budget]), [['Status', 5], ['Launch date', 10]]);
@@ -71,17 +91,28 @@ test('classifyLine and typedKind: a line made a decision, a to-do or a question,
   const text = 'Intro\nWe ship Friday\nAfter\n';
   const e = classifyLine(text, 8, 'decision');
   const now = text.slice(0, e.from) + e.insert + text.slice(e.to);
-  assert.equal(now, 'Intro\n\n> [!decision] We ship Friday\n\nAfter\n');
+  assert.equal(now, 'Intro\nWe ship Friday #decision\nAfter\n', 'where it is, a tag at its end');
   assert.equal(e.kind, 'decision');
   const back = classifyLine(now, now.indexOf('We'), 'decision');
   assert.equal(back.insert, 'We ship Friday');
   assert.equal(back.kind, null);
   assert.equal(classifyLine('- ask Bob @bob\n', 2, 'todo').insert, '- [ ] ask Bob @bob');
-  assert.equal(classifyLine('! it is so\n', 2, 'question').insert, '> [!question] it is so');
+  assert.equal(classifyLine('! it is so\n', 2, 'question').insert, 'it is so #question');
+  // In a list within a list: its mark and its depth kept.
+  const nested = '- launch\n  - we ship friday\n    1. ask bob\n';
+  assert.equal(classifyLine(nested, nested.indexOf('we'), 'decision').insert, '  - we ship friday #decision');
+  assert.equal(classifyLine(nested, nested.indexOf('ask'), 'todo').insert, '    1. [ ] ask bob');
+  assert.equal(classifyLine('  - [ ] ask bob\n', 8, 'question').insert, '  - ask bob #question');
+  assert.equal(classifyLine('  - we ship #decision\n', 6, 'risk').insert, '  - we ship #risk');
+  // An old callout: a plain line now.
+  assert.equal(classifyLine('> [!question] who books\n', 16, 'todo').insert, '- [ ] who books');
+  assert.equal(classifyLine('> [!question] who books\n', 16, 'decision').insert, 'who books #decision');
   assert.equal(classifyLine('\n', 0, 'todo'), null);
   assert.equal(typedKind('! We ship'), 'decision');
   assert.equal(typedKind('? Why'), 'question');
   assert.equal(typedKind('[] Call @ann'), 'todo');
+  assert.equal(typedKind('  - ! We ship'), 'decision');
+  assert.equal(typedKind('1. ? Why'), 'question');
   assert.equal(typedKind('!important'), null);
   assert.equal(typedKind('Plain'), null);
 });
@@ -100,8 +131,8 @@ test('moveItem and wallOf: a card moved is the note changed — owner, done, kin
   assert.ok(!/\[!decision\] We launch/.test(reopened));
   // A question handed to someone: a to-do.
   assert.match(moveItem(NOTE, items[2], { kind: 'todo', owner: 'ann' }), /\n- \[ \] Do we need a press kit\? @ann\n/);
-  // A to-do decided: a callout of its own.
-  assert.match(moveItem(NOTE, items[4], { kind: 'decision' }), /- \[x\] Draft the notes @\S+\n\n> \[!decision\] Book the call\n/);
+  // A to-do decided: in its list, marked.
+  assert.match(moveItem(NOTE, items[4], { kind: 'decision' }), /- \[x\] Draft the notes @\S+\n- Book the call #decision\n/);
   const cols = wallOf(NOTE);
   assert.deepEqual(cols.map((c) => [c.id, c.items.length]), [['decided', 1], ['open', 1], ['@ann', 1], ['@\uBBFC\uC218', 1], ['nobody', 1]]);
 });
@@ -137,7 +168,7 @@ test('the demo agent wraps a meeting up: to-dos by owner, decisions, the next me
     assert.equal(note.match(/Book the call/g).length, 1);
     const next = fs.readFileSync(path.join(ws, 'Weekly 2026-10-12.md'), 'utf8');
     assert.equal(previousOf(next), 'Weekly 2026-10-05');
-    assert.match(next, /## Launch date \(10\uBD84\)\n\n> \[!question\] Do we need a press kit\?\n/);
+    assert.match(next, /## Launch date \(10\uBD84\)\n\n- Do we need a press kit\? #question\n/);
     assert.deepEqual(agendaOf(next).map((a) => a.title), ['Status', 'Launch date']);
   } finally { fs.rmSync(ws, { recursive: true, force: true }); }
 });
@@ -166,19 +197,19 @@ test('risks, ideas and topics for next time: read, marked, moved, on the wall', 
     ['next', 'Pricing for teams'],
     ['todo', 'Ask legal #next'],
   ]);
-  // Marked: a callout of its own, or "- … #next"; again: plain words.
+  // Marked: a tag at the end, "#risk", "#next"; again: plain words.
   const text = '## Launch (10m)\nreview may slip\noffer range\n';
   const risk = classifyLine(text, text.indexOf('review'), 'risk');
-  assert.equal(risk.insert, '\n> [!warning] review may slip\n');
+  assert.equal(risk.insert, 'review may slip #risk');
   const later = classifyLine(text, text.indexOf('offer'), 'next');
-  assert.equal(later.insert, '- offer range #next');
+  assert.equal(later.insert, 'offer range #next');
   assert.equal(classifyLine('- offer range #next', 3, 'next').insert, '- offer range');
   assert.equal(classifyLine('> [!idea] free month', 3, 'idea').insert, 'free month');
   // Moved on the wall: a risk decided, an idea for next time, a topic as a to-do.
   assert.match(moveItem(MORE, items[0], { kind: 'decision' }), /> \[!decision\] The store review may take a week\./);
   assert.match(moveItem(MORE, items[1], { kind: 'next' }), /\n- A first month free instead of a discount\? #next\n/);
   assert.match(moveItem(MORE, items[2], { kind: 'todo', owner: 'bob' }), /\n- \[ \] The offer range @bob\n/);
-  assert.match(moveItem(MORE, items[2], { kind: 'risk' }), /\n> \[!warning\] The offer range\n/);
+  assert.match(moveItem(MORE, items[2], { kind: 'risk' }), /\n- The offer range #risk\n/);
   // The wall: risks after the questions, ideas and next time last; none, no column.
   assert.deepEqual(wallOf(MORE).map((c) => [c.id, c.items.length]), [['decided', 0], ['open', 0], ['risks', 1], ['@ann', 1], ['nobody', 0], ['ideas', 1], ['later', 2]]);
   assert.ok(!wallOf(NOTE).some((c) => ['risks', 'ideas', 'later'].includes(c.id)));
@@ -192,7 +223,7 @@ test('the demo agent carries risks and ideas into the wrap-up, and #next to the 
     const task = wrapTask('Weekly 2026-10-05.md', 'Weekly 2026-10-12.md', []);
     execFileSync(process.execPath, [path.join(ROOT, 'scripts', 'demo-agent.js')], { cwd: ws, env: { ...process.env, AGENT_NOTES_TASK: task, AGENT_NOTES_FOCUS: 'Weekly 2026-10-05.md' }, stdio: 'pipe' });
     const note = fs.readFileSync(path.join(ws, 'Weekly 2026-10-05.md'), 'utf8');
-    assert.match(note, /### Risks\n\n> \[!warning\] The store review may take a week\.\n\n### Ideas\n\n> \[!idea\] A first month free/);
+    assert.match(note, /### Risks\n\n- The store review may take a week\. #risk\n\n### Ideas\n\n- A first month free[^\n]* #idea\n/);
     const next = fs.readFileSync(path.join(ws, 'Weekly 2026-10-12.md'), 'utf8');
     assert.match(next, /## Launch \(10m\)\n\n- The offer range\n- Pricing for teams\n/);
   } finally { fs.rmSync(ws, { recursive: true, force: true }); }
@@ -212,8 +243,8 @@ test('fold: to-dos under their owners in a Wrap-up, the rest again, the next mee
     '## Wrap-up', '', 'We set the launch.', '', '**Time:** Launch 12m of 10m', '',
     '### To-dos by owner', '', '**@sua**', '', '- [ ] Decide on QA @sua \u{1F4C5} 2026-10-09', '', '**@ann**', '', '- [x] Book the venue @ann', '',
     '**No owner**', '', '- [ ] Ship the tool', '',
-    '### Decisions', '', '> [!decision] We launch on Oct 10.', '', '### Open questions', '', '> [!question] A press kit?', '',
-    '### Risks', '', '> [!warning] Review may slip.', '', 'Next meeting: [[Weekly 2026-10-12]]', '',
+    '### Decisions', '', '- We launch on Oct 10. #decision', '', '### Open questions', '', '- A press kit? #question', '',
+    '### Risks', '', '- Review may slip. #risk', '', 'Next meeting: [[Weekly 2026-10-12]]', '',
   ].join('\n'));
   // Again: the section is redone, its to-dos (and a new one) moved again.
   const again = foldNote(`${out.replace('\n## Wrap-up', '- [ ] New one @bob\n\n## Wrap-up')}`, { path: 'sub/Weekly 2026-10-05.md', next: 'sub/Weekly 2026-10-12.md' });
@@ -223,10 +254,10 @@ test('fold: to-dos under their owners in a Wrap-up, the rest again, the next mee
   assert.ok(!again.includes('We set the launch.'));
   // Next time: the same agenda, its questions and #next under their items.
   assert.equal(nextNote(note, { path: 'sub/Weekly 2026-10-05.md', next: 'sub/Weekly 2026-10-12.md' }), [
-    '# Weekly 2026-10-12', '', 'Previous meeting: [[Weekly 2026-10-05]]', '', '## Launch (10m)', '', '> [!question] A press kit?', '',
+    '# Weekly 2026-10-12', '', 'Previous meeting: [[Weekly 2026-10-05]]', '', '## Launch (10m)', '', '- A press kit? #question', '',
     '## Pricing (5m)', '', '- Offer range', '',
   ].join('\n'));
-  assert.equal(nextNote('# M\n\n> [!question] Who?\n', { path: 'M.md', next: 'M (next).md' }), '# M (next)\n\nPrevious meeting: [[M]]\n\n> [!question] Who?\n');
+  assert.equal(nextNote('# M\n\n> [!question] Who?\n', { path: 'M.md', next: 'M (next).md' }), '# M (next)\n\nPrevious meeting: [[M]]\n\n- Who? #question\n');
   // A question the meeting settled: not open in the wrap-up, not carried on.
   const settled = foldQuestions(out).map((q) => q.key);
   assert.deepEqual(foldQuestions(out).map((q) => q.body), ['A press kit?']);

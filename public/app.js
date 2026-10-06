@@ -6685,7 +6685,7 @@ function liveKey(tab, e) {
   ed.closeStep();
   const st = tab.live;
   st.entries.delete(o.entry.key);
-  const kept = { ...o.entry, key: liveMod.keptLine(o.entry).trim(), state: 'kept', offer: false, wasKept: true };
+  const kept = { ...o.entry, key: insert.trim(), state: 'kept', offer: false, wasKept: true };
   st.entries.set(kept.key, kept);
   setTimeout(() => { if (kept.state === 'kept') { kept.state = 'gone'; drawNotes(tab); } }, 1600);
   drawNotes(tab);
@@ -6712,8 +6712,7 @@ function meetTyped(tab) {
   if (!kind) return;
   const e = meetMod.classifyLine(v, start, kind);
   if (!e) return;
-  // A blank line after it, so the next words aren't part of it.
-  const insert = `${e.insert.replace(/\n$/, '')}\n\n`;
+  const insert = `${e.insert}\n`;
   ed.replace(e.from, s, insert, e.from + insert.length);
   refreshRail(tab);
 }

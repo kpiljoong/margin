@@ -189,7 +189,7 @@ No agent is involved: it is a way of putting your own notes together by hand. It
 
 A **desk** is a plane to lay notes and thoughts out on, move them about, pile them up and think about them with the margin. It is a `.canvas` file — a [JSON Canvas](https://jsoncanvas.org), as Obsidian writes them, so the same desk opens there and Margin keeps what Obsidian wrote (colours, sides of the arrows, fields it doesn't know). Make one with the palette's **New desk…** or a folder's right-click **New desk here…**; open one from the tree (▦).
 
-**Open on a desk** (palette, on a note — a meeting's, mostly) makes a desk beside the note, *note desk.canvas*: the note in the middle, its open questions (`> [!question]`) and its to-dos not done as cards, in groups, and the notes it links to (`[[…]]`). Each card taken from the note says where from — a link back to its line — and stays as it was written; when the note settles the question or ticks the to-do, the card says so (*no longer open in the note*, *done in the note*) and dims. Made once; after that, the same desk opens.
+**Open on a desk** (palette, on a note — a meeting's, mostly) makes a desk beside the note, *note desk.canvas*: the note in the middle, its open questions (`#question`, or `> [!question]`) and its to-dos not done as cards, in groups, and the notes it links to (`[[…]]`). Each card taken from the note says where from — a link back to its line — and stays as it was written; when the note settles the question or ticks the to-do, the card says so (*no longer open in the note*, *done in the note*) and dims. Made once; after that, the same desk opens.
 
 - **Back to the note, in red pen**: a question card's **Decided…** (`d`) asks in what words (empty: as it was asked), a to-do's **Done** (`x`) ticks it; the card shows what it will ask of the note (*→ decided: “…”*, *→ done*; × takes it back) and nothing is written yet. The panel then has **Propose to *note* (n)**: all of that note's cards' asks at once, as one red pen review of the note — the question becomes a decision, the to-do is ticked — to accept (y / A) and apply (a) as any other. The cards say *proposed*, and once applied, *no longer open* or *done in the note*.
 
@@ -250,25 +250,22 @@ A comment may start with who said it, `@Mina …` (Tab completes a name used bef
 
 ### Meetings: the rail, the wrap-up, the decision wall, and in space (experimental)
 
-For a meeting run from the note: what it **decides**, leaves **open** and **hands out** is written in the note as plain Markdown any app reads —
+For a meeting run from the note: what it **decides**, leaves **open** and **hands out** is written in the note as plain Markdown any app reads — your own lines, where you wrote them (in their list, at their depth), with a tag at the end saying what each is:
 
 ```markdown
 ## Launch date (10m)
 
-> [!decision] We launch on October 20.
-
-> [!question] Do we need a press kit?
-
-- [ ] Draft the release notes @ann 📅 2026-10-12
-
-> [!warning] The store review may take a week.
-
-> [!idea] A first month free instead of a discount?
-
-- The offer range #next
+- launch date
+  - 20th? marketing ok, support ok
+  - go with the 20th #decision
+    - [ ] Draft the release notes @ann 📅 2026-10-12
+  - press kit? #question
+- store review can take a week #risk
+- a first month free instead of a discount? #idea
+- the offer range #next
 ```
 
-— a decision, an open question, a to-do, a **risk** (a `warning` callout, as GitHub and Obsidian show it), an **idea**, and a topic left for the **next meeting** (`#next`)
+— a decision, an open question, a to-do (a box in its list item), a **risk**, an **idea**, and a topic left for the **next meeting**. The preview shows a tag as a small mark in its colour (*decided*, *question*, *risk*, *idea*, *next time*) and leaves the list as it is; in other apps they are tags, and a search for `#decision` finds every decision. Callouts — `> [!decision] …`, `> [!question] …`, `> [!warning] …`, `> [!idea] …`, as earlier meetings were written — are read just the same; marking one again makes it a plain line with a tag.
 
 — and Margin gathers it as you go and after.
 
@@ -278,15 +275,15 @@ Marking a line, in a meeting:
 
 | Key | |
 |---|---|
-| ⌘⌥1 (⌥X p 1) | the line is a decision (`> [!decision] …`, a callout of its own); again: plain words |
-| ⌘⌥2 (⌥X p 2) | the line is a to-do (`- [ ] …`); write `@who` and `📅 YYYY-MM-DD` in it |
-| ⌘⌥3 (⌥X p 3) | the line is an open question (`> [!question] …`) |
-| ⌘⌥4 (⌥X p 4) | the line is a risk (`> [!warning] …`) |
-| ⌘⌥5 (⌥X p 5) | the line is an idea (`> [!idea] …`) |
-| ⌘⌥6 (⌥X p 6) | the line is for the next meeting (`- … #next`) |
+| ⌘⌥1 (⌥X p 1) | the line is a decision (`… #decision`, where it is); again: plain words |
+| ⌘⌥2 (⌥X p 2) | the line is a to-do (`- [ ] …`, a box in its own list item); write `@who` and `📅 YYYY-MM-DD` in it |
+| ⌘⌥3 (⌥X p 3) | the line is an open question (`… #question`) |
+| ⌘⌥4 (⌥X p 4) | the line is a risk (`… #risk`) |
+| ⌘⌥5 (⌥X p 5) | the line is an idea (`… #idea`) |
+| ⌘⌥6 (⌥X p 6) | the line is for the next meeting (`… #next`) |
 | ⌘⌥↩ (⌥X p g) | the next agenda item: a new line at its end, its clock running |
 
-With the rail on, a line started with `! ` (a decision), `[] ` (a to-do) or `? ` (a question) becomes one when you end it with Enter — with Korean input too.
+With the rail on, a line started with `! ` (a decision), `[] ` (a to-do) or `? ` (a question) becomes one when you end it with Enter — `- ! go with the 20th` becomes `- go with the 20th #decision` — with Korean input too.
 
 **Wrap up** (the rail's **Wrap up ▸**, ⌥X p w, or M-x *Meeting: wrap up…*) asks the agent, as a task you can still change, to add a **Wrap-up** section at the end of the note — what the meeting did, the time each agenda item took (from the clock), the to-dos **by owner**, the decisions, the open questions, the risks and the ideas — and to write the **next meeting's note**: the same name a week on when it has a date in it (`Weekly 2026-10-05` → `Weekly 2026-10-12`), the same agenda, the open questions and the `#next` topics carried over under their items, and a line `Previous meeting: [[…]]`. It comes back as a run to review and apply, as any. **Fold** (⌘⌥⇧↩, ⌥X p z, or M-x *Meeting: fold…*) is the quick one, in seconds and without an agent: the minutes the live margin wrote and nobody let go go into the note as Tab would keep them, the to-dos move under their owners to a **Wrap-up** section at the end with a two- or three-sentence summary the live margin writes (when it is on), the time on each item, the decisions, questions, risks and ideas again and `Next meeting: [[…]]`; the change is proposed for review, and the next meeting's note is made at once when there is none. Folding again redoes the section. The next note then shows a **Since last time** card at the top: the previous meeting's to-dos by owner, how many are done (the ring), and what it decided; a click opens the previous note at that line, × hides it.
 
@@ -298,7 +295,7 @@ With the rail on, a line started with `! ` (a decision), `[] ` (a to-do) or `? `
 - **Agenda tunnel**: on the stage, ⌘⌥↩ (the next agenda item) goes down a corridor of gates, one for each item, from the one you were in to the next — what the finished item decided and handed out on the walls on the way, a gate past its minutes glowing red — and back to the note in about a second and a half.
 - **Decision orbit** (the wall's **Orbit ◎** or `o`, ⌥X p o, or M-x *Meeting: decision orbit*) shows the wall's cards in space: the agenda items as sectors of a floor, the decisions high over the middle in their item's sector, the open questions going slowly round an outer ring, and a pillar for each owner with their to-dos up it (one for no owner). Drag the floor to turn it, pinch or scroll (or `+` `−`) to come nearer, `←` `→` to turn, `1`–`9` to fly to an agenda item, `0` for all of it. Pointing at a card draws a beam down to its place on the floor and shows its line as written. **Throw** a card — at a pillar (that person's to-do), the middle (decided) or the ring (open) — and it lands there: the same change as dragging it on the wall, proposed to the note with **Propose to the note**. Copy PNG (`c`) draws the orbit as the camera sees it; Esc goes back to the wall. The cards are flat and only moved and scaled, so their words stay sharp; with very many, each part shows as many as fit (a pillar 8, decisions 14, questions 18) and how many more.
 
-**Live margin (experimental, off until you turn it on).** M-x *Meeting: live margin…* (⌥X p l; it turns meeting mode on) writes the minutes of each line beside it as you take notes: when you end a line (Enter) or stop typing for about half a second, the line — with the meeting's title, its agenda item and today's date — goes to Claude Haiku through the `claude` command you are signed in to (a Claude Code agent is needed; nothing else is sent, a private note is never sent, and no key is kept by Margin). A chip — decision, to-do, question, risk, idea, next time, owner, date — shows at once from the words, and the sentence is written out beside the line as it comes, in about a second; typing on in that line cancels it. It is only a suggestion: **Tab** keeps the nearest one above the cursor, writing the line over in the meeting's format (`> [!decision] …`, `- [ ] … @who 📅 date`, `> [!question] …`, `> [!warning] …`, `> [!idea] …`, `- … #next`) with the cursor after it, Tab again keeps the one above it; **Esc** lets it go. A small panel in the top corner shows, for each line, the time from your pause to the first letter and to the whole sentence, and the median and p90 so far. While the live margin is on, its session stays up — started with the app, kept between meetings, started again if it ends — so the first line is as quick as the rest; it costs nothing while it waits. Again to turn it off (and the session ends).
+**Live margin (experimental, off until you turn it on).** M-x *Meeting: live margin…* (⌥X p l; it turns meeting mode on) writes the minutes of each line beside it as you take notes: when you end a line (Enter) or stop typing for about half a second, the line — with the meeting's title, its agenda item and today's date — goes to Claude Haiku through the `claude` command you are signed in to (a Claude Code agent is needed; nothing else is sent, a private note is never sent, and no key is kept by Margin). A chip — decision, to-do, question, risk, idea, next time, owner, date — shows at once from the words, and the sentence is written out beside the line as it comes, in about a second; typing on in that line cancels it. It is only a suggestion: **Tab** keeps the nearest one above the cursor — what the line is, not the margin's words: your line stays as you wrote it, in its list and at its depth, with its tag added at the end (`#decision`, `#question`, `#risk`, `#idea`, `#next`; a to-do gets its box, `@who` and `📅 date`; a line you marked yourself, `! …` or a tag, keeps your mark), the cursor after it; the margin's sentence stays in the margin. Tab again keeps the one above it; **Esc** lets it go. A small panel in the top corner shows, for each line, the time from your pause to the first letter and to the whole sentence, and the median and p90 so far. While the live margin is on, its session stays up — started with the app, kept between meetings, started again if it ends — so the first line is as quick as the rest; it costs nothing while it waits. Again to turn it off (and the session ends).
 
 **Its model and effort.** Settings → *Live margin and the desk's margin* picks the model (Haiku, Sonnet, Opus) and the effort (Default, Low, Medium, High) for both the live margin and the desk's margin. The default is Haiku with the default effort — Margin then tells it not to think, the quickest and the cheapest; an effort is passed to the CLI as `--effort` and lets the model think that much. Changing either starts the waiting sessions again with it. The panel in the corner names the model that wrote the last line (as the CLI reports it, `haiku-4-5`, `sonnet-5-5 · low`). Measured on a few meeting lines (October 2026): Haiku's first words in about 0.5 s, about $0.0016 a line; Sonnet with Low about 0.6 s and about the same per line (Sonnet's prompt is cached and Haiku's is too short to be; a session's first line costs a few times more), but 2–3 s on a line it stops to think about; Opus about 2 s and 3–4× per line. One setting for both: the desk asks seldom and the meeting often, but both are the same kind of short answer, and two settings would mean two warm sessions to keep apart for little gain.
 
