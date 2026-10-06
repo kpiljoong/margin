@@ -1492,6 +1492,32 @@ const changed = applied.split('\n').filter((l) => /^(#+ |- )/.test(l)).length;
 console.log(`${changed === 1 ? '✓' : '✗'} exactly the picked change reached the file`);
 if (changed !== 1) failed = true;
 
+await check('Labs: the experimental views are out of the palette and the review until turned on; then there', `
+  const mac = navigator.platform.startsWith('Mac');
+  const palette = async (q) => {
+    document.body.dispatchEvent(new KeyboardEvent('keydown', { code: 'KeyP', key: 'p', bubbles: true, cancelable: true, metaKey: mac, ctrlKey: !mac }));
+    const input = await until(() => !$('#overlay').hidden && $('#overlay input'));
+    input.value = '>' + q;
+    input.dispatchEvent(new Event('input'));
+    await sleep(150);
+    return input;
+  };
+  const found = async (q) => {
+    const input = await palette(q);
+    const names = $$('#overlay .palette-item').map((i) => i.textContent);
+    input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }));
+    await until(() => $('#overlay').hidden);
+    return names.some((n) => n.toLowerCase().includes(q.toLowerCase()));
+  };
+  const off = { stage: await found('depth stage'), orbit: await found('decision orbit'), gather: await found('Gather: pieces') };
+  const input = await palette('Labs: experimental views');
+  input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }));
+  await until(() => $('#overlay').hidden);
+  const said = (await until(() => !$('#toast').hidden && /Labs on/.test($('#toast').textContent) && $('#toast')))?.textContent;
+  const on = { stage: await found('depth stage'), orbit: await found('decision orbit'), gather: await found('Gather: pieces') };
+  return { off, on, said };
+`, (v) => (v && !v.off.stage && !v.off.orbit && !v.off.gather && v.on.stage && v.on.orbit && v.on.gather && /Space .*Gather/.test(v.said) ? null : `got ${JSON.stringify(v)}`));
+
 await check('red pen: the marks on the note, the reasons in the margin; y takes one, s shows it in depth with a comment for the follow-up, a applies it', `
   const ta = await openNote('sub/proof.md');
   ta.focus();

@@ -8,7 +8,7 @@ An agent works on your notes the way an editor works on a manuscript: it writes 
 
 Whatever would change your notes comes through the same review, change by change, before it is yours: a run you delegated, an agent working in the folder from a terminal or another editor (*Changed outside*), and later git pull and sync too. Nothing has its own way in.
 
-*Today:* agent runs, changes from outside, your own suggestions (tracked changes, for a meeting) and renaming, moving and trashing files by editing a folder as text (dired) go through it (hunk by hunk, 3-way merge, undo), drawn on the note with the red pen — yours in blue: struck through, written in above a caret, the reasons in the margin; a change to a flow or to a picture's marks drawn on the picture itself. git pull and sync are next.
+*Today:* agent runs, changes from outside (also those made while Margin was closed, found when it opens, and kept across restarts until looked at), your own suggestions (tracked changes, for a meeting) and renaming, moving and trashing files by editing a folder as text (dired) go through it (hunk by hunk, 3-way merge, undo), drawn on the note with the red pen — yours in blue: struck through, written in above a caret, the reasons in the margin; a change to a flow or to a picture's marks drawn on the picture itself. A git pull in a terminal comes in as a change from outside; git pull from Margin itself and sync are next.
 
 ### Principle 2 — Everything is a note
 

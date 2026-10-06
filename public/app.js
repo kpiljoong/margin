@@ -265,6 +265,9 @@ const DEFAULT_SETTINGS = {
   emacsKeys: false, fillColumn: 70,
   // Labs: off until turned on in Settings.
   labSteadyDraw: false, labWheelPans: false,
+  // Labs, experimental views (LAB_VIEWS): out of the palette, the menus and
+  // the review until turned on.
+  labViews: false,
   // The file tree shows the active tab's file (as VS Code's Auto Reveal).
   followTab: true,
   // Pens: yours (suggesting, comments) and the agent's; '' is the theme's.
@@ -316,6 +319,26 @@ function applySettings() {
 }
 
 S.settings = loadSettings();
+
+// Labs: views kept but out of the way until turned on (Settings → Labs →
+// Experimental views). Off, their commands are out of the palette, the leader
+// menu and the review; one run by name (a key of your own, a macro) says
+// where they are and offers to turn them on. Nothing is lost either way.
+const LAB_VIEWS = 'Space (the red pen in depth), the depth stage and the agenda tunnel, the decision orbit, Gather';
+const labsOn = () => !!S.settings.labViews;
+const lab = (name, fn) => (...a) => {
+  if (labsOn()) return fn(...a);
+  toast(`${name} is in Labs: Settings \u2192 Labs \u2192 Experimental views.`, '', { label: 'Turn on', run: () => { setLabs(true); fn(...a); } });
+  return undefined;
+};
+function setLabs(on) {
+  setSetting('labViews', on);
+  renderContent(S.focus);
+  toast(on ? `Labs on: ${LAB_VIEWS}.` : 'Labs off: the experimental views are out of the way (Settings \u2192 Labs).');
+}
+// A buffer's keys, as shown and found by name: without the Labs ones while they're off.
+const LAB_KEYS = new Set(['Space: the red pen in depth (experimental)']);
+const keysOf = (kind) => (BUFFER_KEYS[kind] || []).filter(([, label]) => labsOn() || !LAB_KEYS.has(label));
 
 function setSetting(key, value) {
   S.settings[key] = value;
@@ -3379,7 +3402,7 @@ const COMMANDS = [
   ['Lens: places that disagree (experimental)…', () => setTimeout(() => lensRun('conflict'), 0)],
   ['Lens: decisions and open questions (experimental)…', () => setTimeout(() => lensRun('decisions'), 0)],
   ['Forks: this paragraph, other ways (experimental)…', () => setTimeout(forkRun, 0)],
-  ['Gather: pieces of notes into one (experimental)', () => setTimeout(gatherView, 0)],
+  ['Gather: pieces of notes into one (experimental)', lab('Gather', () => setTimeout(gatherView, 0)), { labs: true }],
   ['Lock this paragraph (experimental)', () => setTimeout(toggleLock, 0)],
   ['Origin: where this note\u2019s paragraphs came from (experimental)', () => setTimeout(originView, 0)],
   ['Drawer: this note\u2019s scraps (experimental)', () => setTimeout(() => toggleDrawer(), 0)],
@@ -3395,8 +3418,9 @@ const COMMANDS = [
   ['Meeting: wrap up \u2014 minutes, to-dos by owner, the next meeting (experimental)\u2026', () => setTimeout(() => wrapUp(), 0)],
   ['Meeting: fold \u2014 the margin\u2019s minutes into the note, to-dos by owner, the next meeting, in seconds (experimental)', () => foldMeeting(), { key: 'meeting-fold' }],
   ['Meeting: decision wall (experimental)', () => setTimeout(() => wallView(), 0)],
-  ['Meeting: depth stage \u2014 the rail behind the note, the agenda on the floor (experimental)', () => setTimeout(toggleStage, 0)],
-  ['Meeting: decision orbit \u2014 the wall in space (experimental)', () => setTimeout(() => wallView(fileTab(), true), 0)],
+  ['Meeting: depth stage \u2014 the rail behind the note, the agenda on the floor (experimental)', lab('The depth stage', () => setTimeout(toggleStage, 0)), { labs: true }],
+  ['Meeting: decision orbit \u2014 the wall in space (experimental)', lab('The decision orbit', () => setTimeout(() => wallView(fileTab(), true), 0)), { labs: true }],
+  ['Labs: experimental views on / off', () => setLabs(!labsOn())],
   ['Meeting: live margin \u2014 each line\u2019s minutes beside it as you write (experimental, sends lines to Claude)', () => setTimeout(toggleLive, 0)],
   ['Describe a key…', () => describeKey()],
   ['Describe a command…', () => setTimeout(describeCommand, 0)],
@@ -3511,9 +3535,9 @@ function allCommands() {
   };
   if (tab && SPECIAL[tab.kind]) {
     const title = SPECIAL[tab.kind].title;
-    for (const [key, label] of [...BUFFER_KEYS[tab.kind], ...COMMON_KEYS]) add({ name: `${title}: ${label}`, ctx: [tab.kind], inBuffer: key, run: () => pressBufferKey(tab, key) });
+    for (const [key, label] of [...keysOf(tab.kind), ...COMMON_KEYS]) add({ name: `${title}: ${label}`, ctx: [tab.kind], inBuffer: key, run: () => pressBufferKey(tab, key) });
   }
-  for (const [name, run, opt] of COMMANDS) add({ name, run, shortcut: opt?.key || null, prefix: typeof opt === 'string' ? opt : null, ctx: NOTE_COMMAND.test(name) ? ['file'] : null });
+  for (const [name, run, opt] of COMMANDS) if (!opt?.labs || labsOn()) add({ name, run, shortcut: opt?.key || null, prefix: typeof opt === 'string' ? opt : null, ctx: NOTE_COMMAND.test(name) ? ['file'] : null });
   for (const r of recipes.list) add({ name: `Recipe: ${r.name}`, run: () => runRecipe(r), leader: r.key ? ['r', r.key] : null, ctx: r.scope === 'file' ? ['file'] : null, recipe: true });
   for (const m of kept.list) add({ name: `Macro: ${m.name}`, run: () => playKept(m), doc: keptDoc(m), ctx: ['file'], macro: m });
   // The leader's keys: on the command they run, or a command of their own.
@@ -3893,8 +3917,8 @@ function openSettings({ keys = false } = {}) {
   const st = S.settings;
   const segRow = (key, options) => h('div', { class: 'seg' }, Object.entries(options).map(([value, label]) =>
     h('button', { class: st[key] === value ? 'on' : '', onclick: () => { setSetting(key, value); openSettings(); } }, label)));
-  const toggle = (key, label, detail) => h('label', { class: 'set-toggle' },
-    h('input', { type: 'checkbox', checked: !!st[key], onchange: (e) => setSetting(key, e.target.checked) }),
+  const toggle = (key, label, detail, after) => h('label', { class: 'set-toggle' },
+    h('input', { type: 'checkbox', checked: !!st[key], onchange: (e) => { setSetting(key, e.target.checked); after?.(); } }),
     h('span', {}, h('b', {}, label), detail ? h('span', { class: 'set-detail' }, detail) : null));
   const themeSelect = (key, kind) => h('select', { class: 'theme-select', onchange: (e) => { setSetting(key, e.target.value); openSettings(); } },
     allThemes().filter((t) => t.kind === kind).map((t) => h('option', { value: t.id, selected: st[key] === t.id }, t.name)));
@@ -3958,6 +3982,7 @@ function openSettings({ keys = false } = {}) {
       h('div', { class: 'set-label' }, 'Labs'),
       h('p', { class: 'set-detail' }, 'Experiments you can turn on and off. They may change or go away.'),
       h('div', { class: 'set-toggles' },
+        toggle('labViews', 'Experimental views', `${LAB_VIEWS}. Off: out of the palette, the menus and the review (nothing is lost; a key of your own to one offers to turn them on).`, () => renderContent(S.focus)),
         toggle('labSteadyDraw', 'Steady live drawing', 'While you type in a ```flow block, keep the picture until the line is whole and you pause, so boxes don’t jump at every key.'),
         toggle('labWheelPans', 'Canvas: the wheel moves', 'Scrolling or two fingers move the canvas; pinch or ⌘/Ctrl + wheel zooms. Off: the wheel zooms.')),
       h('div', { class: 'set-label', id: 'set-keys' }, 'Keyboard shortcuts'),
@@ -5625,7 +5650,7 @@ function outsideView(tab) {
   wrap.append(h('div', { class: 'review-head' },
     h('span', { class: 'badge st-review' }, 'outside'),
     h('div', { class: 'task' }, 'Changed outside Margin'),
-    h('div', { class: 'meta' }, h('span', {}, 'Notes another program changed while Margin was open — an agent in a terminal, another editor. Every change is kept until you undo it; earlier versions are also in each note’s history.'))));
+    h('div', { class: 'meta' }, h('span', {}, 'Notes another program changed — an agent in a terminal, another editor, git — while Margin was open, or while it was closed (found when it opens). Every change is kept until you undo it; earlier versions are also in each note’s history. They wait here, across restarts, until you are done with them.'))));
   const changes = tab.run?.changes;
   if (!changes) { wrap.append(h('div', { class: 'empty' }, 'Loading…')); return wrap; }
   if (!changes.length) { wrap.append(h('div', { class: 'review-note ok' }, 'Nothing changed outside since you last looked.')); return wrap; }
@@ -6117,7 +6142,7 @@ const noteText = (tab) => (tab.editor?.tracking ? tab.editor.trackTexts().propos
 let stageMod = null;
 const loadStage = async () => (stageMod ||= await import('./stage.js'));
 let meetStage = store.getItem('an.meetStage') === '1';
-const stageOn = (tab) => !!(meetStage && stageMod && railOn(tab) && !stageMod.reduced());
+const stageOn = (tab) => !!(meetStage && labsOn() && stageMod && railOn(tab) && !stageMod.reduced());
 
 async function toggleStage() {
   await Promise.all([loadMeet(), loadStage()]);
@@ -6714,7 +6739,7 @@ async function wallView(tab = fileTab(), orbiting = false) {
     propose: (text) => proposeText(tab, text),
     copyPng: (png) => copyPicture({ png: () => png, what: () => 'the wall' }),
     close: () => focusEditor(),
-    orbit: space ? (o) => stageMod.orbitScene(o) : null,
+    orbit: space && labsOn() ? (o) => stageMod.orbitScene(o) : null,
     orbiting,
   });
 }
@@ -7492,7 +7517,7 @@ function describeKey() {
       return;
     }
     const tab = activeTab();
-    const pair = plain && tab && SPECIAL[tab.kind] && [...BUFFER_KEYS[tab.kind], ...COMMON_KEYS].find(([x]) => x === e.key);
+    const pair = plain && tab && SPECIAL[tab.kind] && [...keysOf(tab.kind), ...COMMON_KEYS].find(([x]) => x === e.key);
     if (pair) {
       const cmd = allCommands().find((c) => c.inBuffer === pair[0]);
       if (cmd) { openHelp(topicOf(cmd)); return; }
@@ -7661,7 +7686,7 @@ function pressBufferKey(tab, key) {
   const el = bufferEl(tab);
   el?.dispatchEvent(new KeyboardEvent('keydown', { key, bubbles: true, cancelable: true }));
 }
-const keysHint = (kind) => ['j / k  next / previous', '< / >  first / last', ...[...COMMON_KEYS, ...BUFFER_KEYS[kind]].map(([k, l]) => `${k}  ${l}`)].join('\n');
+const keysHint = (kind) => ['j / k  next / previous', '< / >  first / last', ...[...COMMON_KEYS, ...keysOf(kind)].map(([k, l]) => `${k}  ${l}`)].join('\n');
 
 const reviewItems = (wrap) => [...wrap.querySelectorAll('.kb-item')];
 const itemKey = (el) => `${el.dataset.path}#${el.dataset.hunk ?? ''}`;
@@ -7761,7 +7786,7 @@ function reviewOwnKeys(e, tab, { wrap, items, cur }) {
       if (!onPen) return e.key === 'y';
       penDecide(tab, cur.dataset.path, cur.dataset.mark, e.key);
       return true;
-    case 's': if (tab.kind !== 'dired') openSpaceView(tab); return true;
+    case 's': if (tab.kind !== 'dired') lab('Space', () => openSpaceView(tab))(); return true;
     case 'F': if (!own) openFilmView(tab); return true;
     case 'v':
       store.setItem('an.reviewView', penFirst() ? 'diff' : 'pen');
@@ -8021,7 +8046,7 @@ function reviewView(tab) {
           h('span', { class: 'review-keys', title: keysHint('review') }, penFirst() ? 'j k · y n · A all · a apply · v diff · s space' : 'j k · x · a apply · v red pen')),
         S.git?.repo && run.kind !== 'proof' ? h('label', { class: 'commit-toggle', title: 'Commit the applied files to git, authored by the agent (local only)' },
           h('input', { type: 'checkbox', checked: store.getItem('an.commitOnApply') !== 'false', onchange: (e) => store.setItem('an.commitOnApply', String(e.target.checked)) }), 'Commit to git') : null,
-        run.changes.some(penable) ? h('button', { class: 'btn', title: 'The red pen in depth: paragraph by paragraph (s) — experimental', onclick: () => openSpaceView(tab) }, 'Space') : null,
+        labsOn() && run.changes.some(penable) ? h('button', { class: 'btn', title: 'The red pen in depth: paragraph by paragraph (s) — Labs', onclick: () => openSpaceView(tab) }, 'Space') : null,
         filmable(run) ? h('button', { class: 'btn', title: 'The note through the rounds of this run (F) — experimental', onclick: () => openFilmView(tab) }, 'Film') : null,
         h('button', { class: 'btn', onclick: () => followUp(tab, lensFixText(tab) + spaceComments(tab)) }, 'Follow up…'),
         h('button', { class: 'btn danger', onclick: () => discardRun(tab) }, 'Discard'),
@@ -8814,8 +8839,8 @@ function defaultLeaderTree() {
       { key: 'z', label: 'Fold the meeting (quick wrap-up)', cmd: 'Meeting: fold \u2014 the margin\u2019s minutes into the note, to-dos by owner, the next meeting, in seconds (experimental)', when: () => note, run: () => foldMeeting() },
       { key: 'w', label: 'Wrap up the meeting…', cmd: 'Meeting: wrap up \u2014 minutes, to-dos by owner, the next meeting (experimental)\u2026', when: () => note, run: () => wrapUp() },
       { key: 'b', label: 'Decision wall', cmd: 'Meeting: decision wall (experimental)', when: () => note, run: () => wallView() },
-      { key: 'D', label: meetStage ? 'Depth stage: off' : 'Depth stage (experimental)', cmd: 'Meeting: depth stage \u2014 the rail behind the note, the agenda on the floor (experimental)', when: () => note, run: () => toggleStage() },
-      { key: 'o', label: 'Decision orbit', cmd: 'Meeting: decision orbit \u2014 the wall in space (experimental)', when: () => note, run: () => wallView(tab, true) },
+      { key: 'D', label: meetStage ? 'Depth stage: off' : 'Depth stage (experimental)', cmd: 'Meeting: depth stage \u2014 the rail behind the note, the agenda on the floor (experimental)', when: () => note && labsOn(), run: () => toggleStage() },
+      { key: 'o', label: 'Decision orbit', cmd: 'Meeting: decision orbit \u2014 the wall in space (experimental)', when: () => note && labsOn(), run: () => wallView(tab, true) },
       { key: 'l', label: liveOn ? 'Live margin: off' : 'Live margin (experimental)', cmd: 'Meeting: live margin \u2014 each line\u2019s minutes beside it as you write (experimental, sends lines to Claude)', when: () => note, run: () => toggleLive() },
     ] },
     { key: 'q', label: 'macro', items: [

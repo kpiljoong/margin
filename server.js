@@ -16,6 +16,7 @@ const { picturesIn, pictureSize, hiddenIn } = require('./lib/pictures');
 const { lockRanges, lockedHunks, drawerText, drawerScraps, addedLines } = require('./lib/beside');
 const { liveMargin, projectOf } = require('./lib/live');
 const { deskMargin } = require('./lib/desk');
+const { OutsideStore, Seen, changedWhileAway } = require('./lib/outside');
 
 const APP_DIR = __dirname;
 const PUBLIC_DIR = path.join(APP_DIR, 'public');
@@ -364,11 +365,13 @@ function startWatcher() {
       // Changed by another program: keep the text it replaced.
       const was = textCache.get(p);
       textCache.delete(p);
-      if (!NOTE_EXT.has(extOf(p)) || isOurs(p)) continue;
+      if (!NOTE_EXT.has(extOf(p))) continue;
       const abs = path.join(ROOT, p);
       let now = null;
       let st = null;
       try { st = fs.statSync(abs); if (st.isFile()) now = readText(abs); } catch { /* gone */ }
+      sawNote(p, now, st);
+      if (isOurs(p)) continue;
       if (!was) {
         // A note that was not there: made just now (not merely unread).
         if (now != null && st.birthtimeMs && Date.now() - st.birthtimeMs < 30_000 && !isTemplatePath(p)) changedOutside(p, null, now);
@@ -570,19 +573,58 @@ function getVersion(rel, id) {
 // editor): the text from before the first such change, until they are looked
 // at — so they can be reviewed like an agent run, change by change.
 // before: null for a note it made; the text now is null for one it deleted.
-const outside = new Map(); // rel → { before, since, at }
+// They are kept on disk (lib/outside.js), and so is what Margin last saw of
+// each note: one changed while it was closed is found when it opens.
+const outside = new OutsideStore(path.join(DATA_DIR, 'outside')); // rel → { before, since, at }
 const OUTSIDE_MAX = 200;
+const seenNotes = new Seen(path.join(DATA_DIR, 'seen'));
 
-function changedOutside(rel, was, now) {
+function changedOutside(rel, was, now, when = Date.now()) {
   const seen = outside.get(rel);
   if (seen) {
     if (now === seen.before) outside.delete(rel); // back as it was
-    else seen.at = Date.now();
+    else outside.set(rel, { ...seen, at: when });
     return;
   }
   if (was != null && Buffer.byteLength(was) > HISTORY_MAX_BYTES) return;
   if (outside.size >= OUTSIDE_MAX) outside.delete(outside.keys().next().value);
-  outside.set(rel, { before: was, since: Date.now(), at: Date.now() });
+  outside.set(rel, { before: was, since: when, at: when });
+}
+
+// A note as Margin sees it now (text null: gone, or not text).
+function sawNote(rel, text, st) {
+  if (text != null && st?.isFile() && st.size <= MAX_OPEN_BYTES) seenNotes.record(rel, text, st);
+  else if (!st) seenNotes.forget(rel);
+}
+
+// When Margin opens: the notes changed, made or deleted while it was closed,
+// as changes from outside; then every note seen as it is (the first time
+// only that — what came before can't be known).
+async function catchUp() {
+  ensureDataDir();
+  const files = new Map();
+  for (const rel of walk(ROOT)) {
+    if (!NOTE_EXT.has(extOf(rel))) continue;
+    try { const st = fs.statSync(path.join(ROOT, rel)); if (st.isFile() && st.size <= MAX_OPEN_BYTES) files.set(rel, st); } catch { /* gone */ }
+  }
+  const read = (rel) => { try { return readText(path.join(ROOT, rel)); } catch { return null; } };
+  const away = changedWhileAway(seenNotes, files, read);
+  for (const c of away) {
+    if (c.before != null && c.now != null) keepVersion(c.rel, c.before, 'outside');
+    changedOutside(c.rel, c.before, c.now, Math.round(c.at));
+  }
+  let n = 0;
+  for (const [rel, st] of files) {
+    const e = seenNotes.entry(rel);
+    if (e && e.size === st.size && e.mtimeMs === st.mtimeMs) continue;
+    const text = read(rel);
+    if (text != null) seenNotes.record(rel, text, st);
+    if (++n % 200 === 0) await new Promise((r) => setImmediate(r));
+  }
+  for (const rel of [...seenNotes.files.keys()]) if (!files.has(rel)) seenNotes.forget(rel);
+  seenNotes.save(true);
+  seenNotes.sweep();
+  if (away.length) broadcast('fs', { paths: away.map((c) => c.rel), structural: false });
 }
 
 // → { status, now } while the note still differs from before; else forgets it.
@@ -639,6 +681,7 @@ function wroteNote(abs, data) {
     const st = fs.statSync(abs);
     const text = Buffer.isBuffer(data) ? data.toString('utf8') : String(data);
     textCache.set(relOf(abs), { mtimeMs: st.mtimeMs, size: st.size, text, lower: text.toLowerCase() });
+    sawNote(relOf(abs), text, st);
   } catch { /* the cache fills itself on the next read */ }
 }
 
@@ -2436,8 +2479,10 @@ function listen(port, attempts = 10) {
 markInterruptedRuns();
 startWatcher();
 listen(opts.port);
+setImmediate(() => catchUp().catch((e) => console.error(`Looking for changes made while closed: ${e.message}`)));
 
 function shutdown() {
+  seenNotes.save();
   live?.stop();
   desk?.stop();
   for (const id of running.keys()) { try { cancelRun(id, 'server stopped'); } catch { /* ignore */ } }
