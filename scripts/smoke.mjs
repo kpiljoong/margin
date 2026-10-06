@@ -1973,6 +1973,30 @@ await check('meetings: fold (the rail\u2019s Fold) \u2014 to-dos left in their l
 for (const f of ['fold 2026-10-05.md', 'fold 2026-10-12.md']) fs.rmSync(path.join(ws, 'sub', f), { force: true });
 await sleep(500);
 
+fs.writeFileSync(path.join(ws, 'sub', 'levels.md'), '# levels\n\n## Launch (5m)\n\n- launch date\n- the 20th\n');
+await check('meetings: Tab and \u21E7Tab indent and outdent a list item in meeting mode (never the live margin\u2019s keep)', `
+  const mac = navigator.platform.startsWith('Mac');
+  let ta = await openNote('sub/levels.md');
+  document.body.dispatchEvent(new KeyboardEvent('keydown', { code: 'KeyM', key: 'M', shiftKey: true, bubbles: true, cancelable: true, metaKey: mac, ctrlKey: !mac }));
+  await until(() => $('.meeting') || document.documentElement.classList.contains('meeting'), 3000);
+  ta = $$('.editor-wrap textarea').find((t) => t.offsetParent);
+  ta.focus();
+  const end = ta.value.indexOf('the 20th') + 8;
+  ta.setSelectionRange(end, end);
+  const tab = (shiftKey) => ta.dispatchEvent(new KeyboardEvent('keydown', { key: 'Tab', code: 'Tab', shiftKey, bubbles: true, cancelable: true }));
+  tab(false);
+  await sleep(100);
+  const indented = ta.value;
+  tab(true);
+  await sleep(100);
+  const outdented = ta.value;
+  document.body.dispatchEvent(new KeyboardEvent('keydown', { code: 'KeyM', key: 'M', shiftKey: true, bubbles: true, cancelable: true, metaKey: mac, ctrlKey: !mac }));
+  await sleep(200);
+  return { indented, outdented };
+`, (v) => (v?.indented?.endsWith('- launch date\n  - the 20th\n') && v.outdented.endsWith('- launch date\n- the 20th\n') ? null : `got ${JSON.stringify(v)}`));
+fs.rmSync(path.join(ws, 'sub', 'levels.md'), { force: true });
+await sleep(300);
+
 fs.writeFileSync(path.join(ws, 'desk.canvas'), JSON.stringify({ nodes: [
   { id: 'a', type: 'text', text: 'First card', x: 0, y: 0, width: 260, height: 140, keep: 'me' },
   { id: 'b', type: 'text', text: 'Second card', x: 500, y: 0, width: 260, height: 140 },

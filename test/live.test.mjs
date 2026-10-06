@@ -9,7 +9,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { wanted, ruleOf, kindFor, dueOf, leadOf, parseReply, keptLine, keepEdit, keepAll, memoryOf, plainReply, asked, foldReply, projectMemory, snippetsFor, quantile } from '../public/live.js';
+import { wanted, ruleOf, kindFor, liveKeyOf, keepKey, dueOf, leadOf, parseReply, keptLine, keepEdit, keepAll, memoryOf, plainReply, asked, foldReply, projectMemory, snippetsFor, quantile } from '../public/live.js';
 
 const require = createRequire(import.meta.url);
 const server = require('../lib/live.js');
@@ -85,6 +85,20 @@ test('parseReply: the head once its bracket closes, then the sentence (both side
   }
 });
 
+test('its keys: \u2325\u21A9 keeps, Esc lets go, Tab and \u21E7Tab are never its (they indent the list)', () => {
+  const k = (key, mods = {}) => liveKeyOf({ key, ...mods });
+  assert.equal(k('Enter', { altKey: true }), 'keep');
+  assert.equal(k('Escape'), 'drop');
+  assert.equal(k('Tab'), null, 'Tab indents, even with minutes offered');
+  assert.equal(k('Tab', { shiftKey: true }), null, '\u21E7Tab outdents');
+  assert.equal(k('Enter'), null, 'Enter ends the line');
+  assert.equal(k('Enter', { metaKey: true, altKey: true }), null, '\u2318\u2325\u21A9 is the next agenda item');
+  assert.equal(k('Enter', { metaKey: true }), null, '\u2318\u21A9 ticks a box');
+  assert.equal(k('Enter', { altKey: true, isComposing: true }), null, 'not while Korean is composed');
+  assert.equal(keepKey(true), '\u2325\u21A9');
+  assert.equal(keepKey(false), 'Alt+Enter');
+});
+
 test('kindFor: a line that asks is a question, whatever the model says', () => {
   const line = '- \uBCF4\uB3C4\uC790\uB8CC \uD544\uC694?? bob \uBAA8\uB984';
   assert.equal(ruleOf(line).kind, 'question');
@@ -130,7 +144,7 @@ test('memoryOf: the last meeting, as the margin is told it', () => {
   assert.ok(long.endsWith('\u2026'));
 });
 
-test('keepAll: every line the margin answered, kept as Tab would, from the bottom up', () => {
+test('keepAll: every line the margin answered, kept as ⌥↩ would, from the bottom up', () => {
   const text = '## Plan (10m)\nlaunch 20th ok\n- [ ] Draft @bob\nann: survey thurs\n?? when\nbeta ok\nlater';
   const entries = new Map([
     ['launch 20th ok', { kind: 'decision', state: 'done', sentence: 'We launch on the 20th.' }],

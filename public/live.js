@@ -1,7 +1,7 @@
 // The live margin (experimental): while a meeting is written, its minutes
 // beside each line — a chip at once (by rule: a decision, a to-do, a
 // question, a risk, an idea, one for next time, whose, by when), then a fast model's clean sentence, written in
-// as it comes (server.js → lib/live.js). It is only shown: Tab keeps what
+// as it comes (server.js → lib/live.js). It is only shown: ⌥↩ keeps what
 // the line is (a tag at its end, a to-do's box; the words and the list as they
 // were written), Esc lets it go.
 import { markLine } from './meeting.js';
@@ -10,6 +10,17 @@ const KIND = { decision: 'Decided', question: 'Open', todo: 'To-do', risk: 'Risk
 // "?? when did we say": a question to the margin, not for the minutes.
 const ASKED = /^\s*\?\?/;
 export const asked = (line) => ASKED.test(line);
+
+// Its keys: ⌥↩ (Alt+Enter) keeps the minutes, Esc lets them go. Never Tab
+// or ⇧Tab: in a meeting as anywhere, they indent and outdent the list.
+const MAC = typeof navigator !== 'undefined' && /Mac/i.test(navigator.platform || '');
+export const keepKey = (mac = MAC) => (mac ? '\u2325\u21A9' : 'Alt+Enter');
+export function liveKeyOf(e) {
+  if (e.isComposing || e.metaKey || e.ctrlKey || e.shiftKey) return null;
+  if (e.key === 'Enter' && e.altKey) return 'keep';
+  if (e.key === 'Escape' && !e.altKey) return 'drop';
+  return null;
+}
 
 // Lines worth minutes: words, not a heading, a fence, a rule or the link
 // to the previous meeting.
@@ -234,7 +245,7 @@ export function keptLine(e, line) {
   return markLine(line, e.kind, e);
 }
 
-// Every line's minutes the margin wrote and nobody let go, kept (as Tab
+// Every line's minutes the margin wrote and nobody let go, kept (as ⌥↩
 // would), from the last line up. Lines written as minutes already, and
 // answers, stay as they are.
 export function keepAll(text, entries) {
@@ -289,7 +300,7 @@ export function liveCard() {
   const ms = el('span', 'live-ms');
   const text = el('span', 'live-text');
   const remark = el('div', 'live-remark');
-  const keys = el('div', 'live-keys', 'Tab keep \u00B7 Esc not this');
+  const keys = el('div', 'live-keys', `${keepKey()} keep \u00B7 Esc not this`);
   const card = el('div', 'mnote live-note', el('div', 'live-body', chip, who, due, text, ms), remark, keys);
   card.show = (e) => {
     card.className = `mnote live-note k-${e.kind} s-${e.state}${e.offer ? ' offer' : ''}`;
