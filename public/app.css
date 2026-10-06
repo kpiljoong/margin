@@ -330,7 +330,9 @@ input[type=checkbox] { accent-color: var(--accent); }
 .pen-acts .pen-no:hover { color: var(--bad); background: var(--bg-hover); }
 .pen-card.pen-y { border-left-color: var(--ok); }
 .pen-card.pen-y .pen-yes { color: var(--ok); }
-.pen-card.pen-n { opacity: .5; border-left-color: var(--fg-faint); }
+/* Left: the reason and buttons step back; stet stays in full ink. */
+.pen-card.pen-n { border-left-color: var(--fg-faint); }
+.pen-card.pen-n > :not(.pen-acts), .pen-card.pen-n .pen-acts > :not(.pen-stet) { opacity: .5; }
 .pen-card.pen-n .pen-no { color: var(--bad); }
 .pen-card.pen-n .pen-note { text-decoration: line-through; }
 .pen-stuck { font-size: 11.5px; color: var(--warn); }
