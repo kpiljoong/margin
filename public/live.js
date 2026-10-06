@@ -308,8 +308,12 @@ export function liveHud() {
   const last = el('span', 'live-hud-last');
   const stats = el('span', 'live-hud-stats');
   const ctx = el('span', 'live-hud-ctx');
-  const hud = el('div', 'live-hud', el('span', 'live-hud-dot'), el('b', null, 'Live margin'), ctx, last, stats);
+  const model = el('span', 'live-hud-model');
+  const hud = el('div', 'live-hud', el('span', 'live-hud-dot'), el('b', null, 'Live margin'), model, ctx, last, stats);
   hud.show = (s) => {
+    // The model that wrote the last line (as the CLI says), else the one asked for.
+    model.textContent = s.model ? `${String(s.model).replace(/^claude-/, '').replace(/-\d{8}$/, '')}${s.effort ? ` \u00b7 ${s.effort}` : ''}` : '';
+    model.title = s.model ? `Model: ${s.model}${s.effort ? `, effort ${s.effort}` : ''}` : '';
     hud.classList.toggle('busy', !!s.busy);
     ctx.textContent = s.context ? `knows ${s.context}` : '';
     ctx.title = s.context ? 'The other notes of this project the margin is told about (not private ones)' : '';

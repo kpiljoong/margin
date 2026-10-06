@@ -268,6 +268,9 @@ const DEFAULT_SETTINGS = {
   // Labs, experimental views (LAB_VIEWS): out of the palette, the menus and
   // the review until turned on.
   labViews: false,
+  // The live margin's and the desk's Claude model and effort ('' none: it
+  // does not think): the quickest and cheapest unless chosen.
+  liveModel: 'haiku', liveEffort: '',
   // The file tree shows the active tab's file (as VS Code's Auto Reveal).
   followTab: true,
   // Pens: yours (suggesting, comments) and the agent's; '' is the theme's.
@@ -3917,6 +3920,15 @@ function openSettings({ keys = false } = {}) {
   const st = S.settings;
   const segRow = (key, options) => h('div', { class: 'seg' }, Object.entries(options).map(([value, label]) =>
     h('button', { class: st[key] === value ? 'on' : '', onclick: () => { setSetting(key, value); openSettings(); } }, label)));
+  // The live margin's model and effort: its sessions start again with them.
+  const liveSeg = (key, options) => h('div', { class: 'seg' }, Object.entries(options).map(([value, label]) =>
+    h('button', { class: (st[key] || '') === value ? 'on' : '', onclick: () => { setSetting(key, value); api('POST', '/api/live/options', liveOpts()).catch(() => {}); openSettings(); } }, label)));
+  const liveCost = () => [
+    // Measured (October 2026): Haiku's first words in about 0.5 s, $0.0016 a line.
+    { sonnet: 'Sonnet’s first words come later: about 0.6–1 s, and 2–3 s on a line it stops to think about. A line costs about what Haiku’s does (its prompt is cached, Haiku’s is too short to be), a session’s first a few times more.',
+      opus: 'Opus is slower and dearer: its first words in about 2 s, a line about 3–4× what Haiku’s costs.' }[liveOpts().model],
+    liveOpts().effort ? 'With an effort it may think before it writes: those lines take seconds longer and cost more, the more so the higher.' : null,
+  ].filter(Boolean).join(' ');
   const toggle = (key, label, detail, after) => h('label', { class: 'set-toggle' },
     h('input', { type: 'checkbox', checked: !!st[key], onchange: (e) => { setSetting(key, e.target.checked); after?.(); } }),
     h('span', {}, h('b', {}, label), detail ? h('span', { class: 'set-detail' }, detail) : null));
@@ -3979,6 +3991,12 @@ function openSettings({ keys = false } = {}) {
           ? '⌃ and ⌥ keys move, mark, kill and yank as in Emacs, with ⌃X, ⌃U and registers (ESC then a key is ⌥ and the key). ⌥ then no longer types special characters in notes.'
           : 'Ctrl and Alt keys move, mark, kill and yank as in Emacs, with Ctrl+X, Ctrl+U and registers. Ctrl+C, Ctrl+V and Ctrl+Z still copy, paste and undo; Ctrl+X is Emacs’s (cut: Ctrl+W).'),
         toggle('followTab', 'Tree follows the active tab', 'Selecting a tab opens its folders in the file tree and scrolls to it (also ⇅ at the top of the tree). Off: use ◎ in the tree.')),
+      h('div', { class: 'set-label' }, 'Live margin and the desk’s margin'),
+      h('p', { class: 'set-detail' }, 'The Claude model that writes a meeting’s minutes beside its lines and answers on a desk, through your claude login. Haiku with the default effort (no thinking) is the quickest and the cheapest.'),
+      h('div', { class: 'set-grid' },
+        h('div', { class: 'set-label' }, 'Model'), liveSeg('liveModel', LIVE_MODEL_NAMES),
+        h('div', { class: 'set-label' }, 'Effort'), liveSeg('liveEffort', { '': 'Default', low: 'Low', medium: 'Medium', high: 'High' })),
+      liveCost() ? h('p', { class: 'set-detail set-warn' }, liveCost()) : null,
       h('div', { class: 'set-label' }, 'Labs'),
       h('p', { class: 'set-detail' }, 'Experiments you can turn on and off. They may change or go away.'),
       h('div', { class: 'set-toggles' },
@@ -4463,15 +4481,18 @@ async function deskStream(body, onText) {
 // The first time: what the desk's margin sends, and where.
 async function deskConsent() {
   if (store.getItem('an.deskMargin') === '1') return true;
-  const ok = await askConfirm('The desk’s margin sends the cards you give it (their text, and the notes and pictures they show — a marked part of a picture with the whole of it) to Claude (Haiku) through your claude login. Notes marked private, and what .agentnotesignore names, are never sent. Nothing goes until you ask.', { okLabel: 'Send the cards' });
+  const ok = await askConfirm(`The desk’s margin sends the cards you give it (their text, and the notes and pictures they show — a marked part of a picture with the whole of it) to Claude (${liveModelName()}) through your claude login. Notes marked private, and what .agentnotesignore names, are never sent. Nothing goes until you ask.`, { okLabel: 'Send the cards' });
   if (ok) store.setItem('an.deskMargin', '1');
   return ok;
 }
 let deskWarm = false;
+const LIVE_MODEL_NAMES = { haiku: 'Haiku', sonnet: 'Sonnet', opus: 'Opus' };
+const liveOpts = () => ({ model: LIVE_MODEL_NAMES[S.settings.liveModel] ? S.settings.liveModel : 'haiku', effort: ['low', 'medium', 'high'].includes(S.settings.liveEffort) ? S.settings.liveEffort : '' });
+const liveModelName = () => LIVE_MODEL_NAMES[liveOpts().model];
 function deskWarmUp() {
   if (deskWarm || store.getItem('an.deskMargin') !== '1') return;
   deskWarm = true;
-  api('POST', '/api/desk/warm', {}).catch(() => { deskWarm = false; });
+  api('POST', '/api/desk/warm', liveOpts()).catch(() => { deskWarm = false; });
 }
 
 function deskView(tab, c) {
@@ -4589,7 +4610,7 @@ function deskView(tab, c) {
         ask: async (req, onText) => {
           if (!(await deskConsent())) throw new Error('Not sent');
           deskWarm = true;
-          return deskStream({ ...req, path: tab.path }, onText);
+          return deskStream({ ...req, path: tab.path, ...liveOpts() }, onText);
         },
         onChange: (text) => { tab.text = text; renderTabs(); scheduleDrawingSave(tab); },
         toast,
@@ -6333,7 +6354,7 @@ async function toggleLive() {
   liveWarm();
   if (!S.meeting) toggleMeeting();
   if (tab) liveStart(tab);
-  toast('Live margin: each line you write goes to Claude (Haiku) · Tab keeps its minutes · Esc lets them go');
+  toast(`Live margin: each line you write goes to Claude (${liveModelName()}) · Tab keeps its minutes · Esc lets them go`);
 }
 
 function liveState(tab) {
@@ -6348,8 +6369,10 @@ async function liveStart(tab) {
   st.note = 'starting…';
   liveHudShow(tab);
   try {
-    const r = await api('POST', '/api/live/start', { path: tab.path });
+    const r = await api('POST', '/api/live/start', { path: tab.path, ...liveOpts() });
     st.note = r.ready ? '' : `${r.agent}: warming up…`;
+    st.model ||= r.model;
+    st.effort = r.effort;
   } catch (e) {
     st.started = false;
     st.note = e.message;
@@ -6374,7 +6397,7 @@ function liveStop(server = false) {
 }
 // With the app: the session up and warm before the first meeting.
 function liveWarm() {
-  if (liveOn) api('POST', '/api/live/warm').catch(() => {});
+  if (liveOn) api('POST', '/api/live/warm', liveOpts()).catch(() => {});
 }
 
 const lineNoAt = (v, pos) => { let n = 0; for (let i = v.indexOf('\n'); i >= 0 && i < pos; i = v.indexOf('\n', i + 1)) n++; return n; };
@@ -6586,6 +6609,7 @@ function liveEnd(tab, e, info) {
   e.state = info.ok && e.sentence.trim() ? 'done' : 'error';
   if (!info.ok) e.error = info.error;
   st.cost += info.cost || 0;
+  if (info.model) st.model = info.model;
   if (e.state !== 'done') return;
   const t = { first: e.t.first - e.t.stop, line: e.t.done - e.t.stop, model: e.t.first - e.t.send, why: e.why, cold: !!info.cold,
     serverFirst: info.firstMs, serverDone: info.doneMs, inTokens: info.inTokens, outTokens: info.outTokens, cacheRead: info.cacheRead, cost: info.cost };
@@ -6674,7 +6698,7 @@ function liveHudShow(tab) {
   if (!st || !tab.editor) return;
   st.hud ||= liveMod.liveHud();
   if (st.hud.parentNode !== tab.editor.el) tab.editor.el.append(st.hud);
-  st.hud.show({ times: st.times, cost: st.cost, last: st.last, note: st.note, context: st.context, busy: !!st.inflight, calls: st.calls, cancelled: st.cancelled });
+  st.hud.show({ model: st.model, effort: st.effort, times: st.times, cost: st.cost, last: st.last, note: st.note, context: st.context, busy: !!st.inflight, calls: st.calls, cancelled: st.cancelled });
 }
 
 function meetTyped(tab) {

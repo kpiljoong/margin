@@ -176,7 +176,7 @@ process.stdin.on('data', (d) => {
     const j = JSON.parse(buf.slice(0, i)); buf = buf.slice(i + 1);
     if (j.type !== 'user') continue;
     const text = j.message.content;
-    fs.appendFileSync(process.env.FAKE_LOG, JSON.stringify({ pid: process.pid, text }) + '\\n');
+    fs.appendFileSync(process.env.FAKE_LOG, JSON.stringify({ pid: process.pid, text, args: process.argv.slice(2), thinking: process.env.MAX_THINKING_TOKENS ?? null }) + '\\n');
     const line = /Line: (.*)$/.exec(text)?.[1] ?? 'REQUEST';
     if (line === 'DIE') process.exit(3);
     n++;
@@ -270,6 +270,37 @@ test('the resident session: the last meeting in its header; requests answered, n
     assert.match(s.at(-1).text, /Minutes so far:\n- one\n- two\n\nItem: \(none\)\nLine: three$/);
   } finally {
     m.stop();
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('the model and effort: Haiku without thinking unless told; another one, thinking that much', { skip: process.platform === 'win32' }, async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'margin-live-test-'));
+  const bin = path.join(dir, 'fake-claude');
+  fs.writeFileSync(bin, FAKE, { mode: 0o755 });
+  const log = path.join(dir, 'log');
+  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+  const run = async (opts) => {
+    const m = server.liveMargin({ bin, env: { ...process.env, FAKE_LOG: log }, warmMs: 30, retryMs: 50, opts });
+    try {
+      m.warm();
+      await sleep(60);
+      const end = await new Promise((done) => m.line({ key: 'A', title: 'A', agenda: [], line: 'one', today: 'T' }, () => {}, done));
+      assert.equal(end.ok, true);
+      return { ...fs.readFileSync(log, 'utf8').trim().split('\n').map((l) => JSON.parse(l)).at(-1), model: end.model };
+    } finally { m.stop(); }
+  };
+  try {
+    const plain = await run(undefined);
+    assert.equal(plain.args[plain.args.indexOf('--model') + 1], 'haiku');
+    assert.equal(plain.args.includes('--effort'), false);
+    assert.equal(plain.thinking, '0');
+    assert.equal(plain.model, 'haiku', 'the model asked for when the CLI does not say');
+    const told = await run({ model: 'sonnet', effort: 'low' });
+    assert.equal(told.args[told.args.indexOf('--model') + 1], 'sonnet');
+    assert.equal(told.args[told.args.indexOf('--effort') + 1], 'low');
+    assert.equal(told.thinking, null);
+  } finally {
     fs.rmSync(dir, { recursive: true, force: true });
   }
 });

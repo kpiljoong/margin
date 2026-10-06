@@ -2183,11 +2183,12 @@ async function routeApi(method, url, body) {
   if (method === 'GET' && p === '/api/comments') return getComments(q('path'));
   if (method === 'PUT' && p === '/api/comments') return saveComments(body || {});
   if (method === 'POST' && p === '/api/proofs') return openProof(body || {});
-  if (method === 'POST' && p === '/api/live/start') { const key = liveFor(String((body || {}).path || '')); return { ...live.start(key), agent: liveAgent().label }; }
-  if (method === 'POST' && p === '/api/live/warm') return { ...liveUp().warm(), agent: liveAgent().label };
+  if (method === 'POST' && p === '/api/live/options') return { changed: setLiveOpts(body), ...liveOpts };
+  if (method === 'POST' && p === '/api/live/start') { setLiveOpts(body); const key = liveFor(String((body || {}).path || '')); return { ...live.start(key), agent: liveAgent().label, ...liveOpts }; }
+  if (method === 'POST' && p === '/api/live/warm') { setLiveOpts(body); return { ...liveUp().warm(), agent: liveAgent().label, ...liveOpts }; }
   if (method === 'POST' && p === '/api/live/stop') { live?.stop(); return { ok: true }; }
   if (method === 'POST' && p === '/api/live/project') return liveProject(String((body || {}).path || ''));
-  if (method === 'POST' && p === '/api/desk/warm') return { ...deskUp().warm(), agent: liveAgent().label };
+  if (method === 'POST' && p === '/api/desk/warm') { setLiveOpts(body); return { ...deskUp().warm(), agent: liveAgent().label, ...liveOpts }; }
   if ((m = p.match(/^\/api\/proofs\/([\w-]+)$/)) && method === 'PUT') return saveProof(m[1], body || {});
   if (method === 'POST' && p === '/api/runs') return { ...startRun(body || {}), command: undefined };
   if ((m = p.match(/^\/api\/runs\/([\w-]+)$/)) && method === 'GET') {
@@ -2235,6 +2236,27 @@ const SECURITY_HEADERS = {
 // minutes come back as they are written (NDJSON), and nothing is saved. Its
 // session stays up while the margin is on (warm, from the app's start).
 let live = null;
+// Their model and effort (Settings → Live margin), as the page last said:
+// Haiku, not thinking, unless chosen. The live margin and the desk's share them.
+const LIVE_MODELS = ['haiku', 'sonnet', 'opus'];
+const LIVE_EFFORTS = ['low', 'medium', 'high'];
+let liveOpts = { model: 'haiku', effort: '' };
+function setLiveOpts(b) {
+  if (!b || typeof b !== 'object' || !('model' in b || 'effort' in b)) return false;
+  const next = { model: LIVE_MODELS.includes(b.model) ? b.model : 'haiku', effort: LIVE_EFFORTS.includes(b.effort) ? b.effort : '' };
+  if (next.model === liveOpts.model && next.effort === liveOpts.effort) return false;
+  liveOpts = next;
+  // Up again with them: the resident session and its spare, the desk's too.
+  const on = !!live?.on;
+  live?.stop();
+  live = null;
+  if (on) liveUp().warm();
+  const had = !!desk;
+  desk?.stop();
+  desk = null;
+  if (had) deskUp().warm();
+  return true;
+}
 function liveAgent() {
   return AGENT?.kind === 'claude' ? AGENT : AGENTS.find((a) => a.kind === 'claude') || null;
 }
@@ -2244,7 +2266,7 @@ function liveUp() {
   if (!live) {
     const env = { ...process.env };
     delete env.ELECTRON_RUN_AS_NODE;
-    live = liveMargin({ bin: agent.command.trim().split(/\s+/)[0], env });
+    live = liveMargin({ bin: agent.command.trim().split(/\s+/)[0], env, opts: liveOpts });
   }
   return live;
 }
@@ -2286,7 +2308,7 @@ function deskUp() {
   if (!desk) {
     const env = { ...process.env };
     delete env.ELECTRON_RUN_AS_NODE;
-    desk = deskMargin({ bin: agent.command.trim().split(/\s+/)[0], env });
+    desk = deskMargin({ bin: agent.command.trim().split(/\s+/)[0], env, opts: liveOpts });
   }
   return desk;
 }
@@ -2347,6 +2369,7 @@ function deskCards(cards) {
 function deskAsk(req, res, body) {
   const canvas = workspacePath(String(body.path || ''));
   if (loadIgnore(ROOT)(relOf(canvas))) throw httpError(403, 'This desk is in .agentnotesignore: its cards are not sent.');
+  setLiveOpts(body);
   const m = deskUp();
   const { cards, withheld } = deskCards(body.cards);
   res.writeHead(200, { ...SECURITY_HEADERS, 'Content-Type': 'application/x-ndjson; charset=utf-8' });
