@@ -110,11 +110,17 @@ export function ruleOf(line, today = new Date(), lead = null) {
   return { kind, fixed: !!(c || t || g || later), owner: kind === 'todo' || kind === 'question' ? owner : null, due: kind === 'todo' ? dueOf(line, today) || (lead ? dueOf(lead, today) : null) : null };
 }
 
+// The model talking to the person instead of keeping minutes ("I'm ready
+// to take minutes…", "Sure, what…"): not minutes, so not shown.
+const CHAT = /^(?:I(?:'m| am) (?:ready|here|happy|sorry)|I (?:see|can|could|notice)\b|I'd (?:be|like|need)|I'll (?:be|help|take|keep)|Sure[,!.]|Certainly\b|Of course\b|Got it\b|Okay[,!]|Hello[,!.]|Hi[,!.]|Happy to\b|Let me\b|Please (?:share|provide|send|type|give|let)|Could you\b|Would you\b|What would you\b|How can I\b|It (?:looks|seems) like you|You (?:haven't|have not|seem|might|may want)|\uB124[,.!]|\uC54C\uACA0\uC2B5\uB2C8\uB2E4|\uC88B\uC2B5\uB2C8\uB2E4[,.!]|\uC548\uB155\uD558\uC138\uC694|\uD68C\uC758\uB85D\uC744 (?:\uC791\uC131|\uAE30\uB85D)\uD560 \uC900\uBE44)/i;
+
 // The model's reply as it streams: "[todo @bob 2026-10-15] Draft the notes."
-// → { head (its bracket closed), kind, owner, due, sentence }.
+// → { head (its bracket closed), kind, owner, due, sentence }; talk: true
+// when it has no head or talks to the person — nothing to show.
 export function parseReply(text) {
   const m = /^\s*\[([^\]\n]*)\]\s*/.exec(text);
-  if (!m) return /^\s*\[/.test(text) ? { head: false, sentence: '' } : { head: true, kind: null, sentence: text.replace(/^\s+/, '').split('\n')[0] };
+  if (!m) return !text.trim() || /^\s*\[/.test(text) ? { head: false, sentence: '' } : { head: true, kind: null, talk: true, sentence: '' };
+  if (CHAT.test(text.slice(m[0].length))) return { head: true, kind: null, talk: true, sentence: '' };
   const parts = m[1].trim().split(/\s+/);
   const kind = Object.hasOwn(KIND, parts[0]?.toLowerCase()) ? parts[0].toLowerCase() : null;
   const owner = parts.find((p) => p.startsWith('@'))?.slice(1).replace(/[^\p{L}\p{N}_.-]/gu, '') || null;
@@ -122,6 +128,14 @@ export function parseReply(text) {
   // One head: a second one, or a second line, joins the sentence.
   const said = text.slice(m[0].length).replace(/\s*\n+\s*(?:\[[^\]\n]*\]\s*)?/g, ' ').replace(/\s*\[(?:decision|todo|question|risk|idea|next|note)\b[^\]\n]*\]\s*/gi, ' ');
   return { head: true, kind, owner, due, ...remarkOf(said) };
+}
+
+// The kind to show: the model's, but a line asking ("\uBCF4\uB3C4\uC790\uB8CC \uD544\uC694?? bob
+// \uBAA8\uB984", "a press kit?") is a question whatever the model makes of it
+// (an idea, a risk or one for next time may ask too).
+export function kindFor(line, kind) {
+  if (!kind || ASKED.test(line) || !/\?\s*$|\?\?/.test(line)) return kind;
+  return ['idea', 'risk', 'next', 'question'].includes(kind) ? kind : 'question';
 }
 
 // "We launch on Oct 27. || Last week: the 20th. Changed?": the sentence, and

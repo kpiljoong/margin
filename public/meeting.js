@@ -280,22 +280,29 @@ export function wrapTask(path, next, times) {
   const said = times.filter((t) => t.ms > 0).map((t) => `${t.title} ${Math.max(1, Math.round(t.ms / 60000))}m of ${t.budget}m`);
   return [
     `Wrap up this meeting (${path}) for after it:`,
-    '1. At the end of the note, add a section "## Wrap-up": two or three sentences on what the meeting did; a line "**Time:** …" with each agenda item\'s minutes (below); "### To-dos by owner": move every to-do line of the note (`- [ ] …`) here, under a line **@owner** for each owner (**No owner** last), each kept as written with its @owner and \u{1F4C5} date; "### Decisions", "### Open questions", "### Risks" and "### Ideas": each line of the note marked `#decision` / `#question` / `#risk` / `#idea` (or written as a `> [!decision]` / `> [!question]` / `> [!warning]` / `> [!idea]` callout) again, as a list item `- … #decision` (and so on) (a heading with none: leave it out). Leave the rest of the note as it is.',
+    '1. At the end of the note, add a section "## Wrap-up": two or three sentences on what the meeting did; a line "**Time:** …" with each agenda item\'s minutes (below); "### To-dos by owner": every to-do of the note (`- [ ] …`), left where it is in the note, listed here under a line **@owner** for each owner (**No owner** last) as a plain list item without the box — its words and \u{1F4C5} date, crossed out (`~~…~~`) when done, then ` · [[#its section\'s heading]]`; "### Decisions", "### Open questions", "### Risks" and "### Ideas": each line of the note marked `#decision` / `#question` / `#risk` / `#idea` (or written as a `> [!decision]` / `> [!question]` / `> [!warning]` / `> [!idea]` callout) again, as a list item `- … #decision` (and so on) (a heading with none: leave it out). Leave the rest of the note as it is.',
     `2. Create the next meeting's note, ${next}: "# " and its name, a line "Previous meeting: [[${stem}]]", then the same agenda headings with their minutes; under each, the open questions raised there, carried over as list items ending in \`#question\`, and the lines marked \`#next\` there, as list items without the tag. Nothing else.`,
     said.length ? `Time on the agenda: ${said.join('; ')}.` : 'The agenda\'s clock was not kept: leave the time line out.',
     'Keep it plain Markdown: decisions, questions, risks and ideas as lines ending in their tag (#decision, #question, #risk, #idea), to-dos as `- [ ] what @owner \u{1F4C5} YYYY-MM-DD`.',
   ].join('\n');
 }
 
-// Fold (the live margin's quick wrap-up): the note with its to-dos moved
-// to a "## Wrap-up" at the end, under their owners, after the summary, the
-// time on each item and its decisions, questions, risks and ideas again,
-// then the link to the next meeting. A section an earlier fold left goes
-// (its to-dos are moved again), as do the questions asked of the margin
+// Fold (the live margin's quick wrap-up): the note with a "## Wrap-up" at
+// the end — the summary, the time on each item, its to-dos by owner (each
+// left where it was written, in its list; here only its words and a link to
+// its section), its decisions, questions, risks and ideas again, then the
+// link to the next meeting. A section an earlier fold left goes
+// (to-dos an older fold moved into it go back into the note), as do the questions asked of the margin
 // (?? …). Done here, not by an agent: what the margin
 // wrote is already in the note. times: [{ title, budget, ms }]; settled:
 // the keys of questions the meeting decided or answered (not open any more).
 const WRAP = /^##\s+Wrap-up\s*$/i;
+// A to-do as the wrap-up shows it: its words (its owner is the heading over
+// it), crossed out when done, and a link to its section — not a to-do itself.
+const todoRef = (t) => {
+  const words = t.text.replace(OWNERS, '$1').replace(KIND_TAGS, ' ').replace(/\s+/g, ' ').trim();
+  return `- ${t.done ? `~~${words}~~` : words}${t.head ? ` \u00b7 [[#${t.head.replace(/[[\]|#^]/g, '')}]]` : ''}`;
+};
 // The questions a fold asks about: the note's, an earlier fold's left out.
 export function foldQuestions(text) {
   const w = text.split('\n').findIndex((l) => WRAP.test(l));
@@ -317,17 +324,26 @@ export function foldNote(text, { path, next, summary = '', times = [], settled =
   const body = [];
   let fence = false;
   let cut = false;
+  let head = null;
   for (const l of lines) {
     if (/^\s*(```|~~~)/.test(l)) fence = !fence;
-    if (!fence && TASK.test(l)) { todos.push(l.trim()); cut = true; continue; }
+    const hd = !fence && HEADING.exec(l);
+    if (hd) head = hd[2];
+    const t = !fence && TASK.exec(l);
+    if (t) todos.push({ text: t[4], done: t[3] !== ' ', head });
     // "?? …": asked of the live margin, not part of the minutes.
     if (!fence && /^\s*\?\?/.test(l)) { cut = true; continue; }
     if (cut && !l.trim() && !body.at(-1)?.trim()) continue;
     cut = false;
     body.push(l);
   }
-  for (const l of old) if (TASK.test(l)) todos.push(l.trim());
   while (body.length && !body.at(-1).trim()) body.pop();
+  // An older fold moved its to-dos into its section: back into the note.
+  const moved = old.filter((l) => TASK.test(l)).map((l) => l.trim());
+  if (moved.length) {
+    body.push('', ...moved);
+    for (const l of moved) { const t = TASK.exec(l); todos.push({ text: t[4], done: t[3] !== ' ', head: null }); }
+  }
   const items = meetingItems(body.join('\n'));
   const out = [...body, '', '## Wrap-up', ''];
   if (summary.trim()) out.push(summary.trim(), '');
@@ -336,9 +352,10 @@ export function foldNote(text, { path, next, summary = '', times = [], settled =
   if (todos.length) {
     out.push('### To-dos by owner', '');
     const owners = [];
-    for (const t of todos) { const o = OWNER.exec(t)?.[2] || ''; if (!owners.includes(o)) owners.push(o); }
+    const ownerOf = (t) => OWNER.exec(t.text)?.[2] || '';
+    for (const t of todos) { const o = ownerOf(t); if (!owners.includes(o)) owners.push(o); }
     owners.sort((a, b) => (a === '') - (b === ''));
-    for (const o of owners) out.push(o ? `**@${o}**` : '**No owner**', '', ...todos.filter((t) => (OWNER.exec(t)?.[2] || '') === o), '');
+    for (const o of owners) out.push(o ? `**@${o}**` : '**No owner**', '', ...todos.filter((t) => ownerOf(t) === o).map(todoRef), '');
   }
   const done = new Set(settled);
   for (const [head, kind] of [['Decisions', 'decision'], ['Open questions', 'question'], ['Risks', 'risk'], ['Ideas', 'idea']]) {

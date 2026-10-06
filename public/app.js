@@ -6576,9 +6576,11 @@ async function liveSend(tab, q, lines) {
     }
     const { end } = await liveStream(body, ctl.signal, (said) => {
       const r = e.kind === 'answer' ? { head: true, sentence: liveMod.plainReply(said) } : liveMod.parseReply(said);
+      // Talking to the person ("I'm ready to take minutes…"): not minutes.
+      if (r.talk) { e.talked = true; e.sentence = ''; return; }
       if (!r.head || !r.sentence) return;
       if (!e.t.first) e.t.first = performance.now();
-      if (r.kind && !e.fixed) e.kind = r.kind;
+      if (r.kind && !e.fixed) e.kind = liveMod.kindFor(e.line, r.kind);
       if (r.owner) e.owner = r.owner;
       // Dates by rule first: a model counts weekdays less well.
       if (e.kind === 'todo') e.due = liveMod.dueOf(e.line) || r.due || e.due;
@@ -6606,7 +6608,7 @@ async function liveSend(tab, q, lines) {
 function liveEnd(tab, e, info) {
   const st = tab.live;
   e.t.done = performance.now();
-  e.state = info.ok && e.sentence.trim() ? 'done' : 'error';
+  e.state = info.ok && e.sentence.trim() ? 'done' : info.ok && e.talked ? 'gone' : 'error';
   if (!info.ok) e.error = info.error;
   st.cost += info.cost || 0;
   if (info.model) st.model = info.model;
@@ -6763,8 +6765,8 @@ async function wrapUp(tab = fileTab()) {
 }
 
 // Fold: the quick wrap-up, in seconds and without an agent. The margin's
-// minutes go into the note (as Tab would keep them), its to-dos under their
-// owners in a "## Wrap-up" with the time and its decisions and questions
+// minutes go into the note (as Tab would keep them), its to-dos listed by
+// owner (left in place) in a "## Wrap-up" with the time, its decisions and questions
 // again, and a summary the live margin writes (when it is on); proposed,
 // for review. The next meeting's note is made when there is none.
 async function foldMeeting(tab = fileTab()) {

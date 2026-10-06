@@ -1894,9 +1894,9 @@ await check('meetings (experimental): the rail gathers a decision (a key) and a 
 {
   const t = fs.readFileSync(path.join(ws, 'sub', 'weekly 2026-10-05.md'), 'utf8');
   const next = fs.readFileSync(path.join(ws, 'sub', 'weekly 2026-10-12.md'), 'utf8');
-  const good = /\n## Wrap-up\n/.test(t) && /\*\*@ann\*\*\n\n- \[ \] Post the role @ann\n/.test(t) && /Next meeting: \[\[weekly 2026-10-12\]\]\n$/.test(t)
+  const good = /\n## Wrap-up\n/.test(t) && /## Hiring \(10m\)\n\n- \[ \] Post the role @ann\n/.test(t) && /\*\*@ann\*\*\n\n- Post the role · \[\[#Hiring \(10m\)\]\]\n/.test(t) && /Next meeting: \[\[weekly 2026-10-12\]\]\n$/.test(t)
     && next === '# weekly 2026-10-12\n\nPrevious meeting: [[weekly 2026-10-05]]\n\n## Status (5m)\n\n- Do we need a beta #question\n\n## Hiring (10m)\n';
-  console.log(`${good ? '✓' : '✗'} the wrap-up at the end of the meeting's note (the to-do under its owner), the next meeting with the open question carried over; the wall's proposal discarded`);
+  console.log(`${good ? '✓' : '✗'} the wrap-up at the end of the meeting's note (the to-do left in place, listed under its owner), the next meeting with the open question carried over; the wall's proposal discarded`);
   if (!good) { console.log(JSON.stringify({ t, next })); failed = true; }
   // Out of the way of the checks after (the tasks of all notes).
   for (const f of ['weekly 2026-10-05.md', 'weekly 2026-10-12.md']) fs.rmSync(path.join(ws, 'sub', f), { force: true });
@@ -1939,8 +1939,8 @@ await check('meetings: a line marked a risk, an idea, for next time (\u2318\u232
 fs.rmSync(path.join(ws, 'sub', 'kinds 2026-10-05.md'), { force: true });
 await sleep(500);
 
-fs.writeFileSync(path.join(ws, 'sub', 'fold 2026-10-05.md'), '# fold 2026-10-05\n\n## Launch (5m)\n\n> [!decision] We launch on Oct 10.\n\n- [ ] Ship the tool @bob\n?? who books the hall\n\n> [!question] A press kit?\n');
-await check('meetings: fold (the rail\u2019s Fold) \u2014 to-dos under their owners in a Wrap-up, proposed for review, and the next meeting\u2019s note made', `
+fs.writeFileSync(path.join(ws, 'sub', 'fold 2026-10-05.md'), '# fold 2026-10-05\n\n## Launch (5m)\n\n> [!decision] We launch on Oct 10.\n\n- Tools\n  - [ ] Ship the tool @bob\n?? who books the hall\n\n> [!question] A press kit?\n');
+await check('meetings: fold (the rail\u2019s Fold) \u2014 to-dos left in their lists, listed by owner in a Wrap-up, proposed for review, and the next meeting\u2019s note made', `
   const mac = navigator.platform.startsWith('Mac');
   const command = async (name) => {
     document.body.dispatchEvent(new KeyboardEvent('keydown', { code: 'KeyP', key: 'p', bubbles: true, cancelable: true, metaKey: mac, ctrlKey: !mac }));
@@ -1964,10 +1964,10 @@ await check('meetings: fold (the rail\u2019s Fold) \u2014 to-dos under their own
   await sleep(200);
   document.body.dispatchEvent(new KeyboardEvent('keydown', { code: 'KeyM', key: 'M', shiftKey: true, bubbles: true, cancelable: true, metaKey: mac, ctrlKey: !mac }));
   await sleep(200);
-  return { review: !!review, toast, owner: /@bob/.test(review?.textContent || '') };
+  return { review: !!review, toast, owner: /@bob/.test(review?.textContent || ''), ref: /Ship the tool \\u00b7 \\[?\\[?#?Launch \\(5m\\)/.test(review?.textContent || '') };
 `, (v) => {
   const next = (() => { try { return fs.readFileSync(path.join(ws, 'sub', 'fold 2026-10-12.md'), 'utf8'); } catch { return null; } })();
-  return v?.review && v.owner && /^Folded/.test(v.toast) && /made fold 2026-10-12/.test(v.toast)
+  return v?.review && v.owner && v.ref === true && /^Folded/.test(v.toast) && /made fold 2026-10-12/.test(v.toast)
     && next === '# fold 2026-10-12\n\nPrevious meeting: [[fold 2026-10-05]]\n\n## Launch (5m)\n\n- A press kit? #question\n' ? null : `got ${JSON.stringify({ v, next })}`;
 });
 for (const f of ['fold 2026-10-05.md', 'fold 2026-10-12.md']) fs.rmSync(path.join(ws, 'sub', f), { force: true });

@@ -9,7 +9,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { wanted, ruleOf, dueOf, leadOf, parseReply, keptLine, keepEdit, keepAll, memoryOf, plainReply, asked, foldReply, projectMemory, snippetsFor, quantile } from '../public/live.js';
+import { wanted, ruleOf, kindFor, dueOf, leadOf, parseReply, keptLine, keepEdit, keepAll, memoryOf, plainReply, asked, foldReply, projectMemory, snippetsFor, quantile } from '../public/live.js';
 
 const require = createRequire(import.meta.url);
 const server = require('../lib/live.js');
@@ -69,12 +69,34 @@ test('parseReply: the head once its bracket closes, then the sentence (both side
     assert.equal(parse('[whatever] Hi').kind, null);
     assert.equal(parse('[todo @bob] Bob drafts the notes; [todo @mina] Mina reviews').sentence, 'Bob drafts the notes; Mina reviews');
     assert.equal(parse('[todo @bob] Bob drafts the notes,\n[todo @mina] Mina reviews').sentence, 'Bob drafts the notes, Mina reviews');
-    assert.equal(parse('No head at all.').sentence, 'No head at all.');
+    // No head, or talking to the person: not minutes.
+    assert.deepEqual(parse('I\'m ready to take minutes for your meeting. I see you\'ve'), { head: true, kind: null, talk: true, sentence: '' });
+    assert.equal(parse('[note] I see you\'ve started a heading.').talk, true);
+    assert.equal(parse('[note] Sure, what would you like?').talk, true);
+    assert.equal(parse('[note] \uB124, \uC54C\uACA0\uC2B5\uB2C8\uB2E4.').talk, true);
+    assert.equal(parse('[note] I see').talk, true);
+    assert.equal(parse('[note] Ivan sees the demo Friday.').talk, undefined);
+    assert.equal(parse('[note] \uB124 \uBA85\uC774 \uC628\uB2E4.').talk, undefined);
+    assert.deepEqual(parse('  '), { head: false, sentence: '' }, 'nothing yet');
     // A remark after "||" (a partial "|" while it streams is not shown).
     assert.deepEqual([parse('[decision] We launch Oct 27. |').sentence, parse('[decision] We launch Oct 27. |').remark], ['We launch Oct 27.', '']);
     const r = parse('[decision] We launch Oct 27. || Last meeting set Oct 20. Changed?');
     assert.deepEqual([r.sentence, r.remark], ['We launch Oct 27.', 'Last meeting set Oct 20. Changed?']);
   }
+});
+
+test('kindFor: a line that asks is a question, whatever the model says', () => {
+  const line = '- \uBCF4\uB3C4\uC790\uB8CC \uD544\uC694?? bob \uBAA8\uB984';
+  assert.equal(ruleOf(line).kind, 'question');
+  assert.equal(kindFor(line, 'todo'), 'question');
+  assert.equal(kindFor('a press kit?', 'decision'), 'question');
+  assert.equal(kindFor('a press kit?  ', 'note'), 'question');
+  assert.equal(kindFor('what if we skip the beta?', 'idea'), 'idea');
+  assert.equal(kindFor('will the review slip?', 'risk'), 'risk');
+  assert.equal(kindFor('\uBCF4\uB3C4\uC790\uB8CC \uD544\uC694? \uBBFC\uC218\uAC00 \uD655\uC778', 'todo'), 'todo', 'a ? in the middle, then a task');
+  assert.equal(kindFor('?? when is the beta', 'answer'), 'answer');
+  assert.equal(kindFor('launch on the 20th', 'decision'), 'decision');
+  assert.equal(kindFor('a press kit?', null), null);
 });
 
 test('ask the margin: a ?? line, answered, kept in its place', () => {

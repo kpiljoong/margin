@@ -199,8 +199,9 @@ function forksOf(f, text) {
 // "Make or change a command…": whatever was asked, the demo adds one macro,
 // "Make it a task", on ⌥X o t (and a step Margin can't read when asked for
 // a broken one, to see the review say so).
-// The meeting's note with a wrap-up at its end (the to-dos moved there, by
-// owner), and the next meeting's note → [note, { path, text }].
+// The meeting's note with a wrap-up at its end (the to-dos listed there by
+// owner, each left where it was written), and the next meeting's note →
+// [note, { path, text }].
 function wrapUp(f, text, rawTask) {
   const lines = text.replace(/\n+$/, '').split('\n');
   const keep = [];
@@ -231,11 +232,17 @@ function wrapUp(f, text, rawTask) {
     if (other) once(/idea/i.test(other[1]) ? ideas : risks, other[2].trim());
     // A topic for next time: under its item in the next meeting's note.
     if (!tagged && !/^\s*[-*+]\s+\[/.test(l) && !/^\s*>/.test(l) && /(^|\s)#next\b/i.test(l) && agenda.length) agenda[agenda.length - 1].later.push(l.replace(/^\s*(?:[-*+]\s+)?/, '').replace(/\s*#next\b/gi, '').trim());
-    if (/^\s*[-*+]\s+\[[ xX]\]\s+\S/.test(l)) { todos.push(l.trim()); continue; }
+    const todo = /^\s*(?:[-*+]|\d+[.)])\s+\[([ xX])\]\s+(\S.*)$/.exec(l);
+    if (todo) todos.push({ text: todo[2], done: todo[1] !== ' ', section });
     keep.push(l);
   }
   const note = keep.join('\n').replace(/\n{3,}/g, '\n\n').replace(/\n+$/, '');
-  const owner = (t) => /(?:^|\s)@([\p{L}\p{N}_][\p{L}\p{N}_.-]*)/u.exec(t)?.[1] || '';
+  const owner = (t) => /(?:^|\s)@([\p{L}\p{N}_][\p{L}\p{N}_.-]*)/u.exec(t.text)?.[1] || '';
+  // Its words, not a to-do again: crossed out when done, linked to its section.
+  const ref = (t) => {
+    const words = t.text.replace(/(^|\s)@[\p{L}\p{N}_][\p{L}\p{N}_.-]*/gu, '$1').replace(/\s+/g, ' ').trim();
+    return `- ${t.done ? `~~${words}~~` : words}${t.section ? ` \u00b7 [[#${t.section.replace(/[[\]|#^]/g, '')}]]` : ''}`;
+  };
   const owners = [...new Set(todos.map(owner))].sort((a, b) => (!a) - (!b));
   const time = /Time on the agenda: (.*)\.\s*$/m.exec(rawTask)?.[1];
   const next = /Create the next meeting's note, (.+?): "# "/.exec(rawTask)?.[1] || f.replace(/\.md$/i, ' (next).md');
@@ -244,7 +251,7 @@ function wrapUp(f, text, rawTask) {
     `${agenda.length} item${agenda.length === 1 ? '' : 's'} on the agenda: ${decisions.length} decided, ${questions.length} left open, ${todos.length} to-do${todos.length === 1 ? '' : 's'} for ${owners.filter(Boolean).length} people.`];
   if (time) out.push('', `**Time:** ${time.split('; ').join(' · ')}`);
   out.push('', '### To-dos by owner');
-  for (const o of owners) out.push('', o ? `**@${o}**` : '**No owner**', '', ...todos.filter((t) => owner(t) === o));
+  for (const o of owners) out.push('', o ? `**@${o}**` : '**No owner**', '', ...todos.filter((t) => owner(t) === o).map(ref));
   for (const [head, xs, tag] of [['Decisions', decisions, 'decision'], ['Open questions', questions, 'question'], ['Risks', risks, 'risk'], ['Ideas', ideas, 'idea']]) {
     if (xs.length) out.push(...(out[out.length - 1] === '' ? [] : ['']), `### ${head}`, '', ...xs.map((x) => `- ${x} #${tag}`), '');
   }

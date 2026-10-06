@@ -161,11 +161,14 @@ test('the demo agent wraps a meeting up: to-dos by owner, decisions, the next me
     const note = fs.readFileSync(path.join(ws, 'Weekly 2026-10-05.md'), 'utf8');
     assert.match(note, /\n## Wrap-up\n\n2 items on the agenda: 1 decided, 1 left open, 3 to-dos for 2 people\./);
     assert.match(note, /\*\*Time:\*\* Status 4m of 5m\n/);
-    assert.match(note, /### To-dos by owner\n\n\*\*@ann\*\*\n\n- \[ \] Send the survey @ann/);
-    assert.match(note, /\*\*No owner\*\*\n\n- \[ \] Book the call\n/);
+    assert.match(note, /### To-dos by owner\n\n\*\*@ann\*\*\n\n- Send the survey \u{1F4C5} 2026-10-08 \u00b7 \[\[#Status \(5m\)\]\]\n/u);
+    assert.match(note, /\*\*No owner\*\*\n\n- Book the call \u00b7 \[\[#Launch date \(10\uBD84\)\]\]\n/);
+    assert.match(note, /- ~~Draft the notes~~ \u00b7/);
     assert.match(note, /Next meeting: \[\[Weekly 2026-10-12\]\]\n$/);
-    // Moved, not copied: each to-do once.
-    assert.equal(note.match(/Book the call/g).length, 1);
+    // Left in place: the to-do where it was, and its words in the wrap-up.
+    assert.match(note, /- \[x\] Draft the notes @\uBBFC\uC218\n- \[ \] Book the call\n/);
+    assert.equal(note.match(/Book the call/g).length, 2);
+    assert.equal(meetingItems(note).filter((i) => i.kind === 'todo').length, 3);
     const next = fs.readFileSync(path.join(ws, 'Weekly 2026-10-12.md'), 'utf8');
     assert.equal(previousOf(next), 'Weekly 2026-10-05');
     assert.match(next, /## Launch date \(10\uBD84\)\n\n- Do we need a press kit\? #question\n/);
@@ -229,7 +232,14 @@ test('the demo agent carries risks and ideas into the wrap-up, and #next to the 
   } finally { fs.rmSync(ws, { recursive: true, force: true }); }
 });
 
-test('fold: to-dos under their owners in a Wrap-up, the rest again, the next meeting', () => {
+test('fold: a to-do in a nested list stays under its item', () => {
+  const note = ['# M', '', '## Launch', '', '- Press', '  - kit?? #question', '  - [ ] Draft the kit @bob \u{1F4C5} 2026-10-09', '- Venue', '  - [ ] Book it #decision', ''].join('\n');
+  const out = foldNote(note, { path: 'M.md', next: 'M2.md' });
+  assert.ok(out.startsWith(note.trimEnd()), 'the note as it was');
+  assert.match(out, /\*\*@bob\*\*\n\n- Draft the kit \u{1F4C5} 2026-10-09 \u00b7 \[\[#Launch\]\]\n\n\*\*No owner\*\*\n\n- Book it \u00b7 \[\[#Launch\]\]\n/u);
+});
+
+test('fold: to-dos left in place and listed by owner in a Wrap-up, the rest again, the next meeting', () => {
   const note = [
     '# Weekly 2026-10-05', '', '## Launch (10m)', '', '> [!decision] We launch on Oct 10.', '', 'Before that:',
     '- [ ] Decide on QA @sua \u{1F4C5} 2026-10-09', '- [ ] Ship the tool', '- [x] Book the venue @ann', '',
@@ -238,20 +248,26 @@ test('fold: to-dos under their owners in a Wrap-up, the rest again, the next mee
   const times = [{ title: 'Launch', budget: 10, ms: 12 * 60000 }, { title: 'Pricing', budget: 5, ms: 0 }];
   const out = foldNote(note, { path: 'sub/Weekly 2026-10-05.md', next: 'sub/Weekly 2026-10-12.md', summary: 'We set the launch.', times });
   assert.equal(out, [
-    '# Weekly 2026-10-05', '', '## Launch (10m)', '', '> [!decision] We launch on Oct 10.', '', 'Before that:', '',
+    '# Weekly 2026-10-05', '', '## Launch (10m)', '', '> [!decision] We launch on Oct 10.', '', 'Before that:',
+    '- [ ] Decide on QA @sua \u{1F4C5} 2026-10-09', '- [ ] Ship the tool', '- [x] Book the venue @ann', '',
     '> [!question] A press kit?', '', '## Pricing (5m)', '', '> [!warning] Review may slip.', '', '- Offer range #next', '',
     '## Wrap-up', '', 'We set the launch.', '', '**Time:** Launch 12m of 10m', '',
-    '### To-dos by owner', '', '**@sua**', '', '- [ ] Decide on QA @sua \u{1F4C5} 2026-10-09', '', '**@ann**', '', '- [x] Book the venue @ann', '',
-    '**No owner**', '', '- [ ] Ship the tool', '',
+    '### To-dos by owner', '', '**@sua**', '', '- Decide on QA \u{1F4C5} 2026-10-09 \u00b7 [[#Launch (10m)]]', '', '**@ann**', '', '- ~~Book the venue~~ \u00b7 [[#Launch (10m)]]', '',
+    '**No owner**', '', '- Ship the tool \u00b7 [[#Launch (10m)]]', '',
     '### Decisions', '', '- We launch on Oct 10. #decision', '', '### Open questions', '', '- A press kit? #question', '',
     '### Risks', '', '- Review may slip. #risk', '', 'Next meeting: [[Weekly 2026-10-12]]', '',
   ].join('\n'));
-  // Again: the section is redone, its to-dos (and a new one) moved again.
+  // Read again, the wrap-up's list is not more to-dos, decisions or questions.
+  assert.equal(meetingItems(out).filter((i) => i.kind === 'todo').length, 3);
+  // Again: the section is redone, with a new to-do.
   const again = foldNote(`${out.replace('\n## Wrap-up', '- [ ] New one @bob\n\n## Wrap-up')}`, { path: 'sub/Weekly 2026-10-05.md', next: 'sub/Weekly 2026-10-12.md' });
   assert.equal(again.match(/## Wrap-up/g).length, 1);
-  assert.match(again, /\*\*@bob\*\*\n\n- \[ \] New one @bob\n/);
-  assert.equal(again.match(/Decide on QA/g).length, 1);
+  assert.match(again, /\*\*@bob\*\*\n\n- New one \u00b7 \[\[#Pricing \(5m\)\]\]\n/);
+  assert.equal(again.match(/Decide on QA/g).length, 2);
   assert.ok(!again.includes('We set the launch.'));
+  // To-dos an older fold moved into its section: back into the note.
+  const older = foldNote('# M\n\n## A\n\n- talk\n\n## Wrap-up\n\n### To-dos by owner\n\n**@bob**\n\n- [ ] Call @bob\n', { path: 'M.md', next: 'M2.md' });
+  assert.match(older, /^# M\n\n## A\n\n- talk\n\n- \[ \] Call @bob\n\n## Wrap-up\n\n### To-dos by owner\n\n\*\*@bob\*\*\n\n- Call\n/);
   // Next time: the same agenda, its questions and #next under their items.
   assert.equal(nextNote(note, { path: 'sub/Weekly 2026-10-05.md', next: 'sub/Weekly 2026-10-12.md' }), [
     '# Weekly 2026-10-12', '', 'Previous meeting: [[Weekly 2026-10-05]]', '', '## Launch (10m)', '', '- A press kit? #question', '',
