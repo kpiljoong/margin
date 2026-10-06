@@ -30,7 +30,12 @@ async function startServer() {
     return data;
   };
   await sleep(300); // the watcher is up
-  return { ws, api, stop: () => { proc.kill(); fs.rmSync(ws, { recursive: true, force: true }); } };
+  // Gone before its folder is: it may still be writing what it saw.
+  const stop = async () => {
+    if (proc.exitCode === null) await new Promise((r) => { proc.once('exit', r); proc.kill(); });
+    fs.rmSync(ws, { recursive: true, force: true, maxRetries: 5 });
+  };
+  return { ws, api, stop };
 }
 
 test('tasks: every checkbox line with its due date, not in code or templates; checked off by line', async (t) => {
