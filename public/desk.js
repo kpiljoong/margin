@@ -399,7 +399,12 @@ export class Desk {
       e.stopPropagation();
       const id = [...(this.nums || [])].find(([, v]) => v === Number(n[1]))?.[0];
       const card = id && this.d.nodes.find((x) => x.id === id);
-      if (!card) return;
+      if (!card) {
+        // Over time's facts (its card), or a meeting not on the desk (its note).
+        const ai = id?.startsWith('trail:') && this.ai.find((a) => a.id === id.slice(6));
+        if (ai) this.show(ai, true); else if (id && NOTE.test(id)) this.opts.openNote(id);
+        return;
+      }
       this.sel = new Set([id]);
       this.paintSel();
       this.dockShow();
@@ -1585,7 +1590,7 @@ export class Desk {
       const t = trailOf(notes);
       const n = t.meetings.length;
       const at = this.spot(ns, 440, 320);
-      const card = this.addAi({ kind: 'trail', title: `Over time \u00B7 ${n} meeting${n === 1 ? '' : 's'}`, x: at.x, y: at.y, width: 440, height: 200, text: trailText(t), state: 'done', paths: files }, false);
+      const card = this.addAi({ kind: 'trail', title: `Over time \u00B7 ${n} meeting${n === 1 ? '' : 's'}`, x: at.x, y: at.y, width: 440, height: 200, text: trailText(t), state: 'done', paths: t.meetings.map((m) => m.path) }, false);
       this.status.textContent = `Over time \u00B7 ${n}`;
       if (r.more) this.say(`Only ${(r.notes || []).length} meetings of the chain were read.`);
       if (hidden) this.say(`${hidden} private note${hidden === 1 ? '' : 's'} left out.`);
@@ -1622,9 +1627,9 @@ export class Desk {
       if (!notes.length) throw new Error('Nothing to read: the meetings are private.');
       const t = trailOf(notes);
       const on = (p) => this.d.nodes.find((n) => n.type === 'file' && n.file === p);
-      const facts = trailText(t, { max: 40 });
-      // The server sends a note's first 6000 characters, 40000 in all.
-      let room = 38000 - facts.length;
+      const facts = trailText(t, { max: 15 });
+      // The server sends a card's first 6000 characters, 40000 in all.
+      let room = 38000 - Math.min(6000, facts.length);
       const size = new Map(notes.map((n) => [n.path, Math.min(6000, n.text.length)]));
       const sent = [...t.meetings].reverse().filter((m) => (room -= size.get(m.path)) >= 0).reverse();
       const cards = [{ key: `trail:${a.id}`, text: facts },
