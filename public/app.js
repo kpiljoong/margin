@@ -1283,6 +1283,7 @@ function filesPanel() {
       h('button', { class: 'icon-btn', title: 'Show the open file in the tree', onclick: locateFile }, '◎'),
       h('button', { class: 'icon-btn', title: 'Today’s journal note', onclick: openDaily }, '◷'),
       h('button', { class: 'icon-btn new-note', title: 'New note', onclick: newNoteMenu }, '+'),
+      h('button', { class: 'icon-btn new-desk', title: 'New desk… (cards to think with, a .canvas)', onclick: () => newDesk() }, '▦'),
       h('button', { class: 'icon-btn', title: 'New folder', onclick: () => newFolder() }, '⊞'),
       h('button', { class: 'icon-btn', title: 'Refresh', onclick: () => loadTree().then(syncOpenTabs) }, '↻')),
   ];
@@ -1572,6 +1573,7 @@ function resizeEditor(e) {
   handle.addEventListener('pointerup', up);
 }
 
+let midTab = null;
 function renderTabs() {
   ensurePanes();
   S.groups.forEach((grp, g) => {
@@ -1584,7 +1586,11 @@ function renderTabs() {
       'data-id': t.id,
       ondragstart: (e) => { e.dataTransfer.setData('text/x-agent-notes-tab', t.id); e.dataTransfer.effectAllowed = 'move'; document.body.classList.add('tab-dragging'); },
       ondragend: tabDragEnd,
-      onclick: () => activate(t.id), onauxclick: (e) => { if (e.button === 1) closeTab(t.id); },
+      onclick: () => activate(t.id),
+      // The middle button closes the tab: kept by the tab's id, since saving (the editor losing focus) may draw the
+      // tabs again between the press and the release, when an auxclick would go to neither.
+      onmousedown: (e) => { if (e.button === 1) { e.preventDefault(); midTab = t.id; } },
+      onmouseup: (e) => { if (e.button === 1 && midTab === t.id) { midTab = null; closeTab(t.id); } },
       oncontextmenu: (e) => contextMenu(e, [
         { label: S.groups.length > 1 ? 'Move to other pane' : 'Open to the side', run: () => moveTab(t, t.group === 0 ? 1 : 0) },
         isDoc(t) ? { label: 'Rename / move file…', run: () => renameItem(t.path) } : null,

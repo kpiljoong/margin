@@ -187,7 +187,7 @@ No agent is involved: it is a way of putting your own notes together by hand. It
 
 ### The desk: cards to think with (experimental)
 
-A **desk** is a plane to lay notes and thoughts out on, move them about, pile them up and think about them with the margin. It is a `.canvas` file — a [JSON Canvas](https://jsoncanvas.org), as Obsidian writes them, so the same desk opens there and Margin keeps what Obsidian wrote (colours, sides of the arrows, fields it doesn't know). Make one with the palette's **New desk…** or a folder's right-click **New desk here…**; open one from the tree (▦).
+A **desk** is a plane to lay notes and thoughts out on, move them about, pile them up and think about them with the margin. It is a `.canvas` file — a [JSON Canvas](https://jsoncanvas.org), as Obsidian writes them, so the same desk opens there and Margin keeps what Obsidian wrote (colours, sides of the arrows, fields it doesn't know). Make one with the **▦** button at the top of the file tree (beside **+**, the new note), the palette's **New desk…** or a folder's right-click **New desk here…**; open one from the tree (▦).
 
 **Open on a desk** (palette, on a note — a meeting's, mostly) makes a desk beside the note, *note desk.canvas*: the note in the middle, its open questions (`#question`, or `> [!question]`) and its to-dos not done as cards, in groups, and the notes it links to (`[[…]]`). Each card taken from the note says where from — a link back to its line — and stays as it was written; when the note settles the question or ticks the to-do, the card says so (*no longer open in the note*, *done in the note*) and dims. Made once; after that, the same desk opens.
 
@@ -522,7 +522,7 @@ Each `##` with a ```` ```macro ```` block is a command, "Macro: Make it a task" 
   - Drag the middle divider to resize the two panes (double-click for 50/50). The ratio is remembered.
   - Drag tabs to reorder them or move them to the other pane's tab bar or editor area. Closing a pane merges its tabs into the other pane.
   - Layout and tab order are remembered per workspace.
-- **Tab context menu**: Close, Close others, Close to the right, Close all (tabs in that pane). Unsaved tabs ask before closing (saved first if autosave is on). The palette also has Close other tabs / Close all tabs.
+- **Tab context menu**: Close, Close others, Close to the right, Close all (tabs in that pane). A click with the middle button (the wheel) closes a tab. Unsaved tabs ask before closing (saved first if autosave is on). The palette also has Close other tabs / Close all tabs.
 - **10 themes**: Midnight, Paper, Nord, Solarized Dark/Light, Dracula, Gruvbox Dark, GitHub Light, Sepia, High Contrast. The default, System, switches between Midnight/Paper following the OS setting. In the palette's `Theme: choose…` you can preview with the arrow keys and cancel with Esc; you can also click ◐ in the status bar.
 - **Theme extensions**:
   - Pick your own accent color
