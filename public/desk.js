@@ -285,7 +285,7 @@ function button(label, title, run, cls = '') {
 }
 // The margin's cards as kept beside the desk: done ones, what shows them.
 export const marginCards = (ai) => ai.filter((a) => a.state === 'done' && String(a.text || '').trim()).slice(-200)
-  .map(({ id, kind, batch, of, title, text, x, y, width, height }) => ({ id, kind, ...(batch ? { batch } : {}), ...(of ? { of } : {}), ...(title ? { title } : {}), text, x, y, width, height }));
+  .map(({ id, kind, batch, of, title, text, x, y, width, height, paths }) => ({ id, kind, ...(batch ? { batch } : {}), ...(of ? { of } : {}), ...(title ? { title } : {}), text, x, y, width, height, ...(paths?.length ? { paths } : {}) }));
 const SVG = 'http://www.w3.org/2000/svg';
 const svg = (tag, cls) => { const e = document.createElementNS(SVG, tag); if (cls) e.setAttribute('class', cls); return e; };
 
@@ -1575,12 +1575,20 @@ export class Desk {
     this.status.textContent = 'Over time\u2026';
     try {
       const r = await this.opts.trail(files);
-      const t = trailOf(r.notes || []);
+      // Private notes stay out of it: the card may be kept, and sent later.
+      let notes = (r.notes || []).filter((x) => !x.private);
+      const hidden = (r.notes || []).length - notes.length;
+      // The cards in view (none selected): only the notes in a series, when some are.
+      const linked = new Set(notes.flatMap((x) => (x.prev ? [x.path, x.prev] : [])));
+      if (!this.sel.size && linked.size) notes = notes.filter((x) => linked.has(x.path));
+      if (!notes.length) throw new Error('Nothing to follow: the notes are private.');
+      const t = trailOf(notes);
       const n = t.meetings.length;
       const at = this.spot(ns, 440, 320);
-      const card = this.addAi({ kind: 'trail', title: `Over time \u00B7 ${n} meeting${n === 1 ? '' : 's'}`, x: at.x, y: at.y, width: 440, height: 200, text: trailText(t), state: 'done' }, false);
+      const card = this.addAi({ kind: 'trail', title: `Over time \u00B7 ${n} meeting${n === 1 ? '' : 's'}`, x: at.x, y: at.y, width: 440, height: 200, text: trailText(t), state: 'done', paths: files }, false);
       this.status.textContent = `Over time \u00B7 ${n}`;
-      if (r.more) this.say(`Only the first ${n} meetings of the chain were read.`);
+      if (r.more) this.say(`Only ${(r.notes || []).length} meetings of the chain were read.`);
+      if (hidden) this.say(`${hidden} private note${hidden === 1 ? '' : 's'} left out.`);
       if (n > 1) this.proposeRow(t.meetings); else this.show(card, true);
     } catch (err) {
       this.status.textContent = '';
@@ -1594,10 +1602,60 @@ export class Desk {
   // The meetings in a row below the cards, in order, each in a group named
   // by its place and date (≈ when it is estimated), an arrow to the next;
   // a note not on the desk yet comes onto it.
+  // What the rules can't tell (Over time's card, "Read into it"): the same
+  // to-dos written differently, what goes against what, what holds now, what
+  // to raise first — the margin reads the card's facts, worked out again
+  // without the private ones, and the meetings, oldest first, each titled
+  // with its date (as many of the newest as the request has room for).
+  async readTrail(a) {
+    if (this.busy || !a?.paths?.length || !this.opts.trail) return;
+    this.busy = 'Read into it';
+    this.dockShow();
+    this.status.textContent = 'Read into it\u2026';
+    this.el.classList.add('thinking');
+    const at = this.spot([a], 440, 360);
+    const card = this.addAi({ kind: 'summary', title: 'Over time \u00B7 what it means', x: at.x, y: at.y, width: 440, height: 240, text: '' });
+    const t0 = performance.now();
+    try {
+      const r = await this.opts.trail(a.paths);
+      const notes = (r.notes || []).filter((n) => !n.private);
+      if (!notes.length) throw new Error('Nothing to read: the meetings are private.');
+      const t = trailOf(notes);
+      const on = (p) => this.d.nodes.find((n) => n.type === 'file' && n.file === p);
+      const facts = trailText(t, { max: 40 });
+      // The server sends a note's first 6000 characters, 40000 in all.
+      let room = 38000 - facts.length;
+      const size = new Map(notes.map((n) => [n.path, Math.min(6000, n.text.length)]));
+      const sent = [...t.meetings].reverse().filter((m) => (room -= size.get(m.path)) >= 0).reverse();
+      const cards = [{ key: `trail:${a.id}`, text: facts },
+        ...sent.map((m) => ({ key: on(m.path)?.id || m.path, file: m.path, when: m.date ? `${m.estimated ? '\u2248' : ''}${m.date}` : 'no date' }))];
+      if (sent.length < t.meetings.length) this.say(`The ${sent.length} newest meetings were read (the card\u2019s facts are from all ${t.meetings.length}).`);
+      const res = await this.opts.ask({ task: 'trail', cards }, (said) => { card.text = said; card.state = 'stream'; this.els.get(card.id)?.show(card); });
+      this.withheld = res.withheld;
+      this.nums = res.nums;
+      if (!res.end?.ok) throw new Error(res.end?.error || 'No answer');
+      card.text = res.said.trim();
+      card.state = 'done';
+      this.render();
+      this.show(card);
+      this.status.textContent = `Read into it \u00B7 ${((performance.now() - t0) / 1000).toFixed(1)}s`;
+    } catch (err) {
+      card.state = 'error';
+      card.text = err.message;
+      this.els.get(card.id)?.show(card);
+      this.status.textContent = '';
+      this.opts.toast(err.message, 'error');
+    } finally {
+      this.busy = null;
+      this.el.classList.remove('thinking');
+      this.dockShow();
+      this.saveMargin();
+    }
+  }
   proposeRow(ms) {
     const cards = this.d.nodes.filter((n) => n.type !== 'group');
-    const b = boundsOf(cards) || { x: 0, y: 0, width: 0, height: 0 };
-    const y = cards.length ? b.y + b.height + 160 : 0;
+    const b = boundsOf([...cards, ...this.ai.map((a) => ({ ...a, height: this.els.get(a.id)?.offsetHeight || a.height }))]) || { x: 0, y: 0, width: 0, height: 0 };
+    const y = cards.length || this.ai.length ? b.y + b.height + 160 : 0;
     let x = b.x;
     const layout = ms.map((m, i) => {
       const n = this.d.nodes.find((c) => c.type === 'file' && c.file === m.path);
@@ -1641,6 +1699,8 @@ export class Desk {
       this.change({ ...this.d, nodes: [...groups, ...this.d.nodes.map((n) => (pos.has(n.id) ? { ...n, x: pos.get(n.id).x, y: pos.get(n.id).y } : n))] });
       this.fit(true, groups);
     } else if (p.kind === 'row') {
+      // A card taken off the desk since: brought back.
+      for (const g of p.layout) if (g.id && !this.d.nodes.some((n) => n.id === g.id)) g.id = null;
       const groups = p.layout.map((g) => ({ id: newId(), type: 'group', label: g.name, ...g.box }));
       const added = p.layout.filter((g) => !g.id).map((g) => ({ id: newId(), type: 'file', file: g.path, ...g.at, width: g.width, height: g.height }));
       const pos = new Map(p.layout.filter((g) => g.id).map((g) => [g.id, g.at]));
@@ -1666,8 +1726,9 @@ export class Desk {
     const keep = button('Keep', 'Keep it as a card of the desk (Tab)', () => this.keep(a));
     const all = button('Keep all', 'Keep all that came with it as cards of the desk (\u21E7Tab)', () => this.keepAll(a));
     const note = button('Make a note…', 'A new note of it, on the desk in its place', () => this.makeNote(a));
+    const read = button('Read into it', 'What the rules can\u2019t tell: the same to-dos written differently, what goes against what, what holds now, what to raise first. The meetings (not private ones) go to the margin', () => this.readTrail(a));
     const drop = button('×', 'Let it go (Esc)', () => this.drop(a), 'ghost');
-    const foot = el('div', 'desk-ai-foot', keep, all, note, drop);
+    const foot = el('div', 'desk-ai-foot', keep, all, note, read, drop);
     const e = el('div', 'desk-card t-ai', head, body, foot);
     e.dataset.id = a.id;
     e.show = (x) => {
@@ -1677,6 +1738,7 @@ export class Desk {
       if (x.state === 'error') body.textContent = x.text;
       else if (e.src !== x.text) { body.innerHTML = this.opts.render(x.text || ''); e.src = x.text; }
       note.hidden = x.kind !== 'merge' || x.state !== 'done';
+      read.hidden = x.kind !== 'trail' || x.state !== 'done' || !x.paths?.length;
       keep.disabled = x.state !== 'done';
       const n = this.batchOf(x).length;
       all.hidden = n < 2;

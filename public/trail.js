@@ -98,7 +98,7 @@ export function trailOf(notes) {
   const meetings = order.map((n) => ({ path: n.path, name: stemOf(n.path), date: n.date, how: n.how, estimated: n.estimated }));
   const todos = new Map();
   const questions = new Map();
-  const decided = new Map();
+  const decided = new Map(); // same words → the meetings it was decided in
   order.forEach((n, i) => {
     for (const it of meetingItems(n.text || '')) {
       const same = sameOf(it.text);
@@ -112,7 +112,11 @@ export function trailOf(notes) {
         const q = questions.get(same) || { text: it.body, in: [] };
         if (!q.in.includes(i)) q.in.push(i);
         questions.set(same, q);
-      } else if (it.kind === 'decision' && !decided.has(same)) decided.set(same, { text: it.body, in: i });
+      } else if (it.kind === 'decision') {
+        const d = decided.get(same) || { text: it.body, in: i, all: [] };
+        if (!d.all.includes(i)) d.all.push(i);
+        decided.set(same, d);
+      }
     }
   });
   const out = [...todos.values()].map((t) => {
@@ -132,10 +136,11 @@ export function trailOf(notes) {
     meetings,
     todos: out,
     questions: [...questions.entries()].map(([same, q]) => {
-      const d = decided.get(same);
-      return { text: q.text, in: q.in, decided: d && d.in >= q.in[0] ? d.in : null };
+      // Decided after it was last asked (one decided before and asked again is open again).
+      const d = decided.get(same)?.all.find((i) => i >= q.in.at(-1));
+      return { text: q.text, in: q.in, decided: d ?? null };
     }),
-    decisions: [...decided.values()],
+    decisions: [...decided.values()].map((d) => ({ text: d.text, in: d.in })),
   };
 }
 

@@ -836,6 +836,7 @@ function saveDeskMargin({ path: relPath, cards }) {
     id: cleanStr(c?.id, 64), kind: DESK_KINDS.has(c?.kind) ? c.kind : 'answer',
     batch: cleanStr(c?.batch, 64) || undefined, of: cleanStr(c?.of, 64) || undefined, title: cleanStr(c?.title, 200) || undefined,
     text: cleanStr(c?.text, 50000), x: num(c?.x), y: num(c?.y), width: num(c?.width, 60), height: num(c?.height, 40),
+    paths: Array.isArray(c?.paths) ? c.paths.slice(0, 24).map((p) => cleanStr(p, 1000)).filter(Boolean) : undefined,
   })).filter((c) => c.id && c.text.trim());
   const file = deskMarginOf(rel);
   if (!clean.length) fs.rmSync(file, { force: true });
@@ -850,24 +851,53 @@ function saveDeskMargin({ path: relPath, cards }) {
 // was ticked). Read here, sent nowhere.
 const TRAIL_MAX = 24;
 const PREVIOUS_RE = /^\s*(?:\*\*)?Previous meeting:?(?:\*\*)?:?\s*\[\[([^\]|#]+)/i;
+// The meeting a note names before it, from its first 4 KB, kept while the
+// file is the same (every note is looked at for each request).
+const previousNames = new Map(); // rel → { mtimeMs, size, name }
+function previousName(rel) {
+  const abs = path.join(ROOT, rel);
+  let st;
+  try { st = fs.statSync(abs); } catch { previousNames.delete(rel); return null; }
+  const hit = previousNames.get(rel);
+  if (hit && hit.mtimeMs === st.mtimeMs && hit.size === st.size) return hit.name;
+  let head = '';
+  try {
+    const fd = fs.openSync(abs, 'r');
+    const buf = Buffer.alloc(4096);
+    const n = fs.readSync(fd, buf, 0, buf.length, 0);
+    fs.closeSync(fd);
+    head = buf.subarray(0, n).toString('utf8');
+  } catch { /* unreadable: none */ }
+  const name = head.split('\n', 20).map((l) => PREVIOUS_RE.exec(l)).find(Boolean)?.[1].trim() || null;
+  if (previousNames.size > 50000) previousNames.clear();
+  previousNames.set(rel, { mtimeMs: st.mtimeMs, size: st.size, name });
+  return name;
+}
 function deskTrail({ paths }) {
   if (!Array.isArray(paths) || !paths.length) throw httpError(400, 'paths should be a list');
   const ignored = loadIgnore(ROOT);
   const notes = workspaceFiles().filter((f) => NOTE_EXT.has(extOf(f)) && !isTemplatePath(f) && !ignored(f));
-  // [[name]] → a note: its path (with or without .md), else its name anywhere.
+  // [[name]] → a note: in the folder of the note that names it, then by its
+  // path from the root (with or without .md), else by its name anywhere.
   const byPath = new Map(notes.map((f) => [f.toLowerCase(), f]));
   const byName = new Map();
-  for (const f of notes) { const k = path.basename(f).replace(/\.(md|markdown)$/i, '').toLowerCase(); if (!byName.has(k)) byName.set(k, f); }
-  const find = (name) => { const t = name.trim().toLowerCase(); return byPath.get(t) || byPath.get(`${t}.md`) || byName.get(path.basename(t)) || null; };
+  const stemOf = (f) => path.posix.basename(f).replace(/\.(md|markdown)$/i, '').toLowerCase();
+  for (const f of notes) { const k = stemOf(f); if (!byName.has(k)) byName.set(k, f); }
+  const find = (name, from) => {
+    const t = name.trim().toLowerCase();
+    const dir = path.posix.dirname(from.toLowerCase());
+    const here = dir === '.' ? t : `${dir}/${t}`;
+    return byPath.get(here) || byPath.get(`${here}.md`) || byPath.get(t) || byPath.get(`${t}.md`) || byName.get(stemOf(t)) || null;
+  };
   const prevOf = new Map();
   for (const f of notes) {
-    const head = (cachedText(f)?.text || '').split('\n', 20);
-    const m = head.map((l) => PREVIOUS_RE.exec(l)).find(Boolean);
-    const p = m && find(m[1]);
+    const name = previousName(f);
+    const p = name && find(name, f);
     if (p && p !== f) prevOf.set(f, p);
   }
   const want = [];
-  const add = (f) => { if (f && !want.includes(f) && want.length < TRAIL_MAX) want.push(f); };
+  let more = false;
+  const add = (f) => { if (!f || want.includes(f)) return; if (want.length < TRAIL_MAX) want.push(f); else more = true; };
   for (const p of paths) add(byPath.get(String(p).toLowerCase()));
   for (let i = 0; i < want.length; i++) {
     add(prevOf.get(want[i]));
@@ -889,7 +919,7 @@ function deskTrail({ paths }) {
         versions, private: isPrivateNote(path.join(ROOT, f)) || undefined,
       };
     }),
-    more: want.length >= TRAIL_MAX,
+    more,
   };
 }
 
@@ -2450,6 +2480,8 @@ function deskCards(cards) {
       const rel = relOf(abs);
       if (ignored(rel) || (NOTE_EXT.has(extOf(abs)) && isPrivateNote(abs))) { withheld.push(rel); continue; }
       title = path.basename(rel).replace(/\.[^.]+$/, '');
+      // Its date, when the desk knows it (Over time): beside the title.
+      if (typeof c.when === 'string' && c.when.trim()) title += ` (${c.when.trim().slice(0, 40)})`;
       const pic = RAW_MIME[extOf(abs)] && pictures < 8 && deskPicture(c.picture);
       if (pic) pics.push({ ...pic, what: `the picture ${path.basename(rel)}` });
       else if (!NOTE_EXT.has(extOf(abs))) text = '(a file that is not a note)';

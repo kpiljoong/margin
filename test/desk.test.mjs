@@ -151,6 +151,10 @@ test('the server: the cards it sends, numbered; a private note never', { skip: p
   assert.match(said, /^Cards:\n#1 "a":\n# A\n\nopen text\n\n#2 card:\na card\n\nRequest \(cards #1, #2\): Sum/);
   assert.doesNotMatch(said, /secret|hidden|tags/);
   assert.equal(lines.at(-1).end.ok, true);
+  // Over time, read into: a meeting's date beside its title; what is asked.
+  const tr = (await ask({ path: 'd.canvas', task: 'trail', cards: [{ key: 't', text: 'facts' }, { key: 'k1', file: 'a.md', when: '\u22482026-09-17' }, { key: 'k2', file: 'secret.md', when: '2026-09-10' }] }));
+  assert.deepEqual(tr[0], { cards: [['t', 1], ['k1', 2]], withheld: ['secret.md'] });
+  assert.match(tr.filter((l) => l.t != null).map((l) => l.t).join(''), /^Cards:\n#1 card:\nfacts\n\n#2 "a \(\u22482026-09-17\)":\n# A[^]*Request \(cards #1, #2\): The first card was worked out by rules[^]*## Same to-dos[^]*## To raise/);
   // A talk: a card keeps its number, and is shown once.
   const talk = async (cs, q) => (await ask({ path: 'd.canvas', task: 'chat', cards: cs, question: q, talk: 'T1' }));
   let r = await talk([{ key: 'x', text: 'one' }], 'q1');
@@ -180,18 +184,20 @@ test('the server: the cards it sends, numbered; a private note never', { skip: p
   assert.equal((await api('PUT', '/api/desk/margin', { path: 'd.canvas', cards: [
     { id: 'q1', kind: 'question', batch: 'b1', text: '? Who pays? (#1)', x: 10.4, y: 20, width: 340, height: 60, state: 'done', extra: 1 },
     { id: 'q2', kind: 'rm -rf', text: 'an answer', x: 'no', y: 0, width: 0, height: 0 },
+    { id: 'q4', kind: 'trail', text: 'facts', x: 0, y: 0, width: 440, height: 200, paths: ['m/a.md', 7, ''] },
     { id: 'q3', kind: 'summary', text: '  ' },
-  ] })).cards, 2);
+  ] })).cards, 3);
   assert.deepEqual((await api('GET', '/api/desk/margin?path=d.canvas')).cards, [
     { id: 'q1', kind: 'question', batch: 'b1', text: '? Who pays? (#1)', x: 10, y: 20, width: 340, height: 60 },
     { id: 'q2', kind: 'answer', text: 'an answer', x: 0, y: 0, width: 60, height: 40 },
+    { id: 'q4', kind: 'trail', text: 'facts', x: 0, y: 0, width: 440, height: 200, paths: ['m/a.md'] },
   ]);
   assert.equal(fs.readFileSync(path.join(ws, 'd.canvas'), 'utf8'), EMPTY_DESK);
   assert.ok(fs.existsSync(path.join(ws, '.agent-notes', 'desk', 'd.canvas.json')));
   assert.match((await api('PUT', '/api/desk/margin', { path: 'a.md', cards: [] })).error, /Not a desk/);
   assert.match((await api('GET', '/api/desk/margin?path=../x.canvas')).error || '', /./);
   await api('POST', '/api/rename', { from: 'd.canvas', to: 'e/d2.canvas' });
-  assert.equal((await api('GET', '/api/desk/margin?path=e/d2.canvas')).cards.length, 2);
+  assert.equal((await api('GET', '/api/desk/margin?path=e/d2.canvas')).cards.length, 3);
   await api('PUT', '/api/desk/margin', { path: 'e/d2.canvas', cards: [] });
   assert.ok(!fs.existsSync(path.join(ws, '.agent-notes', 'desk', 'e', 'd2.canvas.json')));
   await api('POST', '/api/rename', { from: 'e/d2.canvas', to: 'd.canvas' });

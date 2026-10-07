@@ -85,6 +85,10 @@ test('the trail: to-dos that came back, ticked, questions decided', () => {
   assert.doesNotMatch(md, /Ask legal/); // ticked when it was written: nothing to follow
   assert.match(md, /- Do we need a beta\? · 09-03, 09-10 → decided 09-17/);
   assert.match(md, /\*\*Decided\*\* \(2\)\n- 09-03 · We ship on Friday/);
+  // Decided, asked again, then decided again: open between, decided at the last.
+  const again = [{ path: 'a 2026-09-01.md', text: '- Beta? #decision' }, { path: 'b 2026-09-02.md', text: '- Beta? #question' }];
+  assert.equal(trailOf(again).questions[0].decided, null);
+  assert.equal(trailOf([...again, { path: 'c 2026-09-03.md', text: '- Beta? #decision' }]).questions[0].decided, 2);
   // A to-do ticked in a later meeting, not in a kept version: done by that meeting.
   const later = trailOf([notes[0], { ...notes[1], versions: [], text: '- [x] Draft the release notes @ann' }]);
   assert.deepEqual(later.todos.find((x) => /Draft/.test(x.text)).ticked, { by: null, after: null, how: 'meeting', in: 1 });
@@ -99,6 +103,10 @@ test('the server: the chain both ways, the kept versions’ to-dos', { skip: pro
   fs.writeFileSync(path.join(ws, 'm/W 2026-09-10.md'), '# W\n\nPrevious meeting: [[W 2026-09-03]]\n\n- [x] Fix login\n');
   fs.writeFileSync(path.join(ws, 'W 2026-09-17.md'), '# W\n**Previous meeting:** [[m/W 2026-09-10]]\n');
   fs.writeFileSync(path.join(ws, 'other.md'), '# other\nPrevious meeting: [[nowhere]]\n');
+  // Another series with the same names, in its own folder; a private note in it.
+  fs.mkdirSync(path.join(ws, 'b'));
+  fs.writeFileSync(path.join(ws, 'b/W 2026-09-03.md'), '---\nprivate: true\n---\n# W\n');
+  fs.writeFileSync(path.join(ws, 'b/W 2026-09-10.md'), '# W\nPrevious meeting: [[W 2026-09-03.md]]\n');
   const kept = path.join(ws, '.agent-notes', 'history', 'm', 'W 2026-09-10.md');
   fs.mkdirSync(kept, { recursive: true });
   fs.writeFileSync(path.join(kept, `${at(2026, 9, 10, 18)}.save`), '# W\n\nsome words\n- [ ] Fix login\n');
@@ -120,6 +128,8 @@ test('the server: the chain both ways, the kept versions’ to-dos', { skip: pro
   const tr = trailOf(r.notes);
   assert.deepEqual(tr.meetings.map((x) => x.path), ['m/W 2026-09-03.md', 'm/W 2026-09-10.md', 'W 2026-09-17.md']);
   assert.equal(tr.todos[0].ticked.how, 'kept');
+  const b = await trail({ paths: ['b/W 2026-09-10.md'] });
+  assert.deepEqual(b.notes.map((n) => [n.path, n.prev, !!n.private]), [['b/W 2026-09-10.md', 'b/W 2026-09-03.md', false], ['b/W 2026-09-03.md', null, true]]);
   // Not a note in the workspace: nothing.
   assert.deepEqual((await trail({ paths: ['../x.md', 'none.md'] })).notes, []);
   assert.match((await trail({})).error, /paths/);
