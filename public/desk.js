@@ -282,6 +282,9 @@ function button(label, title, run, cls = '') {
   b.addEventListener('click', (e) => { e.stopPropagation(); run(); });
   return b;
 }
+// The margin's cards as kept beside the desk: done ones, what shows them.
+export const marginCards = (ai) => ai.filter((a) => a.state === 'done' && String(a.text || '').trim()).slice(-200)
+  .map(({ id, kind, batch, of, title, text, x, y, width, height }) => ({ id, kind, ...(batch ? { batch } : {}), ...(of ? { of } : {}), ...(title ? { title } : {}), text, x, y, width, height }));
 const SVG = 'http://www.w3.org/2000/svg';
 const svg = (tag, cls) => { const e = document.createElementNS(SVG, tag); if (cls) e.setAttribute('class', cls); return e; };
 
@@ -298,7 +301,8 @@ const ACTIONS = [
 // line), pickNote() → Promise<path>, makeNote(md)
 // → Promise<path>, ask({ task, cards, question, talk }, onText) →
 // Promise<{ said, end, withheld }>, privateOf(paths) → Promise<{ path: why }>,
-// onChange(text), toast(msg, kind), reduced, dockMin, onDock(min) }
+// onChange(text), toast(msg, kind), reduced, dockMin, onDock(min),
+// loadMargin() → Promise<[card]>, saveMargin([card]) }
 export class Desk {
   constructor(opts) {
     this.opts = opts;
@@ -309,7 +313,7 @@ export class Desk {
     this.html = new Map(); // a note's card: its rendered text
     this.notes = new Map(); // a note cards were taken from: its text now
     this.priv = new Map(); // a note's card: why it is private ('' if not)
-    this.ai = []; // what the margin wrote, not kept yet
+    this.ai = []; // what the margin wrote, not kept yet (kept beside the desk, see saveMargin)
     this.proposal = null; // { kind: 'group' | 'links', ... }
     this.undo = [];
     this.redo = [];
@@ -318,6 +322,33 @@ export class Desk {
     this.build();
     this.render();
     requestAnimationFrame(() => this.fit(false));
+    this.loadMargin();
+  }
+
+  // What the margin wrote and was not kept yet stays beside the desk (not in
+  // its file: .agent-notes/desk/), so closing it loses nothing; it comes back
+  // as it was, dashed, still to be kept or let go.
+  async loadMargin() {
+    if (!this.opts.loadMargin) return;
+    let cards;
+    try { cards = await this.opts.loadMargin(); } catch { return; } // not read: nothing written over it either
+    const had = new Set(this.ai.map((a) => a.id));
+    const back = (Array.isArray(cards) ? cards : []).filter((a) => a && a.id && !had.has(a.id)).map((a) => ({ ...a, state: 'done' }));
+    this.ai = [...back, ...this.ai];
+    this.marginRead = true;
+    this.savedMargin = JSON.stringify(marginCards(back));
+    if (back.length) {
+      this.render();
+      this.say(`${back.length} of the margin\u2019s cards from before, not kept yet: Tab keeps the newest, \u21E7Tab all that came with it, Esc lets it go.`);
+    }
+  }
+  saveMargin() {
+    if (!this.marginRead || !this.opts.saveMargin) return;
+    const now = JSON.stringify(marginCards(this.ai));
+    if (now === this.savedMargin) return;
+    this.savedMargin = now;
+    clearTimeout(this.marginTimer);
+    this.marginTimer = setTimeout(() => this.opts.saveMargin(JSON.parse(now)), 300);
   }
 
   // ---- the parts
@@ -546,6 +577,7 @@ export class Desk {
       put(e);
     }
     for (const [id, e] of this.els) if (!keep.has(id)) { e.remove(); this.els.delete(id); }
+    this.saveMargin();
     // Which notes on it are private: shown, but never sent.
     const ask = [...new Set(this.d.nodes.filter((n) => n.type === 'file' && !this.priv.has(n.file)).map((n) => n.file))];
     if (ask.length && this.opts.privateOf) {
@@ -1196,7 +1228,7 @@ export class Desk {
     if (mod && k.toLowerCase() === 'z') { handled(); this.back(e.shiftKey); return; }
     if (mod && k.toLowerCase() === 'a') { handled(); this.sel = new Set(this.d.nodes.filter((n) => n.type !== 'group').map((n) => n.id)); this.paintSel(); this.dockShow(); return; }
     if (mod || e.altKey) return;
-    if (k === 'Tab') { handled(); if (this.proposal) this.take(); else this.keep(this.ai.at(-1)); return; }
+    if (k === 'Tab') { handled(); if (this.proposal) this.take(); else if (e.shiftKey) this.keepAll(this.ai.at(-1)); else this.keep(this.ai.at(-1)); return; }
     if (k === 'Escape') {
       handled();
       if (this.marking) { this.markMode(null); return; }
@@ -1503,8 +1535,9 @@ export class Desk {
         if (!qs.length) throw new Error('No questions came back');
         // One under another, as tall as they came out.
         let y = at.y;
+        const batch = newId();
         const cards = qs.map((q) => {
-          const c = this.addAi({ kind: 'question', x: at.x, y, width: 340, height: 60, text: `? ${q}`, state: 'done' }, false);
+          const c = this.addAi({ kind: 'question', batch, x: at.x, y, width: 340, height: 60, text: `? ${q}`, state: 'done' }, false);
           y += (this.els.get(c.id)?.offsetHeight || 100) + 16;
           return c;
         });
@@ -1523,6 +1556,7 @@ export class Desk {
       this.el.classList.remove('thinking');
       for (const n of ns) this.els.get(n.id)?.classList.remove('given');
       this.dockShow();
+      this.saveMargin();
     }
   }
   propose(ns, p) {
@@ -1565,9 +1599,10 @@ export class Desk {
     const head = el('div', 'desk-head');
     const body = el('div', 'desk-body md');
     const keep = button('Keep', 'Keep it as a card of the desk (Tab)', () => this.keep(a));
+    const all = button('Keep all', 'Keep all that came with it as cards of the desk (\u21E7Tab)', () => this.keepAll(a));
     const note = button('Make a note…', 'A new note of it, on the desk in its place', () => this.makeNote(a));
     const drop = button('×', 'Let it go (Esc)', () => this.drop(a), 'ghost');
-    const foot = el('div', 'desk-ai-foot', keep, note, drop);
+    const foot = el('div', 'desk-ai-foot', keep, all, note, drop);
     const e = el('div', 'desk-card t-ai', head, body, foot);
     e.dataset.id = a.id;
     e.show = (x) => {
@@ -1578,19 +1613,33 @@ export class Desk {
       else if (e.src !== x.text) { body.innerHTML = this.opts.render(x.text || ''); e.src = x.text; }
       note.hidden = x.kind !== 'merge' || x.state !== 'done';
       keep.disabled = x.state !== 'done';
+      const n = this.batchOf(x).length;
+      all.hidden = n < 2;
+      all.textContent = `Keep all ${n}`;
     };
     return e;
   }
-  keep(a) {
-    if (!a || a.state !== 'done') return;
-    this.ai = this.ai.filter((x) => x !== a);
-    const h = Math.round((this.els.get(a.id)?.offsetHeight || a.height));
-    const n = { id: newId(), type: 'text', text: a.text, x: a.x, y: a.y, width: a.width, height: Math.max(60, h) };
-    // An answer about a marked part: it stays its answer (and an arrow from the mark says so).
-    const m = a.of && this.d.nodes.find((x) => x.id === a.of && x.from?.kind === 'region');
-    if (m) n.from = { file: m.from.file, kind: 'answer', rect: m.from.rect, of: m.id, at: today() };
-    this.sel = new Set([n.id]);
-    this.change({ ...this.d, nodes: [...this.d.nodes, n], edges: m ? [...this.d.edges, { id: newId(), fromNode: m.id, toNode: n.id }] : this.d.edges });
+  // What came of one request, together (the questions): done and not kept.
+  batchOf(a) { return a?.batch ? this.ai.filter((x) => x.batch === a.batch && x.state === 'done') : a?.state === 'done' ? [a] : []; }
+  keep(a) { this.keepCards(a && a.state === 'done' ? [a] : []); }
+  keepAll(a) { this.keepCards(this.batchOf(a)); }
+  // Cards of the desk made of them, in one step (one ⌘Z).
+  keepCards(list) {
+    if (!list.length) return;
+    const gone = new Set(list);
+    this.ai = this.ai.filter((x) => !gone.has(x));
+    const nodes = [];
+    const edges = [];
+    for (const a of list) {
+      const h = Math.round((this.els.get(a.id)?.offsetHeight || a.height));
+      const n = { id: newId(), type: 'text', text: a.text, x: a.x, y: a.y, width: a.width, height: Math.max(60, h) };
+      // An answer about a marked part: it stays its answer (and an arrow from the mark says so).
+      const m = a.of && this.d.nodes.find((x) => x.id === a.of && x.from?.kind === 'region');
+      if (m) { n.from = { file: m.from.file, kind: 'answer', rect: m.from.rect, of: m.id, at: today() }; edges.push({ id: newId(), fromNode: m.id, toNode: n.id }); }
+      nodes.push(n);
+    }
+    this.sel = new Set(nodes.map((n) => n.id));
+    this.change({ ...this.d, nodes: [...this.d.nodes, ...nodes], edges: [...this.d.edges, ...edges] });
   }
   drop(a) { if (!a) return; this.ai = this.ai.filter((x) => x !== a); this.render(); }
   async makeNote(a) {

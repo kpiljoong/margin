@@ -9,7 +9,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { parseDesk, stringifyDesk, stackOnto, groupAround, childrenOf, groupAt, removeCards, parseGroups, parseLinks, parseQuestions, groupLayout, nearest, cardTitle, edgePath, STEP, EMPTY_DESK, noteDesk, linksOf, fromState, toNote } from '../public/desk.js';
+import { parseDesk, stringifyDesk, stackOnto, groupAround, childrenOf, groupAt, removeCards, parseGroups, parseLinks, parseQuestions, groupLayout, nearest, cardTitle, edgePath, STEP, EMPTY_DESK, noteDesk, linksOf, fromState, toNote, marginCards } from '../public/desk.js';
 
 const require = createRequire(import.meta.url);
 const { requestText, picturesOf, answerLang, textLang } = require('../lib/desk.js');
@@ -174,6 +174,27 @@ test('the server: the cards it sends, numbered; a private note never', { skip: p
   const sent = r.filter((l) => l.t).map((l) => l.t).join('');
   assert.match(sent, /^\[image image\/png AAAA\]\n\[image image\/png BBBB\]\n\[image image\/png CCCC\]\nCards:\n#1 "p":\n\[picture 1: the picture p\.png\]\n\n#2 card:\nIs this right\?\n\[picture 2: the part of p\.png it marks \(x, y, width, height: 1, 2, 3, 4\)\]\n\[picture 3: the whole of p\.png\]\n\n#3 card:\nand this\?\n\n#4 card:\nbad\n\nRequest/);
   assert.doesNotMatch(sent, /DDDD|EEEE/);
+  // The margin's cards not kept yet: beside the desk, out of its file; cleaned; with it when it moves; none, no file.
+  const api = async (method, p, body) => (await fetch(`http://127.0.0.1:${m[1]}${p}`, { method, headers: { 'x-agent-notes-token': m[2], 'content-type': 'application/json' }, body: body && JSON.stringify(body) })).json();
+  assert.deepEqual((await api('GET', '/api/desk/margin?path=d.canvas')).cards, []);
+  assert.equal((await api('PUT', '/api/desk/margin', { path: 'd.canvas', cards: [
+    { id: 'q1', kind: 'question', batch: 'b1', text: '? Who pays? (#1)', x: 10.4, y: 20, width: 340, height: 60, state: 'done', extra: 1 },
+    { id: 'q2', kind: 'rm -rf', text: 'an answer', x: 'no', y: 0, width: 0, height: 0 },
+    { id: 'q3', kind: 'summary', text: '  ' },
+  ] })).cards, 2);
+  assert.deepEqual((await api('GET', '/api/desk/margin?path=d.canvas')).cards, [
+    { id: 'q1', kind: 'question', batch: 'b1', text: '? Who pays? (#1)', x: 10, y: 20, width: 340, height: 60 },
+    { id: 'q2', kind: 'answer', text: 'an answer', x: 0, y: 0, width: 60, height: 40 },
+  ]);
+  assert.equal(fs.readFileSync(path.join(ws, 'd.canvas'), 'utf8'), EMPTY_DESK);
+  assert.ok(fs.existsSync(path.join(ws, '.agent-notes', 'desk', 'd.canvas.json')));
+  assert.match((await api('PUT', '/api/desk/margin', { path: 'a.md', cards: [] })).error, /Not a desk/);
+  assert.match((await api('GET', '/api/desk/margin?path=../x.canvas')).error || '', /./);
+  await api('POST', '/api/rename', { from: 'd.canvas', to: 'e/d2.canvas' });
+  assert.equal((await api('GET', '/api/desk/margin?path=e/d2.canvas')).cards.length, 2);
+  await api('PUT', '/api/desk/margin', { path: 'e/d2.canvas', cards: [] });
+  assert.ok(!fs.existsSync(path.join(ws, '.agent-notes', 'desk', 'e', 'd2.canvas.json')));
+  await api('POST', '/api/rename', { from: 'e/d2.canvas', to: 'd.canvas' });
   // Not a request it knows; a desk in .agentnotesignore.
   assert.equal((await ask({ path: 'd.canvas', task: 'rm', cards })).at(-1).end.ok, false);
   fs.writeFileSync(path.join(ws, '.agentnotesignore'), 'hidden.md\nd.canvas\n');
@@ -270,4 +291,19 @@ test('answerLang: the cards\' words decide, not their titles, tags or links; a q
   // Said at the end of the request, in so many words.
   assert.match(requestText('summary', [ko], '', undefined, 'ko'), /\n\nAnswer in Korean \(\uD55C\uAD6D\uC5B4\uB85C \uB2F5\uD558\uC138\uC694\)\.$/);
   assert.match(requestText('questions', [en], '', undefined, 'en'), /\n\nAnswer in English\.$/);
+});
+
+test('marginCards: what is kept beside the desk of the margin\'s cards: done, with words, what shows them', () => {
+  assert.deepEqual(marginCards([
+    { id: 'a', kind: 'summary', title: 'Sum up', text: 'Both say go.', x: 1, y: 2, width: 380, height: 200, state: 'done' },
+    { id: 'b', kind: 'question', batch: 'B', text: '? Who pays?', x: 1, y: 2, width: 340, height: 60, state: 'done' },
+    { id: 'c', kind: 'answer', of: 'm1', text: 'It is the logo.', x: 1, y: 2, width: 380, height: 160, state: 'done' },
+    { id: 'd', kind: 'summary', text: 'half', state: 'stream' },
+    { id: 'e', kind: 'summary', text: 'No answer', state: 'error' },
+    { id: 'f', kind: 'summary', text: ' ', state: 'done' },
+  ]), [
+    { id: 'a', kind: 'summary', title: 'Sum up', text: 'Both say go.', x: 1, y: 2, width: 380, height: 200 },
+    { id: 'b', kind: 'question', batch: 'B', text: '? Who pays?', x: 1, y: 2, width: 340, height: 60 },
+    { id: 'c', kind: 'answer', of: 'm1', text: 'It is the logo.', x: 1, y: 2, width: 380, height: 160 },
+  ]);
 });

@@ -775,8 +775,13 @@ function commentsForAgent(rel) {
 // locked (DATA_DIR/locks/<note>.json, each a paragraph as written — an
 // agent's change to one is never applied), its drawer of scraps set aside
 // for it (DATA_DIR/drawer/<note>.md, Markdown), and for a note made with
-// Gather, the pieces it was made of (DATA_DIR/gathered/<note>.json).
+// Gather, the pieces it was made of (DATA_DIR/gathered/<note>.json). A
+// desk's margin cards not kept yet (DATA_DIR/desk/<desk>.json): what the
+// margin wrote on it, kept so closing the desk loses nothing, out of the
+// .canvas until the person keeps them.
 const LOCKS_DIR = path.join(DATA_DIR, 'locks');
+const DESK_DIR = path.join(DATA_DIR, 'desk');
+const deskMarginOf = (rel) => `${resolveInside(DESK_DIR, rel)}.json`;
 const DRAWER_DIR = path.join(DATA_DIR, 'drawer');
 const GATHERED_DIR = path.join(DATA_DIR, 'gathered');
 const locksOf = (rel) => `${resolveInside(LOCKS_DIR, rel)}.json`;
@@ -815,6 +820,27 @@ function saveDrawer({ path: relPath, scraps }) {
   if (!clean.length) fs.rmSync(file, { force: true });
   else { ensureDataDir(); fs.mkdirSync(path.dirname(file), { recursive: true }); writeFileAtomic(file, drawerText(clean)); }
   return { path: rel, scraps: noteDrawer(rel) };
+}
+
+const DESK_KINDS = new Set(['summary', 'merge', 'question', 'answer']);
+function deskMarginCards(rel) {
+  const d = readJson(deskMarginOf(rel), null);
+  return Array.isArray(d?.cards) ? d.cards : [];
+}
+function saveDeskMargin({ path: relPath, cards }) {
+  const rel = relOf(workspacePath(relPath));
+  if (!/\.canvas$/i.test(rel)) throw httpError(400, 'Not a desk');
+  if (!Array.isArray(cards) || cards.length > 200) throw httpError(400, 'cards should be a list');
+  const num = (v, min = -1e7) => (Number.isFinite(v) ? Math.max(min, Math.min(1e7, Math.round(v))) : min > 0 ? min : 0);
+  const clean = cards.map((c) => ({
+    id: cleanStr(c?.id, 64), kind: DESK_KINDS.has(c?.kind) ? c.kind : 'answer',
+    batch: cleanStr(c?.batch, 64) || undefined, of: cleanStr(c?.of, 64) || undefined, title: cleanStr(c?.title, 200) || undefined,
+    text: cleanStr(c?.text, 50000), x: num(c?.x), y: num(c?.y), width: num(c?.width, 60), height: num(c?.height, 40),
+  })).filter((c) => c.id && c.text.trim());
+  const file = deskMarginOf(rel);
+  if (!clean.length) fs.rmSync(file, { force: true });
+  else { ensureDataDir(); fs.mkdirSync(path.dirname(file), { recursive: true }); writeFileAtomic(file, JSON.stringify({ at: new Date().toISOString(), cards: clean }, null, 2)); }
+  return { path: rel, cards: clean.length };
 }
 
 function keepGathered(rel, pieces) {
@@ -891,7 +917,7 @@ function besideForAgent(files, focus) {
 
 // A note moved: what is beside it goes with it.
 function moveBeside(fromRel, toRel) {
-  for (const of of [locksOf, drawerOf, gatheredOf]) {
+  for (const of of [locksOf, drawerOf, gatheredOf, deskMarginOf]) {
     try {
       const from = of(fromRel);
       if (!fs.existsSync(from)) continue;
@@ -2179,6 +2205,8 @@ async function routeApi(method, url, body) {
   if (method === 'PUT' && p === '/api/locks') return saveLocks(body || {});
   if (method === 'GET' && p === '/api/drawer') return { path: relOf(workspacePath(q('path'))), scraps: noteDrawer(relOf(workspacePath(q('path')))) };
   if (method === 'PUT' && p === '/api/drawer') return saveDrawer(body || {});
+  if (method === 'GET' && p === '/api/desk/margin') { const rel = relOf(workspacePath(q('path'))); return { path: rel, cards: deskMarginCards(rel) }; }
+  if (method === 'PUT' && p === '/api/desk/margin') return saveDeskMargin(body || {});
   if (method === 'GET' && p === '/api/origin') return originOf(q('path'));
   if (method === 'GET' && p === '/api/comments') return getComments(q('path'));
   if (method === 'PUT' && p === '/api/comments') return saveComments(body || {});

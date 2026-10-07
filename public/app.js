@@ -4588,6 +4588,9 @@ function deskView(tab, c) {
           return out;
         },
         openNote: (p, line) => openFile(p, { side: true, line }),
+        // What the margin wrote and was not kept yet: beside the desk, in .agent-notes/desk/.
+        loadMargin: async () => (await api('GET', `/api/desk/margin?path=${encodeURIComponent(tab.path)}`)).cards,
+        saveMargin: (cards) => api('PUT', '/api/desk/margin', { path: tab.path, cards }).catch((e) => toast(`The margin\u2019s cards were not kept: ${e.message}`, 'error')),
         privateOf: async (paths) => (await api('POST', '/api/private', { paths })).private || {},
         // A note written in from the desk (its card read large): through its
         // tab when it is open (the editor follows, autosave saves); else read
