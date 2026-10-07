@@ -233,7 +233,7 @@ process.stdin.on('data', (d) => {
     const j = JSON.parse(buf.slice(0, i)); buf = buf.slice(i + 1);
     if (j.type !== 'user') continue;
     const text = j.message.content;
-    fs.appendFileSync(process.env.FAKE_LOG, JSON.stringify({ pid: process.pid, text, args: process.argv.slice(2), thinking: process.env.MAX_THINKING_TOKENS ?? null }) + '\\n');
+    fs.appendFileSync(process.env.FAKE_LOG, JSON.stringify({ pid: process.pid, text, args: process.argv.slice(2), system: fs.existsSync('system.md') ? fs.readFileSync('system.md', 'utf8') : null, thinking: process.env.MAX_THINKING_TOKENS ?? null }) + '\\n');
     const line = /Line: (.*)$/.exec(text)?.[1] ?? 'REQUEST';
     if (line === 'DIE') process.exit(3);
     if (line === 'STDERR_DIE') { process.stderr.write("error: unknown option '--foo'\\n"); process.exit(1); }
@@ -268,6 +268,10 @@ test('the resident session: one meeting, another, the swap, up again after it en
     let s = sent();
     assert.equal(s[0].text, "Meeting: A\nToday: T\n\nItem: (none)\nLine: one");
     assert.equal(s[1].text, 'Item: (none)\nUnder: to do:\nLine: two');
+    // The prompt, whole, from a file beside it: not on the command line, which cmd.exe ends at the first line break.
+    assert.deepEqual(s[0].args.slice(s[0].args.indexOf('--system-prompt-file'), s[0].args.indexOf('--system-prompt-file') + 2), ['--system-prompt-file', 'system.md']);
+    assert.ok(!s[0].args.includes('--system-prompt'));
+    assert.match(s[0].system, /^You keep the minutes[^]*\n[^]*\[decision\]/);
     // Another meeting: told so at once, then a fresh session told its minutes.
     assert.equal((await ask('B', 'three')).ok, true);
     s = sent();
