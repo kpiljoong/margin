@@ -736,7 +736,8 @@ export class MarkdownEditor {
   // element beside its line, the words it is on marked.
   setNotes(notes) {
     this.notes = notes;
-    this.el.classList.toggle('with-notes', notes.length > 0);
+    // The live margin keeps its column from the start: the text you write doesn't move when its first card comes.
+    this.el.classList.toggle('with-notes', notes.length > 0 || this.el.classList.contains('live'));
     this.notesCol.replaceChildren(...notes.map((n) => n.el));
     this._renderFind();
     this._placeNotes();
