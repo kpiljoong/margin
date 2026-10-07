@@ -1845,7 +1845,7 @@ function editorFor(tab) {
   ed.ta.addEventListener('input', (e) => { if (/^insert(LineBreak|Paragraph)$/.test(e.inputType) && railOn(tab)) meetTyped(tab); });
   ed.ta.addEventListener('keyup', () => { if (tab.railEl) clockStep(tab, true); if (tab.live) liveOfferSoon(tab); });
   ed.ta.addEventListener('click', () => { if (tab.railEl) clockStep(tab, true); if (tab.live) liveOfferSoon(tab); });
-  // The live margin: each line's minutes as it is written; ⌥↩ keeps them.
+  // The live margin: each line's minutes as it is written; ⌃↩ keeps them.
   ed.ta.addEventListener('input', (e) => liveInput(tab, e));
   ed.keyHook = (e) => liveKey(tab, e);
   // Words dragged out of the note say where they came from (the drawer).
@@ -6380,7 +6380,7 @@ setInterval(() => {
 // minutes beside it as it is written — a chip by rule at once, then a fast
 // model's sentence, streamed (server.js /api/live → the claude CLI). A line
 // goes when typing stops for a moment or the line ends; a line still being
-// answered is let go when it changes. ⌥↩ keeps the minutes (the line
+// answered is let go when it changes. ⌃↩ keeps the minutes (the line
 // becomes them), Esc lets them go. Off unless turned on.
 let liveMod = null;
 const loadLive = async () => (liveMod ||= await import('./live.js'));
@@ -6671,7 +6671,7 @@ function liveEnd(tab, e, info) {
 }
 
 // Its minutes beside each line that has them; the newest near the cursor
-// is the one ⌥↩ keeps.
+// is the one ⌃↩ keeps.
 function liveNotes(tab) {
   const st = liveState(tab);
   const offer = liveOffer(tab);
@@ -6698,7 +6698,7 @@ function liveOfferSoon(tab) {
   tab.live.offerTimer = setTimeout(() => { if (liveActive(tab)) drawNotes(tab); }, 150);
 }
 
-// The minutes ⌥↩ would keep: the last answered line at or above the
+// The minutes ⌃↩ would keep: the last answered line at or above the
 // cursor (a few lines up at most), with the cursor at a line's end.
 function liveOffer(tab) {
   const st = tab.live;
@@ -6709,7 +6709,7 @@ function liveOffer(tab) {
   const nl = v.indexOf('\n', s);
   if (v.slice(s, nl < 0 ? v.length : nl).trim()) return null;
   const lines = v.split('\n');
-  // Lines just kept don't count: ⌥↩ after ⌥↩ goes on up.
+  // Lines just kept don't count: ⌃↩ after ⌃↩ goes on up.
   for (let i = lineNoAt(v, s), seen = 0; i >= 0 && seen < 4; i--) {
     const k = lines[i].trim();
     if (!k) continue;
@@ -6720,7 +6720,7 @@ function liveOffer(tab) {
   return null;
 }
 
-// ⌥↩ keeps the minutes offered, Esc lets them go. Tab and ⇧Tab stay the
+// ⌃↩ (Alt+Enter off a Mac) keeps the minutes offered, Esc lets them go. Tab and ⇧Tab stay the
 // editor's (indent, outdent), live margin or not.
 function liveKey(tab, e) {
   const act = liveActive(tab) && liveMod.liveKeyOf(e);
@@ -6819,7 +6819,7 @@ async function wrapUp(tab = fileTab()) {
 }
 
 // Fold: the quick wrap-up, in seconds and without an agent. The margin's
-// minutes go into the note (as ⌥↩ would keep them), its to-dos listed by
+// minutes go into the note (as ⌃↩ would keep them), its to-dos listed by
 // owner (left in place) in a "## Wrap-up" with the time, its decisions and questions
 // again, and a summary the live margin writes (when it is on); proposed,
 // for review. The next meeting's note is made when there is none.

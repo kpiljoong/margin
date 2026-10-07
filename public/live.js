@@ -1,7 +1,7 @@
 // The live margin (experimental): while a meeting is written, its minutes
 // beside each line — a chip at once (by rule: a decision, a to-do, a
 // question, a risk, an idea, one for next time, whose, by when), then a fast model's clean sentence, written in
-// as it comes (server.js → lib/live.js). It is only shown: ⌥↩ keeps what
+// as it comes (server.js → lib/live.js). It is only shown: ⌃↩ keeps what
 // the line is (a tag at its end, a to-do's box; the words and the list as they
 // were written), Esc lets it go.
 import { markLine } from './meeting.js';
@@ -11,14 +11,17 @@ const KIND = { decision: 'Decided', question: 'Open', todo: 'To-do', risk: 'Risk
 const ASKED = /^\s*\?\?/;
 export const asked = (line) => ASKED.test(line);
 
-// Its keys: ⌥↩ (Alt+Enter) keeps the minutes, Esc lets them go. Never Tab
-// or ⇧Tab: in a meeting as anywhere, they indent and outdent the list.
+// Its keys: ⌃↩ on a Mac (Alt+Enter elsewhere) keeps the minutes, Esc lets
+// them go. Not ⌥↩ alone on a Mac: the Korean input takes it as its hanja key
+// (it still keeps, with another input); not ⌘↩ (it ticks a box), nor Ctrl+Enter
+// off a Mac (the same). Never Tab or ⇧Tab: they indent and outdent the list.
+// Never while an input method is composing.
 const MAC = typeof navigator !== 'undefined' && /Mac/i.test(navigator.platform || '');
-export const keepKey = (mac = MAC) => (mac ? '\u2325\u21A9' : 'Alt+Enter');
-export function liveKeyOf(e) {
-  if (e.isComposing || e.metaKey || e.ctrlKey || e.shiftKey) return null;
-  if (e.key === 'Enter' && e.altKey) return 'keep';
-  if (e.key === 'Escape' && !e.altKey) return 'drop';
+export const keepKey = (mac = MAC) => (mac ? '\u2303\u21A9' : 'Alt+Enter');
+export function liveKeyOf(e, mac = MAC) {
+  if (e.isComposing || e.keyCode === 229 || e.metaKey || e.shiftKey) return null;
+  if (e.key === 'Enter') return (mac ? !!e.ctrlKey !== !!e.altKey : e.altKey && !e.ctrlKey) ? 'keep' : null;
+  if (e.key === 'Escape' && !e.altKey && !e.ctrlKey) return 'drop';
   return null;
 }
 
@@ -245,7 +248,7 @@ export function keptLine(e, line) {
   return markLine(line, e.kind, e);
 }
 
-// Every line's minutes the margin wrote and nobody let go, kept (as ⌥↩
+// Every line's minutes the margin wrote and nobody let go, kept (as ⌃↩
 // would), from the last line up. Lines written as minutes already, and
 // answers, stay as they are.
 export function keepAll(text, entries) {

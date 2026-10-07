@@ -85,17 +85,24 @@ test('parseReply: the head once its bracket closes, then the sentence (both side
   }
 });
 
-test('its keys: \u2325\u21A9 keeps, Esc lets go, Tab and \u21E7Tab are never its (they indent the list)', () => {
-  const k = (key, mods = {}) => liveKeyOf({ key, ...mods });
-  assert.equal(k('Enter', { altKey: true }), 'keep');
+test('its keys: \u2303\u21A9 keeps on a Mac (Alt+Enter elsewhere), Esc lets go, never while an input method composes; Tab and \u21E7Tab are never its', () => {
+  const k = (key, mods = {}, mac = true) => liveKeyOf({ key, ...mods }, mac);
+  assert.equal(k('Enter', { ctrlKey: true }), 'keep', '\u2303\u21A9 on a Mac');
+  assert.equal(k('Enter', { altKey: true }), 'keep', '\u2325\u21A9 still, with an input that leaves it alone');
+  assert.equal(k('Enter', { ctrlKey: true, altKey: true }), null);
+  assert.equal(k('Enter', { altKey: true }, false), 'keep', 'Alt+Enter on Windows and Linux');
+  assert.equal(k('Enter', { ctrlKey: true }, false), null, 'Ctrl+Enter ticks a box there');
   assert.equal(k('Escape'), 'drop');
+  assert.equal(k('Escape', { ctrlKey: true }), null);
   assert.equal(k('Tab'), null, 'Tab indents, even with minutes offered');
   assert.equal(k('Tab', { shiftKey: true }), null, '\u21E7Tab outdents');
   assert.equal(k('Enter'), null, 'Enter ends the line');
   assert.equal(k('Enter', { metaKey: true, altKey: true }), null, '\u2318\u2325\u21A9 is the next agenda item');
   assert.equal(k('Enter', { metaKey: true }), null, '\u2318\u21A9 ticks a box');
-  assert.equal(k('Enter', { altKey: true, isComposing: true }), null, 'not while Korean is composed');
-  assert.equal(keepKey(true), '\u2325\u21A9');
+  assert.equal(k('Enter', { ctrlKey: true, isComposing: true }), null, 'not while Korean is composed');
+  assert.equal(k('Enter', { ctrlKey: true, keyCode: 229 }), null, 'nor when the input method has the key');
+  assert.equal(k('Escape', { keyCode: 229 }), null);
+  assert.equal(keepKey(true), '\u2303\u21A9');
   assert.equal(keepKey(false), 'Alt+Enter');
 });
 
