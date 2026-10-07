@@ -12,7 +12,7 @@ import { fileURLToPath } from 'node:url';
 import { parseDesk, stringifyDesk, stackOnto, groupAround, childrenOf, groupAt, removeCards, parseGroups, parseLinks, parseQuestions, groupLayout, nearest, cardTitle, edgePath, STEP, EMPTY_DESK, noteDesk, linksOf, fromState, toNote } from '../public/desk.js';
 
 const require = createRequire(import.meta.url);
-const { requestText, picturesOf, answerLang } = require('../lib/desk.js');
+const { requestText, picturesOf, answerLang, textLang } = require('../lib/desk.js');
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
@@ -256,6 +256,17 @@ test('answerLang: the cards\' words decide, not their titles, tags or links; a q
   assert.equal(answerLang([en], '\uBB50\uAC00 \uB0A8\uC558\uC9C0?'), 'ko');
   assert.equal(answerLang([ko], '', 'en'), 'en');
   assert.equal(answerLang([en], '', 'ko'), 'ko');
+  // Pictures have no words: the system's language; what the server says for a file is not the card's.
+  const pic = { n: 3, title: 'shot', text: '', pictures: [{ what: 'the picture shot.png' }] };
+  assert.equal(answerLang([pic], '', '', 'ko-KR'), 'ko');
+  assert.equal(answerLang([pic, { n: 4, title: 'a.pdf', text: '(a file that is not a note)' }], '', '', 'ko'), 'ko');
+  assert.equal(answerLang([pic], '', '', 'en-US'), 'en');
+  assert.equal(answerLang([pic]), 'en');
+  assert.equal(answerLang([pic, ko], '', '', 'en-US'), 'ko');
+  // The workspace's notes, for the fallback.
+  assert.equal(textLang([ko.text, en.text, '']), 'ko');
+  assert.equal(textLang([en.text]), 'en');
+  assert.equal(textLang(['', '#tag [[x]]']), '');
   // Said at the end of the request, in so many words.
   assert.match(requestText('summary', [ko], '', undefined, 'ko'), /\n\nAnswer in Korean \(\uD55C\uAD6D\uC5B4\uB85C \uB2F5\uD558\uC138\uC694\)\.$/);
   assert.match(requestText('questions', [en], '', undefined, 'en'), /\n\nAnswer in English\.$/);

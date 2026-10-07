@@ -4655,7 +4655,7 @@ function deskView(tab, c) {
         ask: async (req, onText) => {
           if (!(await deskConsent())) throw new Error('Not sent');
           deskWarm = true;
-          return deskStream({ ...req, path: tab.path, ...liveOpts(), lang: ['ko', 'en'].includes(S.settings.deskLang) ? S.settings.deskLang : '' }, onText);
+          return deskStream({ ...req, path: tab.path, ...liveOpts(), lang: ['ko', 'en'].includes(S.settings.deskLang) ? S.settings.deskLang : '', fallback: navigator.language }, onText);
         },
         onChange: (text) => { tab.text = text; renderTabs(); scheduleDrawingSave(tab); },
         toast,

@@ -15,7 +15,7 @@ const { parseAgentLog } = require('./lib/agentlog');
 const { picturesIn, pictureSize, hiddenIn } = require('./lib/pictures');
 const { lockRanges, lockedHunks, drawerText, drawerScraps, addedLines } = require('./lib/beside');
 const { liveMargin, projectOf, testLine } = require('./lib/live');
-const { deskMargin } = require('./lib/desk');
+const { deskMargin, textLang } = require('./lib/desk');
 const { OutsideStore, Seen, changedWhileAway } = require('./lib/outside');
 const { tiersOf, agentLines } = require('./lib/tiers');
 
@@ -2395,6 +2395,17 @@ function deskCards(cards) {
   }
   return { cards: out, withheld: [...new Set(withheld)] };
 }
+// The language most of the workspace's notes are in ('ko', 'en', '' none):
+// what a desk answers in about cards without words (pictures). The first
+// 4,000 characters of up to 300 notes, counted once in ten minutes.
+let notesLangAt = { at: 0, lang: '' };
+function notesLang() {
+  if (Date.now() - notesLangAt.at < 600000) return notesLangAt.lang;
+  const texts = workspaceFiles().filter((p) => NOTE_EXT.has(extOf(p)) && !isTemplatePath(p)).slice(0, 300)
+    .map((p) => cachedText(p)?.text.slice(0, 4000) || '');
+  notesLangAt = { at: Date.now(), lang: textLang(texts) };
+  return notesLangAt.lang;
+}
 function deskAsk(req, res, body) {
   const canvas = workspacePath(String(body.path || ''));
   if (loadIgnore(ROOT)(relOf(canvas))) throw httpError(403, 'This desk is in .agentnotesignore: its cards are not sent.');
@@ -2407,7 +2418,7 @@ function deskAsk(req, res, body) {
   let head = false;
   const start = () => { if (!head) { head = true; res.write(`${JSON.stringify({ cards: cards.map((c) => [c.key, c.n]), withheld })}\n`); } };
   let over = false;
-  const cancel = m.ask({ task: String(body.task || ''), cards, question: String(body.question || '').slice(0, 2000), talk: String(body.talk || '').slice(0, 100), lang: String(body.lang || '') },
+  const cancel = m.ask({ task: String(body.task || ''), cards, question: String(body.question || '').slice(0, 2000), talk: String(body.talk || '').slice(0, 100), lang: String(body.lang || ''), fallback: notesLang() || String(body.fallback || '').slice(0, 20) },
     (t) => { start(); res.write(`${JSON.stringify({ t })}\n`); }, (info) => { start(); over = true; res.end(`${JSON.stringify({ end: info })}\n`); });
   start();
   res.on('close', () => { if (!over) cancel(); });
