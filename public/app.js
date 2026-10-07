@@ -271,6 +271,9 @@ const DEFAULT_SETTINGS = {
   // The live margin's and the desk's Claude model and effort ('' none: it
   // does not think): the quickest and cheapest unless chosen.
   liveModel: 'haiku', liveEffort: '',
+  // The language the desk's margin answers in: '' the cards' (their words, not
+  // their titles), 'ko' or 'en'.
+  deskLang: '',
   // The file tree shows the active tab's file (as VS Code's Auto Reveal).
   followTab: true,
   // Pens: yours (suggesting, comments) and the agent's; '' is the theme's.
@@ -1587,10 +1590,8 @@ function renderTabs() {
       ondragstart: (e) => { e.dataTransfer.setData('text/x-agent-notes-tab', t.id); e.dataTransfer.effectAllowed = 'move'; document.body.classList.add('tab-dragging'); },
       ondragend: tabDragEnd,
       onclick: () => activate(t.id),
-      // The middle button closes the tab: kept by the tab's id, since saving (the editor losing focus) may draw the
-      // tabs again between the press and the release, when an auxclick would go to neither.
+      // The middle button closes the tab pressed (on its release, in the bar: see bar.onmouseup).
       onmousedown: (e) => { if (e.button === 1) { e.preventDefault(); midTab = t.id; } },
-      onmouseup: (e) => { if (e.button === 1 && midTab === t.id) { midTab = null; closeTab(t.id); } },
       oncontextmenu: (e) => contextMenu(e, [
         { label: S.groups.length > 1 ? 'Move to other pane' : 'Open to the side', run: () => moveTab(t, t.group === 0 ? 1 : 0) },
         isDoc(t) ? { label: 'Rename / move file…', run: () => renameItem(t.path) } : null,
@@ -1624,7 +1625,11 @@ function renderTabs() {
     const target = el && tabById(el.dataset.id);
     placeTab(t, g, target ? (before ? target : S.tabs.filter((x) => x.group === g)[S.tabs.filter((x) => x.group === g).indexOf(target) + 1] || null) : null);
   };
-  bar.querySelector('.tab.active')?.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+  // Released in the bar, the middle button closes the tab it pressed, though the tabs were drawn again in between
+  // (saving as the editor loses focus) and another is under it now: an auxclick would go to neither.
+  bar.onmouseup = (e) => { if (e.button !== 1) return; const id = midTab; midTab = null; if (id && tabById(id)) closeTab(id); };
+  // Only a tab newly active is scrolled to: drawn again, the bar stays where it was scrolled.
+  if (bar.shown !== grp.active) { bar.shown = grp.active; bar.querySelector('.tab.active')?.scrollIntoView({ block: 'nearest', inline: 'nearest' }); }
   glide(bar, bar.querySelector('.tab.active'), 'tab-pill');
   });
 }
@@ -4003,6 +4008,7 @@ function openSettings({ keys = false, live = false } = {}) {
       h('div', { class: 'set-grid' },
         h('div', { class: 'set-label' }, 'Model'), liveSeg('liveModel', LIVE_MODEL_NAMES),
         h('div', { class: 'set-label' }, 'Effort'), liveSeg('liveEffort', { '': 'Default', low: 'Low', medium: 'Medium', high: 'High' }),
+        h('div', { class: 'set-label' }, 'Desk answers in'), liveSeg('deskLang', { '': 'The cards\u2019 language', ko: '\uD55C\uAD6D\uC5B4', en: 'English' }),
         claudeAgentNames().length > 1 ? [h('div', { class: 'set-label' }, 'Agent'), liveSeg('liveAgent', { '': 'Automatic', ...Object.fromEntries(claudeAgentNames().map((n) => [n, n])) })] : null),
       liveCost() ? h('p', { class: 'set-detail set-warn' }, liveCost()) : null,
       liveStatusBox(),
@@ -4649,7 +4655,7 @@ function deskView(tab, c) {
         ask: async (req, onText) => {
           if (!(await deskConsent())) throw new Error('Not sent');
           deskWarm = true;
-          return deskStream({ ...req, path: tab.path, ...liveOpts() }, onText);
+          return deskStream({ ...req, path: tab.path, ...liveOpts(), lang: ['ko', 'en'].includes(S.settings.deskLang) ? S.settings.deskLang : '' }, onText);
         },
         onChange: (text) => { tab.text = text; renderTabs(); scheduleDrawingSave(tab); },
         toast,
@@ -9648,6 +9654,7 @@ window.addEventListener('drop', (e) => {
 // Mouse back/forward buttons (3 and 4).
 window.addEventListener('mousedown', (e) => { if (e.button === 3 || e.button === 4) e.preventDefault(); });
 window.addEventListener('mouseup', (e) => {
+  if (e.button === 1) midTab = null; // a tab pressed with it and let go outside the tabs
   if (e.button !== 3 && e.button !== 4) return;
   e.preventDefault();
   runCommand(e.button === 3 ? 'nav-back' : 'nav-forward');

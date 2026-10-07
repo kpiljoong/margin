@@ -12,7 +12,7 @@ import { fileURLToPath } from 'node:url';
 import { parseDesk, stringifyDesk, stackOnto, groupAround, childrenOf, groupAt, removeCards, parseGroups, parseLinks, parseQuestions, groupLayout, nearest, cardTitle, edgePath, STEP, EMPTY_DESK, noteDesk, linksOf, fromState, toNote } from '../public/desk.js';
 
 const require = createRequire(import.meta.url);
-const { requestText, picturesOf } = require('../lib/desk.js');
+const { requestText, picturesOf, answerLang } = require('../lib/desk.js');
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
@@ -243,4 +243,20 @@ test('requestText and picturesOf: the pictures of a card named in its text, sent
   const seen = new Map([['a', '']]);
   assert.deepEqual(picturesOf(cards, seen).map((p) => p.data), ['BB', 'CC']);
   assert.match(requestText('chat', cards, 'why?', seen), /^Cards:\n#2 card:\nIs this right\?\n\[picture 1: the part/);
+});
+
+test('answerLang: the cards\' words decide, not their titles, tags or links; a question in a talk by itself; Settings win', () => {
+  // "출시는 20일로 확정했다" under an English title, with English tags and a link.
+  const ko = { n: 1, title: 'Launch sync 2026-10-07', text: '## Agenda (10m)\n- \uCD9C\uC2DC\uB294 20\uC77C\uB85C \uD655\uC815\uD588\uB2E4 #decision @ann [[Launch plan]]\n- QA \uCCB4\uD06C\uB9AC\uC2A4\uD2B8 \uD655\uC778 #todo https://example.com/a/very/long/link' };
+  const en = { n: 2, title: '\uD68C\uC758', text: 'We ship on the 20th; the store review may take a week.' };
+  assert.equal(answerLang([ko]), 'ko');
+  assert.equal(answerLang([en]), 'en');
+  assert.equal(answerLang([]), 'en');
+  assert.equal(answerLang([ko], 'what is left open?'), 'en');
+  assert.equal(answerLang([en], '\uBB50\uAC00 \uB0A8\uC558\uC9C0?'), 'ko');
+  assert.equal(answerLang([ko], '', 'en'), 'en');
+  assert.equal(answerLang([en], '', 'ko'), 'ko');
+  // Said at the end of the request, in so many words.
+  assert.match(requestText('summary', [ko], '', undefined, 'ko'), /\n\nAnswer in Korean \(\uD55C\uAD6D\uC5B4\uB85C \uB2F5\uD558\uC138\uC694\)\.$/);
+  assert.match(requestText('questions', [en], '', undefined, 'en'), /\n\nAnswer in English\.$/);
 });

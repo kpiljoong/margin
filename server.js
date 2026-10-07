@@ -2407,7 +2407,7 @@ function deskAsk(req, res, body) {
   let head = false;
   const start = () => { if (!head) { head = true; res.write(`${JSON.stringify({ cards: cards.map((c) => [c.key, c.n]), withheld })}\n`); } };
   let over = false;
-  const cancel = m.ask({ task: String(body.task || ''), cards, question: String(body.question || '').slice(0, 2000), talk: String(body.talk || '').slice(0, 100) },
+  const cancel = m.ask({ task: String(body.task || ''), cards, question: String(body.question || '').slice(0, 2000), talk: String(body.talk || '').slice(0, 100), lang: String(body.lang || '') },
     (t) => { start(); res.write(`${JSON.stringify({ t })}\n`); }, (info) => { start(); over = true; res.end(`${JSON.stringify({ end: info })}\n`); });
   start();
   res.on('close', () => { if (!over) cancel(); });
