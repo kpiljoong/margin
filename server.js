@@ -14,7 +14,7 @@ const { loadIgnore, isPrivateNote } = require('./lib/privacy');
 const { parseAgentLog } = require('./lib/agentlog');
 const { picturesIn, pictureSize, hiddenIn } = require('./lib/pictures');
 const { lockRanges, lockedHunks, drawerText, drawerScraps, addedLines } = require('./lib/beside');
-const { liveMargin, projectOf } = require('./lib/live');
+const { liveMargin, projectOf, testLine } = require('./lib/live');
 const { deskMargin } = require('./lib/desk');
 const { OutsideStore, Seen, changedWhileAway } = require('./lib/outside');
 const { tiersOf, agentLines } = require('./lib/tiers');
@@ -2187,6 +2187,14 @@ async function routeApi(method, url, body) {
   if (method === 'POST' && p === '/api/live/start') { setLiveOpts(body); const key = liveFor(String((body || {}).path || '')); return { ...live.start(key), agent: liveAgent().label, ...liveOpts }; }
   if (method === 'POST' && p === '/api/live/warm') { setLiveOpts(body); return { ...liveUp().warm(), agent: liveAgent().label, ...liveOpts }; }
   if (method === 'POST' && p === '/api/live/stop') { live?.stop(); return { ok: true }; }
+  if (method === 'GET' && p === '/api/live/status') return liveStatus();
+  if (method === 'POST' && p === '/api/live/restart') { if (!setLiveOpts(body)) liveRestart(); return liveStatus(); }
+  if (method === 'POST' && p === '/api/live/test') {
+    setLiveOpts(body);
+    const agent = liveAgent();
+    if (!agent) throw httpError(400, 'The live margin needs the Claude Code agent (Settings \u2192 Agents).');
+    return { agent: agent.label, ...(await testLine({ bin: liveBin(agent), env: liveEnv(), opts: liveOpts })) };
+  }
   if (method === 'POST' && p === '/api/live/project') return liveProject(String((body || {}).path || ''));
   if (method === 'POST' && p === '/api/desk/warm') { setLiveOpts(body); return { ...deskUp().warm(), agent: liveAgent().label, ...liveOpts }; }
   if ((m = p.match(/^\/api\/proofs\/([\w-]+)$/)) && method === 'PUT') return saveProof(m[1], body || {});
@@ -2240,13 +2248,23 @@ let live = null;
 // Haiku, not thinking, unless chosen. The live margin and the desk's share them.
 const LIVE_MODELS = ['haiku', 'sonnet', 'opus'];
 const LIVE_EFFORTS = ['low', 'medium', 'high'];
-let liveOpts = { model: 'haiku', effort: '' };
+// agent: the Claude Code agent (its name in Settings → Agents) they go
+// through; none, or one that is gone: the default agent when it is Claude
+// Code, else the first that is.
+let liveOpts = { model: 'haiku', effort: '', agent: '' };
+const claudeAgents = () => AGENTS.filter((a) => a.kind === 'claude');
 function setLiveOpts(b) {
   if (!b || typeof b !== 'object' || !('model' in b || 'effort' in b)) return false;
-  const next = { model: LIVE_MODELS.includes(b.model) ? b.model : 'haiku', effort: LIVE_EFFORTS.includes(b.effort) ? b.effort : '' };
-  if (next.model === liveOpts.model && next.effort === liveOpts.effort) return false;
+  const next = { model: LIVE_MODELS.includes(b.model) ? b.model : 'haiku', effort: LIVE_EFFORTS.includes(b.effort) ? b.effort : '',
+    agent: claudeAgents().some((a) => a.label === b.agent) ? b.agent : '' };
+  if (next.model === liveOpts.model && next.effort === liveOpts.effort && next.agent === liveOpts.agent) return false;
   liveOpts = next;
-  // Up again with them: the resident session and its spare, the desk's too.
+  liveRestart();
+  return true;
+}
+// Up again: the resident session and its spare, the desk's too (each only
+// if it was up).
+function liveRestart() {
   const on = !!live?.on;
   live?.stop();
   live = null;
@@ -2255,10 +2273,21 @@ function setLiveOpts(b) {
   desk?.stop();
   desk = null;
   if (had) deskUp().warm();
-  return true;
 }
 function liveAgent() {
-  return AGENT?.kind === 'claude' ? AGENT : AGENTS.find((a) => a.kind === 'claude') || null;
+  return claudeAgents().find((a) => a.label === liveOpts.agent) || (AGENT?.kind === 'claude' ? AGENT : claudeAgents()[0] || null);
+}
+const liveEnv = () => { const env = { ...process.env }; delete env.ELECTRON_RUN_AS_NODE; return env; };
+const liveBin = (agent) => agent.command.trim().split(/\s+/)[0];
+// Settings' status: which agent, signed in or not, the session (up, waiting
+// on a line how long, its last answer and error).
+async function liveStatus() {
+  const agent = liveAgent();
+  return {
+    agents: claudeAgents().map((a) => a.label), agent: agent?.label || null, chosen: liveOpts.agent, bin: agent ? liveBin(agent) : null,
+    model: liveOpts.model, effort: liveOpts.effort, signIn: agent ? await agentStatus(agent) : null,
+    on: !!live?.on, session: live ? live.state() : null,
+  };
 }
 function liveUp() {
   const agent = liveAgent();
@@ -2266,7 +2295,7 @@ function liveUp() {
   if (!live) {
     const env = { ...process.env };
     delete env.ELECTRON_RUN_AS_NODE;
-    live = liveMargin({ bin: agent.command.trim().split(/\s+/)[0], env, opts: liveOpts });
+    live = liveMargin({ bin: liveBin(agent), env, opts: liveOpts });
   }
   return live;
 }
@@ -2308,7 +2337,7 @@ function deskUp() {
   if (!desk) {
     const env = { ...process.env };
     delete env.ELECTRON_RUN_AS_NODE;
-    desk = deskMargin({ bin: agent.command.trim().split(/\s+/)[0], env, opts: liveOpts });
+    desk = deskMargin({ bin: liveBin(agent), env, opts: liveOpts });
   }
   return desk;
 }

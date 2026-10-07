@@ -569,6 +569,11 @@ input[type=checkbox] { accent-color: var(--accent); }
 .set-grid { display: grid; grid-template-columns: 120px auto; align-items: center; justify-content: start; gap: 2px 14px; margin-top: 8px; }
 .set-grid .set-label { margin: 8px 0; }
 .set-detail.set-warn { margin-top: 8px; color: var(--pen); }
+.live-status-box { margin-top: 8px; }
+.live-status-box .set-detail { margin: 2px 0; }
+.live-status-box .set-detail.set-warn { margin-top: 2px; }
+.live-status-box .set-buttons { display: flex; gap: 8px; margin: 8px 0 4px; }
+.live-test:empty { display: none; }
 .set-toggles { display: flex; flex-direction: column; gap: 8px; margin-top: 16px; }
 .set-toggle { display: flex; gap: 10px; align-items: flex-start; cursor: pointer; }
 .set-toggle input { margin-top: 3px; }
@@ -1688,6 +1693,7 @@ li.callout-hot { background: color-mix(in srgb, var(--accent) 16%, transparent);
 .live-note.s-kept { opacity: .55; border-left-color: var(--ok); }
 .live-note.s-kept .live-chip { --m: var(--ok); }
 .live-note.offer { background: color-mix(in srgb, var(--pen) 12%, var(--bg)); box-shadow: 0 0 0 1px color-mix(in srgb, var(--pen) 45%, transparent), 0 0 22px color-mix(in srgb, var(--pen) 22%, transparent); }
+.live-hud-warn { color: var(--pen); }
 .live-keys { margin-top: 2px; font: 11px var(--sans); color: var(--fg-faint); }
 .live-hud { position: absolute; right: 14px; top: 8px; z-index: 4; display: flex; align-items: center; gap: 10px; max-width: calc(100% - 28px); padding: 4px 10px; border-radius: 12px; background: color-mix(in srgb, var(--bg) 88%, transparent); border: 1px solid var(--border); font: 11px var(--sans); color: var(--fg-dim); font-variant-numeric: tabular-nums; pointer-events: none; white-space: nowrap; overflow: hidden; }
 .live-hud b { color: var(--fg); font-weight: 600; }

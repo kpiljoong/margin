@@ -3425,6 +3425,7 @@ const COMMANDS = [
   ['Meeting: decision orbit \u2014 the wall in space (experimental)', lab('The decision orbit', () => setTimeout(() => wallView(fileTab(), true), 0)), { labs: true }],
   ['Labs: experimental views on / off', () => setLabs(!labsOn())],
   ['Meeting: live margin \u2014 each line\u2019s minutes beside it as you write (experimental, sends lines to Claude)', () => setTimeout(toggleLive, 0)],
+  ['Meeting: live margin status \u2014 its agent, sign-in and session; test or restart it', () => setTimeout(() => openSettings({ live: true }), 0)],
   ['Describe a key…', () => describeKey()],
   ['Describe a command…', () => setTimeout(describeCommand, 0)],
   ['Dired: edit a folder as text…', () => setTimeout(pickDiredFolder, 0)],
@@ -3914,7 +3915,7 @@ function shortcutsSection() {
   return box;
 }
 
-function openSettings({ keys = false } = {}) {
+function openSettings({ keys = false, live = false } = {}) {
   const overlay = $('#overlay');
   const close = () => { overlay.hidden = true; overlay.replaceChildren(); };
   const st = S.settings;
@@ -3995,8 +3996,10 @@ function openSettings({ keys = false } = {}) {
       h('p', { class: 'set-detail' }, 'The Claude model that writes a meeting’s minutes beside its lines and answers on a desk, through your claude login. Haiku with the default effort (no thinking) is the quickest and the cheapest.'),
       h('div', { class: 'set-grid' },
         h('div', { class: 'set-label' }, 'Model'), liveSeg('liveModel', LIVE_MODEL_NAMES),
-        h('div', { class: 'set-label' }, 'Effort'), liveSeg('liveEffort', { '': 'Default', low: 'Low', medium: 'Medium', high: 'High' })),
+        h('div', { class: 'set-label' }, 'Effort'), liveSeg('liveEffort', { '': 'Default', low: 'Low', medium: 'Medium', high: 'High' }),
+        claudeAgentNames().length > 1 ? [h('div', { class: 'set-label' }, 'Agent'), liveSeg('liveAgent', { '': 'Automatic', ...Object.fromEntries(claudeAgentNames().map((n) => [n, n])) })] : null),
       liveCost() ? h('p', { class: 'set-detail set-warn' }, liveCost()) : null,
+      liveStatusBox(),
       h('div', { class: 'set-label' }, 'Labs'),
       h('p', { class: 'set-detail' }, 'Experiments you can turn on and off. They may change or go away.'),
       h('div', { class: 'set-toggles' },
@@ -4012,6 +4015,7 @@ function openSettings({ keys = false } = {}) {
   overlay.hidden = false;
   overlay.querySelector('.dialog').focus();
   if (keys) $('#set-keys')?.scrollIntoView({ block: 'start' });
+  if (live) $('#set-live')?.scrollIntoView({ block: 'center' });
 }
 
 // ------------------------------------------------------------------ file operations
@@ -4487,7 +4491,36 @@ async function deskConsent() {
 }
 let deskWarm = false;
 const LIVE_MODEL_NAMES = { haiku: 'Haiku', sonnet: 'Sonnet', opus: 'Opus' };
-const liveOpts = () => ({ model: LIVE_MODEL_NAMES[S.settings.liveModel] ? S.settings.liveModel : 'haiku', effort: ['low', 'medium', 'high'].includes(S.settings.liveEffort) ? S.settings.liveEffort : '' });
+const liveOpts = () => ({ model: LIVE_MODEL_NAMES[S.settings.liveModel] ? S.settings.liveModel : 'haiku', effort: ['low', 'medium', 'high'].includes(S.settings.liveEffort) ? S.settings.liveEffort : '', agent: S.settings.liveAgent || '' });
+// The Claude Code agents the live margin may go through (Settings → Agents).
+const claudeAgentNames = () => (S.info?.agents || []).filter((a) => a.kind === 'claude').map((a) => a.label);
+
+// Settings: which agent, signed in or not, the session; Test sends one line
+// through a session of its own, Restart starts the margin's again.
+function liveStatusBox() {
+  const lines = h('div', { class: 'live-status' }, h('p', { class: 'set-detail' }, 'Checking\u2026'));
+  const result = h('p', { class: 'set-detail live-test' });
+  const draw = (r) => lines.replaceChildren(...liveMod.statusLines(r).map((l) => h('p', { class: `set-detail${l.warn ? ' set-warn' : ''}` }, l.text)));
+  const load = async () => { try { await loadLive(); draw(await api('GET', '/api/live/status')); } catch (e) { lines.replaceChildren(h('p', { class: 'set-detail set-warn' }, e.message)); } };
+  const test = h('button', { class: 'btn small', title: 'Send one test line to Claude, through a session of its own (costs about what a line does)', onclick: async () => {
+    test.disabled = true;
+    result.className = 'set-detail live-test';
+    result.textContent = 'Sending a test line\u2026';
+    try {
+      await loadLive();
+      const r = await api('POST', '/api/live/test', liveOpts());
+      result.textContent = r.ok ? `\u2713 ${r.agent}: first words in ${liveMod.secs(r.ms)}, all in ${liveMod.secs(r.doneMs)} \u00b7 ${r.model} \u00b7 \u201c${r.said}\u201d` : `\u2717 ${r.agent}: ${r.error}`;
+      result.classList.toggle('set-warn', !r.ok);
+    } catch (e) { result.textContent = `\u2717 ${e.message}`; result.classList.add('set-warn'); }
+    test.disabled = false;
+    load();
+  } }, 'Test');
+  const restart = h('button', { class: 'btn small', title: 'End the live margin\u2019s session and start a fresh one (and the desk\u2019s)', onclick: async () => {
+    try { await loadLive(); draw(await api('POST', '/api/live/restart', liveOpts())); toast('The live margin\u2019s session started again'); setTimeout(load, 4000); } catch (e) { toast(e.message, 'error'); }
+  } }, 'Restart session');
+  load();
+  return h('div', { class: 'live-status-box', id: 'set-live' }, lines, h('div', { class: 'set-buttons' }, test, restart), result);
+}
 const liveModelName = () => LIVE_MODEL_NAMES[liveOpts().model];
 function deskWarmUp() {
   if (deskWarm || store.getItem('an.deskMargin') !== '1') return;
@@ -6597,6 +6630,7 @@ async function liveSend(tab, q, lines) {
     } else {
       e.state = 'error';
       e.error = err.message;
+      st.note = `${err.message} \u00b7 Settings \u2192 Live margin: Test`;
     }
   } finally {
     if (st.inflight?.ctl === ctl) st.inflight = null;
@@ -6610,6 +6644,8 @@ function liveEnd(tab, e, info) {
   e.t.done = performance.now();
   e.state = info.ok && e.sentence.trim() ? 'done' : info.ok && e.talked ? 'gone' : 'error';
   if (!info.ok) e.error = info.error;
+  // The corner says what went wrong (not "warming up" for ever), until a line comes back.
+  st.note = info.ok ? '' : `${info.error || 'No answer'} \u00b7 Settings \u2192 Live margin: Test`;
   st.cost += info.cost || 0;
   if (info.model) st.model = info.model;
   if (e.state !== 'done') return;

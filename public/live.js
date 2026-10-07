@@ -275,6 +275,25 @@ export function keepEdit(text, i, e, at = -1) {
 }
 
 // The time it took, as people read it.
+// Settings' status of the live margin (server.js liveStatus) as lines to
+// show → [{ text, warn }].
+export function statusLines(r, now = Date.now()) {
+  if (!r?.agent) return [{ text: 'No Claude Code agent: add one in Settings \u2192 Agents (its command is claude).', warn: true }];
+  const ago = (t) => { const m = Math.round((now - t) / 60000); return m < 1 ? 'just now' : m < 60 ? `${m} min ago` : `${Math.round(m / 60)} h ago`; };
+  const sign = r.signIn?.ok === true ? ' \u00b7 signed in' : r.signIn?.ok === false ? ` \u00b7 ${r.signIn.message || 'not signed in'}${r.signIn.login ? ` (run ${r.signIn.login})` : ''}` : '';
+  const out = [{ text: `Agent: ${r.agent}${r.chosen ? '' : ' (automatic)'} \u2014 runs \u201c${r.bin}\u201d${sign}`, warn: r.signIn?.ok === false }];
+  const x = r.session;
+  if (x?.error) out.push({ text: `Session: ended \u2014 ${x.error}`, warn: true });
+  else if (!x?.up) out.push({ text: r.on ? 'Session: starting\u2026' : 'Session: not running (it starts when the live margin is on).', warn: false });
+  else {
+    const stuck = x.busy > 15000;
+    out.push({ text: `Session: up${x.ready ? '' : ' (warming up)'} \u00b7 ${x.turns} line${x.turns === 1 ? '' : 's'}${x.startedAt ? ` \u00b7 started ${ago(x.startedAt)}` : ''}${stuck ? ` \u00b7 waiting on a line for ${Math.round(x.busy / 1000)} s` : ''}`, warn: stuck });
+  }
+  if (x?.lastOkAt) out.push({ text: `Last answer ${ago(x.lastOkAt)}.`, warn: false });
+  if (x?.lastError && (!x.lastOkAt || x.lastErrorAt > x.lastOkAt)) out.push({ text: `Last error ${ago(x.lastErrorAt)}: ${x.lastError}`, warn: true });
+  return out;
+}
+
 export const secs = (ms) => (ms == null ? '—' : `${(ms / 1000).toFixed(2)}s`);
 export function quantile(xs, q) {
   const a = xs.filter((x) => x != null).sort((x, y) => x - y);
@@ -333,7 +352,8 @@ export function liveHud() {
     hud.classList.toggle('busy', !!s.busy);
     ctx.textContent = s.context ? `knows ${s.context}` : '';
     ctx.title = s.context ? 'The other notes of this project the margin is told about (not private ones)' : '';
-    last.textContent = s.last ? `first ${secs(s.last.first)} · line ${secs(s.last.line)}` : s.note || 'waiting for a line…';
+    last.textContent = s.note || (s.last ? `first ${secs(s.last.first)} · line ${secs(s.last.line)}` : 'waiting for a line…');
+    last.classList.toggle('live-hud-warn', /Settings/.test(s.note || ''));
     const firsts = s.times.map((x) => x.first);
     const lines = s.times.map((x) => x.line);
     stats.textContent = s.times.length

@@ -9,7 +9,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { wanted, ruleOf, kindFor, liveKeyOf, keepKey, dueOf, leadOf, parseReply, keptLine, keepEdit, keepAll, memoryOf, plainReply, asked, foldReply, projectMemory, snippetsFor, quantile } from '../public/live.js';
+import { wanted, ruleOf, kindFor, liveKeyOf, keepKey, statusLines, dueOf, leadOf, parseReply, keptLine, keepEdit, keepAll, memoryOf, plainReply, asked, foldReply, projectMemory, snippetsFor, quantile } from '../public/live.js';
 
 const require = createRequire(import.meta.url);
 const server = require('../lib/live.js');
@@ -214,7 +214,9 @@ test('wanted and quantile', () => {
 
 // A stand-in for the claude CLI (stream-json in and out): it answers each
 // line with "[note] <the line>", writes what it was sent to a log, and ends
-// itself on a line "DIE".
+// itself on a line "DIE"; "HANG" gets no answer ("HANG_ONCE": the first
+// time), "AUTH" the error a signed-out CLI answers with, "STDERR_DIE" an
+// error on stderr and an end.
 const FAKE = `#!/usr/bin/env node
 const fs = require('fs');
 let n = 0, buf = '';
@@ -227,6 +229,10 @@ process.stdin.on('data', (d) => {
     fs.appendFileSync(process.env.FAKE_LOG, JSON.stringify({ pid: process.pid, text, args: process.argv.slice(2), thinking: process.env.MAX_THINKING_TOKENS ?? null }) + '\\n');
     const line = /Line: (.*)$/.exec(text)?.[1] ?? 'REQUEST';
     if (line === 'DIE') process.exit(3);
+    if (line === 'STDERR_DIE') { process.stderr.write("error: unknown option '--foo'\\n"); process.exit(1); }
+    if (line === 'HANG') continue;
+    if (line === 'HANG_ONCE' && !fs.existsSync(process.env.FAKE_LOG + '.hung')) { fs.writeFileSync(process.env.FAKE_LOG + '.hung', ''); continue; }
+    if (line === 'AUTH') { process.stdout.write(JSON.stringify({ type: 'result', subtype: 'success', is_error: true, result: 'Not logged in \u00b7 Please run /login', total_cost_usd: 0 }) + '\\n'); continue; }
     n++;
     const out = (o) => process.stdout.write(JSON.stringify(o) + '\\n');
     out({ type: 'stream_event', event: { type: 'content_block_delta', delta: { text: '[note] ' + line } } });
@@ -320,6 +326,64 @@ test('the resident session: the last meeting in its header; requests answered, n
     m.stop();
     fs.rmSync(dir, { recursive: true, force: true });
   }
+});
+
+test('a stuck session: ended after a silence, the line sent again on a fresh one; errors said as errors', { skip: process.platform === 'win32' }, async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'margin-live-test-'));
+  const bin = path.join(dir, 'fake-claude');
+  fs.writeFileSync(bin, FAKE, { mode: 0o755 });
+  const log = path.join(dir, 'log');
+  const m = server.liveMargin({ bin, env: { ...process.env, FAKE_LOG: log }, warmMs: 30, retryMs: 50, opts: { stallMs: 300 } });
+  const ask = (line) => new Promise((done) => m.line({ key: 'E', title: 'E', agenda: [], line, today: 'T' }, () => {}, done));
+  const sent = () => fs.readFileSync(log, 'utf8').trim().split('\n').map((l) => JSON.parse(l));
+  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+  try {
+    m.warm();
+    await sleep(60);
+    // No word back: the session is ended and the line goes again, on a fresh one.
+    assert.equal((await ask('HANG_ONCE')).ok, true);
+    let s = sent();
+    assert.equal(s.length, 2);
+    assert.notEqual(s[0].pid, s[1].pid);
+    assert.match(s[1].text, /Line: HANG_ONCE$/);
+    // Stuck again and again: once more only, then said.
+    const h = await ask('HANG');
+    assert.equal(h.ok, false);
+    assert.match(h.error, /^No word from Claude in \d+ s/);
+    assert.equal(sent().filter((x) => /Line: HANG$/.test(x.text)).length, 2);
+    assert.match(m.state().lastError, /No word from Claude/);
+    // Signed out: an error, not minutes.
+    await sleep(100);
+    const a = await ask('AUTH');
+    assert.deepEqual([a.ok, a.error], [false, 'Not logged in \u00b7 Please run /login']);
+    assert.equal((await ask('fine')).ok, true);
+    assert.ok(m.state().lastOkAt >= m.state().lastErrorAt);
+    // A CLI that ends says why (its last words on stderr).
+    const d = await ask('STDERR_DIE');
+    assert.equal(d.ok, false);
+    assert.equal(d.error, "The Claude session ended: error: unknown option '--foo'");
+    // Settings' Test: one line through a session of its own.
+    const t = await server.testLine({ bin, env: { ...process.env, FAKE_LOG: log } });
+    assert.deepEqual([t.ok, t.said, t.error], [true, '[note] -> go w/ the 20th', null]);
+  } finally {
+    m.stop();
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('statusLines: Settings\u2019 status of the live margin', () => {
+  const now = 10 * 3600000;
+  assert.deepEqual(statusLines({ agent: null }).map((l) => l.warn), [true]);
+  const base = { agent: 'Claude Code', chosen: '', bin: 'claude', signIn: { ok: true }, on: true };
+  assert.deepEqual(statusLines({ ...base, session: { up: true, ready: true, turns: 3, startedAt: now - 2 * 3600000, busy: 0, lastOkAt: now - 60000 } }, now).map((l) => l.text), [
+    'Agent: Claude Code (automatic) \u2014 runs \u201cclaude\u201d \u00b7 signed in', 'Session: up \u00b7 3 lines \u00b7 started 2 h ago', 'Last answer 1 min ago.']);
+  const stuck = statusLines({ ...base, chosen: 'Claude Code', signIn: { ok: false, message: 'Not signed in (or the sign-in expired).', login: 'claude /login' },
+    session: { up: true, ready: true, turns: 1, startedAt: now, busy: 52000, lastError: 'No word', lastErrorAt: now } }, now);
+  assert.deepEqual(stuck.map((l) => l.warn), [true, true, true]);
+  assert.match(stuck[0].text, /^Agent: Claude Code \u2014 runs \u201cclaude\u201d \u00b7 Not signed in \(or the sign-in expired\)\. \(run claude \/login\)$/);
+  assert.match(stuck[1].text, /waiting on a line for 52 s$/);
+  assert.equal(statusLines({ ...base, on: false, session: null })[1].text, 'Session: not running (it starts when the live margin is on).');
+  assert.equal(statusLines({ ...base, session: { error: 'The Claude session ended.' } })[1].text, 'Session: ended \u2014 The Claude session ended.');
 });
 
 test('the model and effort: Haiku without thinking unless told; another one, thinking that much', { skip: process.platform === 'win32' }, async () => {
