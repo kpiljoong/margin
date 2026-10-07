@@ -4592,6 +4592,8 @@ function deskView(tab, c) {
         loadMargin: async () => (await api('GET', `/api/desk/margin?path=${encodeURIComponent(tab.path)}`)).cards,
         saveMargin: (cards) => api('PUT', '/api/desk/margin', { path: tab.path, cards }).catch((e) => toast(`The margin\u2019s cards were not kept: ${e.message}`, 'error')),
         privateOf: async (paths) => (await api('POST', '/api/private', { paths })).private || {},
+        // Over time: the notes and the meetings before and after them, read on the server (nothing sent).
+        trail: (paths) => api('POST', '/api/desk/trail', { paths }),
         // A note written in from the desk (its card read large): through its
         // tab when it is open (the editor follows, autosave saves); else read
         // and saved as a tab is, against the version read — never over a newer one.

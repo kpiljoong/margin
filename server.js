@@ -822,7 +822,7 @@ function saveDrawer({ path: relPath, scraps }) {
   return { path: rel, scraps: noteDrawer(rel) };
 }
 
-const DESK_KINDS = new Set(['summary', 'merge', 'question', 'answer']);
+const DESK_KINDS = new Set(['summary', 'merge', 'question', 'answer', 'trail']);
 function deskMarginCards(rel) {
   const d = readJson(deskMarginOf(rel), null);
   return Array.isArray(d?.cards) ? d.cards : [];
@@ -841,6 +841,56 @@ function saveDeskMargin({ path: relPath, cards }) {
   if (!clean.length) fs.rmSync(file, { force: true });
   else { ensureDataDir(); fs.mkdirSync(path.dirname(file), { recursive: true }); writeFileAtomic(file, JSON.stringify({ at: new Date().toISOString(), cards: clean }, null, 2)); }
   return { path: rel, cards: clean.length };
+}
+
+// The desk's "Over time" (public/trail.js): the notes on it, and the
+// meetings before and after them ("Previous meeting: [[…]]" near the top,
+// either way), each with what tells when it was (its file's times, its
+// oldest kept version) and the to-do lines of its kept versions (when one
+// was ticked). Read here, sent nowhere.
+const TRAIL_MAX = 24;
+const PREVIOUS_RE = /^\s*(?:\*\*)?Previous meeting:?(?:\*\*)?:?\s*\[\[([^\]|#]+)/i;
+function deskTrail({ paths }) {
+  if (!Array.isArray(paths) || !paths.length) throw httpError(400, 'paths should be a list');
+  const ignored = loadIgnore(ROOT);
+  const notes = workspaceFiles().filter((f) => NOTE_EXT.has(extOf(f)) && !isTemplatePath(f) && !ignored(f));
+  // [[name]] → a note: its path (with or without .md), else its name anywhere.
+  const byPath = new Map(notes.map((f) => [f.toLowerCase(), f]));
+  const byName = new Map();
+  for (const f of notes) { const k = path.basename(f).replace(/\.(md|markdown)$/i, '').toLowerCase(); if (!byName.has(k)) byName.set(k, f); }
+  const find = (name) => { const t = name.trim().toLowerCase(); return byPath.get(t) || byPath.get(`${t}.md`) || byName.get(path.basename(t)) || null; };
+  const prevOf = new Map();
+  for (const f of notes) {
+    const head = (cachedText(f)?.text || '').split('\n', 20);
+    const m = head.map((l) => PREVIOUS_RE.exec(l)).find(Boolean);
+    const p = m && find(m[1]);
+    if (p && p !== f) prevOf.set(f, p);
+  }
+  const want = [];
+  const add = (f) => { if (f && !want.includes(f) && want.length < TRAIL_MAX) want.push(f); };
+  for (const p of paths) add(byPath.get(String(p).toLowerCase()));
+  for (let i = 0; i < want.length; i++) {
+    add(prevOf.get(want[i]));
+    for (const [f, p] of prevOf) if (p === want[i]) add(f);
+  }
+  return {
+    notes: want.map((f) => {
+      const c = cachedText(f);
+      let st = null;
+      try { st = fs.statSync(path.join(ROOT, f)); } catch { /* gone */ }
+      const versions = versionsOf(f).slice(0, HISTORY_KEEP).map((v) => {
+        let t = '';
+        try { t = fs.readFileSync(path.join(historyDir(f), v.id), 'utf8'); } catch { /* gone */ }
+        return [v.date, t.split('\n').filter((l) => TASK_RE.test(l)).join('\n')];
+      });
+      return {
+        path: f, text: (c?.text || '').slice(0, 200000), prev: prevOf.get(f) || null,
+        created: st ? Math.round(st.birthtimeMs || st.mtimeMs) : null, modified: st ? Math.round(st.mtimeMs) : null,
+        versions, private: isPrivateNote(path.join(ROOT, f)) || undefined,
+      };
+    }),
+    more: want.length >= TRAIL_MAX,
+  };
 }
 
 function keepGathered(rel, pieces) {
@@ -2207,6 +2257,7 @@ async function routeApi(method, url, body) {
   if (method === 'PUT' && p === '/api/drawer') return saveDrawer(body || {});
   if (method === 'GET' && p === '/api/desk/margin') { const rel = relOf(workspacePath(q('path'))); return { path: rel, cards: deskMarginCards(rel) }; }
   if (method === 'PUT' && p === '/api/desk/margin') return saveDeskMargin(body || {});
+  if (method === 'POST' && p === '/api/desk/trail') return deskTrail(body || {});
   if (method === 'GET' && p === '/api/origin') return originOf(q('path'));
   if (method === 'GET' && p === '/api/comments') return getComments(q('path'));
   if (method === 'PUT' && p === '/api/comments') return saveComments(body || {});

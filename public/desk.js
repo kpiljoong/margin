@@ -8,6 +8,7 @@
 
 import { meetingItems, moveItem, bodyOf } from './meeting.js';
 import { IMAGE_FILE, rectFrom, regionsOf, threadOf, regionNote, cropParts } from './regions.js';
+import { trailOf, trailText } from './trail.js';
 
 // ---------------------------------------------------------------- the file
 
@@ -291,6 +292,7 @@ const svg = (tag, cls) => { const e = document.createElementNS(SVG, tag); if (cl
 const ACTIONS = [
   ['summary', 'Sum up', 's', 'What the cards say together, where they agree and where they don’t'],
   ['questions', 'Questions', 'q', 'What they leave open, or where they disagree'],
+  ['trail', 'Over time', 't', 'The meetings before and after them, in order: each to-do (when it came, how often it came back, when it was ticked), the questions that came back, what was decided when; by rules, nothing sent'],
   ['group', 'Sort', 'o', 'Into groups by what they are about (shown first, Tab to take)'],
   ['links', 'Links', 'l', 'The cards that belong together (shown first, Tab to take)'],
   ['merge', 'Merge', 'm', 'One note of them all, to make into a new note'],
@@ -302,7 +304,8 @@ const ACTIONS = [
 // → Promise<path>, ask({ task, cards, question, talk }, onText) →
 // Promise<{ said, end, withheld }>, privateOf(paths) → Promise<{ path: why }>,
 // onChange(text), toast(msg, kind), reduced, dockMin, onDock(min),
-// loadMargin() → Promise<[card]>, saveMargin([card]) }
+// loadMargin() → Promise<[card]>, saveMargin([card]),
+// trail(paths) → Promise<{ notes, more }> (server.js deskTrail) }
 export class Desk {
   constructor(opts) {
     this.opts = opts;
@@ -314,7 +317,7 @@ export class Desk {
     this.notes = new Map(); // a note cards were taken from: its text now
     this.priv = new Map(); // a note's card: why it is private ('' if not)
     this.ai = []; // what the margin wrote, not kept yet (kept beside the desk, see saveMargin)
-    this.proposal = null; // { kind: 'group' | 'links', ... }
+    this.proposal = null; // { kind: 'group' | 'links' | 'row', ... }
     this.undo = [];
     this.redo = [];
     this.talk = [];
@@ -371,7 +374,7 @@ export class Desk {
     this.marquee = el('div', 'desk-marquee');
     this.marquee.hidden = true;
     this.dock = this.buildDock();
-    this.hint = el('div', 'desk-hint', 'Double-click: a card · Space: read one · drag a note from the tree, or a picture (or paste one) · drop a card on a card: a group · drop cards on the margin, or s q o l m · / talk · z all');
+    this.hint = el('div', 'desk-hint', 'Double-click: a card · Space: read one · drag a note from the tree, or a picture (or paste one) · drop a card on a card: a group · drop cards on the margin, or s q t o l m · / talk · z all');
     this.el = el('div', 'desk', this.grid, this.world, this.marquee, this.dock, this.hint);
     this.el.tabIndex = 0;
     this.el.desk = this; // for tests
@@ -707,7 +710,7 @@ export class Desk {
     this.edges.style.height = `${h}px`;
     // The groups the margin would make, where they would be.
     this.world.querySelectorAll('.desk-ghost').forEach((g) => g.remove());
-    if (this.proposal?.kind === 'group') {
+    if (this.proposal?.kind === 'group' || this.proposal?.kind === 'row') {
       for (const g of this.proposal.layout) {
         const f = el('div', 'desk-ghost', el('span', null, g.name));
         Object.assign(f.style, { left: `${g.box.x}px`, top: `${g.box.y}px`, width: `${g.box.width}px`, height: `${g.box.height}px` });
@@ -1506,6 +1509,7 @@ export class Desk {
   async act(task, given = null) {
     if (this.busy) return;
     const ns = given || this.context();
+    if (task === 'trail') { await this.trail(ns); return; }
     if (task === 'region' && !String(ns[0]?.text || '').trim()) { this.opts.toast('Write in the mark first what to ask, or what it says (Enter).'); this.edit(ns[0].id); return; }
     if (!ns.length) { this.opts.toast('No cards to give the margin: select some, or bring them into view.'); return; }
     if (task === 'group' && ns.length < 3) { this.opts.toast('Sorting needs three cards or more.'); return; }
@@ -1559,6 +1563,58 @@ export class Desk {
       this.saveMargin();
     }
   }
+  // Over time (trail.js): the meetings the notes among them are in, in
+  // order, and what became of what they wrote — read from the notes and
+  // their kept versions by rules; nothing is sent. A card of it, and the
+  // meetings in a row, to take (Tab).
+  async trail(ns) {
+    const files = [...new Set(ns.flatMap((n) => (n.type === 'file' && NOTE.test(n.file) ? [n.file] : NOTE.test(n.from?.file || '') ? [n.from.file] : [])))];
+    if (!files.length || !this.opts.trail) { this.opts.toast('Over time starts from a meeting\u2019s note on the desk: select it, or bring it into view.'); return; }
+    this.busy = 'Over time';
+    this.dockShow();
+    this.status.textContent = 'Over time\u2026';
+    try {
+      const r = await this.opts.trail(files);
+      const t = trailOf(r.notes || []);
+      const n = t.meetings.length;
+      const at = this.spot(ns, 440, 320);
+      const card = this.addAi({ kind: 'trail', title: `Over time \u00B7 ${n} meeting${n === 1 ? '' : 's'}`, x: at.x, y: at.y, width: 440, height: 200, text: trailText(t), state: 'done' }, false);
+      this.status.textContent = `Over time \u00B7 ${n}`;
+      if (r.more) this.say(`Only the first ${n} meetings of the chain were read.`);
+      if (n > 1) this.proposeRow(t.meetings); else this.show(card, true);
+    } catch (err) {
+      this.status.textContent = '';
+      this.opts.toast(err.message, 'error');
+    } finally {
+      this.busy = null;
+      this.dockShow();
+      this.saveMargin();
+    }
+  }
+  // The meetings in a row below the cards, in order, each in a group named
+  // by its place and date (≈ when it is estimated), an arrow to the next;
+  // a note not on the desk yet comes onto it.
+  proposeRow(ms) {
+    const cards = this.d.nodes.filter((n) => n.type !== 'group');
+    const b = boundsOf(cards) || { x: 0, y: 0, width: 0, height: 0 };
+    const y = cards.length ? b.y + b.height + 160 : 0;
+    let x = b.x;
+    const layout = ms.map((m, i) => {
+      const n = this.d.nodes.find((c) => c.type === 'file' && c.file === m.path);
+      const width = n?.width || 420;
+      const height = n?.height || 560;
+      const box = { x, y, width: width + PAD * 2, height: height + HEAD + PAD };
+      x += box.width + 60;
+      const date = m.date ? `${m.estimated ? '\u2248' : ''}${m.date}` : 'no date';
+      return { name: `${i + 1} \u00B7 ${date}`, path: m.path, id: n?.id || null, box, at: { x: box.x + PAD, y: box.y + HEAD }, width, height };
+    });
+    this.proposal = { kind: 'row', layout };
+    const added = layout.filter((g) => !g.id).length;
+    const day = (m) => `${m.estimated ? '\u2248' : ''}${m.date || '?'}`;
+    this.say(`${ms.length} meetings, ${day(ms[0])} \u2192 ${day(ms.at(-1))}${added ? ` (${added} not on the desk yet)` : ''}: Tab lays them out in order, below, Esc not. Then Tab keeps the card.`);
+    this.render();
+    this.fit(true, [...cards, ...layout.map((g) => g.box)]);
+  }
   propose(ns, p) {
     if (p.kind === 'group') {
       if (!p.groups.length) throw new Error('The margin sent no groups back');
@@ -1583,6 +1639,15 @@ export class Desk {
       const pos = new Map(p.layout.flatMap((g) => g.at.map((a) => [a.id, a])));
       const groups = p.layout.map((g) => ({ id: newId(), type: 'group', label: g.name, ...g.box }));
       this.change({ ...this.d, nodes: [...groups, ...this.d.nodes.map((n) => (pos.has(n.id) ? { ...n, x: pos.get(n.id).x, y: pos.get(n.id).y } : n))] });
+      this.fit(true, groups);
+    } else if (p.kind === 'row') {
+      const groups = p.layout.map((g) => ({ id: newId(), type: 'group', label: g.name, ...g.box }));
+      const added = p.layout.filter((g) => !g.id).map((g) => ({ id: newId(), type: 'file', file: g.path, ...g.at, width: g.width, height: g.height }));
+      const pos = new Map(p.layout.filter((g) => g.id).map((g) => [g.id, g.at]));
+      const ids = p.layout.map((g) => g.id || added.find((a) => a.file === g.path).id);
+      const has = (a, b) => this.d.edges.some((e) => e.fromNode === a && e.toNode === b);
+      const edges = ids.slice(1).map((id, i) => [ids[i], id]).filter(([a, b]) => !has(a, b)).map(([a, b]) => ({ id: newId(), fromNode: a, fromSide: 'right', toNode: b, toSide: 'left' }));
+      this.change({ ...this.d, nodes: [...groups, ...this.d.nodes.map((n) => (pos.has(n.id) ? { ...n, ...pos.get(n.id) } : n)), ...added], edges: [...this.d.edges, ...edges] });
       this.fit(true, groups);
     } else {
       this.change({ ...this.d, edges: [...this.d.edges, ...p.links.map((l) => ({ id: newId(), fromNode: l.from, toNode: l.to, toEnd: 'none', ...(l.label ? { label: l.label } : {}) }))] });
