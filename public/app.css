@@ -428,6 +428,15 @@ input[type=checkbox] { accent-color: var(--accent); }
 .recall-ref:hover { color: var(--fg); background: color-mix(in srgb, var(--r) 18%, var(--bg)); }
 .recall-date { margin-left: 5px; color: var(--fg-faint); font-variant-numeric: tabular-nums; }
 .recall-more { font: 11.5px/1.5 var(--sans); color: var(--fg-faint); }
+.mnote.recall.k-ask { --r: var(--accent); }
+.recall-ask { margin-top: 6px; padding-top: 6px; border-top: 1px dashed color-mix(in srgb, var(--r) 40%, transparent); }
+.mnote.k-ask .recall-ask { margin-top: 2px; padding-top: 0; border-top: 0; }
+.recall-q { font: 13px/1.4 var(--sans); color: var(--fg); overflow-wrap: anywhere; }
+.recall-answers { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; margin-top: 5px; }
+.recall-ans { all: unset; cursor: pointer; padding: 1px 9px; border-radius: 10px; border: 1px solid color-mix(in srgb, var(--r) 55%, transparent); font: 12px/1.5 var(--sans); color: var(--fg); }
+.recall-ans:hover, .recall-ans:focus-visible { background: color-mix(in srgb, var(--r) 20%, var(--bg)); }
+.recall-ans.quiet { border-color: transparent; color: var(--fg-faint); }
+.recall-date-in { font: 12px var(--sans); color: var(--fg); background: var(--bg); border: 1px solid var(--border); border-radius: 6px; padding: 0 4px; color-scheme: light dark; }
 .mnote-input { width: 100%; box-sizing: border-box; margin-top: 3px; padding: 4px 6px; border: 1px solid var(--pen-me); border-radius: 5px; background: var(--bg); color: var(--fg); font: 13px var(--sans); outline: none; }
 .ed-curline { position: absolute; left: 0; right: 0; z-index: 0; pointer-events: none; background: color-mix(in srgb, var(--accent) 10%, transparent); box-shadow: inset 4px 0 0 var(--accent); }
 .pen-who { font: 600 11.5px var(--sans); margin-right: 5px; }

@@ -280,8 +280,9 @@ const DEFAULT_SETTINGS = {
   penMe: '', penAgent: '',
   // The margin's handwriting ('' the pens' hands, else one of MARGIN_FONTS).
   marginFont: '',
-  // The margin remembers: beside a line, what the other notes say about it.
-  recall: true,
+  // The margin remembers: beside a line, what the other notes say about it;
+  // and asks, now and then, what it can't tell.
+  recall: true, recallAsk: true,
 };
 const ACCENTS = ['#7aa2f7', '#bb9af7', '#2ac3de', '#9ece6a', '#e0af68', '#ff9e64', '#f7768e', '#c0caf5'];
 const LINE_HEIGHTS = { 1.5: 'Compact', 1.7: 'Normal', 1.9: 'Relaxed' };
@@ -4020,6 +4021,7 @@ function openSettings({ keys = false, live = false } = {}) {
           ? '⌃ and ⌥ keys move, mark, kill and yank as in Emacs, with ⌃X, ⌃U and registers (ESC then a key is ⌥ and the key). ⌥ then no longer types special characters in notes.'
           : 'Ctrl and Alt keys move, mark, kill and yank as in Emacs, with Ctrl+X, Ctrl+U and registers. Ctrl+C, Ctrl+V and Ctrl+Z still copy, paste and undo; Ctrl+X is Emacs’s (cut: Ctrl+W).'),
         toggle('recall', 'The margin remembers', 'Beside a to-do, a question, a decision or a line about one: what your other notes already say about it (the same to-do open or ticked there, a question asked or decided before, a decision made before). Read on this device; nothing is sent.'),
+        toggle('recallAsk', 'The margin asks', 'Now and then one question beside a line, about what it can\u2019t tell: the same to-do in other words? does this decision replace that one? by when? what is the note about? An answer goes in the line itself, or in KNOWN.md (a note of yours, plain lines), and what it remembers follows it. At most 20 a day; Not now waits a day.'),
         toggle('followTab', 'Tree follows the active tab', 'Selecting a tab opens its folders in the file tree and scrolls to it (also ⇅ at the top of the tree). Off: use ◎ in the tree.')),
       h('div', { class: 'set-label' }, 'Live margin and the desk’s margin'),
       h('p', { class: 'set-detail' }, 'The Claude model that writes a meeting’s minutes beside its lines and answers on a desk, through your claude login. Haiku with the default effort (no thinking) is the quickest and the cheapest.'),
@@ -8556,10 +8558,11 @@ function recallFresh() {
   recallSt.loading = (async () => {
     recallMod ||= await import('./recall.js');
     const r = await api('GET', '/api/recall');
-    const sig = JSON.stringify(r.notes);
+    const sig = JSON.stringify(r);
     if (sig === recallSt.sig) return;
     recallSt.sig = sig;
     recallSt.index = recallMod.recallIndex(r.notes);
+    recallSt.known = recallMod.knownOf(r.known);
     recallSt.cache = new Map();
     for (const t of S.tabs) if (t.editor && t.comments && isAttached(t)) drawNotes(t);
   })().catch(() => {}).finally(() => { recallSt.loading = null; });
@@ -8573,12 +8576,91 @@ function recallNotes(tab) {
   for (let i = text.indexOf('\n'); i >= 0; i = text.indexOf('\n', i + 1)) starts.push(i + 1);
   const lines = text.split('\n');
   const off = recallOff();
-  return recallMod.recall(recallSt.index, tab.path, text, { cache: recallSt.cache }).flatMap((r) => {
+  let ask = askNow(tab, text);
+  const cards = recallMod.recall(recallSt.index, tab.path, text, { cache: recallSt.cache, known: recallSt.known }).flatMap((r) => {
     const key = `${tab.path}\n${r.kind}\n${lines[r.line].trim()}`;
-    return off.has(key) ? [] : [{ from: starts[r.line], to: starts[r.line], el: recallCard(tab, r, key) }];
+    if (off.has(key)) return [];
+    const mine = ask?.line === r.line ? ask : null;
+    if (mine) ask = null;
+    return [{ from: starts[r.line], to: starts[r.line], el: recallCard(tab, r, key, mine) }];
   });
+  if (ask) cards.push({ from: starts[ask.line], to: starts[ask.line], el: h('div', { class: 'mnote recall k-ask' }, h('div', { class: 'mnote-head' }, h('span', { class: 'recall-chip' }, 'Question')), askBox(tab, ask)) });
+  return cards;
 }
-function recallCard(tab, r, key) {
+
+// The margin asks (Settings → The margin asks): one question at a time, the
+// one nearest the cursor (never on the line being written), at most
+// ASK_DAY_MAX a day (answered or put off); Not now waits a day.
+const ASK_DAY_MAX = 20;
+const DAY_MS = 86400000;
+function askDay() {
+  const day = new Date().toDateString();
+  let b = {};
+  try { b = JSON.parse(store.getItem('an.askDay') || '{}'); } catch { /* none yet */ }
+  return b.day === day ? b : { day, n: 0 };
+}
+function askSpent() { const b = askDay(); b.n++; store.setItem('an.askDay', JSON.stringify(b)); }
+function askLater() { try { return JSON.parse(store.getItem('an.askLater') || '{}'); } catch { return {}; } }
+function askNow(tab, text) {
+  if (!S.settings.recallAsk || askDay().n >= ASK_DAY_MAX) return null;
+  const later = askLater();
+  const now = Date.now();
+  const cursor = lineNoAt(text, tab.editor.selectionStart);
+  return recallMod.asks(recallSt.index, tab.path, text, { known: recallSt.known, cursor, projects: true }).find((q) => !(later[q.key] > now)) || null;
+}
+const ymdOf = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+const daysOn = (n) => { const d = new Date(); d.setDate(d.getDate() + n); return ymdOf(d); };
+function askBox(tab, q) {
+  const btn = (label, run, cls = '', title = null) => h('button', { class: `recall-ans${cls}`, title, onmousedown: (e) => e.preventDefault(), onclick: run }, label);
+  const tell = (answer) => async () => {
+    try { await api('POST', '/api/recall/known', { line: recallMod.knownLine(answer, q.a, q.b) }); } catch (e) { toast(e.message, 'error'); return; }
+    askSpent();
+    recallSt.at = 0;
+    recallFresh();
+  };
+  const notNow = btn('Not now', () => {
+    const later = Object.fromEntries(Object.entries(askLater()).filter(([, t]) => t > Date.now()).slice(-300));
+    later[q.key] = Date.now() + DAY_MS;
+    store.setItem('an.askLater', JSON.stringify(later));
+    askSpent();
+    drawNotes(tab);
+  }, ' quiet');
+  let answers = [];
+  if (q.kind === 'same') answers = [btn('Same', tell('same')), btn('Different', tell('different'))];
+  else if (q.kind === 'replaces') answers = [btn('Replaces it', tell('replaces')), btn('Both hold', tell('holds')), btn('Not related', tell('unrelated'))];
+  else if (q.kind === 'due') {
+    const fri = (5 - new Date().getDay() + 7) % 7 || 7;
+    const mon = (1 - new Date().getDay() + 7) % 7 || 7;
+    const due = (date) => () => askWrite(tab, q, (v) => {
+      const ls = v.split('\n');
+      if (ls[q.line] == null || !/\[ \]/.test(ls[q.line])) return null;
+      ls[q.line] = recallMod.withDue(ls[q.line], date);
+      return ls.join('\n');
+    });
+    const md = (n) => daysOn(n).slice(5).replace('-', '/');
+    const days = [[fri, 'Fri'], [mon, 'Mon']].sort((x, y) => x[0] - y[0]).map(([n, d]) => btn(`${d} ${md(n)}`, due(daysOn(n))));
+    answers = [btn('Today', due(daysOn(0))), ...days,
+      h('input', { type: 'date', class: 'recall-date-in', title: 'Another day', onchange: (e) => { if (e.target.value) due(e.target.value)(); } }),
+      btn('No date', tell('nodate'))];
+  } else if (q.kind === 'project') answers = q.pick.map((p) => btn(p.name, () => askWrite(tab, q, (v) => recallMod.withProject(v, p.name)), '', `${p.notes} related note${p.notes === 1 ? '' : 's'}`));
+  return h('div', { class: 'recall-ask' }, h('div', { class: 'recall-q' }, recallMod.askText(q)), h('div', { class: 'recall-answers' }, answers, notNow));
+}
+// An answer that goes in the note: written in (one ⌘Z takes it back), the
+// cursor where it was.
+function askWrite(tab, q, change) {
+  const ed = tab.editor;
+  const v = ed.value;
+  const nv = change(v);
+  if (nv == null || nv === v) { toast('That line changed: ask again later.'); return; }
+  let i = 0;
+  while (i < v.length && v[i] === nv[i]) i++;
+  const add = nv.slice(i, i + nv.length - v.length);
+  const at = (x) => (x >= i ? x + add.length : x);
+  ed.replace(i, i, add, at(ed.selectionStart), at(ed.selectionEnd));
+  askSpent();
+  drawNotes(tab);
+}
+function recallCard(tab, r, key, ask = null) {
   const { chip, says } = recallMod.recallText(r);
   const ref = (x) => h('button', { class: 'recall-ref', title: x.raw, onclick: () => openAt(x.path, x.raw) }, x.name, x.date ? h('span', { class: 'recall-date', title: x.estimated ? 'No date in it: from when its file was made, or its oldest kept version' : null }, `${x.estimated ? '\u2248' : ''}${x.date.slice(5)}`) : null);
   return h('div', { class: `mnote recall k-${r.kind}` },
@@ -8592,7 +8674,8 @@ function recallCard(tab, r, key) {
         drawNotes(tab);
       } }, '\u00D7')),
     h('div', { class: 'recall-says' }, says),
-    h('div', { class: 'recall-refs' }, r.refs.slice(0, 3).map(ref), r.refs.length > 3 ? h('span', { class: 'recall-more' }, `+${r.refs.length - 3}`) : null));
+    h('div', { class: 'recall-refs' }, r.refs.slice(0, 3).map(ref), r.refs.length > 3 ? h('span', { class: 'recall-more' }, `+${r.refs.length - 3}`) : null),
+    ask ? askBox(tab, ask) : null);
 }
 
 function noteCard(tab, c, lost) {

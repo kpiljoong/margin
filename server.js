@@ -471,8 +471,9 @@ function listTasks() {
 }
 
 // The margin remembers (public/recall.js): every note's to-do, decision and
-// question lines (0-based) and its first words (for its date). Shown beside
-// another note's lines; nothing is sent anywhere.
+// question lines (0-based), its first words (for its date) and its project;
+// and what you told it when it asked (KNOWN.md, a note of yours). Shown
+// beside another note's lines; nothing is sent anywhere.
 const RECALL_LINE = /^\s*(?:[-*+]|\d+[.)])\s+\[[ xX]\]\s+\S|^\s*>\s*\[!(?:decision|decided|question)\][+-]?\s+\S|(?:^|\s)#(?:decision|decided|question)\b/i;
 const RECALL_MAX = 20000;
 function noteRecall(c) {
@@ -489,19 +490,36 @@ function noteRecall(c) {
   return c.recall;
 }
 
+const KNOWN_FILE = 'KNOWN.md';
 function recallLines() {
   const notes = [];
   let count = 0;
   for (const rel of workspaceFiles()) {
-    if (!NOTE_EXT.has(extOf(rel)) || isTemplatePath(rel)) continue;
+    if (!NOTE_EXT.has(extOf(rel)) || isTemplatePath(rel) || rel === KNOWN_FILE) continue;
     const c = cachedText(rel);
     const lines = c ? noteRecall(c) : [];
     if (!lines.length) continue;
-    notes.push({ path: rel, head: c.text.slice(0, 1500), created: c.created, lines });
+    const head = c.text.slice(0, 1500);
+    notes.push({ path: rel, head, created: c.created, project: projectOf(head).project, lines });
     count += lines.length;
     if (count > RECALL_MAX) break;
   }
-  return { notes };
+  return { notes, known: cachedText(KNOWN_FILE)?.text || '' };
+}
+
+// An answer to one of the margin's questions: a line at the end of KNOWN.md
+// (made with a heading the first time).
+const KNOWN_HEAD = '# Known\n\nWhat you told Margin when it asked (Settings \u2192 The margin asks). Plain lines: change or delete any.\n';
+function addKnown({ line }) {
+  if (typeof line !== 'string' || !/^- \S/.test(line) || /[\r\n]/.test(line) || line.length > 2000) throw httpError(400, 'line: one list item');
+  const abs = workspacePath(KNOWN_FILE);
+  let old = null;
+  try { old = fs.readFileSync(abs, 'utf8'); } catch { /* the first */ }
+  const text = old == null ? `${KNOWN_HEAD}\n${line}\n` : `${old}${old.endsWith('\n') || !old ? '' : '\n'}${line}\n`;
+  if (old != null) keepVersion(KNOWN_FILE, old, 'save');
+  writeFileAtomic(abs, text);
+  if (old == null) treeCache = null;
+  return { path: KNOWN_FILE, hash: hashOf(Buffer.from(text, 'utf8')) };
 }
 
 // Check a task off (or on again), if that line is still that task.
@@ -715,7 +733,7 @@ function wroteNote(abs, data) {
   try {
     const st = fs.statSync(abs);
     const text = Buffer.isBuffer(data) ? data.toString('utf8') : String(data);
-    textCache.set(relOf(abs), { mtimeMs: st.mtimeMs, size: st.size, text, lower: text.toLowerCase() });
+    textCache.set(relOf(abs), { mtimeMs: st.mtimeMs, size: st.size, created: Math.round(st.birthtimeMs || st.mtimeMs), text, lower: text.toLowerCase() });
     sawNote(relOf(abs), text, st);
   } catch { /* the cache fills itself on the next read */ }
 }
@@ -2294,6 +2312,7 @@ async function routeApi(method, url, body) {
   if (method === 'GET' && p === '/api/outside') return listOutside();
   if (method === 'GET' && p === '/api/tasks') return listTasks();
   if (method === 'GET' && p === '/api/recall') return recallLines();
+  if (method === 'POST' && p === '/api/recall/known') return addKnown(body || {});
   if (method === 'POST' && p === '/api/tasks/toggle') return toggleTask(body || {});
   if (method === 'GET' && p === '/api/outside/diff') return outsideDiff(q('path'));
   if (method === 'POST' && p === '/api/outside/seen') return outsideSeen(body || {});

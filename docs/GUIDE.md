@@ -366,6 +366,15 @@ Beside a line of the note you are writing, the margin shows what your other note
 
 The same to-do is the same words without its owner, date, tags and punctuation; "near" is most of the same words (Korean particles aside) — words in many of the notes' items, a project's name, don't count. Its date is the note's date (front matter, name or title; ≈ when it is estimated from the file). Rules only: the notes are read on this device and nothing is sent. × lets a card go on that line for good; Settings → **The margin remembers** turns it off. A note that has shown one keeps its margin, so the text doesn't move as cards come and go.
 
+**It asks, now and then.** What it can't tell, it asks — one question at a time, beside the line nearest the cursor (never the line you are writing), at most 20 a day:
+
+- **The same to-do?** A to-do near one in another note, in other words ("Draft the release notes" and "Release notes draft"): **Same** makes them one from then on (open elsewhere, done already…), **Different** stops the question.
+- **Does this replace that?** A decision near one made before: **Replaces it** — from then on, a line about it meets the newer one ("…, it replaced …"); **Both hold**; **Not related** (no longer shown as near).
+- **By when?** An open to-do with someone on it (`@ann`) and no date: a day puts `📅 2026-10-16` at the end of the line; **No date** stops asking.
+- **What is this note about?** A note with no `project:` whose lines meet notes that have one: the project goes in its front matter.
+
+An answer about one line goes in the line (or the front matter) — one ⌘Z takes it back. One about two notes goes in **KNOWN.md** at the top of the folder: a note of yours with one plain line an answer (`- Same to-do: "…" (note) = "…" (note)`), to read, change or delete like any other — the margin follows it. **Not now** waits a day. Settings → **The margin asks** turns the questions off (what it remembers stays).
+
 ### Changes from outside (an agent in a terminal, another editor)
 
 Agents don't have to run inside Margin: Claude Code or Codex can work in the notes folder directly. When another program changes a note — while Margin is open, or while it is closed — the status bar shows **↯ N changed outside**. Click it (or ⌥X a o) to review those changes like a run — on the note with the red pen (`v` for the diff), from the text before the first change, change by change, with the same keys (`y` keep, `n` undo). Everything is kept unless you unpick it: **Undo 1, keep 3** (`a`) undoes the unpicked ones (the note must not have unsaved edits here) and marks the rest as seen. Notes it makes or deletes are listed too: undoing a new one moves it to the trash (`.agent-notes/trash`), undoing a deletion brings the note back. A note the other program changes back drops off by itself. The texts it replaced are in each note's local history as well.
