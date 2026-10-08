@@ -185,8 +185,10 @@ function renderBlocks(src, offset) {
         `<tbody>${rows.map((r) => `<tr>${head.map((_, k) => cell('td', r[k] || '', k)).join('')}</tr>`).join('')}</tbody></table>`);
       continue;
     }
+    // A paragraph: this line at least (a line no block above took, such as a
+    // "|" that starts no table, is text — or this would never move on).
     const at = i;
-    const buf = [];
+    const buf = [lines[i++]];
     while (i < lines.length && lines[i].trim() && !isBlockStart(lines[i])) buf.push(lines[i++]);
     out.push(`<p data-line="${at + offset}">${buf.map((l) => inline(l.trim()) + (/ {2,}$/.test(l) ? '<br>' : '')).join(' ')}</p>`);
   }

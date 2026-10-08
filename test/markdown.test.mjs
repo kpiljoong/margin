@@ -2,6 +2,12 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { renderMarkdown } from '../public/markdown.js';
 
+test('a line that starts with | but no table is text (it used to hang the preview)', () => {
+  assert.equal(renderMarkdown('|'), '<p data-line="0">|</p>');
+  assert.equal(renderMarkdown('Before\n| not a table\nafter'), '<p data-line="0">Before</p>\n<p data-line="1">| not a table after</p>');
+  assert.match(renderMarkdown('| a | b |\n|---|---|\n| 1 | 2 |'), /<table data-line="0">/, 'a table is still one');
+});
+
 test('a quote that starts with [!type] is a callout', () => {
   const html = renderMarkdown('> [!warning] Mind the **gap**\n> Body text.');
   assert.match(html, /<div class="callout callout-warning" data-line="0" data-callout="warning"><div class="callout-title">Mind the <strong>gap<\/strong><\/div>/);
