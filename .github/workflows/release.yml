@@ -7,6 +7,11 @@ on:
   push:
     tags: ['v*']
   workflow_dispatch:
+    inputs:
+      smoke:
+        description: Run the smoke test too
+        type: boolean
+        default: false
 
 permissions:
   contents: write
@@ -50,9 +55,11 @@ jobs:
       - run: npm test
 
       # The app itself, in Electron on a virtual display: notes, canvas,
-      # presenting, a review picked and applied (scripts/smoke.mjs).
+      # presenting, a review picked and applied (scripts/smoke.mjs). It takes
+      # a while, so only before a larger release (a tag like v0.6.0 or
+      # v1.0.0) or when asked; any time: Test → Run workflow → smoke.
       - name: Smoke test
-        if: runner.os == 'Linux'
+        if: runner.os == 'Linux' && (endsWith(github.ref_name, '.0') || inputs.smoke)
         run: xvfb-run -a npm run smoke
         env:
           ELECTRON_DISABLE_SANDBOX: '1'
