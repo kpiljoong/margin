@@ -762,45 +762,84 @@ export class MarkdownEditor {
 
   placeNotes() { this._placeNotes(); }
 
+  // Each card as near its line as the ones above it let it be. Where a line
+  // is comes from the lines' offsets (laid out once for the text), and a
+  // place inside a line from that line alone: never the text up to it for
+  // each card, which in a long note took seconds.
   _placeNotes() {
     if (!this.notes.length || !this.el.isConnected) { this.anchorCol.replaceChildren(); return; }
-    let y = 0;
     const o = this._off;
     const v = this.ta.value;
-    const offs = this._lineOffsets();
-    const pad = parseFloat(getComputedStyle(this.ta).paddingTop) || 0;
     const lh = this.lineHeight();
-    const lineOf = (pos) => { let l = 0; for (let i = v.indexOf('\n'); i >= 0 && i < pos; i = v.indexOf('\n', i + 1)) l++; return l; };
-    const bars = [];
-    for (const n of [...this.notes].sort((x, z) => x.from - z.from)) {
+    const notes = [...this.notes].sort((x, z) => x.from - z.from);
+    const shown = [];
+    for (const n of notes) {
       const out = n.from < o || n.from - o > v.length;
       n.el.style.display = out ? 'none' : '';
       n.at = null;
-      if (out) continue;
-      const want = this._caretCoords(n.from - o).top;
-      const top = Math.max(want, y);
-      n.el.style.top = `${top}px`;
-      y = top + n.el.offsetHeight + 8;
+      if (!out) shown.push(n);
+    }
+    // Read everything first, then write: no layout between cards.
+    const heights = shown.map((n) => n.el.offsetHeight);
+    const colors = shown.map((n) => getComputedStyle(n.el).getPropertyValue('--r').trim());
+    const spots = shown.map((n) => {
+      const from = n.from - o;
       // What it is about: its words, or its lines.
       let end;
       if (n.end == null && n.to > n.from) end = Math.min(v.length, n.to - o);
       else { const e = Math.min(v.length, Math.max(n.from, n.end ?? n.from) - o); end = v.indexOf('\n', e); if (end < 0) end = v.length; }
-      const last = lineOf(end);
-      const bottom = last + 1 < offs.length ? offs[last + 1] + pad : this._caretCoords(v.length).top + lh;
-      const color = getComputedStyle(n.el).getPropertyValue('--r').trim();
+      const top = this._spot(from).top;
+      const last = this._lineOf(end);
+      const offs = this._lineOffsets();
+      const bottom = last + 1 < offs.length ? offs[last + 1] + this._padTop() : this._spot(v.length).top + lh;
+      return { from, end, top, bottom };
+    });
+    const right = this.ta.offsetLeft + this.ta.clientWidth - (parseFloat(getComputedStyle(this.ta).paddingRight) || 0);
+    this._anchorRight = right + 10;
+    let y = 0;
+    const bars = shown.map((n, k) => {
+      const { end, top: want, bottom } = spots[k];
+      const top = Math.max(want, y);
+      n.el.style.top = `${top}px`;
+      y = top + heights[k] + 8;
       const bar = h('div', 'ed-anchor');
       bar.style.top = `${want}px`;
       bar.style.height = `${Math.max(lh, bottom - want)}px`;
-      if (color) bar.style.setProperty('--a', color);
-      n.at = { end: end + o, top: want, card: top, bar, color };
-      bars.push(bar);
-    }
-    const right = this.ta.offsetLeft + this.ta.clientWidth - (parseFloat(getComputedStyle(this.ta).paddingRight) || 0);
-    for (const b of bars) b.style.left = `${right + 10}px`;
-    this._anchorRight = right + 10;
+      bar.style.left = `${this._anchorRight}px`;
+      if (colors[k]) bar.style.setProperty('--a', colors[k]);
+      n.at = { end: end + o, top: want, card: top, bar, color: colors[k] };
+      return bar;
+    });
     this.anchorCol.replaceChildren(...bars);
     this._anchorKey = '';
     this._anchors();
+  }
+
+  _padTop() { return parseFloat(getComputedStyle(this.ta).paddingTop) || 0; }
+  // The line a place is on (0-based), from the lines' starts (kept with the offsets).
+  _lineOf(pos) {
+    this._lineOffsets();
+    const st = this._starts;
+    let lo = 0;
+    let hi = st.length - 1;
+    while (lo < hi) { const m = (lo + hi + 1) >> 1; if (st[m] <= pos) lo = m; else hi = m - 1; }
+    return lo;
+  }
+  // Where a place is ({ top, left, height }, as _caretCoords): its line's
+  // offset, and within the line (wrapped) by laying out that line alone
+  // (only the line's top when a line's start will do, unless exact).
+  _spot(pos, exact = false) {
+    const l = this._lineOf(pos);
+    const ls = this._starts[l];
+    const offs = this._lineOffsets();
+    if (!exact && pos === ls) return { top: offs[l] + this._padTop(), left: null, height: this.lineHeight() };
+    const probe = this._probe();
+    probe.innerHTML = `${esc(this.ta.value.slice(ls, pos))}<span class="caret">\u200B</span>`;
+    const r = probe.querySelector('.caret').getBoundingClientRect();
+    const pr = probe.getBoundingClientRect();
+    const out = { top: (offs[l] ?? 0) + (r.top - pr.top), left: r.left - pr.left, height: r.height };
+    probe.textContent = '';
+    return out;
   }
 
   // The notes whose words are shown, and the dashed line from them to each.
@@ -823,7 +862,7 @@ export class MarkdownEditor {
     const svg = document.createElementNS(NS, 'svg');
     const x0 = this.notesCol.offsetLeft;
     for (const n of on) {
-      const e = this._caretCoords(n.at.end - o);
+      const e = this._spot(n.at.end - o, true);
       const path = document.createElementNS(NS, 'path');
       const yy = e.top + e.height - 1;
       path.setAttribute('d', `M${e.left + 2} ${yy}H${this._anchorRight}V${n.at.card + 10}H${x0}`);
@@ -835,9 +874,15 @@ export class MarkdownEditor {
 
   // y offset of each source line inside the scrolled content.
   _lineOffsets() {
-    if (this._lineOffsetCache) return this._lineOffsetCache;
     const probe = this._probe();
+    // Kept until the text changes, or the lines would lay out otherwise (width, font).
+    const cs = getComputedStyle(probe);
+    const key = `${probe.clientWidth} ${cs.font} ${cs.paddingTop} ${cs.paddingLeft} ${cs.paddingRight}`;
+    if (this._lineOffsetCache && this._lineOffsetKey === key) return this._lineOffsetCache;
+    this._lineOffsetKey = key;
     const lines = this.ta.value.split('\n');
+    this._starts = [];
+    for (let k = 0, at = 0; k < lines.length; at += lines[k].length + 1, k++) this._starts.push(at);
     probe.innerHTML = lines.map((l, i) => `<span data-l="${i}"></span>${esc(l)}`).join('\n');
     const base = probe.getBoundingClientRect().top - probe.scrollTop;
     const pad = parseFloat(getComputedStyle(this.ta).paddingTop) || 0;
