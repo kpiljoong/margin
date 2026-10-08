@@ -285,6 +285,8 @@ const DEFAULT_SETTINGS = {
   recall: true, recallAsk: true,
   // and understands, with a local model (downloaded when turned on).
   recallModel: false,
+  // and reads them with Claude: how a paragraph met the others (sent).
+  recallJudge: false,
 };
 const ACCENTS = ['#7aa2f7', '#bb9af7', '#2ac3de', '#9ece6a', '#e0af68', '#ff9e64', '#f7768e', '#c0caf5'];
 const LINE_HEIGHTS = { 1.5: 'Compact', 1.7: 'Normal', 1.9: 'Relaxed' };
@@ -4025,6 +4027,8 @@ function openSettings({ keys = false, live = false } = {}) {
         toggle('recall', 'The margin remembers', 'Beside a to-do, a question, a decision or a line about one: what your other notes already say about it (the same to-do open or ticked there, a question asked or decided before, a decision made before); beside a paragraph, the paragraphs of other notes about the same. Read on this device; nothing is sent.'),
         toggle('recallModel', 'The margin understands (a local model)', 'Paragraphs meet the ones about the same thing in other words or another language, not only in the same words. A small multilingual model reads them on this device: your notes are never sent. Turning it on downloads it once (149 MB) and reads your notes in the background (about 400 MB of memory while on).', () => { embedTurn(); openSettings(); }),
         S.settings.recallModel ? modelBox() : null,
+        toggle('recallJudge', 'The margin reads them with Claude', 'When a paragraph meets others, Claude says how in a line \u2014 the same thing, answers it, goes against it, adds to it \u2014 and leaves out the ones not really about it. That paragraph and the three it met are sent to Claude, through the Claude Code agent you signed in to (the live margin\u2019s model, Haiku unless chosen), a few seconds after you stop typing; never the paragraph you are writing, a private note, or one .agentnotesignore names. What it said is kept: a paragraph is read again only when it changes.', () => { judgeSt.got = new Map(); judgeSt.error = null; redrawRecall(); }),
+        S.settings.recallJudge && judgeSt.error ? h('p', { class: 'set-detail' }, h('span', { class: 'set-warn' }, judgeSt.error)) : null,
         toggle('recallAsk', 'The margin asks', 'Now and then one question beside a line, about what it can\u2019t tell: the same to-do in other words? does this decision replace that one? is this paragraph about that one? by when? what is the note about? An answer goes in the line itself, or in KNOWN.md (a note of yours, plain lines), and what it remembers follows it. At most 20 a day; Not now waits a day.'),
         toggle('followTab', 'Tree follows the active tab', 'Selecting a tab opens its folders in the file tree and scrolls to it (also ⇅ at the top of the tree). Off: use ◎ in the tree.')),
       h('div', { class: 'set-label' }, 'Live margin and the desk’s margin'),
@@ -8584,8 +8588,10 @@ function recallNotes(tab) {
   const lines = text.split('\n');
   const off = recallOff();
   const semantic = semanticFor(tab);
-  let ask = askNow(tab, text, semantic);
-  const cards = recallMod.recall(recallSt.index, tab.path, text, { cache: recallSt.cache, known: recallSt.known, semantic }).flatMap((r) => {
+  const cursor = lineNoAt(text, tab.editor.selectionStart);
+  const judge = judgeFor(tab, recallMod.parasOf(text).find((p) => cursor >= p.line && cursor <= p.last)?.text);
+  let ask = askNow(tab, text, semantic, judge);
+  const cards = recallMod.recall(recallSt.index, tab.path, text, { cache: recallSt.cache, known: recallSt.known, semantic, judge }).flatMap((r) => {
     const key = `${tab.path}\n${r.kind}\n${lines[r.line].trim()}`;
     if (off.has(key)) return [];
     const mine = ask?.line === r.line ? ask : null;
@@ -8657,6 +8663,53 @@ async function embedAsk() {
     for (const t of S.tabs) if (t.path === path && t.editor && t.comments && isAttached(t)) drawNotes(t);
   }
 }
+// ---- the margin reads them with Claude (Settings; lib/judge.js): the
+// paragraphs of the note in view that met others — not the one being
+// written — are sent with those a moment after the typing stops; what it
+// says is kept by the paragraph and the other (and on the server, by what
+// was sent). A ref it can't say (withheld, or it failed) stays as found.
+const judgeSt = { got: new Map(), want: new Map(), timer: null, busy: false, error: null };
+const JUDGE_IDLE = 2500;
+function judgeFor(tab, writing) {
+  if (!S.settings.recallJudge) return null;
+  return (t, refs) => refs.map((r) => {
+    const k = `${tab.path}\u0000${t}\u0000${r.path}\u0000${r.line}\u0000${r.text}`;
+    if (judgeSt.got.has(k)) return judgeSt.got.get(k) || undefined;
+    if (t !== writing) {
+      if (!judgeSt.want.has(tab.path)) judgeSt.want.set(tab.path, new Map());
+      const byText = judgeSt.want.get(tab.path);
+      if (!byText.has(t)) byText.set(t, new Map());
+      byText.get(t).set(k, r);
+      clearTimeout(judgeSt.timer);
+      judgeSt.timer = setTimeout(judgeAsk, JUDGE_IDLE);
+    }
+    return undefined;
+  });
+}
+async function judgeAsk() {
+  if (judgeSt.busy) { judgeSt.timer = setTimeout(judgeAsk, JUDGE_IDLE); return; }
+  const want = judgeSt.want;
+  judgeSt.want = new Map();
+  judgeSt.busy = true;
+  try {
+    for (const [path, byText] of want) {
+      // Three refs an item; a paragraph with more goes as two.
+      const items = [];
+      for (const [t, refs] of byText) { const all = [...refs]; for (let i = 0; i < all.length; i += 3) items.push({ text: t, refs: all.slice(i, i + 3) }); }
+      for (let i = 0; i < items.length; i += 8) {
+        const part = items.slice(i, i + 8);
+        let res = null;
+        try {
+          res = await api('POST', '/api/recall/judge', { path, ...liveOpts(), items: part.map((it) => ({ text: it.text, refs: it.refs.map(([, r]) => ({ path: r.path, line: r.line })) })) });
+          judgeSt.error = null;
+        } catch (e) { judgeSt.error = e.message; }
+        part.forEach((it, j) => it.refs.forEach(([k], m) => judgeSt.got.set(k, res?.results[j]?.[m] || null)));
+      }
+      for (const t of S.tabs) if (t.path === path && t.editor && t.comments && isAttached(t)) drawNotes(t);
+    }
+    if (judgeSt.got.size > 5000) judgeSt.got = new Map([...judgeSt.got].slice(-2000));
+  } finally { judgeSt.busy = false; }
+}
 // Settings: where the model is (download, reading the notes, ready), and its buttons.
 function modelBox() {
   const line = h('p', { class: 'set-detail' }, 'Checking\u2026');
@@ -8701,12 +8754,12 @@ function askDay() {
 }
 function askSpent() { const b = askDay(); b.n++; store.setItem('an.askDay', JSON.stringify(b)); }
 function askLater() { try { return JSON.parse(store.getItem('an.askLater') || '{}'); } catch { return {}; } }
-function askNow(tab, text, semantic = null) {
+function askNow(tab, text, semantic = null, judge = null) {
   if (!S.settings.recallAsk || askDay().n >= ASK_DAY_MAX) return null;
   const later = askLater();
   const now = Date.now();
   const cursor = lineNoAt(text, tab.editor.selectionStart);
-  return recallMod.asks(recallSt.index, tab.path, text, { known: recallSt.known, cursor, projects: true, cache: recallSt.cache, semantic }).find((q) => !(later[q.key] > now)) || null;
+  return recallMod.asks(recallSt.index, tab.path, text, { known: recallSt.known, cursor, projects: true, cache: recallSt.cache, semantic, judge }).find((q) => !(later[q.key] > now)) || null;
 }
 const ymdOf = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 const daysOn = (n) => { const d = new Date(); d.setDate(d.getDate() + n); return ymdOf(d); };
@@ -8769,8 +8822,11 @@ function askWrite(tab, q, change) {
   askSpent();
   drawNotes(tab);
 }
+const REL_LABEL = { same: 'Same thing', answers: 'Answers it', against: 'Goes against it', adds: 'Adds to it' };
 function recallCard(tab, r, key, ask = null) {
   const { chip, says } = recallMod.recallText(r);
+  // What Claude said of each (Settings → The margin reads them with Claude).
+  const judged = r.kind === 'related' && r.refs.some((x) => x.rel);
   const ref = (x) => h('button', { class: 'recall-ref', title: x.raw, onclick: () => openAt(x.path, x.raw) }, x.name, x.date ? h('span', { class: 'recall-date', title: x.estimated ? 'No date in it: from when its file was made, or its oldest kept version' : null }, `${x.estimated ? '\u2248' : ''}${x.date.slice(5)}`) : null);
   return h('div', { class: `mnote recall k-${r.kind}` },
     h('div', { class: 'mnote-head' },
@@ -8782,8 +8838,9 @@ function recallCard(tab, r, key, ask = null) {
         store.setItem('an.recallOff', JSON.stringify([...off].slice(-500)));
         drawNotes(tab);
       } }, '\u00D7')),
-    h('div', { class: 'recall-says' }, says),
-    h('div', { class: 'recall-refs' }, r.refs.slice(0, 3).map(ref), r.refs.length > 3 ? h('span', { class: 'recall-more' }, `+${r.refs.length - 3}`) : null),
+    judged ? null : h('div', { class: 'recall-says' }, says),
+    judged ? r.refs.map((x) => h('div', { class: 'recall-why' }, h('div', { class: 'recall-refs' }, ref(x), x.rel ? h('span', { class: 'recall-rel' }, REL_LABEL[x.rel]) : null), x.why ? h('div', { class: 'recall-says' }, x.why) : null))
+      : h('div', { class: 'recall-refs' }, r.refs.slice(0, 3).map(ref), r.refs.length > 3 ? h('span', { class: 'recall-more' }, `+${r.refs.length - 3}`) : null),
     ask ? askBox(tab, ask, r) : null);
 }
 

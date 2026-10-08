@@ -19,6 +19,7 @@ const { deskMargin, textLang } = require('./lib/desk');
 const { OutsideStore, Seen, changedWhileAway } = require('./lib/outside');
 const { tiersOf, agentLines } = require('./lib/tiers');
 const { createEmbed } = require('./lib/embed');
+const { judgeMargin } = require('./lib/judge');
 
 const APP_DIR = __dirname;
 const PUBLIC_DIR = path.join(APP_DIR, 'public');
@@ -534,6 +535,71 @@ async function embedNear({ path: rel, texts }) {
   if (typeof rel !== 'string' || !Array.isArray(texts) || texts.length > 200 || !texts.every((t) => typeof t === 'string' && t.length <= 20000)) throw httpError(400, 'path, texts');
   const r = await embed.near(rel, texts);
   return r ? { results: r.results, n: r.n } : { results: null };
+}
+
+// The margin reads them with Claude (Settings; lib/judge.js): paragraphs of
+// the note being written, and the paragraphs of other notes found near each
+// ({ path, line }: read here, never of a private note or one
+// .agentnotesignore names — those are not judged). → for each ref, { rel,
+// why } or null. Answers are kept by what was sent (.agent-notes/judged.json).
+let judge = null;
+let judgedCache = null;
+let recallEsm = null;
+const JUDGED_FILE = path.join(DATA_DIR, 'judged.json');
+const JUDGED_MAX = 3000;
+async function recallJudge(b) {
+  const { path: rel, items, lang } = b;
+  if (typeof rel !== 'string' || !Array.isArray(items) || items.length > 8
+    || !items.every((it) => it && typeof it.text === 'string' && it.text.length <= 20000 && Array.isArray(it.refs) && it.refs.length <= 3
+      && it.refs.every((r) => r && typeof r.path === 'string' && Number.isInteger(r.line) && r.line >= 0))) throw httpError(400, 'path, items: [{ text, refs: [{ path, line }] }]');
+  setLiveOpts(b);
+  const agent = liveAgent();
+  if (!agent) throw httpError(400, 'Reading the margin with Claude needs the Claude Code agent (Settings → Agents).');
+  const abs = workspacePath(rel);
+  const ignored = loadIgnore(ROOT);
+  if (!NOTE_EXT.has(extOf(abs))) throw httpError(400, 'Only notes.');
+  if (ignored(relOf(abs)) || (fs.existsSync(abs) && isPrivateNote(abs))) throw httpError(403, 'This note is private: its paragraphs are not sent.');
+  recallEsm ||= await import(require('url').pathToFileURL(path.join(__dirname, 'public', 'recall.js')).href);
+  judgedCache ||= new Map(Object.entries(readJson(JUDGED_FILE, {})));
+  const paras = new Map();
+  const refText = (r) => {
+    let a;
+    try { a = workspacePath(r.path); } catch { return null; }
+    const f = relOf(a);
+    if (!NOTE_EXT.has(extOf(a)) || ignored(f) || f === relOf(abs) || isPrivateNote(a)) return null;
+    if (!paras.has(f)) { const c = cachedText(f); paras.set(f, c ? recallEsm.parasOf(c.text) : []); }
+    const p = paras.get(f).find((x) => x.line === r.line);
+    return p ? { name: path.basename(f).replace(/\.[^.]+$/, ''), text: p.text.slice(0, 800) } : null;
+  };
+  const want = lang === 'ko' || lang === 'en' ? lang : textLang(items.map((it) => it.text)) || 'en';
+  const asked = items.map((it) => {
+    const refs = it.refs.map(refText);
+    const sent = refs.filter(Boolean);
+    const text = it.text.replace(/\s+/g, ' ').trim().slice(0, 1500);
+    return { text, refs, sent, key: crypto.createHash('sha1').update(JSON.stringify([want, text, sent])).digest('hex') };
+  });
+  const todo = asked.filter((a) => a.sent.length && !judgedCache.has(a.key));
+  if (todo.length) {
+    if (!judge) {
+      const env = { ...process.env };
+      delete env.ELECTRON_RUN_AS_NODE;
+      judge = judgeMargin({ bin: liveBin(agent), env, opts: liveOpts });
+    }
+    const r = await judge.ask(todo.map((a) => ({ text: a.text, refs: a.sent })), want);
+    if (!r.ok) throw httpError(502, r.error || 'Claude did not answer.');
+    todo.forEach((a, i) => { if (r.verdicts[i].every(Boolean)) judgedCache.set(a.key, r.verdicts[i]); });
+    while (judgedCache.size > JUDGED_MAX) judgedCache.delete(judgedCache.keys().next().value);
+    ensureDataDir();
+    writeFileAtomic(JUDGED_FILE, JSON.stringify(Object.fromEntries(judgedCache)));
+    todo.forEach((a, i) => { a.got = r.verdicts[i]; });
+  }
+  return {
+    results: asked.map((a) => {
+      const got = a.got || judgedCache.get(a.key) || [];
+      let k = 0;
+      return a.refs.map((x) => (x ? got[k++] || null : null));
+    }),
+  };
 }
 
 // An answer to one of the margin's questions: a line at the end of KNOWN.md
@@ -2342,6 +2408,7 @@ async function routeApi(method, url, body) {
   if (method === 'GET' && p === '/api/tasks') return listTasks();
   if (method === 'GET' && p === '/api/recall') return recallLines(url.searchParams.get('sig') || '');
   if (method === 'POST' && p === '/api/recall/known') return addKnown(body || {});
+  if (method === 'POST' && p === '/api/recall/judge') return recallJudge(body || {});
   if (method === 'GET' && p === '/api/embed') return embed.status();
   if (method === 'POST' && p === '/api/embed') return embedOn(body || {});
   if (method === 'POST' && p === '/api/embed/download') { embed.download(); return embed.status(); }
@@ -2470,6 +2537,8 @@ function liveRestart() {
   desk?.stop();
   desk = null;
   if (had) deskUp().warm();
+  judge?.stop();
+  judge = null;
 }
 function liveAgent() {
   return claudeAgents().find((a) => a.label === liveOpts.agent) || (AGENT?.kind === 'claude' ? AGENT : claudeAgents()[0] || null);
@@ -2765,6 +2834,7 @@ function shutdown() {
   seenNotes.save();
   live?.stop();
   desk?.stop();
+  judge?.stop();
   embed.stop();
   for (const id of running.keys()) { try { cancelRun(id, 'server stopped'); } catch { /* ignore */ } }
   process.exit(0);

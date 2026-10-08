@@ -260,8 +260,11 @@ function sameAs(known) {
 // kept while the index and known are. semantic: (text) → { n, list: [{ x
 // (a paragraph of index.paras), s, z }] } or null — the local model's
 // nearest paragraphs (app.js), used for paragraphs instead of the words.
-export function recall(index, path, text, { cache = null, max = 40, known = NONE, semantic = null } = {}) {
-  const c = context(index, path, known, cache, semantic);
+// judge: (text, refs) → for each ref { rel, why } or undefined (not read
+// yet) — what Claude says of them (app.js): the first JUDGED only, 'none'
+// left out, the others with what it said.
+export function recall(index, path, text, { cache = null, max = 40, known = NONE, semantic = null, judge = null } = {}) {
+  const c = context(index, path, known, cache, semantic, judge);
   if (!c) return [];
   const { bySame, decisions, near, canon, latest } = c;
   const mine = new Map(meetingItems(text).map((it) => [it.line, it]));
@@ -332,7 +335,7 @@ export function recall(index, path, text, { cache = null, max = 40, known = NONE
 }
 
 // The other notes' items, as recall and asks use them.
-function context(index, path, known, cache = null, semantic = null) {
+function context(index, path, known, cache = null, semantic = null, judge = null) {
   const others = (index?.items || []).filter((x) => x.path !== path);
   if (!others.length && !index?.paras?.paras?.length) return null;
   const canon = sameAs(known);
@@ -377,7 +380,11 @@ function context(index, path, known, cache = null, semantic = null) {
       found = near.filter((x) => x.s >= (ask ? RELATED_ASK : RELATED_CARD)).map((x) => ({ ...x, rank: x.s }));
     }
     const me = sameOf(excerptOf(t));
-    return found.filter((r) => !told(me, sameOf(excerptOf(r.x.text)))).map((r) => ({ ...r.x, s: r.s, rank: r.rank }));
+    const refs = found.filter((r) => !told(me, sameOf(excerptOf(r.x.text)))).map((r) => ({ ...r.x, s: r.s, rank: r.rank }));
+    if (!judge || !refs.length) return refs;
+    const top = refs.slice(0, JUDGED);
+    const said = judge(t, top) || [];
+    return top.flatMap((r, i) => (said[i]?.rel === 'none' ? [] : said[i] ? [{ ...r, rel: said[i].rel, why: said[i].why }] : [r]));
   };
   return { others, bySame, decisions, near, canon, latest, told, relatedTo };
 }
@@ -390,6 +397,7 @@ const RELATED_MAX = 8;
 // above that paragraph's usual nearness to all n of them. The best of n
 // unrelated ones is about sqrt(2 ln n) by chance: it takes half more than
 // that, and 3.5 at least.
+const JUDGED = 3;
 export const semanticNeed = (n) => Math.max(3.5, Math.sqrt(2 * Math.log(Math.max(2, n))) + 0.5);
 // Or as close as two ways of saying one thing (in a few notes all about the
 // same, none stands out, but these do).
@@ -424,8 +432,8 @@ export const mustLine = (l) => MUST.test(l) && !WHEN.test(l) && !/^\s*(?:#|>|\||
 // line), 'project' (what is the note about? — the projects of the notes its
 // lines and paragraphs meet). a: this line's { text, name }; b: the other
 // item or paragraph.
-export function asks(index, path, text, { known = NONE, cursor = -1, projects = null, cache = null, semantic = null } = {}) {
-  const c = context(index, path, known, cache, semantic);
+export function asks(index, path, text, { known = NONE, cursor = -1, projects = null, cache = null, semantic = null, judge = null } = {}) {
+  const c = context(index, path, known, cache, semantic, judge);
   if (!c) return [];
   const { bySame, others, near, canon } = c;
   const name = stemOf(path);
