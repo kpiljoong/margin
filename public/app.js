@@ -283,6 +283,8 @@ const DEFAULT_SETTINGS = {
   // The margin remembers: beside a line, what the other notes say about it;
   // and asks, now and then, what it can't tell.
   recall: true, recallAsk: true,
+  // and understands, with a local model (downloaded when turned on).
+  recallModel: false,
 };
 const ACCENTS = ['#7aa2f7', '#bb9af7', '#2ac3de', '#9ece6a', '#e0af68', '#ff9e64', '#f7768e', '#c0caf5'];
 const LINE_HEIGHTS = { 1.5: 'Compact', 1.7: 'Normal', 1.9: 'Relaxed' };
@@ -4021,6 +4023,8 @@ function openSettings({ keys = false, live = false } = {}) {
           ? '⌃ and ⌥ keys move, mark, kill and yank as in Emacs, with ⌃X, ⌃U and registers (ESC then a key is ⌥ and the key). ⌥ then no longer types special characters in notes.'
           : 'Ctrl and Alt keys move, mark, kill and yank as in Emacs, with Ctrl+X, Ctrl+U and registers. Ctrl+C, Ctrl+V and Ctrl+Z still copy, paste and undo; Ctrl+X is Emacs’s (cut: Ctrl+W).'),
         toggle('recall', 'The margin remembers', 'Beside a to-do, a question, a decision or a line about one: what your other notes already say about it (the same to-do open or ticked there, a question asked or decided before, a decision made before); beside a paragraph, the paragraphs of other notes about the same. Read on this device; nothing is sent.'),
+        toggle('recallModel', 'The margin understands (a local model)', 'Paragraphs meet the ones about the same thing in other words or another language, not only in the same words. A small multilingual model reads them on this device: your notes are never sent. Turning it on downloads it once (149 MB) and reads your notes in the background (about 400 MB of memory while on).', () => { embedTurn(); openSettings(); }),
+        S.settings.recallModel ? modelBox() : null,
         toggle('recallAsk', 'The margin asks', 'Now and then one question beside a line, about what it can\u2019t tell: the same to-do in other words? does this decision replace that one? is this paragraph about that one? by when? what is the note about? An answer goes in the line itself, or in KNOWN.md (a note of yours, plain lines), and what it remembers follows it. At most 20 a day; Not now waits a day.'),
         toggle('followTab', 'Tree follows the active tab', 'Selecting a tab opens its folders in the file tree and scrolls to it (also ⇅ at the top of the tree). Off: use ◎ in the tree.')),
       h('div', { class: 'set-label' }, 'Live margin and the desk’s margin'),
@@ -8556,12 +8560,15 @@ function recallOff() {
 function recallFresh() {
   if (recallSt.loading || Date.now() - recallSt.at < RECALL_STALE) return;
   recallSt.at = Date.now();
+  embedCheck();
   recallSt.loading = (async () => {
     recallMod ||= await import('./recall.js');
     const r = await api('GET', `/api/recall${recallSt.sig ? `?sig=${recallSt.sig}` : ''}`);
     if (r.same) return;
     recallSt.sig = r.sig;
     recallSt.index = recallMod.recallIndex(r.notes, recallSt.index);
+    embedSt.stale = new Map([...embedSt.stale, ...embedSt.near]);
+    embedSt.near = new Map();
     recallSt.known = recallMod.knownOf(r.known);
     recallSt.cache = new Map();
     for (const t of S.tabs) if (t.editor && t.comments && isAttached(t)) drawNotes(t);
@@ -8576,8 +8583,9 @@ function recallNotes(tab) {
   for (let i = text.indexOf('\n'); i >= 0; i = text.indexOf('\n', i + 1)) starts.push(i + 1);
   const lines = text.split('\n');
   const off = recallOff();
-  let ask = askNow(tab, text);
-  const cards = recallMod.recall(recallSt.index, tab.path, text, { cache: recallSt.cache, known: recallSt.known }).flatMap((r) => {
+  const semantic = semanticFor(tab);
+  let ask = askNow(tab, text, semantic);
+  const cards = recallMod.recall(recallSt.index, tab.path, text, { cache: recallSt.cache, known: recallSt.known, semantic }).flatMap((r) => {
     const key = `${tab.path}\n${r.kind}\n${lines[r.line].trim()}`;
     if (off.has(key)) return [];
     const mine = ask?.line === r.line ? ask : null;
@@ -8586,6 +8594,98 @@ function recallNotes(tab) {
   });
   if (ask) cards.push({ from: starts[ask.line], to: starts[ask.line], el: h('div', { class: 'mnote recall k-ask' }, h('div', { class: 'mnote-head' }, h('span', { class: 'recall-chip' }, 'Question')), askBox(tab, ask)) });
   return cards;
+}
+
+// ---- the margin understands (Settings; lib/embed.js): a local model reads
+// the paragraphs; the paragraphs of the note in view are asked about (a
+// moment after they change), the answers kept until the notes change (and
+// shown meanwhile, so cards don't come and go). Until it has read the notes
+// (or while off), paragraphs meet by their words.
+const embedSt = { status: null, near: new Map(), stale: new Map(), want: new Map(), timer: null, told: false };
+function embedTurn() {
+  embedSt.told = true;
+  api('POST', '/api/embed', { on: !!S.settings.recallModel }).then((st) => { embedSt.status = st; redrawRecall(); }).catch(() => { embedSt.told = false; });
+}
+function embedCheck() {
+  if (!S.settings.recallModel) { if (embedSt.status?.on) embedTurn(); return; }
+  if (!embedSt.told || (embedSt.status && !embedSt.status.on)) { embedTurn(); return; }
+  api('GET', '/api/embed').then((st) => {
+    const was = embedSt.status?.state;
+    embedSt.status = st;
+    if (!st.on) embedTurn();
+    else if (was !== st.state) redrawRecall();
+  }).catch(() => {});
+}
+const embedReady = () => !!S.settings.recallModel && embedSt.status?.state === 'ready' && embedSt.status.total > 0;
+function redrawRecall() { for (const t of S.tabs) if (t.editor && t.comments && isAttached(t)) drawNotes(t); }
+// What the model says of a text in this note: { n, list: [{ x, s, z }] },
+// or null (it hasn't yet: asked now); null when it is off (by the words).
+function semanticFor(tab) {
+  if (!embedReady()) return null;
+  return (text) => {
+    const k = `${tab.path}\u0000${text}`;
+    const got = embedSt.near.get(k);
+    if (got) return got;
+    embedWant(tab, text);
+    return embedSt.stale.get(k) || null;
+  };
+}
+function embedWant(tab, text) {
+  if (!embedSt.want.has(tab.path)) embedSt.want.set(tab.path, new Set());
+  embedSt.want.get(tab.path).add(text);
+  clearTimeout(embedSt.timer);
+  embedSt.timer = setTimeout(embedAsk, 400);
+}
+async function embedAsk() {
+  const want = embedSt.want;
+  embedSt.want = new Map();
+  for (const [path, set] of want) {
+    const texts = [...set].slice(0, 200);
+    let r;
+    try { r = await api('POST', '/api/embed/near', { path, texts }); } catch { continue; }
+    if (!r.results) continue;
+    const byNote = recallSt.index?.paras?.byNote;
+    texts.forEach((t, i) => {
+      const list = r.results[i].map((y) => {
+        const x = byNote?.get(y.path)?.paras.find((p) => p.line === y.line);
+        return x ? { x, s: y.s, z: y.z } : null;
+      }).filter(Boolean);
+      embedSt.near.set(`${path}\u0000${t}`, { n: r.n, list });
+    });
+    if (embedSt.near.size > 5000) embedSt.near = new Map([...embedSt.near].slice(-2000));
+    embedSt.stale = new Map();
+    for (const t of S.tabs) if (t.path === path && t.editor && t.comments && isAttached(t)) drawNotes(t);
+  }
+}
+// Settings: where the model is (download, reading the notes, ready), and its buttons.
+function modelBox() {
+  const line = h('p', { class: 'set-detail' }, 'Checking\u2026');
+  const buttons = h('div', { class: 'set-buttons' });
+  const mb = (n) => `${Math.round(n / 1e6)} MB`;
+  let timer = null;
+  const draw = (st) => {
+    embedSt.status = st;
+    const text = {
+      missing: `Not downloaded yet (${mb(st.size)}, once, from Hugging Face and jsDelivr; each file checked before use).`,
+      downloading: `Downloading\u2026 ${mb(st.got)} of ${mb(st.size)}`,
+      off: 'Downloaded; off.',
+      loading: 'Starting\u2026',
+      indexing: `Reading your notes\u2026 ${st.done} of ${st.total} paragraphs`,
+      ready: `Ready: ${st.total} paragraphs read.`,
+      error: 'Stopped.',
+    }[st.state] || st.state;
+    line.replaceChildren(...[text, st.error ? h('span', { class: 'set-warn' }, ` ${st.error}`) : null].filter(Boolean));
+    buttons.replaceChildren(...[
+      st.state === 'missing' ? h('button', { class: 'btn small', onclick: async () => draw(await api('POST', '/api/embed/download')) }, `Download (${mb(st.size)})`) : null,
+      ['off', 'ready', 'indexing', 'error'].includes(st.state) ? h('button', { class: 'btn small', title: 'Delete the downloaded model (and this folder\u2019s vectors); turn it on again to download it again', onclick: async () => draw(await api('POST', '/api/embed/remove')) }, 'Remove the model') : null].filter(Boolean));
+    clearTimeout(timer);
+    if (['downloading', 'loading', 'indexing'].includes(st.state) && line.isConnected !== false) timer = setTimeout(load, 1000);
+    if (st.state === 'ready') redrawRecall();
+  };
+  const load = async () => { if (!box.isConnected && box.dataset.drawn) return; box.dataset.drawn = '1'; try { draw(await api('GET', '/api/embed')); } catch (e) { line.textContent = e.message; } };
+  const box = h('div', { class: 'live-status-box' }, line, buttons);
+  setTimeout(load, 300);
+  return box;
 }
 
 // The margin asks (Settings → The margin asks): one question at a time, the
@@ -8601,12 +8701,12 @@ function askDay() {
 }
 function askSpent() { const b = askDay(); b.n++; store.setItem('an.askDay', JSON.stringify(b)); }
 function askLater() { try { return JSON.parse(store.getItem('an.askLater') || '{}'); } catch { return {}; } }
-function askNow(tab, text) {
+function askNow(tab, text, semantic = null) {
   if (!S.settings.recallAsk || askDay().n >= ASK_DAY_MAX) return null;
   const later = askLater();
   const now = Date.now();
   const cursor = lineNoAt(text, tab.editor.selectionStart);
-  return recallMod.asks(recallSt.index, tab.path, text, { known: recallSt.known, cursor, projects: true, cache: recallSt.cache }).find((q) => !(later[q.key] > now)) || null;
+  return recallMod.asks(recallSt.index, tab.path, text, { known: recallSt.known, cursor, projects: true, cache: recallSt.cache, semantic }).find((q) => !(later[q.key] > now)) || null;
 }
 const ymdOf = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 const daysOn = (n) => { const d = new Date(); d.setDate(d.getDate() + n); return ymdOf(d); };

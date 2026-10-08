@@ -174,6 +174,8 @@ test('a line that must be done, by no day: by when?', () => {
   assert.ok(mustLine('\uD658\uBD88 \uB85C\uC9C1\uC744 \uBA3C\uC800 \uACE0\uCCD0\uC57C \uD55C\uB2E4.'));
   assert.ok(!mustLine('\uD658\uBD88 \uB85C\uC9C1\uC744 \uAE08\uC694\uC77C\uAE4C\uC9C0 \uACE0\uCCD0\uC57C \uD55C\uB2E4.'));
   assert.ok(!mustLine('We need to fix it by Friday.'));
+  assert.ok(!mustLine('\uBB58 \uD574\uC57C \uD560\uC9C0 \uBAA8\uB974\uACA0\uB2E4.'), 'not knowing what to do is not a to-do');
+  assert.ok(mustLine('\uB0B4\uAC00 \uD574\uC57C \uD560 \uC77C\uC774\uB2E4.'));
   assert.ok(!mustLine('We need to fix it before 10/20.'));
   assert.ok(!mustLine('## We need to'));
   const ix = recallIndex([{ path: 'o.md', v: '1', created: 0, lines: [], text: 'Some other note entirely, with nothing alike in it whatsoever.\n' }]);

@@ -57,7 +57,7 @@ jobs:
         env:
           ELECTRON_DISABLE_SANDBOX: '1'
 
-      # The vendored Excalidraw frame must be byte-for-byte its recorded build.
+      # The vendored code (the Excalidraw frame, the margin model's runtime) must be byte-for-byte its recorded build.
       - run: node build/check-vendor.js
 
       - name: Build

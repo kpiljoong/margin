@@ -1,0 +1,13 @@
+{
+  "name": "margin-vendor-embed",
+  "private": true,
+  "description": "Builds lib/vendor/embed (the runtime and tokenizer of the margin's local model). Not part of the app at runtime.",
+  "license": "MIT",
+  "scripts": {
+    "build": "node build.mjs"
+  },
+  "dependencies": {
+    "@huggingface/tokenizers": "0.2.0",
+    "onnxruntime-web": "1.30.0"
+  }
+}

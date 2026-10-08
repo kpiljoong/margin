@@ -1,0 +1,51 @@
+{
+ "name": "embed",
+ "packages": {
+  "@huggingface/tokenizers": {
+   "version": "0.2.0",
+   "integrity": "sha512-LidMHe1FpcSYH4vcSjXooda34pC0M8m1gmDOv7SQi6Iv+ib1zX7J3sHBCC9/3FPCkn2k1b55FneVqMRxrr99pg=="
+  },
+  "onnxruntime-web": {
+   "version": "1.30.0",
+   "integrity": "sha512-q0y+JrrtukXSzsBWEMccVfqX25LRmosXHF+CaRJmg8pZClzcV7svNc4rKY3jL02Vb7QmRMDs1SigqR4CXAfKYQ=="
+  }
+ },
+ "model": {
+  "name": "Xenova/multilingual-e5-small",
+  "revision": "761b726dd34fb83930e26aab4e9ac3899aa1fa78",
+  "dims": 384,
+  "passage": "passage: ",
+  "query": "query: "
+ },
+ "downloads": [
+  {
+   "file": "ort-wasm-simd-threaded.wasm",
+   "url": "https://cdn.jsdelivr.net/npm/onnxruntime-web@1.30.0/dist/ort-wasm-simd-threaded.wasm",
+   "size": 14239897,
+   "sha256": "3398c10d07d229bd91b364548e130e0e51a8e5704b88c7c083ebbeb78842dee2"
+  },
+  {
+   "file": "model_int8.onnx",
+   "url": "https://huggingface.co/Xenova/multilingual-e5-small/resolve/761b726dd34fb83930e26aab4e9ac3899aa1fa78/onnx/model_int8.onnx",
+   "size": 118054593,
+   "sha256": "4d24e2bc01a447951524466ef533e52944bf48509e6552810bcee1a2711cb02c"
+  },
+  {
+   "file": "tokenizer.json",
+   "url": "https://huggingface.co/Xenova/multilingual-e5-small/resolve/761b726dd34fb83930e26aab4e9ac3899aa1fa78/tokenizer.json",
+   "size": 17082730,
+   "sha256": "0b44a9d7b51c3c62626640cda0e2c2f70fdacdc25bbbd68038369d14ebdf4c39"
+  },
+  {
+   "file": "tokenizer_config.json",
+   "url": "https://huggingface.co/Xenova/multilingual-e5-small/resolve/761b726dd34fb83930e26aab4e9ac3899aa1fa78/tokenizer_config.json",
+   "size": 443,
+   "sha256": "a1d6bc8734a6f635dc158508bef000f8e2e5a759c7d92f984b2c86e5ff53425b"
+  }
+ ],
+ "files": {
+  "ort.wasm.mjs": "11e64bd8ffe11bd1a2a2f0d6275fdfbbba7262f0b76b99b53d228a8a22ef3d90",
+  "tokenizers.mjs": "1c4a848f86156201c033d6cd08c4cf81ae1088552acec3367f31ef086edf5af0",
+  "THIRD-PARTY-LICENSES.txt": "6a30dd69bad478b1d442bf05c53a0a567d3e86dc2a583ee3622e8088038091a2"
+ }
+}

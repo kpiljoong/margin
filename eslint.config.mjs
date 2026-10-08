@@ -14,7 +14,12 @@ const rules = {
 };
 
 export default [
-  { ignores: ['node_modules/', 'dist/', 'out/', 'code-dist/', 'vendor/', 'public/vendor/'] },
+  { ignores: ['node_modules/', 'dist/', 'out/', 'code-dist/', 'vendor/', 'public/vendor/', 'lib/vendor/'] },
+  {
+    files: ['lib/**/*.mjs'],
+    languageOptions: { ecmaVersion: 'latest', sourceType: 'module', globals: { ...globals.node } },
+    rules,
+  },
   {
     files: ['public/**/*.js'],
     languageOptions: { ecmaVersion: 'latest', sourceType: 'module', globals: { ...globals.browser } },

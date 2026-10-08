@@ -18,6 +18,7 @@ const { liveMargin, projectOf, testLine } = require('./lib/live');
 const { deskMargin, textLang } = require('./lib/desk');
 const { OutsideStore, Seen, changedWhileAway } = require('./lib/outside');
 const { tiersOf, agentLines } = require('./lib/tiers');
+const { createEmbed } = require('./lib/embed');
 
 const APP_DIR = __dirname;
 const PUBLIC_DIR = path.join(APP_DIR, 'public');
@@ -517,7 +518,22 @@ function recallLines(sig = '') {
     count += lines.length;
     chars += text ? text.length : 0;
   }
+  embed.sync(notes.filter((n) => n.text != null));
   return { sig: now, notes, known: known?.text || '' };
+}
+
+// The margin's local model (lib/embed.js): on when the app says so, the
+// notes it reads as recallLines gives them.
+const embed = createEmbed({ dataDir: path.join(DATA_DIR, 'embed') });
+function embedOn({ on }) {
+  const s = embed.setOn(!!on);
+  if (on) recallLines();
+  return s;
+}
+async function embedNear({ path: rel, texts }) {
+  if (typeof rel !== 'string' || !Array.isArray(texts) || texts.length > 200 || !texts.every((t) => typeof t === 'string' && t.length <= 20000)) throw httpError(400, 'path, texts');
+  const r = await embed.near(rel, texts);
+  return r ? { results: r.results, n: r.n } : { results: null };
 }
 
 // An answer to one of the margin's questions: a line at the end of KNOWN.md
@@ -2326,6 +2342,11 @@ async function routeApi(method, url, body) {
   if (method === 'GET' && p === '/api/tasks') return listTasks();
   if (method === 'GET' && p === '/api/recall') return recallLines(url.searchParams.get('sig') || '');
   if (method === 'POST' && p === '/api/recall/known') return addKnown(body || {});
+  if (method === 'GET' && p === '/api/embed') return embed.status();
+  if (method === 'POST' && p === '/api/embed') return embedOn(body || {});
+  if (method === 'POST' && p === '/api/embed/download') { embed.download(); return embed.status(); }
+  if (method === 'POST' && p === '/api/embed/remove') { embed.remove(); return embed.status(); }
+  if (method === 'POST' && p === '/api/embed/near') return embedNear(body || {});
   if (method === 'POST' && p === '/api/tasks/toggle') return toggleTask(body || {});
   if (method === 'GET' && p === '/api/outside/diff') return outsideDiff(q('path'));
   if (method === 'POST' && p === '/api/outside/seen') return outsideSeen(body || {});
@@ -2744,6 +2765,7 @@ function shutdown() {
   seenNotes.save();
   live?.stop();
   desk?.stop();
+  embed.stop();
   for (const id of running.keys()) { try { cancelRun(id, 'server stopped'); } catch { /* ignore */ } }
   process.exit(0);
 }

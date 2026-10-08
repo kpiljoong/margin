@@ -1,3 +1,4 @@
-# The vendored Excalidraw frame is checked byte for byte (SRI, build/check-vendor.js):
+# The vendored code is checked byte for byte (SRI, build/check-vendor.js):
 # never convert its line endings.
 public/vendor/** -text
+lib/vendor/** -text

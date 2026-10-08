@@ -118,6 +118,8 @@ function featuresOf(text) {
 // How many words a paragraph needs to be compared (fewer say too little).
 const PARA_WORDS = 4;
 const words = (f) => { let n = 0; for (const k of f.keys()) if (k[0] === 'w') n++; return n; };
+// A paragraph that says enough to be compared (the local model reads these too).
+export const paraWorthy = (text) => words(featuresOf(text)) >= PARA_WORDS;
 
 // Every note's paragraphs, ready to compare: { paras: [{ path, name, date,
 // estimated, project, line, last, raw, text, vec }], post (feature → [[i,
@@ -255,9 +257,11 @@ function sameAs(known) {
 // here, one made before on the same), 'replaces' (a decision here you said
 // replaces that one). A decision you said another replaced gives way to it.
 // refs: the items there, newest first. known: knownOf(KNOWN.md). cache: a Map
-// kept while the index and known are.
-export function recall(index, path, text, { cache = null, max = 40, known = NONE } = {}) {
-  const c = context(index, path, known, cache);
+// kept while the index and known are. semantic: (text) → { n, list: [{ x
+// (a paragraph of index.paras), s, z }] } or null — the local model's
+// nearest paragraphs (app.js), used for paragraphs instead of the words.
+export function recall(index, path, text, { cache = null, max = 40, known = NONE, semantic = null } = {}) {
+  const c = context(index, path, known, cache, semantic);
   if (!c) return [];
   const { bySame, decisions, near, canon, latest } = c;
   const mine = new Map(meetingItems(text).map((it) => [it.line, it]));
@@ -281,10 +285,10 @@ export function recall(index, path, text, { cache = null, max = 40, known = NONE
     let free = true;
     for (let i = p.line; i <= p.last && free; i++) free = !taken.has(i);
     if (!free) continue;
-    const refs = c.relatedTo(p.text, RELATED_CARD);
-    if (refs.length) related.push({ line: p.line, same: null, kind: 'related', refs, s: refs[0].s });
+    const refs = c.relatedTo(p.text);
+    if (refs.length) related.push({ line: p.line, same: null, kind: 'related', refs, rank: refs[0].rank });
   }
-  out.push(...related.sort((a, b) => b.s - a.s).slice(0, RELATED_MAX));
+  out.push(...related.sort((a, b) => b.rank - a.rank).slice(0, RELATED_MAX));
   return out.sort((a, b) => a.line - b.line);
 
   function ofItem(it) {
@@ -328,7 +332,7 @@ export function recall(index, path, text, { cache = null, max = 40, known = NONE
 }
 
 // The other notes' items, as recall and asks use them.
-function context(index, path, known, cache = null) {
+function context(index, path, known, cache = null, semantic = null) {
   const others = (index?.items || []).filter((x) => x.path !== path);
   if (!others.length && !index?.paras?.paras?.length) return null;
   const canon = sameAs(known);
@@ -354,14 +358,26 @@ function context(index, path, known, cache = null) {
     }
     return out;
   };
-  // The paragraphs of other notes about what a text is (at least `least`
-  // near), but not those you said are not related: [{ …paragraph, s }].
-  const relatedTo = (t, least) => {
-    const k = `p${SEP}${path}${SEP}${t}`;
-    let found = cache?.get(k);
-    if (!found) { found = nearParas(index.paras, path, t, 4); cache?.set(k, found); }
+  // The paragraphs of other notes about what a text is (near enough to show,
+  // or to ask about), but not those you said are not related: [{
+  // …paragraph, s, rank }]. semantic: the local model's (none while it
+  // hasn't answered), else by the words.
+  const relatedTo = (t, ask = false) => {
+    let found;
+    if (semantic) {
+      const r = semantic(t);
+      if (!r) return [];
+      const need = semanticNeed(r.n) + (ask ? 0.5 : 0);
+      const close = SEMANTIC_CLOSE + (ask ? 0.01 : 0);
+      found = r.list.filter((x) => x.z >= need || (x.s >= close && x.z >= 1.5)).map((x) => ({ ...x, rank: x.z }));
+    } else {
+      const k = `p${SEP}${path}${SEP}${t}`;
+      let near = cache?.get(k);
+      if (!near) { near = nearParas(index.paras, path, t, 4); cache?.set(k, near); }
+      found = near.filter((x) => x.s >= (ask ? RELATED_ASK : RELATED_CARD)).map((x) => ({ ...x, rank: x.s }));
+    }
     const me = sameOf(excerptOf(t));
-    return found.filter((r) => r.s >= least && !told(me, sameOf(excerptOf(r.x.text)))).map((r) => ({ ...r.x, s: r.s }));
+    return found.filter((r) => !told(me, sameOf(excerptOf(r.x.text)))).map((r) => ({ ...r.x, s: r.s, rank: r.rank }));
   };
   return { others, bySame, decisions, near, canon, latest, told, relatedTo };
 }
@@ -370,6 +386,14 @@ function context(index, path, known, cache = null) {
 const RELATED_CARD = 0.25;
 const RELATED_ASK = 0.33;
 const RELATED_MAX = 8;
+// The local model's paragraphs (lib/embed-worker.mjs) come with z: how far
+// above that paragraph's usual nearness to all n of them. The best of n
+// unrelated ones is about sqrt(2 ln n) by chance: it takes half more than
+// that, and 3.5 at least.
+export const semanticNeed = (n) => Math.max(3.5, Math.sqrt(2 * Math.log(Math.max(2, n))) + 0.5);
+// Or as close as two ways of saying one thing (in a few notes all about the
+// same, none stands out, but these do).
+const SEMANTIC_CLOSE = 0.9;
 
 // A note's lines that say something: [[line, text]] (no front matter, code
 // or blank lines).
@@ -387,7 +411,7 @@ function bodyLines(text) {
 }
 
 // A line that says something is to be done, with no day to it (not a to-do).
-const MUST = /\uC57C\s?(?:\uD55C\uB2E4|\uD568|\uD574|\uD569\uB2C8\uB2E4|\uD560|\uACA0|\uB3FC|\uB41C\uB2E4)|\uD558\uAE30\uB85C \uD588|\uD560 \uAC83|\b(?:need|needs|have|has) to\b|\bmust\b|\bfollow[ -]up\b/i;
+const MUST = /\uC57C\s?(?:\uD55C\uB2E4|\uD568|\uD574|\uD569\uB2C8\uB2E4|\uACA0|\uB3FC|\uB41C\uB2E4|\uD560\s?(?:\uAC83|\uC77C))|\uD558\uAE30\uB85C \uD588|\uD560 \uAC83|\b(?:need|needs|have|has) to\b|\bmust\b|\bfollow[ -]up\b/i;
 const WHEN = /\d{4}-\d{2}-\d{2}|\b\d{1,2}\/\d{1,2}\b|\d+\s*\uC6D4\s*\d+\s*\uC77C|\uAE4C\uC9C0|\uB0B4\uC77C|\uBAA8\uB808|\uC624\uB298|\uC774\uBC88 \uC8FC|\uB2E4\uC74C \uC8FC|\uC6D4\uC694\uC77C|\uD654\uC694\uC77C|\uC218\uC694\uC77C|\uBAA9\uC694\uC77C|\uAE08\uC694\uC77C|\uC8FC\uB9D0|\uC6D4\uB9D0|\b(?:by|until|before|on|tomorrow|today|tonight|next|this) (?:mon|tue|wed|thu|fri|sat|sun|week|month|tomorrow|end|eod)|\b(?:tomorrow|today|tonight|asap|eod)\b/i;
 export const mustLine = (l) => MUST.test(l) && !WHEN.test(l) && !/^\s*(?:#|>|\||```|~~~)/.test(l) && l.length <= 300;
 
@@ -400,8 +424,8 @@ export const mustLine = (l) => MUST.test(l) && !WHEN.test(l) && !/^\s*(?:#|>|\||
 // line), 'project' (what is the note about? — the projects of the notes its
 // lines and paragraphs meet). a: this line's { text, name }; b: the other
 // item or paragraph.
-export function asks(index, path, text, { known = NONE, cursor = -1, projects = null, cache = null } = {}) {
-  const c = context(index, path, known, cache);
+export function asks(index, path, text, { known = NONE, cursor = -1, projects = null, cache = null, semantic = null } = {}) {
+  const c = context(index, path, known, cache, semantic);
   if (!c) return [];
   const { bySame, others, near, canon } = c;
   const name = stemOf(path);
@@ -434,7 +458,7 @@ export function asks(index, path, text, { known = NONE, cursor = -1, projects = 
   let meets = 0;
   for (const p of parasOf(text)) {
     const writing = cursor >= p.line && cursor <= p.last;
-    const best = c.relatedTo(p.text, RELATED_ASK)[0];
+    const best = c.relatedTo(p.text, true)[0];
     if (best) {
       meets++;
       for (const pr of best.project || []) { if (!met.has(pr)) met.set(pr, new Set()); met.get(pr).add(best.path); }
