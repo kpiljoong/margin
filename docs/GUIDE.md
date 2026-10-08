@@ -362,16 +362,18 @@ Beside a line of the note you are writing, the margin shows what your other note
 - a to-do (`- [ ] …`) that is **open elsewhere** too, or was **done already** (ticked in the newest note that has it); one ticked here that is **still open** elsewhere;
 - a question (`#question`, `> [!question]`) **asked before** and not decided, or **decided** (the same words marked `#decision`, or a decision near them);
 - a decision **decided before** on the same thing — in other words, it may undo an earlier one — or one that **answers** a question open elsewhere;
-- any other line whose words are near a decision made elsewhere: that decision.
+- any other line whose words are near a decision made elsewhere: that decision;
+- a paragraph — any note, any prose — about the same as a paragraph of another note: **Related**, with its first words (the nearest few notes; at most 8 such cards in a note, the strongest).
 
-The same to-do is the same words without its owner, date, tags and punctuation; "near" is most of the same words (Korean particles aside) — words in many of the notes' items, a project's name, don't count. Its date is the note's date (front matter, name or title; ≈ when it is estimated from the file). Rules only: the notes are read on this device and nothing is sent. × lets a card go on that line for good; Settings → **The margin remembers** turns it off. A note that has shown one keeps its margin, so the text doesn't move as cards come and go.
+The same to-do is the same words without its owner, date, tags and punctuation; "near" is most of the same words (Korean particles aside) — words in many of the notes' items, a project's name, don't count. Paragraphs are compared by their words and, for Korean, the two-letter pieces of them (so 릴리스 and 릴리즈 share 릴리) with verb endings aside, the rarer a word in your notes the more it counts — no model, no download. The newest notes come first, up to about 3 MB of text. Its date is the note's date (front matter, name or title; ≈ when it is estimated from the file). Rules only: the notes are read on this device and nothing is sent. × lets a card go on that line for good; Settings → **The margin remembers** turns it off. A note that has shown one keeps its margin, so the text doesn't move as cards come and go.
 
-**It asks, now and then.** What it can't tell, it asks — one question at a time, beside the line nearest the cursor (never the line you are writing), at most 20 a day:
+**It asks, now and then.** What it can't tell, it asks — one question at a time, beside the line nearest the cursor (never the line or paragraph you are writing), at most 20 a day:
 
 - **The same to-do?** A to-do near one in another note, in other words ("Draft the release notes" and "Release notes draft"): **Same** makes them one from then on (open elsewhere, done already…), **Different** stops the question.
 - **Does this replace that?** A decision near one made before: **Replaces it** — from then on, a line about it meets the newer one ("…, it replaced …"); **Both hold**; **Not related** (no longer shown as near).
-- **By when?** An open to-do with someone on it (`@ann`) and no date: a day puts `📅 2026-10-16` at the end of the line; **No date** stops asking.
-- **What is this note about?** A note with no `project:` whose lines meet notes that have one: the project goes in its front matter.
+- **About the same thing?** A paragraph close to one in another note it doesn't link to yet: **Link it** puts `[[that note]]` at the paragraph's end (a plain wiki link — the note now says it, for any app); **Not related** stops showing them together.
+- **By when?** An open to-do with someone on it (`@ann`) and no date, or a line that says something is to be done ("need to", "…해야 한다") with no day in it: a day puts `📅 2026-10-16` at the end of the line; **No date** stops asking.
+- **What is this note about?** A note with no `project:` whose lines or paragraphs meet notes that have one: the project goes in its front matter.
 
 An answer about one line goes in the line (or the front matter) — one ⌘Z takes it back. One about two notes goes in **KNOWN.md** at the top of the folder: a note of yours with one plain line an answer (`- Same to-do: "…" (note) = "…" (note)`), to read, change or delete like any other — the margin follows it. **Not now** waits a day. Settings → **The margin asks** turns the questions off (what it remembers stays).
 

@@ -420,7 +420,7 @@ input[type=checkbox] { accent-color: var(--accent); }
 .mnote-hint { font-size: 11px; }
 /* the margin remembers: what the other notes say about a line */
 .mnote.recall { border-left-color: color-mix(in srgb, var(--r) 70%, transparent); background: color-mix(in srgb, var(--r) 6%, var(--bg)); cursor: default; --r: var(--accent); }
-.mnote.recall.k-done, .mnote.recall.k-decided, .mnote.recall.k-answers { --r: var(--ok); } .mnote.recall.k-before { --r: var(--warn); } .mnote.recall.k-asked { --r: var(--accent-2); }
+.mnote.recall.k-done, .mnote.recall.k-decided, .mnote.recall.k-answers { --r: var(--ok); } .mnote.recall.k-before { --r: var(--warn); } .mnote.recall.k-asked { --r: var(--accent-2); } .mnote.recall.k-related { --r: var(--fg-dim); }
 .recall-chip { font: 600 10.5px/1 var(--sans); text-transform: uppercase; letter-spacing: .05em; color: var(--r); }
 .recall-says { color: var(--fg); font: 15px/1.35 var(--hand); overflow-wrap: anywhere; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 3; overflow: hidden; }
 .recall-refs { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 4px; }

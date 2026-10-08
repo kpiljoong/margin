@@ -471,11 +471,15 @@ function listTasks() {
 }
 
 // The margin remembers (public/recall.js): every note's to-do, decision and
-// question lines (0-based), its first words (for its date) and its project;
-// and what you told it when it asked (KNOWN.md, a note of yours). Shown
-// beside another note's lines; nothing is sent anywhere.
+// question lines (0-based), its text (for its paragraphs and date; the
+// newest notes first, RECALL_TEXT in all) and its project; and what you told
+// it when it asked (KNOWN.md, a note of yours). Shown beside another note's
+// lines; nothing is sent anywhere. sig: all of it as it is now — asked with
+// the one it has, the app gets { same: true } when nothing changed.
 const RECALL_LINE = /^\s*(?:[-*+]|\d+[.)])\s+\[[ xX]\]\s+\S|^\s*>\s*\[!(?:decision|decided|question)\][+-]?\s+\S|(?:^|\s)#(?:decision|decided|question)\b/i;
 const RECALL_MAX = 20000;
+const RECALL_NOTE = 20000;
+const RECALL_TEXT = 3000000;
 function noteRecall(c) {
   if (!c.recall) {
     c.recall = [];
@@ -491,20 +495,29 @@ function noteRecall(c) {
 }
 
 const KNOWN_FILE = 'KNOWN.md';
-function recallLines() {
-  const notes = [];
-  let count = 0;
+function recallLines(sig = '') {
+  const found = [];
   for (const rel of workspaceFiles()) {
     if (!NOTE_EXT.has(extOf(rel)) || isTemplatePath(rel) || rel === KNOWN_FILE) continue;
     const c = cachedText(rel);
-    const lines = c ? noteRecall(c) : [];
-    if (!lines.length) continue;
-    const head = c.text.slice(0, 1500);
-    notes.push({ path: rel, head, created: c.created, project: projectOf(head).project, lines });
-    count += lines.length;
-    if (count > RECALL_MAX) break;
+    if (c) found.push([rel, c]);
   }
-  return { notes, known: cachedText(KNOWN_FILE)?.text || '' };
+  const known = cachedText(KNOWN_FILE);
+  const now = crypto.createHash('sha1').update(found.map(([rel, c]) => `${rel}\0${c.mtimeMs}\0${c.size}`).join('\n')).update(`\n${known ? known.mtimeMs : ''}`).digest('hex');
+  if (sig && sig === now) return { sig: now, same: true };
+  found.sort((a, b) => b[1].mtimeMs - a[1].mtimeMs);
+  const notes = [];
+  let count = 0;
+  let chars = 0;
+  for (const [rel, c] of found) {
+    const lines = count > RECALL_MAX ? [] : noteRecall(c);
+    const text = chars < RECALL_TEXT ? c.text.replace(/^\uFEFF/, '').slice(0, RECALL_NOTE) : null;
+    if (!lines.length && text == null) continue;
+    notes.push({ path: rel, v: `${c.mtimeMs}:${c.size}`, head: text == null ? c.text.slice(0, 1500) : undefined, text, created: c.created, project: projectOf(c.text.slice(0, 1500)).project, lines });
+    count += lines.length;
+    chars += text ? text.length : 0;
+  }
+  return { sig: now, notes, known: known?.text || '' };
 }
 
 // An answer to one of the margin's questions: a line at the end of KNOWN.md
@@ -2311,7 +2324,7 @@ async function routeApi(method, url, body) {
   if (method === 'GET' && p === '/api/history/version') return getVersion(q('path'), q('id'));
   if (method === 'GET' && p === '/api/outside') return listOutside();
   if (method === 'GET' && p === '/api/tasks') return listTasks();
-  if (method === 'GET' && p === '/api/recall') return recallLines();
+  if (method === 'GET' && p === '/api/recall') return recallLines(url.searchParams.get('sig') || '');
   if (method === 'POST' && p === '/api/recall/known') return addKnown(body || {});
   if (method === 'POST' && p === '/api/tasks/toggle') return toggleTask(body || {});
   if (method === 'GET' && p === '/api/outside/diff') return outsideDiff(q('path'));

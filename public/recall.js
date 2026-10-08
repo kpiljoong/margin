@@ -1,8 +1,11 @@
 // The margin remembers (rules only; nothing is sent anywhere): beside a line,
 // what the other notes already say about it — the same to-do still open or
 // ticked there, a question asked before or decided, a decision made before
-// (in the same words or near them). The server reads every note's to-do,
-// decision and question lines (server.js recallLines); this matches them.
+// (in the same words or near them); beside a paragraph, the paragraphs of
+// other notes that are about the same (paraIndex: no model, its words and
+// their pieces, weighted by how rare they are). The server reads every
+// note's to-do, decision and question lines and its text (server.js
+// recallLines); this matches them.
 //
 // Plain logic (test/recall.test.mjs); app.js shows it in the margin.
 import { meetingItems } from './meeting.js';
@@ -42,12 +45,15 @@ export function nearness(mine, theirs, share = 0.5) {
   return a >= share && b >= share * 0.6 ? (a + b) / 2 : 0;
 }
 
-// notes: [{ path, head (its first words, for its date), created, project: [names], lines: [[line, text]] }]
-// → { items: [{ path, name, date, estimated, line, raw, project, kind, done, text, same, words }] }
-export function recallIndex(notes) {
+// notes: [{ path, head (its first words, for its date), text (or none), v
+// (its version), created, project: [names], lines: [[line, text]] }]
+// → { items: [{ path, name, date, estimated, line, raw, project, kind, done, text, same, words }],
+//     paras: paraIndex(…) }. prev: the index before (a note's paragraphs
+// are read again only when its v changed).
+export function recallIndex(notes, prev = null) {
   const items = [];
   for (const n of notes || []) {
-    const { date, estimated } = dateOf({ path: n.path, text: n.head || '', created: n.created });
+    const { date, estimated } = dateOf({ path: n.path, text: n.head ?? n.text?.slice(0, 1500) ?? '', created: n.created });
     const name = stemOf(n.path);
     for (const [line, raw] of n.lines || []) {
       for (const it of meetingItems(raw)) {
@@ -63,7 +69,127 @@ export function recallIndex(notes) {
     const common = new Set([...df].filter(([, k]) => k > items.length * 0.15).map(([w]) => w));
     for (const it of items) it.words = new Set([...it.words].filter((w) => !common.has(w)));
   }
-  return { items };
+  return { items, paras: paraIndex(notes, prev?.paras) };
+}
+
+// ---- paragraphs. A note's paragraphs: [{ line, last, raw (its first
+// line), text }] — the lines between blank ones (or headings), a list's
+// items each on its own; no front matter or code.
+export function parasOf(text) {
+  const lines = String(text).split('\n');
+  const front = FRONT.exec(text);
+  const out = [];
+  let cur = null;
+  let fence = false;
+  const end = () => {
+    if (cur) { cur.text = cur.text.replace(/\s+/g, ' ').trim(); if (cur.text) out.push(cur); }
+    cur = null;
+  };
+  for (let i = front ? front[0].split('\n').length : 0; i < lines.length; i++) {
+    const l = lines[i].replace(/\r$/, '');
+    if (/^\s*(```|~~~)/.test(l)) { end(); fence = !fence; continue; }
+    if (fence) continue;
+    if (!l.trim() || /^\s{0,3}#{1,6}\s/.test(l) || /^\s*(?:[-*_]\s*){3,}$/.test(l)) { end(); continue; }
+    if (/^\s?(?:[-*+]|\d+[.)])\s/.test(l)) end();
+    if (!cur) cur = { line: i, last: i, raw: l.trim(), text: '' };
+    cur.last = i;
+    cur.text += ` ${l.replace(/^\s*(?:>\s?)*(?:[-*+]|\d+[.)])?\s*(?:\[[ xX]\]\s+)?/, '')}`;
+  }
+  end();
+  return out;
+}
+
+// What a paragraph is about, as Margin compares it: its words (English
+// ones without -s, -ed, -ing), and for Hangul their two-letter pieces too
+// (\uB9B4\uB9AC\uC2A4 and \uB9B4\uB9AC\uC988 share \uB9B4\uB9AC), at half weight.
+// A Hangul word without the ending of its verb (\uC774\uD0C8\uD55C\uB2E4 is \uC774\uD0C8).
+const ENDING = /(?:\uD569\uB2C8\uB2E4|\uD588\uC2B5\uB2C8\uB2E4|\uD55C\uB2E4|\uD588\uB2E4|\uD558\uB2E4|\uD558\uACE0|\uD558\uB294|\uD558\uB2C8|\uD558\uC790|\uD574\uC57C|\uD588\uACE0|\uD574\uC11C|\uD558\uBA74|\uB41C\uB2E4|\uB418\uB294|\uB410\uB2E4|\uC774\uB2E4|\uC600\uB2E4|\uC788\uB2E4|\uC5C6\uB2E4|\uD588\uC74C|\uD568|\uB428)$/;
+function featuresOf(text) {
+  const f = new Map();
+  for (let w of wordsOf(text)) {
+    if (HANGUL.test(w)) {
+      if (w.length > 3 || (w.length === 3 && ENDING.test(w) && w.replace(ENDING, '').length >= 2)) w = w.replace(ENDING, '') || w;
+      f.set(`w${w}`, 1);
+      for (let i = 0; i + 1 < w.length; i++) if (!f.has(`b${w.slice(i, i + 2)}`)) f.set(`b${w.slice(i, i + 2)}`, 0.7);
+    } else f.set(`w${w.length > 4 ? w.replace(/(?:ing|ed|es|s)$/, '') : w}`, 1);
+  }
+  return f;
+}
+// How many words a paragraph needs to be compared (fewer say too little).
+const PARA_WORDS = 4;
+const words = (f) => { let n = 0; for (const k of f.keys()) if (k[0] === 'w') n++; return n; };
+
+// Every note's paragraphs, ready to compare: { paras: [{ path, name, date,
+// estimated, project, line, last, raw, text, vec }], post (feature → [[i,
+// weight]]), idf }. A paragraph's vector: its features by how rare they are
+// (idf), at length one.
+export function paraIndex(notes, prev = null) {
+  const byNote = new Map();
+  const paras = [];
+  for (const n of notes || []) {
+    if (n.text == null) continue;
+    const old = prev?.byNote?.get(n.path);
+    let mine = old && old.v === n.v && n.v != null ? old.paras : null;
+    if (!mine) {
+      const { date, estimated } = dateOf({ path: n.path, text: n.text.slice(0, 1500), created: n.created });
+      const name = stemOf(n.path);
+      mine = parasOf(n.text).map((p) => ({ path: n.path, name, date, estimated, project: n.project || [], ...p, f: featuresOf(p.text) })).filter((p) => words(p.f) >= PARA_WORDS);
+    }
+    byNote.set(n.path, { v: n.v, paras: mine });
+    paras.push(...mine);
+  }
+  const df = new Map();
+  for (const p of paras) for (const k of p.f.keys()) df.set(k, (df.get(k) || 0) + 1);
+  const N = paras.length;
+  const idf = (k) => Math.log(1 + N / (df.get(k) || 1));
+  // A feature in most paragraphs (a project's name) tells none apart: not looked up.
+  const most = N >= 40 ? N * 0.25 : Infinity;
+  const post = new Map();
+  paras.forEach((p, i) => {
+    p.vec = vecOf(p.f, idf);
+    for (const [k, w] of p.vec) {
+      if (df.get(k) > most) continue;
+      if (!post.has(k)) post.set(k, []);
+      post.get(k).push([i, w]);
+    }
+  });
+  return { paras, post, idf, byNote };
+}
+function vecOf(f, idf) {
+  const v = [...f].map(([k, w]) => [k, w * idf(k)]);
+  const len = Math.hypot(...v.map(([, w]) => w)) || 1;
+  return v.map(([k, w]) => [k, w / len]);
+}
+
+// The paragraphs of other notes nearest a text: [{ x, s (0..1), shared
+// (words both have) }], best first, one a note, at most `top`.
+export function nearParas(pi, path, text, top = 3) {
+  if (!pi?.paras?.length) return [];
+  const f = featuresOf(text);
+  if (words(f) < PARA_WORDS) return [];
+  const score = new Map();
+  const shared = new Map();
+  for (const [k, w] of vecOf(f, pi.idf)) {
+    for (const [i, pw] of pi.post.get(k) || []) {
+      score.set(i, (score.get(i) || 0) + w * pw);
+      if (k[0] === 'w') shared.set(i, (shared.get(i) || 0) + 1);
+    }
+  }
+  const best = new Map();
+  for (const [i, s] of score) {
+    const x = pi.paras[i];
+    if (x.path === path || (shared.get(i) || 0) < 2) continue;
+    if (!best.has(x.path) || best.get(x.path).s < s) best.set(x.path, { x, s, shared: shared.get(i) });
+  }
+  return [...best.values()].sort((a, b) => b.s - a.s).slice(0, top);
+}
+
+// A paragraph's first words, as it is quoted (and known by).
+export function excerptOf(text, n = 80) {
+  const t = String(text).replace(/\s+/g, ' ').trim();
+  if (t.length <= n) return t;
+  const cut = t.slice(0, n);
+  return `${cut.slice(0, cut.lastIndexOf(' ') > n / 2 ? cut.lastIndexOf(' ') : n)}\u2026`;
 }
 
 const newest = (a, b) => (b.date || '').localeCompare(a.date || '');
@@ -131,7 +257,7 @@ function sameAs(known) {
 // refs: the items there, newest first. known: knownOf(KNOWN.md). cache: a Map
 // kept while the index and known are.
 export function recall(index, path, text, { cache = null, max = 40, known = NONE } = {}) {
-  const c = context(index, path, known);
+  const c = context(index, path, known, cache);
   if (!c) return [];
   const { bySame, decisions, near, canon, latest } = c;
   const mine = new Map(meetingItems(text).map((it) => [it.line, it]));
@@ -139,7 +265,7 @@ export function recall(index, path, text, { cache = null, max = 40, known = NONE
   for (const [i, l] of bodyLines(text)) {
     if (out.length >= max) break;
     const it = mine.get(i);
-    const key = `${it ? `${it.kind}${it.done ? '+' : ''}` : ''}|${l}`;
+    const key = `${path}${SEP}${it ? `${it.kind}${it.done ? '+' : ''}` : ''}|${l}`;
     let r = cache?.get(key);
     if (r === undefined) {
       r = it ? ofItem(it) : ofLine(l);
@@ -147,7 +273,19 @@ export function recall(index, path, text, { cache = null, max = 40, known = NONE
     }
     if (r) out.push({ line: i, same: it ? sameOf(it.text) : null, ...r });
   }
-  return out;
+  // A paragraph none of whose lines has a card: the other notes' paragraphs
+  // about the same, the RELATED_MAX nearest.
+  const taken = new Set(out.map((r) => r.line));
+  const related = [];
+  for (const p of parasOf(text)) {
+    let free = true;
+    for (let i = p.line; i <= p.last && free; i++) free = !taken.has(i);
+    if (!free) continue;
+    const refs = c.relatedTo(p.text, RELATED_CARD);
+    if (refs.length) related.push({ line: p.line, same: null, kind: 'related', refs, s: refs[0].s });
+  }
+  out.push(...related.sort((a, b) => b.s - a.s).slice(0, RELATED_MAX));
+  return out.sort((a, b) => a.line - b.line);
 
   function ofItem(it) {
     if (!['todo', 'decision', 'question'].includes(it.kind)) return null;
@@ -190,9 +328,9 @@ export function recall(index, path, text, { cache = null, max = 40, known = NONE
 }
 
 // The other notes' items, as recall and asks use them.
-function context(index, path, known) {
+function context(index, path, known, cache = null) {
   const others = (index?.items || []).filter((x) => x.path !== path);
-  if (!others.length) return null;
+  if (!others.length && !index?.paras?.paras?.length) return null;
   const canon = sameAs(known);
   const bySame = new Map();
   for (const x of others) { const k = canon(x.same); if (!bySame.has(k)) bySame.set(k, []); bySame.get(k).push(x); }
@@ -216,8 +354,22 @@ function context(index, path, known) {
     }
     return out;
   };
-  return { others, bySame, decisions, near, canon, latest, told };
+  // The paragraphs of other notes about what a text is (at least `least`
+  // near), but not those you said are not related: [{ …paragraph, s }].
+  const relatedTo = (t, least) => {
+    const k = `p${SEP}${path}${SEP}${t}`;
+    let found = cache?.get(k);
+    if (!found) { found = nearParas(index.paras, path, t, 4); cache?.set(k, found); }
+    const me = sameOf(excerptOf(t));
+    return found.filter((r) => r.s >= least && !told(me, sameOf(excerptOf(r.x.text)))).map((r) => ({ ...r.x, s: r.s }));
+  };
+  return { others, bySame, decisions, near, canon, latest, told, relatedTo };
 }
+// How near a paragraph must be to show beside one (RELATED_CARD), and to
+// ask about (RELATED_ASK); RELATED_MAX cards of them in a note at most.
+const RELATED_CARD = 0.25;
+const RELATED_ASK = 0.33;
+const RELATED_MAX = 8;
 
 // A note's lines that say something: [[line, text]] (no front matter, code
 // or blank lines).
@@ -234,14 +386,22 @@ function bodyLines(text) {
   return out;
 }
 
+// A line that says something is to be done, with no day to it (not a to-do).
+const MUST = /\uC57C\s?(?:\uD55C\uB2E4|\uD568|\uD574|\uD569\uB2C8\uB2E4|\uD560|\uACA0|\uB3FC|\uB41C\uB2E4)|\uD558\uAE30\uB85C \uD588|\uD560 \uAC83|\b(?:need|needs|have|has) to\b|\bmust\b|\bfollow[ -]up\b/i;
+const WHEN = /\d{4}-\d{2}-\d{2}|\b\d{1,2}\/\d{1,2}\b|\d+\s*\uC6D4\s*\d+\s*\uC77C|\uAE4C\uC9C0|\uB0B4\uC77C|\uBAA8\uB808|\uC624\uB298|\uC774\uBC88 \uC8FC|\uB2E4\uC74C \uC8FC|\uC6D4\uC694\uC77C|\uD654\uC694\uC77C|\uC218\uC694\uC77C|\uBAA9\uC694\uC77C|\uAE08\uC694\uC77C|\uC8FC\uB9D0|\uC6D4\uB9D0|\b(?:by|until|before|on|tomorrow|today|tonight|next|this) (?:mon|tue|wed|thu|fri|sat|sun|week|month|tomorrow|end|eod)|\b(?:tomorrow|today|tonight|asap|eod)\b/i;
+export const mustLine = (l) => MUST.test(l) && !WHEN.test(l) && !/^\s*(?:#|>|\||```|~~~)/.test(l) && l.length <= 300;
+
 // What the margin would ask about a note, nearest the cursor first (never
-// the line being written): [{ line, kind, key, a, b, … }]. kind: 'same' (is
-// this to-do that one, in other words?), 'replaces' (does this decision
-// replace that one?), 'due' (by when? — an open to-do with someone on it
-// and no date), 'project' (what is the note about? — the projects of the
-// notes its lines meet). a: this line's { text, name }; b: the other item.
-export function asks(index, path, text, { known = NONE, cursor = -1, projects = null } = {}) {
-  const c = context(index, path, known);
+// the line or paragraph being written): [{ line, kind, key, a, b, … }].
+// kind: 'same' (is this to-do that one, in other words?), 'replaces' (does
+// this decision replace that one?), 'due' (by when? — an open to-do with
+// someone on it and no date, or a line that says something must be done;
+// prose: true), 'related' (is this paragraph about that one? last: its last
+// line), 'project' (what is the note about? — the projects of the notes its
+// lines and paragraphs meet). a: this line's { text, name }; b: the other
+// item or paragraph.
+export function asks(index, path, text, { known = NONE, cursor = -1, projects = null, cache = null } = {}) {
+  const c = context(index, path, known, cache);
   if (!c) return [];
   const { bySame, others, near, canon } = c;
   const name = stemOf(path);
@@ -266,9 +426,32 @@ export function asks(index, path, text, { known = NONE, cursor = -1, projects = 
       for (const p of x.project || []) { if (!met.has(p)) met.set(p, new Set()); met.get(p).add(x.path); }
     }
   }
+  // Paragraphs: one about another note's, the note not linked to it yet;
+  // a line that must be done, by no day.
+  const lines = String(text).split('\n');
+  const itemLines = new Set(items.map((it) => it.line));
+  const links = new Set([...String(text).matchAll(/\[\[([^\]|#]+)/g)].map((m) => m[1].trim().toLowerCase()));
+  let meets = 0;
+  for (const p of parasOf(text)) {
+    const writing = cursor >= p.line && cursor <= p.last;
+    const best = c.relatedTo(p.text, RELATED_ASK)[0];
+    if (best) {
+      meets++;
+      for (const pr of best.project || []) { if (!met.has(pr)) met.set(pr, new Set()); met.get(pr).add(best.path); }
+      if (!writing && !links.has(best.name.toLowerCase())) {
+        const b = { ...best, text: excerptOf(best.text) };
+        out.push({ line: p.line, last: p.last, kind: 'related', key: `related${SEP}${pairOf(sameOf(excerptOf(p.text)), sameOf(b.text))}`, a: { text: excerptOf(p.text), name }, b });
+      }
+    }
+    for (let i = p.line; i <= p.last; i++) {
+      const l = lines[i];
+      if (i === cursor || itemLines.has(i) || !mustLine(l) || known.noDate.has(sameOf(l))) continue;
+      out.push({ line: i, kind: 'due', prose: true, key: `due${SEP}${sameOf(l)}`, a: { text: l.trim(), name }, raw: l });
+    }
+  }
   // The note's project, when it names none and its lines meet notes that do.
   const fm = FRONT.exec(text)?.[0] || '';
-  if (projects && items.length >= 2 && !/^(projects?|tags)\s*:/im.test(fm) && met.size) {
+  if (projects && items.length + meets >= 2 && !/^(projects?|tags)\s*:/im.test(fm) && met.size) {
     const pick = [...met].sort((x, y) => y[1].size - x[1].size).slice(0, 3).map(([p, ps]) => ({ name: p, notes: ps.size }));
     out.push({ line: 0, kind: 'project', key: `project${SEP}${path}`, a: { text: '', name }, pick });
   }
@@ -281,7 +464,8 @@ export function askText(q) {
   switch (q.kind) {
     case 'same': return `The same to-do as “${q.b.text}” (${when(q.b)})?`;
     case 'replaces': return `Does this replace “${q.b.text}” (${when(q.b)})?`;
-    case 'due': return `By when${q.owner ? ` (@${q.owner})` : ''}?`;
+    case 'due': return q.prose ? 'To be done by when?' : `By when${q.owner ? ` (@${q.owner})` : ''}?`;
+    case 'related': return `About the same as \u201C${q.b.text}\u201D (${when(q.b)})?`;
     case 'project': return 'What is this note about?';
     default: return '';
   }
@@ -290,6 +474,10 @@ export function askText(q) {
 // "By when?" answered: the to-do's line with the date at its end.
 export function withDue(line, date) {
   return `${line.replace(/\s+$/, '')} \u{1F4C5} ${date}`;
+}
+// "About the same?" answered yes: a link to that note at the paragraph's end.
+export function withLink(line, name) {
+  return `${line.replace(/\s+$/, '')} [[${name}]]`;
 }
 // "What is it about?" answered: the note with "project:" in its front matter.
 export function withProject(text, project) {
@@ -315,6 +503,7 @@ export function recallText(r) {
     case 'answers': return { chip: 'Answers', says: `The question open in ${first.name}.` };
     case 'before': return { chip: 'Decided before', says: first.text };
     case 'replaces': return { chip: 'Replaces', says: first.text };
+    case 'related': return { chip: n > 1 ? `Related \u00B7 ${n} notes` : 'Related', says: excerptOf(first.text, 160) };
     default: return { chip: '', says: '' };
   }
 }
