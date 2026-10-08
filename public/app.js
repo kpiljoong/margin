@@ -278,6 +278,10 @@ const DEFAULT_SETTINGS = {
   followTab: true,
   // Pens: yours (suggesting, comments) and the agent's; '' is the theme's.
   penMe: '', penAgent: '',
+  // The margin's handwriting ('' the pens' hands, else one of MARGIN_FONTS).
+  marginFont: '',
+  // The margin remembers: beside a line, what the other notes say about it.
+  recall: true,
 };
 const ACCENTS = ['#7aa2f7', '#bb9af7', '#2ac3de', '#9ece6a', '#e0af68', '#ff9e64', '#f7768e', '#c0caf5'];
 const LINE_HEIGHTS = { 1.5: 'Compact', 1.7: 'Normal', 1.9: 'Relaxed' };
@@ -292,6 +296,14 @@ const FONTS = {
   mono: { label: 'Mono', stack: 'var(--mono)' },
   sans: { label: 'Sans', stack: 'var(--sans)' },
   serif: { label: 'Serif', stack: '"Iowan Old Style", "Charter", "Georgia", "Noto Serif KR", "Nanum Myeongjo", serif' },
+};
+// The margin's words (the agent's notes, yours, the live margin): a hand by
+// default, or a plainer face that is easier to read.
+const MARGIN_FONTS = {
+  '': { label: 'Handwriting' },
+  sans: { label: 'Sans', stack: 'var(--sans)' },
+  serif: { label: 'Serif', stack: FONTS.serif.stack },
+  mono: { label: 'Mono', stack: 'var(--mono)' },
 };
 const WIDTHS = { narrow: ['Narrow', '640px'], normal: ['Normal', '760px'], wide: ['Wide', '980px'], full: ['Full', '100%'] };
 
@@ -316,6 +328,9 @@ function applySettings() {
   r.setProperty('--sidebar-width', `${st.sidebarWidth}px`);
   r.setProperty('--ed-line-height', String(st.lineHeight || 1.7));
   for (const [v, key] of [['--pen-me', 'penMe'], ['--pen', 'penAgent']]) { if (st[key]) r.setProperty(v, st[key]); else r.removeProperty(v); }
+  const hand = MARGIN_FONTS[st.marginFont]?.stack;
+  for (const v of ['--hand', '--hand-me']) { if (hand) r.setProperty(v, hand); else r.removeProperty(v); }
+  for (const t of S.tabs) if (t.editor && t.comments) drawNotes(t);
   for (const t of S.tabs) t.editor?.setOptions({ highlight: st.highlight, spellcheck: st.spellcheck });
   emacs.on = !!st.emacsKeys;
   emacs.fillColumn = Number(st.fillColumn) || 70;
@@ -3435,6 +3450,7 @@ const COMMANDS = [
   ['Meeting: depth stage \u2014 the rail behind the note, the agenda on the floor (experimental)', lab('The depth stage', () => setTimeout(toggleStage, 0)), { labs: true }],
   ['Meeting: decision orbit \u2014 the wall in space (experimental)', lab('The decision orbit', () => setTimeout(() => wallView(fileTab(), true), 0)), { labs: true }],
   ['Labs: experimental views on / off', () => setLabs(!labsOn())],
+  ['Margin: remembers on / off', () => { setSetting('recall', !S.settings.recall); toast(S.settings.recall ? 'The margin remembers: beside a line, what your other notes say about it.' : 'The margin remembers: off'); }],
   ['Meeting: live margin \u2014 each line\u2019s minutes beside it as you write (experimental, sends lines to Claude)', () => setTimeout(toggleLive, 0)],
   ['Meeting: live margin status \u2014 its agent, sign-in and session; test or restart it', () => setTimeout(() => openSettings({ live: true }), 0)],
   ['Describe a key…', () => describeKey()],
@@ -3987,6 +4003,7 @@ function openSettings({ keys = false, live = false } = {}) {
           ...[['penMe', 'Yours', '--pen-me'], ['penAgent', 'The agent’s', '--pen']].map(([key, label, v]) => h('label', { class: 'pen-pick', title: `${label} pen: suggestions and comments` }, label,
             h('input', { type: 'color', class: 'accent-custom', value: st[key] || getComputedStyle(document.documentElement).getPropertyValue(v).trim() || '#000000', onchange: (e) => { setSetting(key, e.target.value); openSettings(); } }),
             st[key] ? h('button', { class: 'accent-dot none', title: 'Theme default', onclick: (e) => { e.preventDefault(); setSetting(key, ''); openSettings(); } }, '∅') : null))),
+        h('div', { class: 'set-label' }, 'Margin font'), segRow('marginFont', Object.fromEntries(Object.entries(MARGIN_FONTS).map(([k, v]) => [k, v.label]))),
         h('div', { class: 'set-label' }, 'Editor font'), segRow('font', Object.fromEntries(Object.entries(FONTS).map(([k, v]) => [k, v.label]))),
         h('div', { class: 'set-label' }, 'Text size'), h('div', { class: 'seg' },
           h('button', { onclick: () => { setSetting('fontSize', Math.max(11, st.fontSize - 1)); openSettings(); } }, '−'),
@@ -4002,6 +4019,7 @@ function openSettings({ keys = false, live = false } = {}) {
         toggle('emacsKeys', 'Emacs keys in the editor', isMac
           ? '⌃ and ⌥ keys move, mark, kill and yank as in Emacs, with ⌃X, ⌃U and registers (ESC then a key is ⌥ and the key). ⌥ then no longer types special characters in notes.'
           : 'Ctrl and Alt keys move, mark, kill and yank as in Emacs, with Ctrl+X, Ctrl+U and registers. Ctrl+C, Ctrl+V and Ctrl+Z still copy, paste and undo; Ctrl+X is Emacs’s (cut: Ctrl+W).'),
+        toggle('recall', 'The margin remembers', 'Beside a to-do, a question, a decision or a line about one: what your other notes already say about it (the same to-do open or ticked there, a question asked or decided before, a decision made before). Read on this device; nothing is sent.'),
         toggle('followTab', 'Tree follows the active tab', 'Selecting a tab opens its folders in the file tree and scrolls to it (also ⇅ at the top of the tree). Off: use ◎ in the tree.')),
       h('div', { class: 'set-label' }, 'Live margin and the desk’s margin'),
       h('p', { class: 'set-detail' }, 'The Claude model that writes a meeting’s minutes beside its lines and answers on a desk, through your claude login. Haiku with the default effort (no thinking) is the quickest and the cheapest.'),
@@ -8510,12 +8528,71 @@ function drawNotes(tab) {
   const text = ed.value;
   const live = liveActive(tab);
   ed.el.classList.toggle('live', live);
+  const recalled = recallNotes(tab);
+  // Once it has remembered something, the note keeps its margin: the text doesn't move as cards come and go.
+  ed.el.classList.toggle('keep-notes', !!S.settings.recall && (recalled.length > 0 || ed.el.classList.contains('keep-notes')));
   ed.setNotes([...tab.comments.filter((c) => !c.resolved || tab.showResolved).map((c) => {
     const at = anchorOf(text, c);
     return { from: at ? at[0] : 0, to: at ? at[1] : 0, el: noteCard(tab, c, !at), cur: tab.noteCur === c.id };
-  }), ...(live ? liveNotes(tab) : [])]);
+  }), ...recalled, ...(live ? liveNotes(tab) : [])]);
   if (live) liveHudShow(tab);
   else tab.live?.hud?.remove();
+}
+
+// ---- the margin remembers (public/recall.js; rules only, nothing is sent):
+// every note's to-do, decision and question lines, read again when they may
+// have changed; beside a line of the note in view, what they say about it.
+// × lets one go for good (this device).
+let recallMod = null;
+const recallSt = { index: null, at: 0, loading: null, cache: new Map(), off: null };
+const RECALL_STALE = 20000;
+function recallOff() {
+  if (!recallSt.off) { try { recallSt.off = new Set(JSON.parse(store.getItem('an.recallOff') || '[]')); } catch { recallSt.off = new Set(); } }
+  return recallSt.off;
+}
+function recallFresh() {
+  if (recallSt.loading || Date.now() - recallSt.at < RECALL_STALE) return;
+  recallSt.at = Date.now();
+  recallSt.loading = (async () => {
+    recallMod ||= await import('./recall.js');
+    const r = await api('GET', '/api/recall');
+    const sig = JSON.stringify(r.notes);
+    if (sig === recallSt.sig) return;
+    recallSt.sig = sig;
+    recallSt.index = recallMod.recallIndex(r.notes);
+    recallSt.cache = new Map();
+    for (const t of S.tabs) if (t.editor && t.comments && isAttached(t)) drawNotes(t);
+  })().catch(() => {}).finally(() => { recallSt.loading = null; });
+}
+function recallNotes(tab) {
+  if (!S.settings.recall || !isNote(tab.path)) return [];
+  recallFresh();
+  if (!recallSt.index || !recallMod) return [];
+  const text = tab.editor.value;
+  const starts = [0];
+  for (let i = text.indexOf('\n'); i >= 0; i = text.indexOf('\n', i + 1)) starts.push(i + 1);
+  const lines = text.split('\n');
+  const off = recallOff();
+  return recallMod.recall(recallSt.index, tab.path, text, { cache: recallSt.cache }).flatMap((r) => {
+    const key = `${tab.path}\n${r.kind}\n${lines[r.line].trim()}`;
+    return off.has(key) ? [] : [{ from: starts[r.line], to: starts[r.line], el: recallCard(tab, r, key) }];
+  });
+}
+function recallCard(tab, r, key) {
+  const { chip, says } = recallMod.recallText(r);
+  const ref = (x) => h('button', { class: 'recall-ref', title: x.raw, onclick: () => openAt(x.path, x.raw) }, x.name, x.date ? h('span', { class: 'recall-date', title: x.estimated ? 'No date in it: from when its file was made, or its oldest kept version' : null }, `${x.estimated ? '\u2248' : ''}${x.date.slice(5)}`) : null);
+  return h('div', { class: `mnote recall k-${r.kind}` },
+    h('div', { class: 'mnote-head' },
+      h('span', { class: 'recall-chip' }, chip),
+      h('span', { class: 'grow' }),
+      h('button', { class: 'mnote-btn', title: 'Not this (it won\u2019t come back on this line)', onclick: () => {
+        const off = recallOff();
+        off.add(key);
+        store.setItem('an.recallOff', JSON.stringify([...off].slice(-500)));
+        drawNotes(tab);
+      } }, '\u00D7')),
+    h('div', { class: 'recall-says' }, says),
+    h('div', { class: 'recall-refs' }, r.refs.slice(0, 3).map(ref), r.refs.length > 3 ? h('span', { class: 'recall-more' }, `+${r.refs.length - 3}`) : null));
 }
 
 function noteCard(tab, c, lost) {

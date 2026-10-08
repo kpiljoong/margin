@@ -418,6 +418,16 @@ input[type=checkbox] { accent-color: var(--accent); }
 .mnote-btn.clock { opacity: .4; }
 .mnote-btn.clock.on { opacity: 1; }
 .mnote-hint { font-size: 11px; }
+/* the margin remembers: what the other notes say about a line */
+.mnote.recall { border-left-color: color-mix(in srgb, var(--r) 70%, transparent); background: color-mix(in srgb, var(--r) 6%, var(--bg)); cursor: default; --r: var(--accent); }
+.mnote.recall.k-done, .mnote.recall.k-decided, .mnote.recall.k-answers { --r: var(--ok); } .mnote.recall.k-before { --r: var(--warn); } .mnote.recall.k-asked { --r: var(--accent-2); }
+.recall-chip { font: 600 10.5px/1 var(--sans); text-transform: uppercase; letter-spacing: .05em; color: var(--r); }
+.recall-says { color: var(--fg); font: 15px/1.35 var(--hand); overflow-wrap: anywhere; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 3; overflow: hidden; }
+.recall-refs { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 4px; }
+.recall-ref { all: unset; cursor: pointer; padding: 1px 7px; border-radius: 8px; background: var(--bg-hover); font: 11.5px/1.5 var(--sans); color: var(--fg-dim); }
+.recall-ref:hover { color: var(--fg); background: color-mix(in srgb, var(--r) 18%, var(--bg)); }
+.recall-date { margin-left: 5px; color: var(--fg-faint); font-variant-numeric: tabular-nums; }
+.recall-more { font: 11.5px/1.5 var(--sans); color: var(--fg-faint); }
 .mnote-input { width: 100%; box-sizing: border-box; margin-top: 3px; padding: 4px 6px; border: 1px solid var(--pen-me); border-radius: 5px; background: var(--bg); color: var(--fg); font: 13px var(--sans); outline: none; }
 .ed-curline { position: absolute; left: 0; right: 0; z-index: 0; pointer-events: none; background: color-mix(in srgb, var(--accent) 10%, transparent); box-shadow: inset 4px 0 0 var(--accent); }
 .pen-who { font: 600 11.5px var(--sans); margin-right: 5px; }

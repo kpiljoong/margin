@@ -225,7 +225,7 @@ Not built, on purpose: a timeline of a note's whole life (Origin, Film and Histo
 
 Margin's red pen is for you too, as tracked changes are in a word processor: made for leading a meeting with the note on a shared screen and correcting it as people talk. Only you write; it is not shared editing.
 
-**Suggesting** (⌘⇧T, ⌥X p p, or ⌥X t p; the ✎ chip in the status bar shows it) keeps the note as it is while you edit it. What you delete stays in view struck through, what you type comes in in pen, on the editing screen itself — and in the preview, in the pen's handwriting. Your pen is blue, the agent's red (both in Settings → Pens). The suggestions are kept as a run of yours, a staged copy beside the note, never in it: they survive a restart, the note can change meanwhile (they go on over it), and ⌘⇧T again stops suggesting with them kept (✎ Suggestions waiting). ⌘Z takes back your suggestions step by step.
+**Suggesting** (⌘⇧T, ⌥X p p, or ⌥X t p; the ✎ chip in the status bar shows it) keeps the note as it is while you edit it. What you delete stays in view struck through, what you type comes in in pen, on the editing screen itself — and in the preview, in the pen's handwriting. Your pen is blue, the agent's red (both in Settings → Pens). The margin's handwriting can be a plainer face that is easier to read: Settings → **Margin font** (Handwriting, Sans, Serif, Mono). The suggestions are kept as a run of yours, a staged copy beside the note, never in it: they survive a restart, the note can change meanwhile (they go on over it), and ⌘⇧T again stops suggesting with them kept (✎ Suggestions waiting). ⌘Z takes back your suggestions step by step.
 
 Quick keys for a meeting:
 
@@ -354,6 +354,17 @@ Applying does the renames and moves as ⌥X f r does — [[links]] and embeds to
 ### Tasks in all notes
 
 ⌥X f x (palette: `Tasks in all notes`) lists every `- [ ]` in the workspace in one tab, like org-mode's agenda or Obsidian Tasks: **Overdue**, **Today** and **Upcoming** by their date (`📅 2026-10-05` or `due:2026-10-05` anywhere in the line), then the rest by note. Tasks in code blocks and in `templates/` are left out. `j`/`k` move, `x` or Space checks one off in its note (or on again), `o`/Enter opens the note at it, `a` opens it and asks the agent to do it (the task is prefilled; the agent checks it off in its proposal), `h` shows the done ones too, `g` refreshes, `q` closes. The list follows changes to the notes.
+
+### The margin remembers
+
+Beside a line of the note you are writing, the margin shows what your other notes already say about it, with where (click a name to open that note at the line):
+
+- a to-do (`- [ ] …`) that is **open elsewhere** too, or was **done already** (ticked in the newest note that has it); one ticked here that is **still open** elsewhere;
+- a question (`#question`, `> [!question]`) **asked before** and not decided, or **decided** (the same words marked `#decision`, or a decision near them);
+- a decision **decided before** on the same thing — in other words, it may undo an earlier one — or one that **answers** a question open elsewhere;
+- any other line whose words are near a decision made elsewhere: that decision.
+
+The same to-do is the same words without its owner, date, tags and punctuation; "near" is most of the same words (Korean particles aside) — words in many of the notes' items, a project's name, don't count. Its date is the note's date (front matter, name or title; ≈ when it is estimated from the file). Rules only: the notes are read on this device and nothing is sent. × lets a card go on that line for good; Settings → **The margin remembers** turns it off. A note that has shown one keeps its margin, so the text doesn't move as cards come and go.
 
 ### Changes from outside (an agent in a terminal, another editor)
 

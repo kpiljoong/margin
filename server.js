@@ -336,7 +336,7 @@ function cachedText(rel) {
   const text = readText(abs);
   if (text == null) return null;
   if (textCache.size > 20000) textCache.clear();
-  const entry = { mtimeMs: st.mtimeMs, size: st.size, text, lower: text.toLowerCase() };
+  const entry = { mtimeMs: st.mtimeMs, size: st.size, created: Math.round(st.birthtimeMs || st.mtimeMs), text, lower: text.toLowerCase() };
   textCache.set(rel, entry);
   return entry;
 }
@@ -468,6 +468,40 @@ function listTasks() {
     if (tasks.length > 5000) break;
   }
   return { tasks };
+}
+
+// The margin remembers (public/recall.js): every note's to-do, decision and
+// question lines (0-based) and its first words (for its date). Shown beside
+// another note's lines; nothing is sent anywhere.
+const RECALL_LINE = /^\s*(?:[-*+]|\d+[.)])\s+\[[ xX]\]\s+\S|^\s*>\s*\[!(?:decision|decided|question)\][+-]?\s+\S|(?:^|\s)#(?:decision|decided|question)\b/i;
+const RECALL_MAX = 20000;
+function noteRecall(c) {
+  if (!c.recall) {
+    c.recall = [];
+    let fence = null;
+    c.text.replace(/^\uFEFF/, '').split('\n').forEach((l, i) => {
+      l = l.replace(/\r$/, '');
+      const f = l.match(/^\s{0,3}(```+|~~~+)/);
+      if (f && (!fence || f[1].startsWith(fence))) { fence = fence ? null : f[1]; return; }
+      if (!fence && l.length < 2000 && RECALL_LINE.test(l)) c.recall.push([i, l]);
+    });
+  }
+  return c.recall;
+}
+
+function recallLines() {
+  const notes = [];
+  let count = 0;
+  for (const rel of workspaceFiles()) {
+    if (!NOTE_EXT.has(extOf(rel)) || isTemplatePath(rel)) continue;
+    const c = cachedText(rel);
+    const lines = c ? noteRecall(c) : [];
+    if (!lines.length) continue;
+    notes.push({ path: rel, head: c.text.slice(0, 1500), created: c.created, lines });
+    count += lines.length;
+    if (count > RECALL_MAX) break;
+  }
+  return { notes };
 }
 
 // Check a task off (or on again), if that line is still that task.
@@ -2259,6 +2293,7 @@ async function routeApi(method, url, body) {
   if (method === 'GET' && p === '/api/history/version') return getVersion(q('path'), q('id'));
   if (method === 'GET' && p === '/api/outside') return listOutside();
   if (method === 'GET' && p === '/api/tasks') return listTasks();
+  if (method === 'GET' && p === '/api/recall') return recallLines();
   if (method === 'POST' && p === '/api/tasks/toggle') return toggleTask(body || {});
   if (method === 'GET' && p === '/api/outside/diff') return outsideDiff(q('path'));
   if (method === 'POST' && p === '/api/outside/seen') return outsideSeen(body || {});
