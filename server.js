@@ -520,17 +520,22 @@ function recallLines(sig = '') {
     count += lines.length;
     chars += text ? text.length : 0;
   }
-  embed.sync(notes.filter((n) => n.text != null));
+  const read = notes.filter((n) => n.text != null);
+  embedNotes = { notes: read.length, left: found.length - read.length };
+  embed.sync(read);
   return { sig: now, notes, known: known?.text || '' };
 }
 
 // The margin's local model (lib/embed.js): on when the app says so, the
-// notes it reads as recallLines gives them.
+// notes it reads as recallLines gives them (the newest, up to RECALL_TEXT
+// characters: how many, and how many older ones are left out).
 const embed = createEmbed({ dataDir: path.join(DATA_DIR, 'embed') });
+let embedNotes = { notes: 0, left: 0 };
+const embedStatus = (s = embed.status()) => ({ ...s, ...embedNotes });
 function embedOn({ on }) {
-  const s = embed.setOn(!!on);
+  embed.setOn(!!on);
   if (on) recallLines();
-  return s;
+  return embedStatus();
 }
 async function embedNear({ path: rel, texts }) {
   if (typeof rel !== 'string' || !Array.isArray(texts) || texts.length > 200 || !texts.every((t) => typeof t === 'string' && t.length <= 20000)) throw httpError(400, 'path, texts');
@@ -2463,10 +2468,10 @@ async function routeApi(method, url, body) {
   if (method === 'POST' && p === '/api/recall/known') return addKnown(body || {});
   if (method === 'POST' && p === '/api/recall/judge') return recallJudge(body || {});
   if (method === 'POST' && p === '/api/recall/think') return recallThink(body || {});
-  if (method === 'GET' && p === '/api/embed') return embed.status();
+  if (method === 'GET' && p === '/api/embed') return embedStatus();
   if (method === 'POST' && p === '/api/embed') return embedOn(body || {});
-  if (method === 'POST' && p === '/api/embed/download') { embed.download(); return embed.status(); }
-  if (method === 'POST' && p === '/api/embed/remove') { embed.remove(); return embed.status(); }
+  if (method === 'POST' && p === '/api/embed/download') { embed.download(); return embedStatus(); }
+  if (method === 'POST' && p === '/api/embed/remove') { embed.remove(); return embedStatus(); }
   if (method === 'POST' && p === '/api/embed/near') return embedNear(body || {});
   if (method === 'POST' && p === '/api/tasks/toggle') return toggleTask(body || {});
   if (method === 'GET' && p === '/api/outside/diff') return outsideDiff(q('path'));

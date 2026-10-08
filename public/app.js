@@ -3369,6 +3369,8 @@ function renderStatus() {
     items.splice(2, 0, h('span', { class: 'item clickable outside-count', title: 'Notes another program changed (an agent in a terminal, another editor). Click to review them change by change.', onclick: openOutside },
       `↯ ${S.outside.length} changed outside`));
   }
+  const chip = embedChip();
+  if (chip) items.splice(2, 0, chip);
   if (echoText) items.splice(2, 0, h('span', { class: 'item echo' }, echoText));
   if (macros.recording) items.splice(2, 0, h('span', { class: 'item rec clickable', title: 'Click to stop recording', onclick: stopRecording }, `● Recording macro · ${kbd('macro-play') || '⌥X q q'} stops`));
   // Suggesting, comments, meeting mode: what a meeting needs to see.
@@ -8619,20 +8621,50 @@ function recallNotes(tab) {
 // moment after they change), the answers kept until the notes change (and
 // shown meanwhile, so cards don't come and go). Until it has read the notes
 // (or while off), paragraphs meet by their words.
-const embedSt = { status: null, near: new Map(), stale: new Map(), want: new Map(), timer: null, told: false };
+const embedSt = { status: null, near: new Map(), stale: new Map(), want: new Map(), timer: null, told: false, poll: null, doneAt: 0 };
+const EMBED_BUSY = ['downloading', 'loading', 'indexing'];
 function embedTurn() {
   embedSt.told = true;
-  api('POST', '/api/embed', { on: !!S.settings.recallModel }).then((st) => { embedSt.status = st; redrawRecall(); }).catch(() => { embedSt.told = false; });
+  api('POST', '/api/embed', { on: !!S.settings.recallModel }).then((st) => { embedSeen(st); redrawRecall(); }).catch(() => { embedSt.told = false; });
 }
 function embedCheck() {
-  if (!S.settings.recallModel) { if (embedSt.status?.on) embedTurn(); return; }
+  if (!S.settings.recallModel) { if (embedSt.status?.on) embedTurn(); else if (embedSt.status) { embedSt.status = null; renderStatus(); } return; }
   if (!embedSt.told || (embedSt.status && !embedSt.status.on)) { embedTurn(); return; }
   api('GET', '/api/embed').then((st) => {
     const was = embedSt.status?.state;
-    embedSt.status = st;
+    embedSeen(st);
     if (!st.on) embedTurn();
     else if (was !== st.state) redrawRecall();
   }).catch(() => {});
+}
+// Its state as the status bar shows it: looked at again each second or so
+// while it downloads, starts or reads the notes; "read" for a while after.
+function embedSeen(st) {
+  if (EMBED_BUSY.includes(embedSt.status?.state) && st.state === 'ready') {
+    embedSt.doneAt = Date.now();
+    setTimeout(renderStatus, 8100);
+  }
+  embedSt.status = st;
+  renderStatus();
+  clearTimeout(embedSt.poll);
+  if (S.settings.recallModel && EMBED_BUSY.includes(st.state)) embedSt.poll = setTimeout(embedCheck, 1500);
+}
+// The status bar's word on the local model: while it is getting ready (or
+// can't), and a moment after it has read the notes; nothing once it is.
+function embedChip() {
+  const st = embedSt.status;
+  if (!S.settings.recallModel || !st?.on) return null;
+  const n = (x) => x.toLocaleString('en-US');
+  const text = {
+    missing: 'Local model: not downloaded',
+    downloading: `Local model: downloading ${Math.floor((100 * st.got) / (st.size || 1))}%`,
+    loading: 'Local model: starting\u2026',
+    indexing: st.total ? `Reading notes ${Math.floor((100 * st.done) / st.total)}% \u00B7 ${n(st.done)} of ${n(st.total)} paragraphs` : 'Reading notes\u2026',
+    error: 'Local model stopped',
+    ready: Date.now() - embedSt.doneAt < 8000 ? `Notes read \u00B7 ${n(st.total)} paragraphs` : null,
+  }[st.state];
+  if (!text) return null;
+  return h('span', { class: `item clickable embed-chip${st.state === 'error' ? ' warn' : ''}`, title: `The margin\u2019s local model (${st.model || 'multilingual-e5-small'}), on this device: until it has read your notes, paragraphs meet by their words. Click for Settings.`, onclick: () => openSettings() }, `\u25CC ${text}`);
 }
 const embedReady = () => !!S.settings.recallModel && embedSt.status?.state === 'ready' && embedSt.status.total > 0;
 function redrawRecall() { for (const t of S.tabs) if (t.editor && t.comments && isAttached(t)) drawNotes(t); }
@@ -8860,14 +8892,14 @@ function modelBox() {
   const mb = (n) => `${Math.round(n / 1e6)} MB`;
   let timer = null;
   const draw = (st) => {
-    embedSt.status = st;
+    embedSeen(st);
     const text = {
       missing: `Not downloaded yet (${mb(st.size)}, once, from Hugging Face and jsDelivr; each file checked before use).`,
       downloading: `Downloading\u2026 ${mb(st.got)} of ${mb(st.size)}`,
       off: 'Downloaded; off.',
       loading: 'Starting\u2026',
       indexing: `Reading your notes\u2026 ${st.done} of ${st.total} paragraphs`,
-      ready: `Ready: ${st.total} paragraphs read.`,
+      ready: `Ready: ${st.total.toLocaleString('en-US')} paragraphs read, of ${st.notes.toLocaleString('en-US')} notes${st.left ? ` \u2014 the newest, up to 3 million characters; ${st.left.toLocaleString('en-US')} older ${st.left === 1 ? 'note is' : 'notes are'} left out` : ''}.`,
       error: 'Stopped.',
     }[st.state] || st.state;
     line.replaceChildren(...[text, st.error ? h('span', { class: 'set-warn' }, ` ${st.error}`) : null].filter(Boolean));
@@ -10160,6 +10192,8 @@ async function boot() {
   await Promise.all([loadTree(), loadRuns(), loadTags(), loadGit(), loadOutside()]);
   loadRecipes().then(() => loadMacros()).then(loadLeaderKeys);
   liveWarm();
+  // The local model starts reading the notes now (the status bar shows how far).
+  if (S.settings.recall && S.settings.recallModel) recallFresh();
   const saved = JSON.parse(store.getItem(`an.tabs.${S.info.root}`) || 'null');
   // v0.2 format was { open, active }; v0.3 stores one entry per pane.
   const groups = saved?.groups || (saved ? [{ open: saved.open, active: saved.active }] : []);

@@ -39,11 +39,22 @@ test('without the model: missing until downloaded, and no answers (the words sti
   const st = await api('GET', '/api/embed');
   assert.equal(st.state, 'missing');
   assert.equal(st.size, 149377663);
-  assert.equal((await api('POST', '/api/embed', { on: true })).state, 'missing');
+  const on = await api('POST', '/api/embed', { on: true });
+  assert.equal(on.state, 'missing');
+  assert.deepEqual([on.notes, on.left], [1, 0], 'the notes it would read, and none left out');
   assert.deepEqual((await api('POST', '/api/embed/near', { path: 'b.md', texts: ['sync'] })).results, null);
   assert.equal((await api('POST', '/api/embed/near', { path: 'b.md', texts: 'sync' })).status, 400);
   assert.equal((await api('POST', '/api/embed', { on: false })).state, 'missing');
   assert.equal((await api('POST', '/api/embed/remove')).state, 'missing');
+});
+
+test('the notes it reads: the newest up to 3 million characters; how many older ones are left out', { skip: process.platform === 'win32' }, async (t) => {
+  const models = fs.mkdtempSync(path.join(os.tmpdir(), 'margin-models-'));
+  t.after(() => fs.rmSync(models, { recursive: true, force: true }));
+  const big = `${'A paragraph about nothing much at all. '.repeat(520)}\n`;
+  const api = await serve(t, Object.fromEntries(Array.from({ length: 152 }, (_, i) => [`n${i}.md`, big])), { MARGIN_MODELS_DIR: models });
+  const on = await api('POST', '/api/embed', { on: true });
+  assert.deepEqual([on.notes, on.left], [150, 2], '20,000 characters of each');
 });
 
 test('the model’s answers: shown when well above chance for that many paragraphs; none yet, none shown', () => {
