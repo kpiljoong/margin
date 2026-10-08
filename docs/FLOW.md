@@ -67,6 +67,24 @@ Deploy request -> Build
 - If an indented line starts with the name of the last step of the line above, it simply continues from that step with no new arrow (`Build -> Deploy` under `Build`).
 - If it starts with a name that is **not** the last step of the line above, an arrow to that step is created. For example, indenting `Screen -> Close` under `Screen -> Input` creates an arrow `Input → Screen`. To branch from the same place, don't indent; write `Screen -> Close` on a new line.
 
+## A chain over several lines
+
+A line that **starts with an arrow** goes on from the last step of the line before it; one that **ends with an arrow** goes on into the first step of the next line. Both draw `a → b → c`, and keep long chains short to read:
+
+```flow
+a
+-> b
+-(ok)-> c
+```
+
+```flow
+a ->
+b ->
+c
+```
+
+Indented under a step, a line starting with an arrow still branches from that step (as above); without indentation it continues the chain. An arrow at the end of the last line goes nowhere and is left out.
+
 ## Decisions and answers
 
 Under a step ending in `?`, an indented line's **first part is the answer.** The answer is not a box; it is written on the arrow leaving the decision.

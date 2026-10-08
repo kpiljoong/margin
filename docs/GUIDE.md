@@ -581,6 +581,7 @@ Login request -> Auth server -> Success?
 
 - `->` connects steps, and you can chain several on one line. `..>` dotted, `<->` bidirectional, `--` line without arrow, `-(HTTPS)->` labeled arrow.
 - The same text is the same step (one box, wherever it's written).
+- A line starting with an arrow (`-> b`) goes on from the line before it, and one ending with an arrow (`a ->`) into the next line, so a chain can be written a step a line: `a` / `-> b` / `-> c`, or `a ->` / `b ->` / `c`.
 - An indented line continues from the last step of the line above. Under a step ending in `?` (a decision), the first word becomes the answer on the arrow (Yes/No). To write what happens on that branch along with the answer, use `Yes -(Retry)-> Result` (label `Yes: Retry`).
 - **Box descriptions and arrow labels**: ` : description` describes what the last step (box) on the line is, shown small under the box (`Payment : call payment gateway, up to 3s`). Under what condition you go somewhere, and what happens on that branch, go on the arrow (answers under a decision, `-(label)->`).
   - If several lines give different descriptions to the same box (`Yes -> Result : keep`, `No -> Result : renew`), they're treated as per-branch descriptions and each moves to that line's arrow label (`Yes: keep`). If there's only one description or they're all the same, it stays under the box.

@@ -11,6 +11,7 @@ Payment !
 - `A -> B -> C` chains steps; one line may hold several. `..>` dotted, `<->` both ways, `--` plain line, `-(label)->` labelled arrow.
 - The same text is the same box wherever it is written, so write a step's name exactly the same way every time.
 - An indented line continues from the LAST step of the line above it.
+- A line starting with an arrow (`-> B`, not indented) continues from the line before; a line ending with an arrow (`A ->`) continues into the next line's first step. So `A` / `-> B` / `-> C` is the chain A -> B -> C.
 - A step ending in `?` is a decision. Under it, an indented line's first part is the answer written on the arrow (`yes -> Next`); `yes -(label)-> Next` shows "yes: label". An answer alone on a line (`yes`) becomes a box, so always follow it with `-> step`.
 - ` : text` at the end of a line describes the line's last box (what it is). What happens on a branch goes on the arrow (`-(label)->`) or becomes its own step.
 - `!` at the end of a step marks a problem (red outline); it is not part of the name.

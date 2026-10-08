@@ -22,6 +22,20 @@ test('an indented line continues from the step above; answers label the arrows o
   assert.ok(!('yes' in n), 'the answer is not a step');
 });
 
+test('a chain over lines: a line starting with an arrow goes on from the line before, one ending with one into the next', () => {
+  const chain = (src) => { const f = parseFlow(src); const t = Object.fromEntries(f.nodes.map((n) => [n.id, n.text])); return f.edges.map((e) => `${t[e.from]}${e.kind}${e.label ? `|${e.label}` : ''}${t[e.to]}`); };
+  assert.deepEqual(chain('a\n-> b\n-> c'), ['a-->b', 'b-->c']);
+  assert.deepEqual(chain('a ->\nb ->\nc ->'), ['a-->b', 'b-->c']);
+  assert.deepEqual(chain('a\n-(ok)-> b\n..> c'), ['a-->|okb', 'b-.->c']);
+  assert.deepEqual(chain('a ..>\n-> b'), ['a-->b']); // the line's own arrow
+  assert.deepEqual(chain('Flow:\n  a\n  -> b\n  -> c'), ['a-->b', 'b-->c']);
+  // Indented under a step: still branches from it; a question's answers as before.
+  assert.deepEqual(chain('a\n  -> b\n  -> c'), ['a-->b', 'a-->c']);
+  assert.deepEqual(chain('Order ->\nPaid?\n  yes -> Ship ->\n  Done'), ['Order-->Paid?', 'Paid?-->|yesShip', 'Ship-->Done']);
+  const f = parseFlow('a\n-> b');
+  assert.deepEqual(f.nodes.find((n) => n.text === 'b').spots, [{ line: 1, start: 3, end: 4 }]);
+});
+
 test('arrow kinds and labels', () => {
   const f = parseFlow('A ..> B\nB <-> C\nC -- D\nD -(HTTP)-> E');
   assert.deepEqual(f.edges.map((e) => [e.kind, e.label]), [['-.->', ''], ['<-->', ''], ['---', ''], ['-->', 'HTTP']]);

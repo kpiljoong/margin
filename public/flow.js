@@ -11,6 +11,9 @@
 // - An indented line continues from the last step of the line above it.
 //   Under a question (a step ending in `?`) its first word is the answer,
 //   written on the arrow.
+// - A line that starts with an arrow goes on from the line before it
+//   ("a" then "-> b" then "-> c": a → b → c), and one that ends with an
+//   arrow goes on into the next ("a ->" then "b ->" then "c").
 // - ` : ` at the end adds a description under the line's last step.
 // - `Name:` alone on a line groups the indented lines below it.
 // - Shapes: `?` at the end is a decision, `(text)` rounded, `((text))` a
@@ -120,6 +123,7 @@ export function parseFlow(src) {
   const colors = []; // { color, list } — read once every step is known
   let direction = 'TD';
   const stack = []; // { indent, last, group }
+  let open = null; // a line ended with an arrow: { from, arrow } for the next one
 
   const node = (raw, group, lineNo, at) => {
     const { text, shape, flag } = parseStep(raw);
@@ -139,7 +143,9 @@ export function parseFlow(src) {
     const body = line.trim();
     if (!body || body.startsWith('#') || body.startsWith('//')) continue;
     const indent = line.length - line.trimStart().length;
-    while (stack.length && stack[stack.length - 1].indent >= indent) stack.pop();
+    // The line before at this depth (a line starting with an arrow goes on from it).
+    let sibling = null;
+    while (stack.length && stack[stack.length - 1].indent >= indent) { const s = stack.pop(); if (!sibling && s.indent === indent) sibling = s; }
     const parent = stack[stack.length - 1] || null;
     const group = parent?.group ?? null;
 
@@ -153,6 +159,7 @@ export function parseFlow(src) {
       const g = { id: `g${groups.length + 1}`, title: header[1].trim(), parent: group, line: lineNo };
       groups.push(g);
       stack.push({ indent, last: null, group: g });
+      open = null;
       continue;
     }
 
@@ -174,10 +181,18 @@ export function parseFlow(src) {
     });
     let prev = parent?.last || null;
     let into = null;
+    let first = { kind: '-->', label: '' };
+    // "-> b": from the step above (indented under it), else from the line before.
+    const lead = steps.length > 1 && !steps[0].piece.trim();
+    if (lead) { steps.shift(); first = arrows.shift(); if (!prev) prev = sibling?.last || null; }
+    // "a ->" on the line before: into this line's first step.
+    const from = open;
+    open = null;
+    if (from) { prev = from.from; if (!lead) first = from.arrow; }
+    const tail = steps.length > 1 && !steps[steps.length - 1].piece.trim() ? (steps.pop(), arrows.pop()) : null;
     // Under a question, "yes -> …" puts the answer on the arrow from it
     // ("yes -(retry)-> …": both, "yes: retry").
-    let first = { kind: '-->', label: '' };
-    if (prev?.shape === 'decision' && steps.length > 1) {
+    if (!lead && !from && prev?.shape === 'decision' && steps.length > 1) {
       const arrow = arrows.shift();
       const answer = steps.shift().piece.trim();
       first = { ...arrow, label: arrow.label ? `${answer}: ${arrow.label}` : answer };
@@ -192,6 +207,7 @@ export function parseFlow(src) {
       prev = n;
     });
     if (note && prev) { notes.push({ node: prev, note, edge: into }); if (!prev.lines.includes(lineNo)) prev.lines.push(lineNo); }
+    if (tail && prev) open = { from: prev, arrow: tail };
     stack.push({ indent, last: prev, group });
   }
 
