@@ -399,6 +399,14 @@ input[type=checkbox] { accent-color: var(--accent); }
 .ed-find-layer mark.note { background: color-mix(in srgb, var(--pen-me) 13%, transparent); box-shadow: 0 2px 0 color-mix(in srgb, var(--pen-me) 70%, transparent); border-radius: 0; }
 .ed-find-layer mark.note.cur { background: color-mix(in srgb, var(--pen-me) 28%, transparent); }
 .ed.with-notes .ed-layer, .ed.with-notes .ed-input { padding-left: max(24px, calc((100% - var(--line-width, 760px) - var(--notes-w) - 30px) / 2)); padding-right: max(calc(var(--notes-w) + 40px), calc((100% - var(--line-width, 760px) - var(--notes-w) - 30px) / 2 + var(--notes-w) + 30px)); }
+.ed-anchors { position: absolute; top: 0; left: 0; right: 0; height: 0; z-index: 2; pointer-events: none; display: none; }
+.ed.with-notes .ed-anchors { display: block; }
+.ed-anchor { position: absolute; width: 2px; border-radius: 1px; background: var(--a, var(--pen-me)); opacity: .35; transition: opacity var(--t-1, 120ms); }
+.ed-anchor.on { opacity: 1; }
+.ed-anchors svg { position: absolute; top: 0; left: 0; width: 1px; height: 1px; overflow: visible; }
+.ed-anchors path { fill: none; stroke: var(--a, var(--pen-me)); stroke-width: 1.2; stroke-dasharray: 3 3; opacity: .8; }
+.ed-find-layer mark.anchor { background: none; text-decoration: underline dashed var(--a, var(--pen-me)); text-decoration-thickness: 1.5px; text-underline-offset: 4px; }
+.mnote.anchored { box-shadow: 0 0 0 1px color-mix(in srgb, var(--r, var(--pen-me)) 55%, transparent); }
 .ed-notes { position: absolute; top: 0; right: 22px; width: var(--notes-w); z-index: 3; pointer-events: none; display: none; }
 .ed.with-notes .ed-notes { display: block; }
 .mnote { position: absolute; left: 0; right: 0; box-sizing: border-box; pointer-events: auto; padding: 3px 6px 5px 9px; border-left: 2px solid var(--pen-me); border-radius: 0 6px 6px 0; background: color-mix(in srgb, var(--pen-me) 6%, var(--bg)); font: 12.5px/1.4 var(--sans); color: var(--fg); cursor: pointer; }

@@ -289,7 +289,7 @@ export function recall(index, path, text, { cache = null, max = 40, known = NONE
     for (let i = p.line; i <= p.last && free; i++) free = !taken.has(i);
     if (!free) continue;
     const refs = c.relatedTo(p.text);
-    if (refs.length) related.push({ line: p.line, same: null, kind: 'related', refs, rank: refs[0].rank });
+    if (refs.length) related.push({ line: p.line, last: p.last, same: null, kind: 'related', refs, rank: refs[0].rank });
   }
   out.push(...related.sort((a, b) => b.rank - a.rank).slice(0, RELATED_MAX));
   return out.sort((a, b) => a.line - b.line);

@@ -147,7 +147,8 @@ export class MarkdownEditor {
     this.hints = []; // ranges shown faintly for a moment (e.g. mentions of a box): [start, end]
     this.history = new UndoHistory('');
     this.track = null; // suggesting: { text, marks, undo, redo } (track.js)
-    this.notes = []; // margin notes: { from, to, el, cur }
+    this.notes = []; // margin notes: { from, to, end, el, cur }
+    this.anchorOn = []; // the notes whose words are shown: the one pointed at, or those the caret is in
     this.nar = null; // narrowed: { head, tail, lines } (the note's text before and after the part in view)
     this.emacs = new EmacsKeys(this); // Emacs keys (emacs.js)
     this.query = null; // query replace, going: { at, end, cur, n, back }
@@ -166,7 +167,8 @@ export class MarkdownEditor {
     this.curLine = h('div', 'ed-curline');
     this.curLine.hidden = true;
     this.notesCol = h('div', 'ed-notes');
-    this.el.append(this.curLine, this.findLayer, this.hlLayer, this.ta, this.notesCol, this.popup, this.findBar);
+    this.anchorCol = h('div', 'ed-anchors');
+    this.el.append(this.curLine, this.findLayer, this.hlLayer, this.ta, this.anchorCol, this.notesCol, this.popup, this.findBar);
 
     this.ta.addEventListener('input', (e) => this._changed(e));
     this.ta.addEventListener('beforeinput', (e) => {
@@ -184,9 +186,9 @@ export class MarkdownEditor {
       if (!this._noWatch) editorWatch.key?.(this, e, commandOf(e));
       this._noWatch = false;
     });
-    this.ta.addEventListener('keyup', () => { this._placeCurLine(); this.onCursor(); });
-    this.ta.addEventListener('click', () => { this._closePopup(); this._placeCurLine(); this.onCursor(); });
-    this.ta.addEventListener('selectionchange', () => this._placeCurLine());
+    this.ta.addEventListener('keyup', () => { this._placeCurLine(); this._anchors(); this.onCursor(); });
+    this.ta.addEventListener('click', () => { this._closePopup(); this._placeCurLine(); this._anchors(); this.onCursor(); });
+    this.ta.addEventListener('selectionchange', () => { this._placeCurLine(); this._anchors(); });
     this.ta.addEventListener('blur', () => setTimeout(() => {
       if (document.activeElement === this.ta) return;
       this._closePopup();
@@ -510,6 +512,7 @@ export class MarkdownEditor {
     const part = (a, b, cls) => { if (a - o >= 0 && b - o <= len) marks.push([a - o, b - o, cls]); };
     for (const [a, b] of this.hints) part(a, b, 'hint');
     for (const n of this.notes) if (n.to > n.from) part(n.from, n.to, n.cur ? 'note cur' : 'note');
+    for (const n of this.anchorOn) if (!(n.to > n.from)) part(n.from, n.at.end, 'anchor');
     if (!marks.length) { this.findLayer.textContent = ''; return; }
     marks.sort((x, y) => x[0] - y[0]);
     const text = this.ta.value;
@@ -528,6 +531,7 @@ export class MarkdownEditor {
     this.findLayer.scrollTop = this.ta.scrollTop;
     if (this.lockLayer) this.lockLayer.scrollTop = this.ta.scrollTop;
     this.notesCol.style.transform = `translateY(${-this.ta.scrollTop}px)`;
+    this.anchorCol.style.transform = `translateY(${-this.ta.scrollTop}px)`;
     if (!this.curLine.hidden) this.curLine.style.transform = `translateY(${-this.ta.scrollTop}px)`;
     this.onScroll();
   }
@@ -732,10 +736,22 @@ export class MarkdownEditor {
     this.curLine.style.transform = `translateY(${-this.ta.scrollTop}px)`;
   }
 
-  // ---------------- notes in the margin: [{ from, to, el, cur }], each
-  // element beside its line, the words it is on marked.
+  // ---------------- notes in the margin: [{ from, to, end, el, cur }], each
+  // element beside its line, the words it is on marked (from–to), or the
+  // lines it is about (from to the end of end's line; from's line when no
+  // end): a bar beside them, and when it is pointed at or the caret is in
+  // them, a dashed line under them to it.
   setNotes(notes) {
     this.notes = notes;
+    this.anchorOn = [];
+    this._anchorKey = '';
+    for (const n of notes) {
+      n.el._anchorNote = n;
+      if (n.el._anchorHooked) continue;
+      n.el._anchorHooked = true;
+      n.el.addEventListener('mouseenter', () => { this._hoverEl = n.el; this._anchors(); });
+      n.el.addEventListener('mouseleave', () => { if (this._hoverEl === n.el) this._hoverEl = null; this._anchors(); });
+    }
     // The live margin keeps its column from the start, and a note that has had
     // remembered cards keeps it: the text you write doesn't move as cards come and go.
     this.el.classList.toggle('with-notes', notes.length > 0 || this.el.classList.contains('live') || this.el.classList.contains('keep-notes'));
@@ -747,18 +763,74 @@ export class MarkdownEditor {
   placeNotes() { this._placeNotes(); }
 
   _placeNotes() {
-    if (!this.notes.length || !this.el.isConnected) return;
+    if (!this.notes.length || !this.el.isConnected) { this.anchorCol.replaceChildren(); return; }
     let y = 0;
     const o = this._off;
+    const v = this.ta.value;
+    const offs = this._lineOffsets();
+    const pad = parseFloat(getComputedStyle(this.ta).paddingTop) || 0;
+    const lh = this.lineHeight();
+    const lineOf = (pos) => { let l = 0; for (let i = v.indexOf('\n'); i >= 0 && i < pos; i = v.indexOf('\n', i + 1)) l++; return l; };
+    const bars = [];
     for (const n of [...this.notes].sort((x, z) => x.from - z.from)) {
-      const out = n.from < o || n.from - o > this.ta.value.length;
+      const out = n.from < o || n.from - o > v.length;
       n.el.style.display = out ? 'none' : '';
+      n.at = null;
       if (out) continue;
       const want = this._caretCoords(n.from - o).top;
       const top = Math.max(want, y);
       n.el.style.top = `${top}px`;
       y = top + n.el.offsetHeight + 8;
+      // What it is about: its words, or its lines.
+      let end;
+      if (n.end == null && n.to > n.from) end = Math.min(v.length, n.to - o);
+      else { const e = Math.min(v.length, Math.max(n.from, n.end ?? n.from) - o); end = v.indexOf('\n', e); if (end < 0) end = v.length; }
+      const last = lineOf(end);
+      const bottom = last + 1 < offs.length ? offs[last + 1] + pad : this._caretCoords(v.length).top + lh;
+      const color = getComputedStyle(n.el).getPropertyValue('--r').trim();
+      const bar = h('div', 'ed-anchor');
+      bar.style.top = `${want}px`;
+      bar.style.height = `${Math.max(lh, bottom - want)}px`;
+      if (color) bar.style.setProperty('--a', color);
+      n.at = { end: end + o, top: want, card: top, bar, color };
+      bars.push(bar);
     }
+    const right = this.ta.offsetLeft + this.ta.clientWidth - (parseFloat(getComputedStyle(this.ta).paddingRight) || 0);
+    for (const b of bars) b.style.left = `${right + 10}px`;
+    this._anchorRight = right + 10;
+    this.anchorCol.replaceChildren(...bars);
+    this._anchorKey = '';
+    this._anchors();
+  }
+
+  // The notes whose words are shown, and the dashed line from them to each.
+  _anchors() {
+    if (!this.notes.length) return;
+    const o = this._off;
+    const c = this.ta.selectionStart + o;
+    const hover = this._hoverEl?._anchorNote;
+    const on = hover?.at && this.notes.includes(hover) ? [hover] : this.notes.filter((n) => n.at && c >= n.from && c <= n.at.end);
+    const key = on.map((n) => this.notes.indexOf(n)).join(',');
+    if (key === this._anchorKey) return;
+    this._anchorKey = key;
+    for (const n of this.notes) { n.el.classList.toggle('anchored', on.includes(n)); n.at?.bar.classList.toggle('on', on.includes(n)); }
+    this.anchorOn = on;
+    this.findLayer.style.setProperty('--a', on.find((n) => n.at.color)?.at.color || '');
+    this._renderFind();
+    this.anchorCol.querySelector('svg')?.remove();
+    if (!on.length) return;
+    const NS = 'http://www.w3.org/2000/svg';
+    const svg = document.createElementNS(NS, 'svg');
+    const x0 = this.notesCol.offsetLeft;
+    for (const n of on) {
+      const e = this._caretCoords(n.at.end - o);
+      const path = document.createElementNS(NS, 'path');
+      const yy = e.top + e.height - 1;
+      path.setAttribute('d', `M${e.left + 2} ${yy}H${this._anchorRight}V${n.at.card + 10}H${x0}`);
+      if (n.at.color) path.style.setProperty('--a', n.at.color);
+      svg.append(path);
+    }
+    this.anchorCol.append(svg);
   }
 
   // y offset of each source line inside the scrolled content.

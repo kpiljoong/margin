@@ -8609,10 +8609,10 @@ function recallNotes(tab) {
     if (off.has(key) || (r.kind === 'related' && thought.within(r.line))) return [];
     const mine = ask?.line === r.line ? ask : null;
     if (mine) ask = null;
-    return [{ from: starts[r.line], to: starts[r.line], el: recallCard(tab, r, key, mine) }];
+    return [{ from: starts[r.line], to: starts[r.line], end: starts[r.last ?? r.line], el: recallCard(tab, r, key, mine) }];
   });
-  if (ask) cards.push({ from: starts[ask.line], to: starts[ask.line], el: h('div', { class: 'mnote recall k-ask' }, h('div', { class: 'mnote-head' }, h('span', { class: 'recall-chip' }, 'Question')), askBox(tab, ask)) });
-  cards.push(...thought.cards.map((c) => ({ from: starts[c.line], to: starts[c.line], el: c.el })));
+  if (ask) cards.push({ from: starts[ask.line], to: starts[ask.line], end: starts[ask.last ?? ask.line], el: h('div', { class: 'mnote recall k-ask' }, h('div', { class: 'mnote-head' }, h('span', { class: 'recall-chip' }, 'Question')), askBox(tab, ask)) });
+  cards.push(...thought.cards.map((c) => ({ from: starts[c.line], to: starts[c.line], end: starts[c.last], el: c.el })));
   return cards.sort((a, b) => a.from - b.from);
 }
 
@@ -8840,7 +8840,7 @@ function thinkCards(tab, text, lines, off) {
       const key = `${tab.path}\nthink\n${p.text.slice(0, 200)}`;
       if (off.has(key)) continue;
       spans.push([p.line, p.last]);
-      out.push({ line: p.line, el: thinkCard(tab, p, r, key, lines[p.last]) });
+      out.push({ line: p.line, last: p.last, el: thinkCard(tab, p, r, key, lines[p.last]) });
     }
   }
   return { cards: out, within: (l) => spans.some(([a, b]) => l >= a && l <= b) };
