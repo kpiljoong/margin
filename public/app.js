@@ -9028,7 +9028,8 @@ function devNotes(tab) {
           text.includes(`[[${y.name}]]`) ? h('span', { class: 'recall-rel' }, 'Linked') : h('button', { class: 'recall-ans', onmousedown: (e) => e.preventDefault(), onclick: () => link(y), title: `Put [[${y.name}]] at the end of this note` }, 'Link here'))))
         : refs.length ? h('div', { class: 'recall-refs' }, refs.map(recallRef)) : null,
       x.kind === 'question' ? devAnswerBox(tab, x, !!p) : null);
-    return { from: starts[at.line], to: starts[at.line], end: starts[at.last], el };
+    // Its paragraph not found: shown at the top, tied to no line there.
+    return { from: starts[at.line], to: starts[at.line], end: starts[at.last], el, noAnchor: !p };
   });
 }
 // Under a question: Answer, the box, what was sent and what came back.

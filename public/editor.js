@@ -736,11 +736,12 @@ export class MarkdownEditor {
     this.curLine.style.transform = `translateY(${-this.ta.scrollTop}px)`;
   }
 
-  // ---------------- notes in the margin: [{ from, to, end, el, cur }], each
+  // ---------------- notes in the margin: [{ from, to, end, el, cur, noAnchor }], each
   // element beside its line, the words it is on marked (from–to), or the
   // lines it is about (from to the end of end's line; from's line when no
   // end): a bar beside them, and when it is pointed at or the caret is in
-  // them, a dashed line under them to it.
+  // them, a dashed line under them to it — none for a note only placed
+  // there (noAnchor: what it was about can't be found).
   setNotes(notes) {
     this.notes = notes;
     this.anchorOn = [];
@@ -802,6 +803,8 @@ export class MarkdownEditor {
       const top = Math.max(want, y);
       n.el.style.top = `${top}px`;
       y = top + heights[k] + 8;
+      // Placed there, but about no line there (noAnchor): no bar, no line to it.
+      if (n.noAnchor) return null;
       const bar = h('div', 'ed-anchor');
       bar.style.top = `${want}px`;
       bar.style.height = `${Math.max(lh, bottom - want)}px`;
@@ -810,7 +813,7 @@ export class MarkdownEditor {
       n.at = { end: end + o, top: want, card: top, bar, color: colors[k] };
       return bar;
     });
-    this.anchorCol.replaceChildren(...bars);
+    this.anchorCol.replaceChildren(...bars.filter(Boolean));
     this._anchorKey = '';
     this._anchors();
   }
