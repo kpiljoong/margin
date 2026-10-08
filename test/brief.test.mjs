@@ -204,3 +204,22 @@ test('themes: what goes, what comes back (three paragraphs, two notes at least),
   assert.match(md, /- Did not know what to do first\. — \[\[Interview 2026-08-21\]\]\n- Where do I start\? five tickets\. — \[\[Support\]\] \(2026-09-03\)/);
   assert.match(md, /## Not checked yet\n\n- Whether examples help\./);
 });
+
+test('since the last meeting, elsewhere: later notes about what it left', () => {
+  const prev = '# Weekly 2026-10-01\n- Do we need a beta first? #question\n- [ ] Draft the store text @bo\n';
+  const others = [
+    { path: 'Beta plan 2026-10-03.md', name: 'Beta plan 2026-10-03', date: '2026-10-03', line: 4, raw: '- We need a beta first, two weeks #decision', kind: 'decision', done: false, text: 'We need a beta first, two weeks' },
+    { path: 'Old 2026-09-20.md', name: 'Old', date: '2026-09-20', line: 1, raw: '- Beta first? #question', kind: 'question', done: false, text: 'Do we need a beta first?' },
+    { path: 'Store 2026-10-05.md', name: 'Store', date: '2026-10-05', line: 2, raw: '- [x] Draft the store text', kind: 'todo', done: true, text: 'Draft the store text' },
+    { path: 'Lunch 2026-10-06.md', name: 'Lunch', date: '2026-10-06', line: 2, raw: '- [ ] Book lunch', kind: 'todo', done: false, text: 'Book lunch' },
+  ];
+  const b = meetingBrief('# Weekly 2026-10-08\n', { path: 'Weekly 2026-10-08.md', prev, prevPath: 'Weekly 2026-10-01.md', others });
+  assert.deepEqual(b.since.map((c) => [c.ref.name, c.kind, c.done, c.about]), [['Store', 'todo', true, 'Draft the store text'], ['Beta plan 2026-10-03', 'decision', false, 'Do we need a beta first?']]);
+});
+
+test('what the last meeting left, settled since in another note: covered, and where', () => {
+  const prev = '# Weekly 2026-10-01\n- Do we need a beta first? #question\n- [ ] Draft the store text @bo\n';
+  const others = [{ path: 'Store 2026-10-05.md', name: 'Store', date: '2026-10-05', line: 2, raw: '- [x] Draft the store text, shared', kind: 'todo', done: true, text: 'Draft the store text, shared' }];
+  const b = meetingBrief('# Weekly 2026-10-08\n', { path: 'Weekly 2026-10-08.md', prev, prevPath: 'Weekly 2026-10-01.md', others });
+  assert.deepEqual(b.cover.map((c) => [c.text, c.done, c.where]), [['Do we need a beta first?', false, undefined], ['Draft the store text', true, 'Store']]);
+});

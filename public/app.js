@@ -9126,7 +9126,7 @@ function briefPrev(tab, st, text) {
 function briefRules(tab, st, mode) {
   const text = tab.editor.value;
   const prev = mode === 'meeting' ? briefPrev(tab, st, text) : null;
-  return briefMod.briefOf(mode, text, { path: tab.path, today: ymdOf(new Date()), prev: prev?.text || '', others: recallSt.index?.items || [] });
+  return briefMod.briefOf(mode, text, { path: tab.path, today: ymdOf(new Date()), prev: prev?.text || '', prevPath: prev?.path || '', others: recallSt.index?.items || [] });
 }
 async function briefLoad() {
   if (briefMod) return;
@@ -9283,7 +9283,7 @@ function briefHead(tab, st, mode, rules, heads) {
   };
   const row = (c) => h('div', { class: `brief-item${c.done ? ' done' : ''} b-${c.from}`, title: c.from === 'last' ? `From ${st.prev?.name || 'the last meeting'}` : '',
     onclick: c.from === 'last' ? () => st.prev?.path && openAt(st.prev.path, c.text) : go(c.line) },
-  h('span', { class: 'brief-box' }, c.done ? '✓' : ''), h('span', { class: 'brief-text' }, c.text), c.owner ? h('span', { class: 'brief-who' }, `@${c.owner}`) : null, c.due ? h('span', { class: 'm-due' }, c.due.slice(5)) : null,
+  h('span', { class: 'brief-box' }, c.done ? '✓' : ''), h('span', { class: 'brief-text' }, c.text), c.where ? h('span', { class: 'brief-who', title: 'Settled there' }, `\u2192 ${c.where}`) : null, c.owner ? h('span', { class: 'brief-who' }, `@${c.owner}`) : null, c.due ? h('span', { class: 'm-due' }, c.due.slice(5)) : null,
   c.from === 'last' && !c.done ? h('button', { class: 'brief-carry', title: 'Put it at the end of this note', onclick: carry(c) }, '+ here') : null);
   const mine = cover.filter((c) => c.from !== 'last');
   const last = cover.filter((c) => c.from === 'last');
@@ -9292,6 +9292,9 @@ function briefHead(tab, st, mode, rules, heads) {
     heads.length ? h('div', { class: 'brief-heads' }, heads.map((x) => h('button', { class: `brief-head k-brief-${x.kind}`, onclick: go(x.p?.line) }, h('span', { class: 'recall-chip' }, BRIEF_CHIP[x.kind]), h('span', {}, x.say)))) : null,
     mine.length ? h('div', { class: 'brief-sec' }, h('div', { class: 'brief-label' }, `${mode === 'meeting' ? 'To cover' : 'Outline'}${of(mine)}`), mine.map(row)) : null,
     last.length ? h('div', { class: 'brief-sec' }, h('div', { class: 'brief-label', title: st.prev?.name || '' }, `From last time${of(last)}`), last.map(row)) : null,
+    rules.since?.length ? h('div', { class: 'brief-sec' }, h('div', { class: 'brief-label', title: 'What other notes, written after the last meeting, decided, asked or did about what it left' }, 'Since then, elsewhere'),
+      rules.since.map((c) => h('div', { class: 'brief-item b-since', title: `About: ${c.about}`, onclick: () => openAt(c.ref.path, c.ref.raw) },
+        h('span', { class: 'brief-box' }, c.kind === 'decision' ? '✔' : c.kind === 'question' ? '?' : c.done ? '✓' : '·'), h('span', { class: 'brief-text' }, c.text), h('span', { class: 'brief-who' }, c.ref.name)))) : null,
     rules.needs.length ? h('div', { class: 'brief-needs' }, h('span', { class: 'brief-label' }, 'Still needs'), rules.needs.map((n) => h('span', { class: 'brief-need' }, n.say))) : null);
 }
 // The command: brief this note (as what it seems to be, or a meeting), and check it with Claude.

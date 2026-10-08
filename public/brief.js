@@ -35,6 +35,8 @@ const NEXT_WORDS = /\uB2E4\uC74C ?(\uC8FC|\uD68C\uC758|\uB2E8\uACC4|\uAE4C\uC9C0
 const MANY = 4;
 const PLACEHOLDER = /\b(TODO|TBD|TK|FIXME|XXX)\b|\?\?\?|\[citation needed\]|\(link\)|\(\uB9C1\uD06C\)|\uCD94\uAC00 \uC608\uC815/;
 
+// Near either way: a short line in a longer one, or the other way round.
+const near = (a, b, share) => nearness(a, b, share) > 0 || nearness(b, a, share) > 0;
 const nameOf = (path) => String(path).split('/').pop().replace(/\.(md|markdown)$/i, '');
 const titleOf = (text) => (/^#\s+(.+)$/m.exec(text) || [])[1] || '';
 const frontOf = (text) => (FRONT.exec(text) || [])[1] || '';
@@ -93,7 +95,7 @@ function topicsOf(text) {
 function mentioned(body, text) {
   const mine = wordsOf(body);
   if (mine.size < 2) return text.toLowerCase().includes(body.toLowerCase());
-  return text.split('\n').some((l) => l.trim() && nearness(mine, wordsOf(l), 0.5) > 0);
+  return text.split('\n').some((l) => l.trim() && near(mine, wordsOf(l), 0.5));
 }
 
 // What the last meeting left for this one: its open questions, its "#next"
@@ -112,12 +114,32 @@ export function carriedOver(prevText, text) {
     });
 }
 
+// Since the last meeting, elsewhere: what other notes decided, asked or
+// ticked after it (dated later) about what it decided, left open or handed
+// out. others: recall.js's index items ({ path, name, date, line, raw,
+// kind, done, text, words }).
+export function changedSince(prevText, prevPath, others, path) {
+  const since = dateOfName(prevPath || '');
+  if (!prevText || !since) return [];
+  const prev = meetingItems(prevText).filter((it) => ['decision', 'question', 'todo', 'next'].includes(it.kind));
+  const out = [];
+  const seen = new Set();
+  for (const o of others) {
+    if (o.path === path || o.path === prevPath || !o.date || o.date <= since || seen.has(`${o.path}:${o.line}`)) continue;
+    const about = prev.find((it) => near(wordsOf(it.body), o.words || wordsOf(o.text), 0.5));
+    if (!about) continue;
+    seen.add(`${o.path}:${o.line}`);
+    out.push({ text: o.text, from: 'since', kind: o.kind, done: !!o.done, about: about.body, ref: { path: o.path, line: o.line, name: o.name, raw: o.raw, date: o.date } });
+  }
+  return out.sort((a, b) => (a.ref.date < b.ref.date ? 1 : -1)).slice(0, 5);
+}
+
 // The meeting's brief. opts: { path, today ('YYYY-MM-DD'), prev: the last
 // meeting's text, others: [{ path, name, line, raw, done }] to-dos of other
 // notes (recall.js's index items) }. → { mode, cover: [{ text, line, from,
 // done, kind }], flags: [{ kind: 'gap' | 'conflict', line, say, refs?, key }],
 // needs: [what the note as a whole still needs] }.
-export function meetingBrief(text, { path = '', today = '', prev = '', others = [] } = {}) {
+export function meetingBrief(text, { path = '', today = '', prev = '', prevPath = '', others = [] } = {}) {
   const items = meetingItems(text);
   const todos = items.filter((it) => it.kind === 'todo');
   const dated = dateOfName(path) || today;
@@ -155,7 +177,14 @@ export function meetingBrief(text, { path = '', today = '', prev = '', others = 
   if (n >= 12 && !SUMMARY.test(text)) needs.push({ key: 'summary', say: 'No summary' });
   const open = items.filter((it) => it.kind === 'question' && !items.some((d) => d.kind === 'decision' && d.line > it.line && d.section === it.section));
   if (open.length) needs.push({ key: 'open', say: `${open.length} open question${open.length > 1 ? 's' : ''}: decide, or carry to next time (#next)` });
-  return { mode: 'meeting', cover: [...topicsOf(text), ...carriedOver(prev, text)], flags, needs };
+  // What the last meeting left, settled since in another note (a to-do
+  // ticked there, a question decided there): covered, and where.
+  const since = changedSince(prev, prevPath, others, path);
+  const last = carriedOver(prev, text).map((c) => {
+    const there = !c.done && since.find((x) => x.about === c.text && (x.kind === 'decision' || (x.kind === 'todo' && x.done)));
+    return there ? { ...c, done: true, where: there.ref.name } : c;
+  });
+  return { mode: 'meeting', cover: [...topicsOf(text), ...last], since, flags, needs };
 }
 
 // A piece of writing: its outline (sections with nothing under them yet),
