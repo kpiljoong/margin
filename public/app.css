@@ -2047,3 +2047,5 @@ img.part { border-radius: 6px; box-shadow: 0 0 0 1px var(--border); }
 .theme-reading, .theme-open { font-size: 13px; line-height: 1.45; }
 .theme-reading .recall-chip, .theme-open .recall-chip { display: block; margin-bottom: 2px; }
 .theme-open { --r: var(--warn); }
+.brief-item { flex-wrap: wrap; column-gap: 6px; row-gap: 0; }
+.brief-item .brief-text { flex: 1 1 55%; min-width: 0; }
