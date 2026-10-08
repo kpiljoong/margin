@@ -398,6 +398,22 @@ const RELATED_MAX = 8;
 // unrelated ones is about sqrt(2 ln n) by chance: it takes half more than
 // that, and 3.5 at least.
 const JUDGED = 3;
+
+// The paragraphs of other notes that may bear on a text, for the margin that
+// thinks along (app.js): more than are shown as related — the model reads
+// them and keeps what helps. [{ path, line }]; null while the local model
+// hasn't answered.
+export function nearFor(index, path, text, { semantic = null, cache = null, max = 5 } = {}) {
+  if (!index?.paras) return [];
+  if (semantic) {
+    const r = semantic(text);
+    return r ? r.list.filter((x) => x.z >= 2).slice(0, max).map(({ x }) => ({ path: x.path, line: x.line })) : null;
+  }
+  const k = `p${SEP}${path}${SEP}${text}`;
+  let near = cache?.get(k);
+  if (!near) { near = nearParas(index.paras, path, text, 4); cache?.set(k, near); }
+  return near.filter((x) => x.s >= 0.12).slice(0, max).map(({ x }) => ({ path: x.path, line: x.line }));
+}
 export const semanticNeed = (n) => Math.max(3.5, Math.sqrt(2 * Math.log(Math.max(2, n))) + 0.5);
 // Or as close as two ways of saying one thing (in a few notes all about the
 // same, none stands out, but these do).

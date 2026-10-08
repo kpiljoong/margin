@@ -20,6 +20,7 @@ const { OutsideStore, Seen, changedWhileAway } = require('./lib/outside');
 const { tiersOf, agentLines } = require('./lib/tiers');
 const { createEmbed } = require('./lib/embed');
 const { judgeMargin } = require('./lib/judge');
+const { thinkMargin } = require('./lib/think');
 
 const APP_DIR = __dirname;
 const PUBLIC_DIR = path.join(APP_DIR, 'public');
@@ -547,44 +548,50 @@ let judgedCache = null;
 let recallEsm = null;
 const JUDGED_FILE = path.join(DATA_DIR, 'judged.json');
 const JUDGED_MAX = 3000;
-async function recallJudge(b) {
-  const { path: rel, items, lang } = b;
-  if (typeof rel !== 'string' || !Array.isArray(items) || items.length > 8
-    || !items.every((it) => it && typeof it.text === 'string' && it.text.length <= 20000 && Array.isArray(it.refs) && it.refs.length <= 3
-      && it.refs.every((r) => r && typeof r.path === 'string' && Number.isInteger(r.line) && r.line >= 0))) throw httpError(400, 'path, items: [{ text, refs: [{ path, line }] }]');
+// What may be sent of a note's paragraphs (Settings → … with Claude): the
+// note (not private, not one .agentnotesignore names) and a reader of the
+// other notes' paragraphs ({ path, line } → { path, line, name, raw, text }
+// or null: not a note, the note itself, private, ignored, no such paragraph).
+async function recallSending(b, what) {
   setLiveOpts(b);
   const agent = liveAgent();
-  if (!agent) throw httpError(400, 'Reading the margin with Claude needs the Claude Code agent (Settings → Agents).');
-  const abs = workspacePath(rel);
+  if (!agent) throw httpError(400, `${what} needs the Claude Code agent (Settings → Agents).`);
+  const abs = workspacePath(b.path);
   const ignored = loadIgnore(ROOT);
   if (!NOTE_EXT.has(extOf(abs))) throw httpError(400, 'Only notes.');
   if (ignored(relOf(abs)) || (fs.existsSync(abs) && isPrivateNote(abs))) throw httpError(403, 'This note is private: its paragraphs are not sent.');
   recallEsm ||= await import(require('url').pathToFileURL(path.join(__dirname, 'public', 'recall.js')).href);
-  judgedCache ||= new Map(Object.entries(readJson(JUDGED_FILE, {})));
   const paras = new Map();
-  const refText = (r) => {
+  const read = (r) => {
     let a;
     try { a = workspacePath(r.path); } catch { return null; }
     const f = relOf(a);
     if (!NOTE_EXT.has(extOf(a)) || ignored(f) || f === relOf(abs) || isPrivateNote(a)) return null;
     if (!paras.has(f)) { const c = cachedText(f); paras.set(f, c ? recallEsm.parasOf(c.text) : []); }
     const p = paras.get(f).find((x) => x.line === r.line);
-    return p ? { name: path.basename(f).replace(/\.[^.]+$/, ''), text: p.text.slice(0, 800) } : null;
+    return p ? { path: f, line: p.line, name: path.basename(f).replace(/\.[^.]+$/, ''), raw: p.raw, text: p.text.slice(0, 800) } : null;
   };
+  const env = { ...process.env };
+  delete env.ELECTRON_RUN_AS_NODE;
+  return { agent, env, read };
+}
+const validRefs = (refs, max) => Array.isArray(refs) && refs.length <= max && refs.every((r) => r && typeof r.path === 'string' && Number.isInteger(r.line) && r.line >= 0);
+async function recallJudge(b) {
+  const { path: rel, items, lang } = b;
+  if (typeof rel !== 'string' || !Array.isArray(items) || items.length > 8
+    || !items.every((it) => it && typeof it.text === 'string' && it.text.length <= 20000 && validRefs(it.refs, 3))) throw httpError(400, 'path, items: [{ text, refs: [{ path, line }] }]');
+  const { agent, env, read: refText } = await recallSending(b, 'Reading the margin with Claude');
+  judgedCache ||= new Map(Object.entries(readJson(JUDGED_FILE, {})));
   const want = lang === 'ko' || lang === 'en' ? lang : textLang(items.map((it) => it.text)) || 'en';
   const asked = items.map((it) => {
     const refs = it.refs.map(refText);
     const sent = refs.filter(Boolean);
     const text = it.text.replace(/\s+/g, ' ').trim().slice(0, 1500);
-    return { text, refs, sent, key: crypto.createHash('sha1').update(JSON.stringify([want, text, sent])).digest('hex') };
+    return { text, refs, sent, key: crypto.createHash('sha1').update(JSON.stringify([want, text, sent.map((x) => [x.name, x.text])])).digest('hex') };
   });
   const todo = asked.filter((a) => a.sent.length && !judgedCache.has(a.key));
   if (todo.length) {
-    if (!judge) {
-      const env = { ...process.env };
-      delete env.ELECTRON_RUN_AS_NODE;
-      judge = judgeMargin({ bin: liveBin(agent), env, opts: liveOpts });
-    }
+    judge ||= judgeMargin({ bin: liveBin(agent), env, opts: liveOpts });
     const r = await judge.ask(todo.map((a) => ({ text: a.text, refs: a.sent })), want);
     if (!r.ok) throw httpError(502, r.error || 'Claude did not answer.');
     todo.forEach((a, i) => { if (r.verdicts[i].every(Boolean)) judgedCache.set(a.key, r.verdicts[i]); });
@@ -600,6 +607,46 @@ async function recallJudge(b) {
       return a.refs.map((x) => (x ? got[k++] || null : null));
     }),
   };
+}
+
+// The margin thinks along (Settings; lib/think.js): a paragraph of the note
+// being written, what comes before it, and the paragraphs of other notes the
+// page found near it ({ path, line }, read here as for recallJudge); when
+// the model asks to look something up, the local model looks (if it is on).
+// → { kind, due, say, refs: [{ path, line, name, raw }] } (kind 'none':
+// nothing to say). Kept by what was sent (.agent-notes/thought.json).
+let thinker = null;
+let thoughtCache = null;
+const THOUGHT_FILE = path.join(DATA_DIR, 'thought.json');
+const THOUGHT_MAX = 2000;
+async function recallThink(b) {
+  const { path: rel, text, before = '', refs = [], today = '', lang } = b;
+  if (typeof rel !== 'string' || typeof text !== 'string' || !text.trim() || text.length > 20000 || typeof before !== 'string' || before.length > 20000
+    || !validRefs(refs, 6) || typeof today !== 'string' || today.length > 40) throw httpError(400, 'path, text, before, refs: [{ path, line }], today');
+  const { agent, env, read } = await recallSending(b, 'Thinking along');
+  thoughtCache ||= new Map(Object.entries(readJson(THOUGHT_FILE, {})));
+  const found = refs.map(read).filter(Boolean);
+  const para = text.replace(/\s+/g, ' ').trim().slice(0, 1500);
+  const want = lang === 'ko' || lang === 'en' ? lang : textLang([para]) || 'en';
+  const req = { text: para, before: before.slice(-1500), today, lang: want, found };
+  const key = crypto.createHash('sha1').update(JSON.stringify([want, today.slice(0, 10), para, req.before, found.map((f) => [f.path, f.line, f.text])])).digest('hex');
+  const said = (r) => ({ kind: r.kind, due: r.due, say: r.say, refs: r.from.map((n) => r.found[n - 1]).filter(Boolean).map(({ path: p, line, name, raw }) => ({ path: p, line, name, raw })) });
+  if (thoughtCache.has(key)) return thoughtCache.get(key);
+  thinker ||= thinkMargin({ bin: liveBin(agent), env, opts: liveOpts });
+  // What the model asks to look up: the paragraphs the local model finds
+  // well above the rest (none while it is off or still reading).
+  const search = async (query) => {
+    const r = await embed.near(relOf(workspacePath(rel)), [query]);
+    return (r?.results?.[0] || []).filter((x) => x.z >= 2.5).map(read).filter(Boolean);
+  };
+  const r = await thinker.think(req, search);
+  if (!r.ok) throw httpError(502, r.error || 'Claude did not answer.');
+  const out = said(r);
+  thoughtCache.set(key, out);
+  while (thoughtCache.size > THOUGHT_MAX) thoughtCache.delete(thoughtCache.keys().next().value);
+  ensureDataDir();
+  writeFileAtomic(THOUGHT_FILE, JSON.stringify(Object.fromEntries(thoughtCache)));
+  return out;
 }
 
 // An answer to one of the margin's questions: a line at the end of KNOWN.md
@@ -2409,6 +2456,7 @@ async function routeApi(method, url, body) {
   if (method === 'GET' && p === '/api/recall') return recallLines(url.searchParams.get('sig') || '');
   if (method === 'POST' && p === '/api/recall/known') return addKnown(body || {});
   if (method === 'POST' && p === '/api/recall/judge') return recallJudge(body || {});
+  if (method === 'POST' && p === '/api/recall/think') return recallThink(body || {});
   if (method === 'GET' && p === '/api/embed') return embed.status();
   if (method === 'POST' && p === '/api/embed') return embedOn(body || {});
   if (method === 'POST' && p === '/api/embed/download') { embed.download(); return embed.status(); }
@@ -2539,6 +2587,8 @@ function liveRestart() {
   if (had) deskUp().warm();
   judge?.stop();
   judge = null;
+  thinker?.stop();
+  thinker = null;
 }
 function liveAgent() {
   return claudeAgents().find((a) => a.label === liveOpts.agent) || (AGENT?.kind === 'claude' ? AGENT : claudeAgents()[0] || null);
@@ -2835,6 +2885,7 @@ function shutdown() {
   live?.stop();
   desk?.stop();
   judge?.stop();
+  thinker?.stop();
   embed.stop();
   for (const id of running.keys()) { try { cancelRun(id, 'server stopped'); } catch { /* ignore */ } }
   process.exit(0);

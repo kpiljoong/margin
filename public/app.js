@@ -287,6 +287,8 @@ const DEFAULT_SETTINGS = {
   recallModel: false,
   // and reads them with Claude: how a paragraph met the others (sent).
   recallJudge: false,
+  // and thinks along with Claude: a word on a paragraph just written (sent).
+  recallThink: false,
 };
 const ACCENTS = ['#7aa2f7', '#bb9af7', '#2ac3de', '#9ece6a', '#e0af68', '#ff9e64', '#f7768e', '#c0caf5'];
 const LINE_HEIGHTS = { 1.5: 'Compact', 1.7: 'Normal', 1.9: 'Relaxed' };
@@ -1844,9 +1846,9 @@ function renderContent(g = S.focus) {
 function editorFor(tab) {
   if (tab.editor) return tab.editor;
   const ed = new MarkdownEditor({
-    onChange: (v) => { tab.content = v; onEdit(tab); drawNotesSoon(tab); if (tab.railEl) railSoon(tab); },
+    onChange: (v) => { tab.content = v; tab.thinkEditAt = Date.now(); onEdit(tab); drawNotesSoon(tab); if (tab.railEl) railSoon(tab); },
     onScroll: () => { if (isAttached(tab) && !tab.restoring) { tab.scroll = ed.scrollTop; syncScroll(tab); } },
-    onCursor: renderStatus,
+    onCursor: () => { renderStatus(); thinkPoke(tab); },
     complete: completeFor,
     onPasteFiles: (files) => attachFiles(tab, files),
     onTrack: () => proofChanged(tab),
@@ -4029,6 +4031,8 @@ function openSettings({ keys = false, live = false } = {}) {
         S.settings.recallModel ? modelBox() : null,
         toggle('recallJudge', 'The margin reads them with Claude', 'When a paragraph meets others, Claude says how in a line \u2014 the same thing, answers it, goes against it, adds to it \u2014 and leaves out the ones not really about it. That paragraph and the three it met are sent to Claude, through the Claude Code agent you signed in to (the live margin\u2019s model, Haiku unless chosen), a few seconds after you stop typing; never the paragraph you are writing, a private note, or one .agentnotesignore names. What it said is kept: a paragraph is read again only when it changes.', () => { judgeSt.got = new Map(); judgeSt.error = null; redrawRecall(); }),
         S.settings.recallJudge && judgeSt.error ? h('p', { class: 'set-detail' }, h('span', { class: 'set-warn' }, judgeSt.error)) : null,
+        toggle('recallThink', 'The margin thinks along (Claude)', 'A paragraph you have just written \u2014 once you leave it, or pause on a finished sentence \u2014 gets a word beside it when that helps: a to-do (and by when, a day to put in the line), a thought on what you are weighing from what your notes said before, or what you are trying to remember, found in your notes (with the local model on, it looks for it). Most paragraphs get nothing. That paragraph, the text before it in the note and up to five paragraphs of other notes near it are sent to Claude through the Claude Code agent you signed in to (the live margin\u2019s model); never a private note, nor one .agentnotesignore names. At most 80 paragraphs a day; what it said is kept.', () => { thinkSt.got = new Map(); thinkSt.error = null; for (const t of S.tabs) t.thinkSeen = null; redrawRecall(); }),
+        S.settings.recallThink && thinkSt.error ? h('p', { class: 'set-detail' }, h('span', { class: 'set-warn' }, thinkSt.error)) : null,
         toggle('recallAsk', 'The margin asks', 'Now and then one question beside a line, about what it can\u2019t tell: the same to-do in other words? does this decision replace that one? is this paragraph about that one? by when? what is the note about? An answer goes in the line itself, or in KNOWN.md (a note of yours, plain lines), and what it remembers follows it. At most 20 a day; Not now waits a day.'),
         toggle('followTab', 'Tree follows the active tab', 'Selecting a tab opens its folders in the file tree and scrolls to it (also ⇅ at the top of the tree). Off: use ◎ in the tree.')),
       h('div', { class: 'set-label' }, 'Live margin and the desk’s margin'),
@@ -8580,6 +8584,7 @@ function recallFresh() {
 }
 function recallNotes(tab) {
   if (!S.settings.recall || !isNote(tab.path)) return [];
+  if (S.settings.recallThink && !tab.thinkSeen && recallMod) tab.thinkSeen = new Set(recallMod.parasOf(tab.editor.value).map((p) => p.text));
   recallFresh();
   if (!recallSt.index || !recallMod) return [];
   const text = tab.editor.value;
@@ -8591,15 +8596,20 @@ function recallNotes(tab) {
   const cursor = lineNoAt(text, tab.editor.selectionStart);
   const judge = judgeFor(tab, recallMod.parasOf(text).find((p) => cursor >= p.line && cursor <= p.last)?.text);
   let ask = askNow(tab, text, semantic, judge);
+  // A paragraph the margin thought about: its word instead of the others'.
+  const thought = thinkCards(tab, text, lines, off);
+  thinkPoke(tab);
+  if (ask && thought.within(ask.line)) ask = null;
   const cards = recallMod.recall(recallSt.index, tab.path, text, { cache: recallSt.cache, known: recallSt.known, semantic, judge }).flatMap((r) => {
     const key = `${tab.path}\n${r.kind}\n${lines[r.line].trim()}`;
-    if (off.has(key)) return [];
+    if (off.has(key) || (r.kind === 'related' && thought.within(r.line))) return [];
     const mine = ask?.line === r.line ? ask : null;
     if (mine) ask = null;
     return [{ from: starts[r.line], to: starts[r.line], el: recallCard(tab, r, key, mine) }];
   });
   if (ask) cards.push({ from: starts[ask.line], to: starts[ask.line], el: h('div', { class: 'mnote recall k-ask' }, h('div', { class: 'mnote-head' }, h('span', { class: 'recall-chip' }, 'Question')), askBox(tab, ask)) });
-  return cards;
+  cards.push(...thought.cards.map((c) => ({ from: starts[c.line], to: starts[c.line], el: c.el })));
+  return cards.sort((a, b) => a.from - b.from);
 }
 
 // ---- the margin understands (Settings; lib/embed.js): a local model reads
@@ -8710,6 +8720,130 @@ async function judgeAsk() {
     if (judgeSt.got.size > 5000) judgeSt.got = new Map([...judgeSt.got].slice(-2000));
   } finally { judgeSt.busy = false; }
 }
+// ---- the margin thinks along (Settings; lib/think.js): a paragraph written
+// or changed here (not one the note had when it was opened) goes to Claude
+// once the cursor has left it, or after a pause on a finished sentence in
+// it, with the text before it and the paragraphs of other notes near it. It
+// says something only when that helps; what it said is kept by the
+// paragraph (and on the server, by what was sent).
+const thinkSt = { got: new Map(), asked: new Set(), queue: [], busy: false, error: null };
+const THINK_IDLE = 3000;
+const THINK_PAUSE = 8000;
+const THINK_DAY_MAX = 80;
+// A sentence that has ended: . ? ! … or a Korean sentence ending (\uB2E4 \uC694 \uAE4C \uC8E0 \uC74C \uD568 \uC784).
+const THINK_DONE = /(?:[.?!…。]|[\uB2E4\uC694\uAE4C\uC8E0\uC74C\uD568\uC784])["')\]]*$/;
+function thinkDay() {
+  const day = new Date().toDateString();
+  let b = {};
+  try { b = JSON.parse(store.getItem('an.thinkDay') || '{}'); } catch { /* none yet */ }
+  return b.day === day ? b : { day, n: 0 };
+}
+function thinkPoke(tab) {
+  if (!S.settings.recallThink || !S.settings.recall || !tab?.editor) return;
+  clearTimeout(tab.thinkTimer);
+  tab.thinkTimer = setTimeout(() => thinkTick(tab), THINK_IDLE);
+}
+function thinkTick(tab) {
+  if (!S.settings.recallThink || !S.settings.recall || !recallMod || !recallSt.index || !tab.editor || !tab.thinkSeen || !isAttached(tab) || !isNote(tab.path)) return;
+  const text = tab.editor.value;
+  const cursor = lineNoAt(text, tab.editor.selectionStart);
+  let later = 0;
+  const ready = [];
+  for (const p of recallMod.parasOf(text)) {
+    const k = `${tab.path}\u0000${p.text}`;
+    if (tab.thinkSeen.has(p.text) || thinkSt.got.has(k) || thinkSt.asked.has(k) || !recallMod.paraWorthy(p.text)) continue;
+    if (cursor >= p.line && cursor <= p.last) {
+      if (!THINK_DONE.test(p.text)) continue;
+      const wait = THINK_PAUSE - (Date.now() - (tab.thinkEditAt || 0));
+      if (wait > 0) { later = wait; continue; }
+    }
+    ready.push(p);
+  }
+  if (later) { clearTimeout(tab.thinkTimer); tab.thinkTimer = setTimeout(() => thinkTick(tab), later + 50); }
+  for (const p of ready.slice(-3)) thinkAsk(tab, text, p);
+}
+function thinkAsk(tab, text, p) {
+  if (thinkDay().n + thinkSt.queue.length >= THINK_DAY_MAX) return;
+  const refs = recallMod.nearFor(recallSt.index, tab.path, p.text, { semantic: semanticFor(tab), cache: recallSt.cache });
+  if (!refs) return; // the local model answers first (and the margin is drawn again)
+  const k = `${tab.path}\u0000${p.text}`;
+  thinkSt.asked.add(k);
+  const now = new Date();
+  thinkSt.queue.push({ tab, k, body: {
+    path: tab.path, text: p.text, before: text.split('\n').slice(0, p.line).join('\n').slice(-1500), refs,
+    today: `${ymdOf(now)} (${now.toLocaleDateString('en-US', { weekday: 'short' })})`, ...liveOpts(),
+  } });
+  thinkPump();
+}
+async function thinkPump() {
+  if (thinkSt.busy) return;
+  thinkSt.busy = true;
+  try {
+    while (thinkSt.queue.length) {
+      const { tab, k, body } = thinkSt.queue.shift();
+      const b = thinkDay();
+      b.n++;
+      store.setItem('an.thinkDay', JSON.stringify(b));
+      let r = null;
+      try { r = await api('POST', '/api/recall/think', body); thinkSt.error = null; } catch (e) { thinkSt.error = e.message; }
+      thinkSt.asked.delete(k);
+      thinkSt.got.set(k, r && r.kind !== 'none' ? r : null);
+      if (thinkSt.got.size > 3000) thinkSt.got = new Map([...thinkSt.got].slice(-1500));
+      if (r && r.kind !== 'none' && tab.editor && tab.comments && isAttached(tab)) drawNotes(tab);
+    }
+  } finally { thinkSt.busy = false; }
+}
+// The cards of the paragraphs it said something on: { cards: [{ line, el }],
+// within(line): that line is in one of them }.
+function thinkCards(tab, text, lines, off) {
+  const out = [];
+  const spans = [];
+  if (S.settings.recallThink) {
+    for (const p of recallMod.parasOf(text)) {
+      const r = thinkSt.got.get(`${tab.path}\u0000${p.text}`);
+      if (!r) continue;
+      const key = `${tab.path}\nthink\n${p.text.slice(0, 200)}`;
+      if (off.has(key)) continue;
+      spans.push([p.line, p.last]);
+      out.push({ line: p.line, el: thinkCard(tab, p, r, key, lines[p.last]) });
+    }
+  }
+  return { cards: out, within: (l) => spans.some(([a, b]) => l >= a && l <= b) };
+}
+const THINK_CHIP = { todo: 'To do', thinking: 'A thought', recall: 'From your notes' };
+function thinkCard(tab, p, r, key, lastLine) {
+  const byNote = recallSt.index?.paras?.byNote;
+  const refs = (r.refs || []).map((y) => byNote?.get(y.path)?.paras.find((x) => x.line === y.line) || y);
+  let days = null;
+  if (r.kind === 'todo' && !/📅|\bdue:/i.test(p.text)) {
+    const btn = (label, run, cls = '') => h('button', { class: `recall-ans${cls}`, onmousedown: (e) => e.preventDefault(), onclick: run }, label);
+    const due = (date) => () => askWrite(tab, null, (v) => {
+      const ls = v.split('\n');
+      if (ls[p.last] !== lastLine) return null;
+      ls[p.last] = recallMod.withDue(ls[p.last], date);
+      const nv = ls.join('\n');
+      // The same paragraph with its day: said and done (not asked again).
+      const now = recallMod.parasOf(nv).find((x) => x.line === p.line);
+      if (now) thinkSt.got.set(`${tab.path}\u0000${now.text}`, null);
+      return nv;
+    }, false);
+    days = h('div', { class: 'recall-ask' }, h('div', { class: 'recall-q' }, 'By when?'), h('div', { class: 'recall-answers' },
+      dayButtons(btn, due, r.due)));
+  }
+  return h('div', { class: `mnote recall k-think k-think-${r.kind}` },
+    h('div', { class: 'mnote-head' },
+      h('span', { class: 'recall-chip' }, THINK_CHIP[r.kind] || 'A thought'),
+      h('span', { class: 'grow' }),
+      h('button', { class: 'mnote-btn', title: 'Not this (it won’t come back on this paragraph)', onclick: () => {
+        const o = recallOff();
+        o.add(key);
+        store.setItem('an.recallOff', JSON.stringify([...o].slice(-500)));
+        drawNotes(tab);
+      } }, '×')),
+    h('div', { class: 'recall-says' }, r.say),
+    refs.length ? h('div', { class: 'recall-refs' }, refs.map(recallRef)) : null,
+    days);
+}
 // Settings: where the model is (download, reading the notes, ready), and its buttons.
 function modelBox() {
   const line = h('p', { class: 'set-detail' }, 'Checking\u2026');
@@ -8783,19 +8917,13 @@ function askBox(tab, q, on = null) {
   if (q.kind === 'same') answers = [btn('Same', tell('same')), btn('Different', tell('different'))];
   else if (q.kind === 'replaces') answers = [btn('Replaces it', tell('replaces')), btn('Both hold', tell('holds')), btn('Not related', tell('unrelated'))];
   else if (q.kind === 'due') {
-    const fri = (5 - new Date().getDay() + 7) % 7 || 7;
-    const mon = (1 - new Date().getDay() + 7) % 7 || 7;
     const due = (date) => () => askWrite(tab, q, (v) => {
       const ls = v.split('\n');
       if (ls[q.line] == null || (q.prose ? ls[q.line] !== q.raw : !/\[ \]/.test(ls[q.line]))) return null;
       ls[q.line] = recallMod.withDue(ls[q.line], date);
       return ls.join('\n');
     });
-    const md = (n) => daysOn(n).slice(5).replace('-', '/');
-    const days = [[fri, 'Fri'], [mon, 'Mon']].sort((x, y) => x[0] - y[0]).map(([n, d]) => btn(`${d} ${md(n)}`, due(daysOn(n))));
-    answers = [btn('Today', due(daysOn(0))), ...days,
-      h('input', { type: 'date', class: 'recall-date-in', title: 'Another day', onchange: (e) => { if (e.target.value) due(e.target.value)(); } }),
-      btn('No date', tell('nodate'))];
+    answers = [...dayButtons(btn, due), btn('No date', tell('nodate'))];
   } else if (q.kind === 'related') {
     answers = [btn('Link it', () => askWrite(tab, q, (v) => {
       const p = recallMod.parasOf(v).find((x) => x.line === q.line && recallMod.excerptOf(x.text) === q.a.text);
@@ -8807,9 +8935,19 @@ function askBox(tab, q, on = null) {
   } else if (q.kind === 'project') answers = q.pick.map((p) => btn(p.name, () => askWrite(tab, q, (v) => recallMod.withProject(v, p.name)), '', `${p.notes} related note${p.notes === 1 ? '' : 's'}`));
   return h('div', { class: 'recall-ask' }, h('div', { class: 'recall-q' }, on?.kind === 'related' && q.kind === 'related' && on.refs[0]?.path === q.b.path ? 'About the same thing?' : recallMod.askText(q)), h('div', { class: 'recall-answers' }, answers, notNow));
 }
+// Today, Friday, Monday, another day: due(date) → what the button does.
+// suggest: a day it suggests (marked, or first when it is another).
+function dayButtons(btn, due, suggest = '') {
+  const fri = (5 - new Date().getDay() + 7) % 7 || 7;
+  const mon = (1 - new Date().getDay() + 7) % 7 || 7;
+  const days = [[0, 'Today'], ...[[fri, 'Fri'], [mon, 'Mon']].sort((x, y) => x[0] - y[0])].map(([n, d]) => [daysOn(n), n ? `${d} ${daysOn(n).slice(5).replace('-', '/')}` : d]);
+  if (suggest && !days.some(([date]) => date === suggest)) days.unshift([suggest, `\uD83D\uDCC5 ${suggest.slice(5).replace('-', '/')}`]);
+  return [...days.map(([date, label]) => btn(label, due(date), date === suggest ? ' on' : '')),
+    h('input', { type: 'date', class: 'recall-date-in', title: 'Another day', onchange: (e) => { if (e.target.value) due(e.target.value)(); } })];
+}
 // An answer that goes in the note: written in (one ⌘Z takes it back), the
 // cursor where it was.
-function askWrite(tab, q, change) {
+function askWrite(tab, q, change, spend = true) {
   const ed = tab.editor;
   const v = ed.value;
   const nv = change(v);
@@ -8819,15 +8957,17 @@ function askWrite(tab, q, change) {
   const add = nv.slice(i, i + nv.length - v.length);
   const at = (x) => (x >= i ? x + add.length : x);
   ed.replace(i, i, add, at(ed.selectionStart), at(ed.selectionEnd));
-  askSpent();
+  if (spend) askSpent();
   drawNotes(tab);
 }
 const REL_LABEL = { same: 'Same thing', answers: 'Answers it', against: 'Goes against it', adds: 'Adds to it' };
+// A note it comes from: its name (and date); opens it at the line.
+const recallRef = (x) => h('button', { class: 'recall-ref', title: x.raw, onclick: () => openAt(x.path, x.raw) }, x.name, x.date ? h('span', { class: 'recall-date', title: x.estimated ? 'No date in it: from when its file was made, or its oldest kept version' : null }, `${x.estimated ? '\u2248' : ''}${x.date.slice(5)}`) : null);
 function recallCard(tab, r, key, ask = null) {
   const { chip, says } = recallMod.recallText(r);
   // What Claude said of each (Settings → The margin reads them with Claude).
   const judged = r.kind === 'related' && r.refs.some((x) => x.rel);
-  const ref = (x) => h('button', { class: 'recall-ref', title: x.raw, onclick: () => openAt(x.path, x.raw) }, x.name, x.date ? h('span', { class: 'recall-date', title: x.estimated ? 'No date in it: from when its file was made, or its oldest kept version' : null }, `${x.estimated ? '\u2248' : ''}${x.date.slice(5)}`) : null);
+  const ref = recallRef;
   return h('div', { class: `mnote recall k-${r.kind}` },
     h('div', { class: 'mnote-head' },
       h('span', { class: 'recall-chip' }, chip),
