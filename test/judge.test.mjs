@@ -25,7 +25,7 @@ test('requestText and parseReply: numbered paragraphs, lettered refs; a line eac
   assert.deepEqual(parseReply('', items), [[undefined, undefined], [undefined]]);
 });
 
-test('recall and asks with what Claude said: none left out, the others with it; not read yet, as found', () => {
+test('recall and asks with what Claude said: none left out, the others with it; being read or not yet, as found', () => {
   const ix = recallIndex([
     { path: 'a.md', v: '1', created: 0, lines: [], text: 'New people leave the app on the first screen; the tutorial is too long.\n' },
     { path: 'b.md', v: '1', created: 0, lines: [], text: 'Mobile sync is slow on large workspaces.\n' },
@@ -42,6 +42,8 @@ test('recall and asks with what Claude said: none left out, the others with it; 
   said.set('a.md', { rel: 'none', why: '' });
   assert.deepEqual(recall(ix, 'today.md', here, { semantic, judge }), []);
   assert.deepEqual(asks(ix, 'today.md', here, { cursor: 0, semantic, judge }), []);
+  said.set('a.md', { reading: true });
+  assert.deepEqual(recall(ix, 'today.md', here, { semantic, judge })[0].refs.map((y) => [y.path, y.reading, y.rel]), [['a.md', true, undefined]], 'being read: as found, marked so');
   said.clear();
   assert.deepEqual(recall(ix, 'today.md', here, { semantic, judge })[0].refs.map((y) => [y.path, y.rel]), [['a.md', undefined], ['b.md', undefined]]);
   assert.equal(asks(ix, 'today.md', here, { cursor: 0, semantic, judge })[0].b.path, 'a.md');

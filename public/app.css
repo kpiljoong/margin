@@ -431,6 +431,12 @@ input[type=checkbox] { accent-color: var(--accent); }
 .mnote.recall.k-done, .mnote.recall.k-decided, .mnote.recall.k-answers { --r: var(--ok); } .mnote.recall.k-before { --r: var(--warn); } .mnote.recall.k-asked { --r: var(--accent-2); } .mnote.recall.k-related { --r: var(--fg-dim); } .mnote.recall.k-think { --r: var(--accent); } .mnote.recall:is(.k-think-todo, .k-think-against, .k-think-risk), .think-more:is(.k-think-todo, .k-think-against, .k-think-risk) { --r: var(--warn); }
 .think-more { --r: var(--accent); margin-top: 6px; padding-top: 5px; border-top: 1px solid color-mix(in srgb, var(--r) 30%, transparent); }
 .think-more > .recall-chip { display: block; margin-bottom: 3px; }
+.margin-dots { display: inline-flex; gap: 3px; align-items: center; margin-left: 6px; }
+.margin-dots i { width: 4px; height: 4px; border-radius: 50%; background: var(--r, var(--accent)); opacity: .25; animation: margin-dot 1.2s ease-in-out infinite; }
+.margin-dots i:nth-child(2) { animation-delay: .2s; } .margin-dots i:nth-child(3) { animation-delay: .4s; }
+@keyframes margin-dot { 40% { opacity: 1; } }
+@media (prefers-reduced-motion: reduce) { .margin-dots i { animation: none; opacity: .6; } }
+.mnote.think-wait { background: none; border-left-style: dashed; padding-bottom: 3px; }
 .recall-chip { font: 600 10.5px/1 var(--sans); text-transform: uppercase; letter-spacing: .05em; color: var(--r); }
 .recall-says { color: var(--fg); font: 15px/1.35 var(--hand); overflow-wrap: anywhere; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 3; overflow: hidden; }
 .recall-refs { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 4px; }

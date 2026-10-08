@@ -260,7 +260,8 @@ function sameAs(known) {
 // kept while the index and known are. semantic: (text) → { n, list: [{ x
 // (a paragraph of index.paras), s, z }] } or null — the local model's
 // nearest paragraphs (app.js), used for paragraphs instead of the words.
-// judge: (text, refs) → for each ref { rel, why } or undefined (not read
+// judge: (text, refs) → for each ref { rel, why }, { reading: true } (being
+// read now: as found, marked reading) or undefined (not read
 // yet) — what Claude says of them (app.js): the first JUDGED only, 'none'
 // left out, the others with what it said.
 export function recall(index, path, text, { cache = null, max = 40, known = NONE, semantic = null, judge = null } = {}) {
@@ -384,7 +385,7 @@ function context(index, path, known, cache = null, semantic = null, judge = null
     if (!judge || !refs.length) return refs;
     const top = refs.slice(0, JUDGED);
     const said = judge(t, top) || [];
-    return top.flatMap((r, i) => (said[i]?.rel === 'none' ? [] : said[i] ? [{ ...r, rel: said[i].rel, why: said[i].why }] : [r]));
+    return top.flatMap((r, i) => (said[i]?.rel === 'none' ? [] : said[i]?.reading ? [{ ...r, reading: true }] : said[i] ? [{ ...r, rel: said[i].rel, why: said[i].why }] : [r]));
   };
   return { others, bySame, decisions, near, canon, latest, told, relatedTo };
 }

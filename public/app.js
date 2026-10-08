@@ -8712,13 +8712,14 @@ async function embedAsk() {
 // written — are sent with those a moment after the typing stops; what it
 // says is kept by the paragraph and the other (and on the server, by what
 // was sent). A ref it can't say (withheld, or it failed) stays as found.
-const judgeSt = { got: new Map(), want: new Map(), timer: null, busy: false, error: null };
+const judgeSt = { got: new Map(), want: new Map(), asking: new Set(), timer: null, busy: false, error: null };
 const JUDGE_IDLE = 2500;
 function judgeFor(tab, writing) {
   if (!S.settings.recallJudge) return null;
   return (t, refs) => refs.map((r) => {
     const k = `${tab.path}\u0000${t}\u0000${r.path}\u0000${r.line}\u0000${r.text}`;
     if (judgeSt.got.has(k)) return judgeSt.got.get(k) || undefined;
+    if (judgeSt.asking.has(k)) return { reading: true };
     if (t !== writing) {
       if (!judgeSt.want.has(tab.path)) judgeSt.want.set(tab.path, new Map());
       const byText = judgeSt.want.get(tab.path);
@@ -8726,6 +8727,7 @@ function judgeFor(tab, writing) {
       byText.get(t).set(k, r);
       clearTimeout(judgeSt.timer);
       judgeSt.timer = setTimeout(judgeAsk, JUDGE_IDLE);
+      return { reading: true };
     }
     return undefined;
   });
@@ -8743,11 +8745,12 @@ async function judgeAsk() {
       for (let i = 0; i < items.length; i += 8) {
         const part = items.slice(i, i + 8);
         let res = null;
+        for (const it of part) for (const [k] of it.refs) judgeSt.asking.add(k);
         try {
           res = await api('POST', '/api/recall/judge', { path, ...liveOpts(), items: part.map((it) => ({ text: it.text, refs: it.refs.map(([, r]) => ({ path: r.path, line: r.line })) })) });
           judgeSt.error = null;
         } catch (e) { judgeSt.error = e.message; }
-        part.forEach((it, j) => it.refs.forEach(([k], m) => judgeSt.got.set(k, res?.results[j]?.[m] || null)));
+        part.forEach((it, j) => it.refs.forEach(([k], m) => { judgeSt.got.set(k, res?.results[j]?.[m] || null); judgeSt.asking.delete(k); }));
       }
       for (const t of S.tabs) if (t.path === path && t.editor && t.comments && isAttached(t)) drawNotes(t);
     }
@@ -8794,12 +8797,13 @@ function thinkTick(tab) {
     ready.push(p);
   }
   if (later) { clearTimeout(tab.thinkTimer); tab.thinkTimer = setTimeout(() => thinkTick(tab), later + 50); }
-  for (const p of ready.slice(-3)) thinkAsk(tab, text, p);
+  // Asked: the margin shows it is thinking about them.
+  if (ready.slice(-3).filter((p) => thinkAsk(tab, text, p)).length && tab.comments && isAttached(tab)) drawNotes(tab);
 }
 function thinkAsk(tab, text, p) {
-  if (thinkDay().n + thinkSt.queue.length >= THINK_DAY_MAX) return;
+  if (thinkDay().n + thinkSt.queue.length >= THINK_DAY_MAX) return false;
   const refs = recallMod.nearFor(recallSt.index, tab.path, p.text, { semantic: semanticFor(tab), cache: recallSt.cache });
-  if (!refs) return; // the local model answers first (and the margin is drawn again)
+  if (!refs) return false; // the local model answers first (and the margin is drawn again)
   const k = `${tab.path}\u0000${p.text}`;
   thinkSt.asked.add(k);
   const now = new Date();
@@ -8808,6 +8812,7 @@ function thinkAsk(tab, text, p) {
     today: `${ymdOf(now)} (${now.toLocaleDateString('en-US', { weekday: 'short' })})`, ...liveOpts(), thinkModel: S.settings.thinkModel === 'haiku' ? 'haiku' : 'sonnet',
   } });
   thinkPump();
+  return true;
 }
 async function thinkPump() {
   if (thinkSt.busy) return;
@@ -8824,7 +8829,7 @@ async function thinkPump() {
       const said = r?.items?.length ? r : null;
       thinkSt.got.set(k, said);
       if (thinkSt.got.size > 3000) thinkSt.got = new Map([...thinkSt.got].slice(-1500));
-      if (said && tab.editor && tab.comments && isAttached(tab)) drawNotes(tab);
+      if (tab.editor && tab.comments && isAttached(tab)) drawNotes(tab);
     }
   } finally { thinkSt.busy = false; }
 }
@@ -8835,7 +8840,14 @@ function thinkCards(tab, text, lines, off) {
   const spans = [];
   if (S.settings.recallThink) {
     for (const p of recallMod.parasOf(text)) {
-      const r = thinkSt.got.get(`${tab.path}\u0000${p.text}`);
+      const k = `${tab.path}\u0000${p.text}`;
+      // Being thought about: a word that it is (it takes a few seconds).
+      if (thinkSt.asked.has(k)) {
+        out.push({ line: p.line, last: p.last, el: h('div', { class: 'mnote recall k-think think-wait', title: 'Claude is thinking along on this paragraph' },
+          h('div', { class: 'mnote-head' }, h('span', { class: 'recall-chip' }, 'Thinking'), h('span', { class: 'margin-dots' }, h('i'), h('i'), h('i')))) });
+        continue;
+      }
+      const r = thinkSt.got.get(k);
       if (!r) continue;
       const key = `${tab.path}\nthink\n${p.text.slice(0, 200)}`;
       if (off.has(key)) continue;
@@ -9012,6 +9024,8 @@ function recallCard(tab, r, key, ask = null) {
   return h('div', { class: `mnote recall k-${r.kind}` },
     h('div', { class: 'mnote-head' },
       h('span', { class: 'recall-chip' }, chip),
+      // Claude is reading them (Settings → The margin reads them with Claude).
+      r.refs?.some((x) => x.reading) ? h('span', { class: 'margin-dots', title: 'Claude is reading how these relate' }, h('i'), h('i'), h('i')) : null,
       h('span', { class: 'grow' }),
       h('button', { class: 'mnote-btn', title: 'Not this (it won\u2019t come back on this line)', onclick: () => {
         const off = recallOff();
