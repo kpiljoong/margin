@@ -5,10 +5,12 @@
 // already written, before the colour lines at the end. Plain logic, tested
 // without a page (test/flowedit.test.mjs).
 
-import { parseFlow, parseStep, ARROWS, ARROW_RE, COLOR_LINE, DIRECTION_LINE, DIRECTIONS, colorKey, colorNames } from './flow.js';
+import { parseFlow, parseStep, noteOf, ARROWS, ARROW_RE, COLOR_LINE, DIRECTION_LINE, DIRECTIONS, colorKey, colorNames } from './flow.js';
 
 const linesOf = (src) => String(src).replace(/\r\n?/g, '\n').split('\n');
 const tryParse = (src) => { try { return parseFlow(src); } catch { return null; } };
+// A written step's name, without its shape, problem mark or note.
+const nameOf = (piece) => parseStep(noteOf(piece).name).text;
 const isColorLine = (body) => { const m = COLOR_LINE.exec(body); return !!(m && colorKey(m[2])); };
 
 // A step's name as it can be written first on a line: one that would read
@@ -30,13 +32,13 @@ function insertLine(src, line) {
   return ls.join('\n');
 }
 
-// Does the last step line end with this step (no note after it)? Then an
-// arrow from it goes on that line: "A -> B" and B -> C is "A -> B -> C".
+// Does the last step line end with this step? Then an arrow from it goes on
+// that line: "A -> B" and B -> C is "A -> B -> C" ("A -> B: note -> C").
 function endsWith(ls, at, name) {
   const body = ls[at]?.trim();
-  if (!body || body.startsWith('#') || body.startsWith('//') || DIRECTION_LINE.test(body) || /\s:\s|:$/.test(body)) return false;
+  if (!body || body.startsWith('#') || body.startsWith('//') || DIRECTION_LINE.test(body) || /:$/.test(body)) return false;
   const pieces = body.split(ARROW_RE);
-  return parseStep(pieces[pieces.length - 1]).text === name;
+  return nameOf(pieces[pieces.length - 1]) === name;
 }
 
 // "New step", else "New step 2", … — a name no step has.
@@ -146,8 +148,7 @@ export function setDirection(src, dir) {
 // Take a step out: from every line it is written on, and the colour lines.
 // In a line of steps the ones on either side of it join up
 // ("A -> B -> C" without B is "A -> C"); a line left with no step goes
-// (an answer under a question with it), and so does its note, which was the
-// step's own.
+// (an answer under a question with it). Its note ("B: note") goes with it.
 export function removeBox(src, name) {
   const f = tryParse(src);
   if (!f?.nodes.some((n) => n.text === name)) return src;
@@ -182,17 +183,13 @@ export function removeBox(src, name) {
     }
     const header = /^([^:]+?)\s*:$/.exec(body);
     if (header && !ARROW_RE.test(header[1])) { stack.push({ indent, last: null }); out.push(raw); continue; }
-    let text = body;
-    let note = '';
-    const nm = /^(.*\S)\s+:\s+(.+)$/.exec(body);
-    if (nm) { text = nm[1]; note = nm[2].trim(); }
-    const pieces = text.split(ARROW_RE);
+    const pieces = body.split(ARROW_RE);
     let steps = pieces.filter((_, i) => i % 2 === 0);
     let arrows = pieces.filter((_, i) => i % 2 === 1).map((a) => a.trim());
     const answerOf = parent?.last && shapes.get(parent.last) === 'decision' && steps.length > 1;
     let answer = null;
     if (answerOf) { answer = `${steps[0].trim()} ${arrows[0]} `; steps = steps.slice(1); arrows = arrows.slice(1); }
-    const names = steps.map((s) => parseStep(s).text);
+    const names = steps.map(nameOf);
     const last = [...names].reverse().find(Boolean) || parent?.last || null;
     stack.push({ indent, last });
     if (!names.includes(name)) { out.push(raw); continue; }
@@ -209,12 +206,11 @@ export function removeBox(src, name) {
     if (!kept.length) continue;
     // One step left, written as it is on another line too: the line said
     // nothing else.
-    const lone = kept.length === 1 && !answer && !(note && names[names.length - 1] !== name) && !hasChildren(lineNo);
+    const lone = kept.length === 1 && !answer && !hasChildren(lineNo);
     if (lone && kept[0].piece === parseStep(kept[0].piece).text && linesOfName.get(kept[0].piece)?.some((l) => l !== lineNo)) continue;
     const lead = raw.slice(0, raw.length - raw.trimStart().length);
     const chain = kept.map((k, i) => (i && k.arrow ? `${k.arrow} ${k.piece}` : k.piece)).join(' ');
-    const ownNote = note && names[names.length - 1] !== name ? ` : ${note}` : '';
-    out.push(`${lead}${answer || ''}${chain}${ownNote}`);
+    out.push(`${lead}${answer || ''}${chain}`);
   }
   return out.join('\n');
 }
@@ -236,7 +232,8 @@ const widthOf = (l) => l.replace(/\t/g, '  ').length - l.replace(/\t/g, '  ').tr
 
 // The step lines as parseFlow reads them: { lineNo, lead, indent, from (the
 // step the line goes on from), answer, answerArrow, steps (as written),
-// names, arrows (written between steps), note }.
+// names, arrows (written between steps) } — a step's note is in what is
+// written of it.
 function stepLines(src) {
   const f = tryParse(src);
   const shapes = new Map((f?.nodes || []).map((n) => [n.text, n.shape]));
@@ -252,11 +249,7 @@ function stepLines(src) {
     if ((dir && DIRECTIONS[dir[2].toLowerCase()]) || isColorLine(body)) continue;
     const header = /^([^:]+?)\s*:$/.exec(body);
     if (header && !ARROW_RE.test(header[1])) { stack.push({ indent, last: null }); continue; }
-    let text = body;
-    let note = '';
-    const nm = /^(.*\S)\s+:\s+(.+)$/.exec(body);
-    if (nm) { text = nm[1]; note = nm[2].trim(); }
-    const pieces = text.split(ARROW_RE);
+    const pieces = body.split(ARROW_RE);
     let steps = pieces.filter((_, i) => i % 2 === 0).map((p) => p.trim());
     let arrows = pieces.filter((_, i) => i % 2 === 1).map((a) => a.trim());
     let answer = null;
@@ -266,9 +259,9 @@ function stepLines(src) {
       steps = steps.slice(1);
       arrows = arrows.slice(1);
     }
-    const names = steps.map((p) => parseStep(p).text);
+    const names = steps.map(nameOf);
     stack.push({ indent, last: [...names].reverse().find(Boolean) || from });
-    out.push({ lineNo, lead: raw.slice(0, raw.length - raw.trimStart().length), indent, from, answer, answerArrow, steps, names, arrows, note });
+    out.push({ lineNo, lead: raw.slice(0, raw.length - raw.trimStart().length), indent, from, answer, answerArrow, steps, names, arrows });
   }
   return out;
 }
@@ -286,8 +279,8 @@ function arrowsOn(L) {
   return out;
 }
 
-const writeLine = (L, { lead = L.lead, answer = L.answer, answerArrow = L.answerArrow, steps = L.steps, arrows = L.arrows, note = L.note } = {}) =>
-  `${lead}${answer != null ? `${answer} ${answerArrow} ` : ''}${steps.map((p, i) => (i ? `${arrows[i - 1]} ${p}` : p)).join(' ')}${note ? ` : ${note}` : ''}`;
+const writeLine = (L, { lead = L.lead, answer = L.answer, answerArrow = L.answerArrow, steps = L.steps, arrows = L.arrows } = {}) =>
+  `${lead}${answer != null ? `${answer} ${answerArrow} ` : ''}${steps.map((p, i) => (i ? `${arrows[i - 1]} ${p}` : p)).join(' ')}`;
 
 // Where the lines going on from line i end.
 function subtreeEnd(ls, i) {
@@ -339,17 +332,17 @@ function removeOnce(src, from, to) {
   const children = ls.slice(L.lineNo + 1, end).map((l) => dedent(l, L.indent));
   if (e.at === 0) {
     // The arrow from the line above: the line goes on from nothing.
-    if (L.steps.length === 1 && !L.note && !children.length && bare(0)) { ls.splice(L.lineNo, 1); return ls.join('\n'); }
+    if (L.steps.length === 1 && !children.length && bare(0)) { ls.splice(L.lineNo, 1); return ls.join('\n'); }
     return relocate(ls, L.lineNo, end, [writeLine(L, { lead: '', answer: null }), ...children]);
   }
   // Within the line: it is two, the steps before the arrow and the ones after
-  // (with its note and the lines going on from it).
+  // (with the lines going on from it).
   const i = e.at;
-  const left = writeLine(L, { steps: L.steps.slice(0, i), arrows: L.arrows.slice(0, i - 1), note: '' });
+  const left = writeLine(L, { steps: L.steps.slice(0, i), arrows: L.arrows.slice(0, i - 1) });
   const rightOf = (lead) => writeLine(L, { lead, answer: null, steps: L.steps.slice(i), arrows: L.arrows.slice(i) });
   // (Or written in the other half: "A -> B -> A" without B -> A is "A -> B".)
   const dropLeft = i === 1 && !L.from && L.answer == null && L.steps[0] === L.names[0] && (bare(0) || L.names.slice(i).includes(L.names[0]));
-  const dropRight = L.steps.length - i === 1 && !L.note && !children.length && L.steps[i] === L.names[i] && (bare(i) || L.names.slice(0, i).includes(L.names[i]));
+  const dropRight = L.steps.length - i === 1 && !children.length && L.steps[i] === L.names[i] && (bare(i) || L.names.slice(0, i).includes(L.names[i]));
   if (!L.from) {
     // Nothing above it: the two lines stay where it was.
     ls.splice(L.lineNo, 1, ...(dropLeft ? [] : [left]), ...(dropRight ? [] : [rightOf(L.lead)]));
@@ -369,7 +362,7 @@ function rewritten(src, from, to, token) {
     const f = tryParse(out);
     const lines = f?.nodes.find((n) => n.text === name)?.lines || [];
     const ls = linesOf(out);
-    const lone = stepLines(out).find((L) => !L.from && L.answer == null && L.steps.length === 1 && L.steps[0] === name && !L.note && subtreeEnd(ls, L.lineNo) === L.lineNo + 1);
+    const lone = stepLines(out).find((L) => !L.from && L.answer == null && L.steps.length === 1 && L.steps[0] === name && subtreeEnd(ls, L.lineNo) === L.lineNo + 1);
     if (lone && lines.some((l) => l !== lone.lineNo)) { ls.splice(lone.lineNo, 1); out = ls.join('\n'); }
   }
   return out;
@@ -469,16 +462,18 @@ export function setShape(src, name, shape) {
     let touched = false;
     const steps = L.steps.map((piece, i) => {
       if (L.names[i] !== name) return piece;
-      const flag = parseStep(piece).flag ? ' !' : '';
+      const own = noteOf(piece).name;
+      const note = piece.slice(own.length);
+      const flag = parseStep(own).flag ? ' !' : '';
       const lead = i === 0 && L.answer == null;
       let out;
       if (first && WRAPS[shape]) out = `${WRAPS[shape][0]}${name}${WRAPS[shape][1]}`;
       else if (first && shape === 'box' && name.endsWith('?')) out = `[${name}]`;
       else out = lead ? written(name) : name;
       first = false;
-      if (`${out}${flag}` === piece) return piece;
+      if (`${out}${flag}${note}` === piece) return piece;
       touched = true;
-      return `${out}${flag}`;
+      return `${out}${flag}${note}`;
     });
     if (touched) { ls[L.lineNo] = writeLine(L, { steps }); changed = true; }
   }
@@ -561,7 +556,7 @@ export function groupBoxes(src, names, title) {
   for (const n of nodes) {
     for (const l of n.lines) {
       const body = ls[l].trim();
-      if (body.split(ARROW_RE).length > 1 || /^(.*\S)\s+:\s+(.+)$/.test(body) || parseStep(body).text !== n.text || kids(l)) continue;
+      if (body.split(ARROW_RE).length > 1 || noteOf(body).note || parseStep(body).text !== n.text || kids(l)) continue;
       const p = parentLine(ls, l);
       if (p >= 0 && !isHeader(ls[p].trim())) continue;
       drop.add(l);

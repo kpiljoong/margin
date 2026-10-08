@@ -14,7 +14,9 @@
 // - A line that starts with an arrow goes on from the line before it
 //   ("a" then "-> b" then "-> c": a → b → c), and one that ends with an
 //   arrow goes on into the next ("a ->" then "b ->" then "c").
-// - ` : ` at the end adds a description under the line's last step.
+// - `Name: note` (or `Name : note`) puts a description under that step:
+//   `Phase 1: rules -> Phase 2: data`. A colon with no space after it
+//   (`10:30`) is part of the name, and so is one in a shape (`[Note: x]`).
 // - `Name:` alone on a line groups the indented lines below it.
 // - Shapes: `?` at the end is a decision, `(text)` rounded, `((text))` a
 //   circle, `[(text)]` a database, `[text]` or plain text a box.
@@ -76,6 +78,16 @@ const SHAPES = [
 
 // A trailing "!" (a problem mark): its length, or 0.
 const flagLength = (t) => { const m = /\s*!$/.exec(t); return m && m.index > 0 ? m[0].length : 0; };
+
+// "Name: note" (or "Name : note"): a step and the description under it. A
+// colon with no space after it ("10:30", "http://…") is part of the name, and
+// so is one inside a shape ("[Phase 1: rules]").
+export function noteOf(piece) {
+  const m = /^(.*?\S)\s*:\s+(\S.*?)\s*$/.exec(piece);
+  const shaped = (t) => SHAPES.some(([re]) => re.test(t.trim()));
+  if (!m || (shaped(piece) && !shaped(m[1]))) return { name: piece, note: '' };
+  return { name: m[1], note: m[2] };
+}
 
 export function parseStep(raw) {
   let text = raw.trim().replace(/\s+/g, ' ');
@@ -163,15 +175,7 @@ export function parseFlow(src) {
       continue;
     }
 
-    // "… : note" — a description under the line's last step.
-    let text = body;
-    let note = '';
-    const nm = /^(.*\S)\s+:\s+(.+)$/.exec(body);
-    if (nm) { text = nm[1]; note = nm[2].trim(); }
-    // "Phase 1 : the rules ->": the arrow at the end is the line's, not the note's.
-    const end = note && /(\s*(?:<->|\.\.>|-\([^()]*\)->|-->|->|\u2192|--))\s*$/.exec(note);
-    if (end) { note = note.slice(0, end.index).trim(); text += end[1]; }
-
+    const text = body;
     // Pieces keep their spaces, so each step's column in the line is known.
     const pieces = text.split(ARROW_RE);
     let at = rawLine.length - rawLine.trimStart().length;
@@ -201,15 +205,16 @@ export function parseFlow(src) {
       first = { ...arrow, label: arrow.label ? `${answer}: ${arrow.label}` : answer };
     }
     steps.forEach(({ piece, at: col }, i) => {
-      const n = node(piece, group, lineNo, col);
+      const { name, note } = noteOf(piece);
+      const n = node(name, group, lineNo, col);
       const arrow = i === 0 ? first : arrows.shift();
       if (!n) return;
       // Writing the step above again ("Screen -> …" under "Screen") just continues from it.
       into = null;
       if (prev && prev !== n) edges.push((into = { from: prev, to: n, kind: arrow.kind, label: arrow.label, line: lineNo }));
       prev = n;
+      if (note) notes.push({ node: n, note, edge: into });
     });
-    if (note && prev) { notes.push({ node: prev, note, edge: into }); if (!prev.lines.includes(lineNo)) prev.lines.push(lineNo); }
     if (tail && prev) open = { from: prev, arrow: tail };
     stack.push({ indent, last: prev, group });
   }
@@ -266,11 +271,11 @@ export function parseFlow(src) {
   };
 }
 
-// Text that can stand as a step: one line, no arrows, no " : " note, no
+// Text that can stand as a step: one line, no arrows, no ": " note, no
 // trailing ":" (a group), no comment mark at the start.
 export function isStepText(text) {
   const t = text.trim();
-  return !!t && !/\n/.test(t) && !ARROW_RE.test(t) && !/\s:\s|:$/.test(t) && !/^(#|\/\/)/.test(t);
+  return !!t && !/\n/.test(t) && !ARROW_RE.test(t) && !/:\s|:$/.test(t) && !/^(#|\/\/)/.test(t);
 }
 
 // Every ```flow block of a Markdown note: { line, source } (line of the

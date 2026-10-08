@@ -24,7 +24,7 @@ Login request -> Auth server -> Success?
 | Indented line | Continues from the last step of the line above |
 | `Success?` | Ending in `?` makes a decision (diamond) |
 | `yes -> B` under `Success?` | The first part, `yes`, is the answer on the arrow |
-| `B : note` | Note under the line's last box |
+| `B: note` or `B : note` | Note under box B |
 | `Pending approval !` | Problem mark (red outline) |
 | `(rounded)` `((circle))` `[(DB)]` `[box]` | Shapes |
 | `Service:` (alone on a line) | Group enclosing the indented lines below |
@@ -83,7 +83,7 @@ b ->
 c
 ```
 
-A description may come before that arrow: `Phase 1 : the rules ->`.
+A description may come before that arrow: `Phase 1: the rules ->`.
 
 Indented under a step, a line starting with an arrow still branches from that step (as above); without indentation it continues the chain. An arrow at the end of the last line goes nowhere and is left out.
 
@@ -101,18 +101,21 @@ Payment succeeded?
 - If you write only the next step without an answer (just `Confirm order` under `Payment succeeded?`), it becomes a box joined by an unlabelled arrow. To attach an answer, write it with an arrow, as in `yes -> Confirm order`.
 - To keep a condition as a box under a decision, write the answer separately in front: `equal -> Same value -(keep)-> Active SPEC`.
 
-## Notes ` : `
+## Notes `Name: note`
 
-` : note` (spaces around the colon) describes **what the line's last box is**. It appears in small text under the box name.
+`Name: note` (a colon followed by a space; a space before it is fine too) describes **what that box is**. It appears in small text under the box name. Any step on a line can have one.
 
 ```flow
-Order received -> Payment : calls the PG, max 3s
-Payment -> Deduct stock : cancel payment on failure
+Order received -> Payment: calls the PG, max 3s
+Payment -> Deduct stock: cancel payment on failure
+Phase 1: the rules -> Phase 2: a golden set
 ```
 
 - A note belongs to the box, so it should be **independent of how you got to that box**.
-- A line with a single step is fine: `Payment : calls the PG`.
-- If a line has several ` : `, it splits at the last one. Don't use ` : ` inside a note. `A:B` without spaces is just part of the name.
+- A line with a single step is fine: `Payment: calls the PG`.
+- The note runs to the next arrow, and splits at the first colon: `a: b: c` is box `a` with the note `b: c`.
+- A colon with no space after it is part of the name: `10:30`, `http://…`. To keep `: ` in a name, put it in a shape: `[Note: draft]`.
+- `Name:` alone on a line (nothing after the colon) is a group, not a note.
 - **If several lines attach different notes to the same box**, the notes are treated as what each branch does, not as describing the box. Each note moves to the label of the arrow drawn by its line.
   ```flow
   SPEC Resolver?
@@ -123,9 +126,9 @@ Payment -> Deduct stock : cancel payment on failure
 
 ### Note, arrow label, or box?
 
-- **What the box is** (role, constraint, owner): ` : note`.
+- **What the box is** (role, constraint, owner): `Name: note`.
 - **Under what condition you go there**: an answer under a decision (`?`).
-- **What happens on that branch** (briefly): arrow label `-(…)->`, or just ` : ` for convenience, which also goes onto the arrow.
+- **What happens on that branch** (briefly): arrow label `-(…)->`, or just a note for convenience, which also goes onto the arrow.
 - **If that action is a step worth discussing on its own**: write it as a box. `yes -> Normalize -> Active SPEC`. As a box it becomes its own step when presenting, links to same-named boxes in other diagrams, and can be clicked or renamed.
 
 In meetings, we recommend writing labels or notes quickly first, then expanding a branch into boxes once discussion goes deeper into it.
@@ -191,10 +194,10 @@ When a note has several flow blocks, the canvas shows them connected.
 ## Text and diagrams
 
 - When the text around a flow block mentions a box name (for Korean names, even with a grammatical particle attached), the canvas follows the cursor to the diagram containing that box.
-- Captions in presentation mode show where you came from and via which answer/label, the box name, the ` : ` note, and the **list items in the body that explicitly describe that box**. Sentences that merely happen to contain the name are not shown.
+- Captions in presentation mode show where you came from and via which answer/label, the box name, its note, and the **list items in the body that explicitly describe that box**. Sentences that merely happen to contain the name are not shown.
   - A list item in the same section (or the intro text above) starting with `- Box name: description` becomes that box's caption, together with the lines indented under it. A box can have several items.
   - Names are compared ignoring case, spacing, and a trailing `?` or `!` (`- Review: …` describes the `Review?` box). The name may also be bold, as in `- **PR**: …`.
-  - Use ` : ` in the diagram for short notes; use a body list item for longer explanations or to say "why this step is a problem".
+  - Use `Name: note` in the diagram for short notes; use a body list item for longer explanations or to say "why this step is a problem".
 
   ```markdown
   - PR: change request opened by a developer
@@ -214,4 +217,4 @@ For canvas, follow, and presentation controls, see "Canvas view" in [GUIDE.md](G
 - **Forgetting the `?`**: in `Same value -> …` under `SPEC Resolver`, `Same value` is a box, not an answer. If it is a decision, add `?` at the end.
 - **Indenting to branch from the same place**: an indented line continues from the **last** step of the line above. To branch from a middle step of a line, start a new line with that step's name.
 - **Writing a name slightly differently**: `Auth server` and `Authserver` are different boxes, so the diagram breaks. If you see a yellow dashed outline, unify them; using autocomplete (Tab) prevents most of this.
-- **Putting ` : ` or arrow characters in a name**: `->`, `..>`, `--`, ` : ` are notation symbols and cannot appear in names.
+- **Putting `: ` or arrow characters in a name**: `->`, `..>`, `--`, `: ` are notation symbols. `Phase 1: rules` is box `Phase 1` with a note; write `[Phase 1: rules]` for the whole name.

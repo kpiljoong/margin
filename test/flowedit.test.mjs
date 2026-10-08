@@ -16,7 +16,8 @@ test('connecting writes a line; an arrow already there is left alone', () => {
   assert.equal(out, 'A -> B\nA -> C\n\ncolor blue: A\n');
   // From the step the last line ends with: that line goes on.
   assert.equal(connect(out, 'C', 'D'), 'A -> B\nA -> C -> D\n\ncolor blue: A\n');
-  assert.equal(connect('A -> B : note', 'B', 'C'), 'A -> B : note\nB -> C');
+  // A note is the step's own: the line goes on after it.
+  assert.equal(connect('A -> B : note', 'B', 'C'), 'A -> B : note -> C');
   assert.equal(connect(out, 'A', 'C'), out);
   assert.equal(connect('A <-> B', 'B', 'A'), 'A <-> B');
   assert.equal(connect('A', 'A', 'A'), 'A');
@@ -86,6 +87,7 @@ test('deleting a box: the steps beside it join up, its lines and colour go', () 
   assert.equal(removeBox('A -> B\nB -> C\n  more', 'B'), 'A\nC\n  more');
   // The last step taken: its note goes too; one not there changes nothing.
   assert.equal(removeBox('A -> B : about B', 'B'), 'A');
+  assert.equal(removeBox('Phase 1: rules -> Phase 2: data -> Done', 'Phase 2'), 'Phase 1: rules -> Done');
   assert.equal(removeBox('A -> B', 'Z'), 'A -> B');
   // Shapes and marks are the step's: [(DB)] is DB.
   assert.equal(removeBox('API -> [(DB)] ! -> Log', 'DB'), 'API -> Log');
@@ -147,6 +149,8 @@ test('shapes: marks on the first place a step is written; a question with answer
   // Back to a box: the marks go, the problem mark stays.
   assert.equal(setShape(setShape(D, '결제 요청', 'round'), '결제 요청', 'box'), D);
   assert.equal(setShape('(A) -> B\nA -> C', 'A', 'circle'), '((A)) -> B\nA -> C');
+  // A note stays after the step it is on.
+  assert.equal(setShape('A: first -> B', 'A', 'round'), '(A): first -> B');
   assert.throws(() => setShape(D, '승인?', 'box'), /stays a question/);
   assert.equal(setShape('Ok? -> Go', 'Ok?', 'box'), '[Ok?] -> Go');
   assert.equal(setShape('[Ok?] -> Go', 'Ok?', 'decision'), 'Ok? -> Go');

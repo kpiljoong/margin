@@ -1353,9 +1353,10 @@ export class MarkdownEditor {
     }
     if (fence?.lang !== 'flow') return null;
     const line = value.slice(lineStart, s);
-    if (/^\s*(#|\/\/)|\s:\s/.test(line)) return null;
+    if (/^\s*(#|\/\/)/.test(line)) return null;
     const piece = line.split(/\s*(?:<->|\.\.>|-\([^()]*\)->|-->|->|→|--)\s*/).pop().replace(/^\s*[[(]*/, '');
-    if (!piece.trim() || /^\s/.test(piece)) return null;
+    // After "Name: " it is the step's note.
+    if (!piece.trim() || /^\s/.test(piece) || /:\s/.test(piece)) return null;
     return { kind: 'step', query: piece, from: s - piece.length };
   }
 

@@ -40,6 +40,26 @@ test('a chain over lines: a line starting with an arrow goes on from the line be
   assert.deepEqual(f.nodes.find((n) => n.text === 'b').spots, [{ line: 1, start: 3, end: 4 }]);
 });
 
+test('"Name: note" is a description under that step, on any step of a line', () => {
+  const notes = (src) => parseFlow(src).nodes.map((n) => [n.text, n.note]);
+  const p = parseFlow('Phase 1: the rules -> Phase 2 : a golden set -> Done');
+  assert.deepEqual(p.nodes.map((n) => [n.text, n.note]), [['Phase 1', 'the rules'], ['Phase 2', 'a golden set'], ['Done', '']]);
+  assert.equal(p.edges.length, 2);
+  assert.deepEqual(p.nodes[0].spots, [{ line: 0, start: 0, end: 7 }]);
+  assert.deepEqual(notes('Phase 1: the rules ->\nPhase 2: data'), [['Phase 1', 'the rules'], ['Phase 2', 'data']]);
+  assert.equal(parseFlow('Phase 1: the rules ->\nPhase 2: data').edges.length, 1);
+  // No space after the colon, or inside a shape: part of the name.
+  assert.deepEqual(notes('10:30 -> http://x'), [['10:30', ''], ['http://x', '']]);
+  assert.deepEqual(notes('[Note: x] -> (a): b'), [['Note: x', ''], ['a', 'b']]);
+  assert.deepEqual(notes('a: b: c'), [['a', 'b: c']]);
+  // A labelled arrow keeps its words; a group stays a group.
+  assert.equal(parseFlow('A -(note: x)-> B').edges[0].label, 'note: x');
+  const g = parseFlow('Phase 1:\n  a -> b');
+  assert.deepEqual([g.groups.length, g.nodes.length], [1, 2]);
+  // Under a question the answer is still the first word.
+  assert.deepEqual(parseFlow('Ok?\n  yes -> Ship: today').edges.map((e) => e.label), ['yes']);
+});
+
 test('arrow kinds and labels', () => {
   const f = parseFlow('A ..> B\nB <-> C\nC -- D\nD -(HTTP)-> E');
   assert.deepEqual(f.edges.map((e) => [e.kind, e.label]), [['-.->', ''], ['<-->', ''], ['---', ''], ['-->', 'HTTP']]);
@@ -71,7 +91,8 @@ test('empty input is an error', () => {
 
 test('isStepText: one step, no arrows, notes or group marks', () => {
   assert.ok(isStepText('Auth server'));
-  for (const bad of ['a -> b', 'a : b', 'Group:', '# x', 'a\nb', '']) assert.ok(!isStepText(bad), bad);
+  assert.ok(isStepText('10:30 standup'));
+  for (const bad of ['a -> b', 'a : b', 'a: b', 'Group:', '# x', 'a\nb', '']) assert.ok(!isStepText(bad), bad);
 });
 
 test('a trailing ! marks a problem, and is not part of the name', () => {

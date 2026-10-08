@@ -55,7 +55,7 @@ test('names a flow can hold; the same words twice are two steps; nothing to read
     'arrow: 300,210 -> 300,390',
     'arrow: 300,510 -> 300,690',
   ));
-  assert.equal(r.text, 'A B: later -> Check -> Check 2');
+  assert.equal(r.text, 'A B - later -> Check -> Check 2');
   assert.equal(sketchToFlow(sketch('pen: 1,1 5,5', 'arrow: 10,10 -> 50,50')), null);
 });
 

@@ -16,9 +16,9 @@ function toLine(p, a, b) {
   return Math.hypot(p[0] - a[0] - t * dx, p[1] - a[1] - t * dy);
 }
 
-// Words as a step's name: one line, no arrows, no " : ", no ":" at the end.
+// Words as a step's name: one line, no arrows, no ": ", no ":" at the end.
 function stepName(words) {
-  const t = words.replace(/\s+/g, ' ').replace(/<->|\.\.>|-->|->|→|--/g, ' ').replace(/\s:\s/g, ' - ').replace(/:+$/, '').replace(/^(#|\/\/)+/, '').replace(/\s+/g, ' ').trim();
+  const t = words.replace(/\s+/g, ' ').replace(/<->|\.\.>|-->|->|→|--/g, ' ').replace(/\s*:\s+/g, ' - ').replace(/:+$/, '').replace(/^(#|\/\/)+/, '').replace(/\s+/g, ' ').trim();
   return isStepText(t) ? t : '';
 }
 
