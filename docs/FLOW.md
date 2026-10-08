@@ -83,6 +83,8 @@ b ->
 c
 ```
 
+A description may come before that arrow: `Phase 1 : the rules ->`.
+
 Indented under a step, a line starting with an arrow still branches from that step (as above); without indentation it continues the chain. An arrow at the end of the last line goes nowhere and is left out.
 
 ## Decisions and answers

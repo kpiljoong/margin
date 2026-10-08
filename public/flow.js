@@ -168,6 +168,9 @@ export function parseFlow(src) {
     let note = '';
     const nm = /^(.*\S)\s+:\s+(.+)$/.exec(body);
     if (nm) { text = nm[1]; note = nm[2].trim(); }
+    // "Phase 1 : the rules ->": the arrow at the end is the line's, not the note's.
+    const end = note && /(\s*(?:<->|\.\.>|-\([^()]*\)->|-->|->|\u2192|--))\s*$/.exec(note);
+    if (end) { note = note.slice(0, end.index).trim(); text += end[1]; }
 
     // Pieces keep their spaces, so each step's column in the line is known.
     const pieces = text.split(ARROW_RE);

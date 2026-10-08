@@ -32,6 +32,10 @@ test('a chain over lines: a line starting with an arrow goes on from the line be
   // Indented under a step: still branches from it; a question's answers as before.
   assert.deepEqual(chain('a\n  -> b\n  -> c'), ['a-->b', 'a-->c']);
   assert.deepEqual(chain('Order ->\nPaid?\n  yes -> Ship ->\n  Done'), ['Order-->Paid?', 'Paid?-->|yesShip', 'Ship-->Done']);
+  // After a description, the arrow is still the line's.
+  const p = parseFlow('Phase 1 : the rules ->\nPhase 2 : a golden set');
+  assert.deepEqual(p.nodes.map((n) => [n.text, n.note]), [['Phase 1', 'the rules'], ['Phase 2', 'a golden set']]);
+  assert.equal(p.edges.length, 1);
   const f = parseFlow('a\n-> b');
   assert.deepEqual(f.nodes.find((n) => n.text === 'b').spots, [{ line: 1, start: 3, end: 4 }]);
 });
