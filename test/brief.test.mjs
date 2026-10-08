@@ -162,4 +162,36 @@ test('the server: the note, its last meeting and the notes near it (never a priv
   assert.doesNotMatch(sent()[1], /secret|last meeting/);
   assert.equal((await brief({ ...body, mode: 'novel' })).status, 400);
   assert.equal((await brief({ ...body, path: 'secret.md' })).status, 403);
+  // Themes: the recent notes' paragraphs, never a private one.
+  fs.writeFileSync(path.join(ws, 'secret.md'), '---\nprivate: true\n---\nThe secret plan is long enough to be a paragraph of its own.\n');
+  const th = await fetch(`http://127.0.0.1:${m[1]}/api/lab/themes`, { method: 'POST', headers: { 'x-agent-notes-token': m[2], 'content-type': 'application/json' }, body: '{}' });
+  const tj = await th.json();
+  assert.equal(th.status, 200, tj.error);
+  assert.deepEqual(tj.themes, []);
+  const asked = sent().at(-1);
+  assert.match(asked, /from "Roadmap 2026-09-28" \(2026-09-28\): We ship on the 24th/);
+  assert.doesNotMatch(asked, /secret/);
+});
+
+const themes = require('../lib/themes.js');
+
+test('themes: what goes, what comes back (three paragraphs, two notes at least), the note made of one', () => {
+  const found = [
+    { path: 'a.md', name: 'Interview 2026-08-21', date: '2026-08-21', text: 'Did not know what to do first.' },
+    { path: 'b.md', name: 'Support', date: '2026-09-03', text: 'Where do I start? five tickets.' },
+    { path: 'c.md', name: 'Demo', date: '2026-09-17', text: 'Stuck in front of the templates.' },
+    { path: 'a.md', name: 'Interview 2026-08-21', date: '2026-08-21', text: 'What do I click now?' },
+  ];
+  assert.match(themes.requestText({ found, lang: 'ko' }), /^\[1\] from "Interview 2026-08-21" \(2026-08-21\): Did not know/);
+  const got = themes.parseReply([
+    'title: "New users can\'t pick a first step"', 'from: 1, 2, 3, 9', 'reading: Many [2] places.', 'open: Whether examples help.', '---',
+    'title: Only one note', 'from: 1, 4, 1', '---',
+    'title: Two only', 'from: 1, 2',
+  ].join('\n'), found);
+  assert.deepEqual(got, [{ title: 'New users can\'t pick a first step', from: [1, 2, 3], reading: 'Many places.', open: 'Whether examples help.' }]);
+  assert.deepEqual(themes.parseReply('none', found), []);
+  const md = themes.themeNote(got[0], got[0].from.map((n) => found[n - 1]));
+  assert.match(md, /^# New users can't pick a first step\n\n> \[!note\] Margin's reading — a suggestion/);
+  assert.match(md, /- Did not know what to do first\. — \[\[Interview 2026-08-21\]\]\n- Where do I start\? five tickets\. — \[\[Support\]\] \(2026-09-03\)/);
+  assert.match(md, /## Not checked yet\n\n- Whether examples help\./);
 });

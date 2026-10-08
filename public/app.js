@@ -3445,6 +3445,7 @@ const COMMANDS = [
   ['Lens: decisions and open questions (experimental)…', () => setTimeout(() => lensRun('decisions'), 0)],
   ['Forks: this paragraph, other ways (experimental)…', () => setTimeout(forkRun, 0)],
   ['Brief: this note \u2014 a secretary in the margin: what to cover, what it still needs, what doesn\u2019t add up (experimental)', lab('Brief', () => setTimeout(() => briefNote(), 0)), { labs: true }],
+  ['Themes: what keeps coming back in your recent notes (experimental)', lab('Themes', () => setTimeout(themesView, 0)), { labs: true }],
   ['Gather: pieces of notes into one (experimental)', lab('Gather', () => setTimeout(gatherView, 0)), { labs: true }],
   ['Lock this paragraph (experimental)', () => setTimeout(toggleLock, 0)],
   ['Origin: where this note\u2019s paragraphs came from (experimental)', () => setTimeout(originView, 0)],
@@ -9295,6 +9296,46 @@ async function briefNote(tab = activeTab()) {
   if (st.mode === 'off' || !briefMode(tab, st)) st.mode = 'meeting';
   drawNotes(tab);
   briefCheck(tab);
+}
+
+// ---- Themes (Labs; lib/themes.js): what keeps coming back in the notes of
+// the last two months — a claim in several notes, written at different
+// times — with the paragraphs it comes back in, Claude's reading of them (a
+// suggestion) and what isn't checked yet; Make a note puts it in Themes/.
+async function themesView() {
+  if (!(await askConfirm('Themes sends paragraphs of the notes you changed in the last two months (up to 120 of them, those like others first when the local model has read your notes) to Claude, through the Claude Code agent you signed in to. A private note, or one .agentnotesignore names, is never sent. Nothing is written until you make a note of a theme.', { okLabel: 'Find themes' }))) return;
+  const overlay = $('#overlay');
+  const close = () => { overlay.hidden = true; overlay.replaceChildren(); overlay.onkeydown = null; };
+  const body = h('div', { class: 'dialog-body themes-body' }, h('div', { class: 'themes-wait' }, h('span', {}, 'Reading your recent notes'), h('span', { class: 'margin-dots' }, h('i'), h('i'), h('i'))));
+  overlay.onclick = (e) => { if (e.target === overlay) close(); };
+  overlay.onkeydown = (e) => { if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); close(); } };
+  overlay.replaceChildren(h('div', { class: 'dialog themes', role: 'dialog' },
+    h('div', { class: 'dialog-head' }, h('span', { class: 'title' }, 'What keeps coming back'), h('span', { class: 'grow' }), h('button', { class: 'icon-btn', title: 'Close', onclick: close }, '×')),
+    body));
+  overlay.hidden = false;
+  let r;
+  try { r = await api('POST', '/api/lab/themes', { ...liveOpts(), thinkModel: S.settings.thinkModel === 'haiku' ? 'haiku' : 'sonnet' }); } catch (e) { body.replaceChildren(h('p', { class: 'dev-error' }, e.message)); return; }
+  if (!r.themes.length) { body.replaceChildren(h('p', {}, r.read < 6 ? 'Too few recent notes to find what comes back.' : `Nothing comes back clearly enough in ${r.read} recent paragraphs — not yet.`)); return; }
+  const make = async (t, btn) => {
+    const name = `Themes/${t.title.replace(/[\\/:*?"<>|#^[\]]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 80)}.md`;
+    try {
+      const f = await api('POST', '/api/file', { path: name, content: t.note });
+      await loadTree();
+      btn.textContent = 'Made';
+      btn.disabled = true;
+      toast(`Made ${f.path}`, '', { label: 'Open', run: () => { close(); openFile(f.path); } });
+    } catch (e) { toast(e.message, 'error'); }
+  };
+  body.replaceChildren(h('p', { class: 'set-detail' }, `From ${r.read} paragraphs of your recent notes. The reading is Claude's: a suggestion to check, not a finding.`),
+    ...r.themes.map((t) => {
+      const btn = h('button', { class: 'btn small primary', onclick: () => make(t, btn) }, 'Make a note');
+      return h('div', { class: 'theme' },
+        h('div', { class: 'theme-head' }, h('div', { class: 'theme-title' }, t.title), h('span', { class: 'grow' }), btn),
+        h('div', { class: 'theme-scenes' }, t.scenes.map((s) => h('button', { class: 'theme-scene', title: `Open ${s.name}`, onclick: () => { close(); openAt(s.path, s.raw); } },
+          h('span', { class: 'theme-quote' }, s.text.length > 180 ? `${s.text.slice(0, 180)}…` : s.text), h('span', { class: 'theme-from' }, `${s.name}${s.date && !s.name.includes(s.date) ? ` · ${s.date}` : ''}`)))),
+        t.reading ? h('div', { class: 'theme-reading' }, h('span', { class: 'recall-chip' }, 'A reading'), t.reading) : null,
+        t.open ? h('div', { class: 'theme-open' }, h('span', { class: 'recall-chip' }, 'Not checked yet'), t.open) : null);
+    }));
 }
 
 // Settings: where the model is (download, reading the notes, ready), and its buttons.

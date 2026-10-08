@@ -23,6 +23,7 @@ const { judgeMargin } = require('./lib/judge');
 const { thinkMargin } = require('./lib/think');
 const { developMargin } = require('./lib/develop');
 const { briefMargin } = require('./lib/brief');
+const { themesMargin, themeNote } = require('./lib/themes');
 
 const APP_DIR = __dirname;
 const PUBLIC_DIR = path.join(APP_DIR, 'public');
@@ -799,6 +800,75 @@ async function labBrief(b) {
   ensureDataDir();
   writeFileAtomic(BRIEFED_FILE, JSON.stringify(Object.fromEntries(briefedCache)));
   return out;
+}
+
+// Themes (Labs; lib/themes.js): what keeps coming back. Paragraphs of the
+// notes changed in the last `days` (never a private or ignored one, nor a
+// template or a theme note made before), those with others like them in
+// other notes first when the local model has read the notes, up to 120 and
+// 16,000 characters, to the thinks-along model. → { themes: [{ title,
+// reading, open, scenes: [{ path, line, name, date, raw, text }], note (the
+// Markdown of a note made of it) }], read: how many paragraphs were sent }.
+let themer = null;
+let themerModel = '';
+async function labThemes(b) {
+  const days = Number.isInteger(b.days) && b.days >= 7 && b.days <= 365 ? b.days : 60;
+  setLiveOpts(b);
+  const agent = liveAgent();
+  if (!agent) throw httpError(400, 'Themes needs the Claude Code agent (Settings → Agents).');
+  recallEsm ||= await import(require('url').pathToFileURL(path.join(__dirname, 'public', 'recall.js')).href);
+  const ignored = loadIgnore(ROOT);
+  const since = Date.now() - days * 86400000;
+  const notes = [];
+  for (const rel of workspaceFiles()) {
+    if (!NOTE_EXT.has(extOf(rel)) || isTemplatePath(rel) || rel === KNOWN_FILE || /^themes\//i.test(rel) || ignored(rel)) continue;
+    const c = cachedText(rel);
+    if (!c || c.mtimeMs < since || isPrivateNote(path.join(ROOT, rel))) continue;
+    notes.push({ rel, c });
+  }
+  notes.sort((x, y) => y.c.mtimeMs - x.c.mtimeMs);
+  const dated = (rel, c) => (/\d{4}-\d{2}-\d{2}/.exec(path.basename(rel)) || [])[0] || new Date(c.mtimeMs).toISOString().slice(0, 10);
+  let paras = [];
+  for (const { rel, c } of notes.slice(0, 200)) {
+    for (const p of recallEsm.parasOf(c.text)) {
+      if (!recallEsm.paraWorthy(p.text)) continue;
+      paras.push({ path: rel, line: p.line, name: path.basename(rel).replace(/\.[^.]+$/, ''), date: dated(rel, c), raw: p.raw, text: p.text.replace(/\s+/g, ' ').trim().slice(0, 400), like: 0 });
+    }
+  }
+  // Those with others like them in other notes first (the local model).
+  if (embed.status().state === 'ready') {
+    const byNote = new Map();
+    for (const p of paras.slice(0, 600)) (byNote.get(p.path) || byNote.set(p.path, []).get(p.path)).push(p);
+    for (const [rel, list] of byNote) {
+      const r = await embed.near(rel, list.map((p) => p.text));
+      r?.results?.forEach((near, i) => { list[i].like = new Set(near.filter((x) => x.z >= 1.5).map((x) => x.path)).size; });
+    }
+    paras = paras.filter((p) => p.like > 0).sort((x, y) => y.like - x.like).concat(paras.filter((p) => !p.like));
+  }
+  const found = [];
+  let size = 0;
+  for (const p of paras) {
+    if (found.length >= 120 || size + p.text.length > 16000) break;
+    found.push(p);
+    size += p.text.length;
+  }
+  if (new Set(found.map((f) => f.path)).size < 2) return { themes: [], read: found.length };
+  const lang = b.lang === 'ko' || b.lang === 'en' ? b.lang : textLang(found.map((f) => f.text)) || 'en';
+  const model = developModel(b);
+  if (themerModel !== model) { themer?.stop(); themer = null; }
+  themerModel = model;
+  const env = { ...process.env };
+  delete env.ELECTRON_RUN_AS_NODE;
+  themer ||= themesMargin({ bin: liveBin(agent), env, opts: { ...liveOpts, model, effort: '' } });
+  const r = await themer.find({ found, lang });
+  if (!r.ok) throw httpError(502, r.error || 'Claude did not answer.');
+  return {
+    read: found.length,
+    themes: r.themes.map((t) => {
+      const scenes = t.from.map((n) => found[n - 1]).map(({ path: p, line, name, date, raw, text }) => ({ path: p, line, name, date, raw, text }));
+      return { title: t.title, reading: t.reading, open: t.open, scenes, note: themeNote(t, scenes) };
+    }),
+  };
 }
 
 // An answer to one of the margin's questions: a line at the end of KNOWN.md
@@ -2611,6 +2681,7 @@ async function routeApi(method, url, body) {
   if (method === 'POST' && p === '/api/recall/think') return recallThink(body || {});
   if (method === 'POST' && p === '/api/recall/develop') return recallDevelop(body || {});
   if (method === 'POST' && p === '/api/lab/brief') return labBrief(body || {});
+  if (method === 'POST' && p === '/api/lab/themes') return labThemes(body || {});
   if (method === 'GET' && p === '/api/embed') return embedStatus();
   if (method === 'POST' && p === '/api/embed') return embedOn(body || {});
   if (method === 'POST' && p === '/api/embed/download') { embed.download(); return embedStatus(); }
@@ -2747,6 +2818,8 @@ function liveRestart() {
   developer = null;
   briefer?.stop();
   briefer = null;
+  themer?.stop();
+  themer = null;
 }
 function liveAgent() {
   return claudeAgents().find((a) => a.label === liveOpts.agent) || (AGENT?.kind === 'claude' ? AGENT : claudeAgents()[0] || null);
@@ -3046,6 +3119,7 @@ function shutdown() {
   thinker?.stop();
   developer?.stop();
   briefer?.stop();
+  themer?.stop();
   embed.stop();
   for (const id of running.keys()) { try { cancelRun(id, 'server stopped'); } catch { /* ignore */ } }
   process.exit(0);

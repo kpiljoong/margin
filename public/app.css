@@ -2028,3 +2028,22 @@ img.part { border-radius: 6px; box-shadow: 0 0 0 1px var(--border); }
 .brief-carry { all: unset; cursor: pointer; position: absolute; right: 2px; top: 0; padding: 0 6px; border-radius: 8px; font-size: 11px; color: var(--fg); background: var(--bg); box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent) 40%, transparent); display: none; }
 .brief-item:hover .brief-carry, .brief-carry:focus-visible { display: inline; }
 .brief-carry:hover { color: var(--fg); background: color-mix(in srgb, var(--accent) 16%, transparent); }
+
+/* Themes (Labs). */
+.dialog.themes { width: min(760px, 92vw); max-height: 86vh; display: flex; flex-direction: column; }
+.dialog.themes .dialog-head { display: flex; align-items: center; gap: 8px; padding: 12px 16px 4px; }
+.dialog.themes .dialog-head .title { font-weight: 600; }
+.dialog.themes .grow { flex: 1; }
+.themes-body { overflow: auto; display: flex; flex-direction: column; gap: 14px; }
+.themes-wait { display: flex; align-items: center; gap: 8px; color: var(--fg-dim); padding: 20px 0; }
+.theme { border: 1px solid var(--border); border-radius: 8px; padding: 10px 12px; display: flex; flex-direction: column; gap: 8px; --r: var(--accent); }
+.theme-head { display: flex; align-items: center; gap: 8px; }
+.theme-title { font-size: 15px; font-weight: 600; }
+.theme-scenes { display: flex; flex-direction: column; gap: 4px; }
+.theme-scene { all: unset; cursor: pointer; display: flex; flex-direction: column; gap: 1px; padding: 5px 8px; border-left: 2px solid color-mix(in srgb, var(--accent) 50%, transparent); background: color-mix(in srgb, var(--fg) 4%, transparent); border-radius: 0 5px 5px 0; }
+.theme-scene:hover { background: color-mix(in srgb, var(--accent) 10%, transparent); }
+.theme-quote { font-size: 13px; line-height: 1.45; }
+.theme-from { font-size: 11px; color: var(--fg-faint); }
+.theme-reading, .theme-open { font-size: 13px; line-height: 1.45; }
+.theme-reading .recall-chip, .theme-open .recall-chip { display: block; margin-bottom: 2px; }
+.theme-open { --r: var(--warn); }
