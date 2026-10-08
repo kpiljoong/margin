@@ -415,6 +415,23 @@ export function nearFor(index, path, text, { semantic = null, cache = null, max 
   if (!near) { near = nearParas(index.paras, path, text, 4); cache?.set(k, near); }
   return near.filter((x) => x.s >= 0.12).slice(0, max).map(({ x }) => ({ path: x.path, line: x.line }));
 }
+// Where a paragraph a card was about is now, or null: { text, uniq (it was
+// the only one with that text), prev, next (the paragraphs around it) },
+// as told by spotOf when the card was made. One with that text when there
+// was one and is one; when there are (or were) more, the one with the same
+// paragraphs around it, if only one has them; else none (gone, changed, or
+// not told apart: a card is never put by another paragraph).
+export function spotOf(paras, i) {
+  const p = paras[i];
+  return { text: p.text, uniq: paras.filter((q) => q.text === p.text).length === 1, prev: paras[i - 1]?.text ?? null, next: paras[i + 1]?.text ?? null };
+}
+export function paraAt(paras, spot) {
+  if (!spot?.text) return null;
+  const same = paras.map((p, i) => [p, i]).filter(([p]) => p.text === spot.text);
+  if (spot.uniq && same.length === 1) return same[0][0];
+  const near = same.filter(([, i]) => (paras[i - 1]?.text ?? null) === spot.prev && (paras[i + 1]?.text ?? null) === spot.next);
+  return near.length === 1 ? near[0][0] : null;
+}
 export const semanticNeed = (n) => Math.max(3.5, Math.sqrt(2 * Math.log(Math.max(2, n))) + 0.5);
 // Or as close as two ways of saying one thing (in a few notes all about the
 // same, none stands out, but these do).

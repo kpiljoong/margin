@@ -673,11 +673,12 @@ let developedCache = null;
 const DEVELOPED_FILE = path.join(DATA_DIR, 'developed.json');
 const DEVELOPED_MAX = 300;
 async function recallDevelop(b) {
-  const { path: rel, text, refs = [], today = '', lang } = b;
+  const { path: rel, text, refs = [], today = '', lang, followUp } = b;
+  if (followUp != null) return recallFollowUp(b);
   if (typeof rel !== 'string' || typeof text !== 'string' || !text.trim() || text.length > 200000
     || !validRefs(refs, 12) || typeof today !== 'string' || today.length > 40) throw httpError(400, 'path, text, refs: [{ path, line }], today');
   const { agent, env, read } = await recallSending(b, 'Developing a note');
-  const model = ['haiku', 'sonnet', 'opus'].includes(b.thinkModel) ? b.thinkModel : 'sonnet';
+  const model = developModel(b);
   developedCache ||= new Map(Object.entries(readJson(DEVELOPED_FILE, {})));
   // The note's paragraphs, as many as fit in 8,000 characters.
   const paras = [];
@@ -690,22 +691,53 @@ async function recallDevelop(b) {
   }
   if (!paras.length) throw httpError(400, 'The note has nothing to develop yet.');
   const links = new Set([...text.matchAll(/\[\[([^\]|#]+)/g)].map((m) => m[1].trim().toLowerCase()));
-  const found = refs.map(read).filter(Boolean).map((f) => ({ ...f, linked: links.has(f.name.toLowerCase()) || links.has(f.path.replace(/\.[^.]+$/, '').toLowerCase()) }));
+  const found = sameOnce(refs.map(read).filter(Boolean)).map((f) => ({ ...f, linked: links.has(f.name.toLowerCase()) || links.has(f.path.replace(/\.[^.]+$/, '').toLowerCase()) }));
   const want = lang === 'ko' || lang === 'en' ? lang : textLang(paras.map((p) => p.text)) || 'en';
   const req = { paras: paras.map((p) => p.text), today, lang: want, found };
-  const key = crypto.createHash('sha1').update(JSON.stringify(['v1', model, want, today.slice(0, 10), req.paras, found.map((f) => [f.path, f.line, f.text, f.linked])])).digest('hex');
+  const key = crypto.createHash('sha1').update(JSON.stringify(['v2', model, want, today.slice(0, 10), req.paras, found.map((f) => [f.path, f.line, f.text, f.linked])])).digest('hex');
   if (developedCache.has(key)) return developedCache.get(key);
+  const r = await developerFor(agent, env, model).develop(req);
+  if (!r.ok) throw httpError(502, r.error || 'Claude did not answer.');
+  return developKeep(key, { items: r.items.map((x) => ({ kind: x.kind, line: paras[x.at].line, say: x.say, refs: x.from.map((n) => found[n - 1]).filter(Boolean).map(refOut) })) });
+}
+// One of its questions answered (in the margin): the paragraph, the
+// question, the answer and the notes the question came from. → { items:
+// [{ kind: 'sharper' | 'next', say, refs }] }. Kept by what was sent.
+async function recallFollowUp(b) {
+  const { followUp: f, refs = [], lang } = b;
+  const str = (x, n) => typeof x === 'string' && x.trim() && x.length <= n;
+  if (typeof b.path !== 'string' || !f || typeof f !== 'object' || !str(f.para, 4000) || !str(f.question, 1000) || !str(f.answer, 2000) || !validRefs(refs, 6)) throw httpError(400, 'path, followUp: { para, question, answer }, refs');
+  const { agent, env, read } = await recallSending(b, 'Developing a note');
+  const model = developModel(b);
+  developedCache ||= new Map(Object.entries(readJson(DEVELOPED_FILE, {})));
+  const found = sameOnce(refs.map(read).filter(Boolean));
+  const req = { para: f.para.replace(/\s+/g, ' ').trim().slice(0, 1500), question: f.question.trim(), answer: f.answer.trim(), found };
+  req.lang = lang === 'ko' || lang === 'en' ? lang : textLang([req.para, req.answer]) || 'en';
+  const key = crypto.createHash('sha1').update(JSON.stringify(['f1', model, req.lang, req.para, req.question, req.answer, found.map((x) => [x.path, x.line, x.text])])).digest('hex');
+  if (developedCache.has(key)) return developedCache.get(key);
+  const r = await developerFor(agent, env, model).followUp(req);
+  if (!r.ok) throw httpError(502, r.error || 'Claude did not answer.');
+  return developKeep(key, { items: r.items.map((x) => ({ kind: x.kind, say: x.say, refs: x.from.map((n) => found[n - 1]).filter(Boolean).map(refOut) })) });
+}
+const developModel = (b) => (['haiku', 'sonnet', 'opus'].includes(b.thinkModel) ? b.thinkModel : 'sonnet');
+function developerFor(agent, env, model) {
   if (developerModel !== model) { developer?.stop(); developer = null; }
   developerModel = model;
   developer ||= developMargin({ bin: liveBin(agent), env, opts: { ...liveOpts, model, effort: '' } });
-  const r = await developer.develop(req);
-  if (!r.ok) throw httpError(502, r.error || 'Claude did not answer.');
-  const out = { items: r.items.map((x) => ({ kind: x.kind, line: paras[x.at].line, say: x.say, refs: x.from.map((n) => found[n - 1]).filter(Boolean).map(({ path: p, line, name, raw }) => ({ path: p, line, name, raw })) })) };
+  return developer;
+}
+function developKeep(key, out) {
   developedCache.set(key, out);
   while (developedCache.size > DEVELOPED_MAX) developedCache.delete(developedCache.keys().next().value);
   ensureDataDir();
   writeFileAtomic(DEVELOPED_FILE, JSON.stringify(Object.fromEntries(developedCache)));
   return out;
+}
+const refOut = ({ path: p, line, name, raw }) => ({ path: p, line, name, raw });
+// The same words in two notes (a copy, a backup) go once: the first found.
+function sameOnce(found) {
+  const seen = new Set();
+  return found.filter((f) => { const k = f.text.replace(/\s+/g, ' ').trim().toLowerCase(); if (seen.has(k)) return false; seen.add(k); return true; });
 }
 
 // An answer to one of the margin's questions: a line at the end of KNOWN.md

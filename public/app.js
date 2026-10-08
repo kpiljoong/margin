@@ -8539,6 +8539,14 @@ function anchorOf(text, c) {
 
 const drawNotesSoon = debounce((tab) => drawNotes(tab), 120);
 function drawNotes(tab) {
+  // While an answer is typed in the margin (Develop), it waits: drawing
+  // would take the box away from under the typing (and a Korean word being
+  // composed in it).
+  if (document.activeElement?.classList?.contains('dev-answer') && tab?.editor?.el.contains(document.activeElement)) {
+    clearTimeout(tab.drawLater);
+    tab.drawLater = setTimeout(() => drawNotes(tab), 600);
+    return;
+  }
   if (tab?.editor) drawLocks(tab);
   if (tab?.comments) canvasComments(tab);
   const ed = tab?.editor;
@@ -8900,12 +8908,21 @@ function thinkCard(tab, p, r, key, lastLine) {
 }
 // ---- Develop this note (a command; lib/develop.js): the note and the
 // paragraphs of other notes near its paragraphs go to Claude, and what it
-// says stands beside the paragraphs it is about — the claim said sharper,
-// questions, notes that back it or go against it, a next step, and other
-// notes' paragraphs that belong here (Link here puts a link at the end).
-// Kept for the session, until × or the next Develop.
-const devSt = new Map(); // path → { busy, items: [{ kind, para, line, say, refs }] }
-const DEV_CHIP = { sharper: 'Sharper', question: 'A question', ground: 'Your notes back it', against: 'Goes against it', next: 'Next step', gather: 'Belongs here' };
+// says stands beside the paragraphs it is about — the claim made more
+// concrete, questions, notes that back it or go against it, a next step,
+// and other notes' paragraphs that are pieces of the same idea (Link here
+// puts a link at the end). A question can be answered in the margin: the
+// answer, the question, its paragraph and the notes it came from go back,
+// and what the paragraph could say with it comes under the question. Kept
+// for the session (answers too), until × or the next Develop.
+//
+// Each card knows its paragraph by its text, whether it was the only one,
+// and the paragraphs around it (recall.js paraAt): when that paragraph is
+// gone, changed or can't be told apart, the card says so at the top of the
+// note — never beside another paragraph — and can't be answered.
+const devSt = new Map(); // path → { busy, items: [{ kind, spot, line, say, refs, ans }] }
+let devAsked = 0;
+const DEV_CHIP = { sharper: 'More concrete', question: 'A question', ground: 'Your notes back it', against: 'Goes against it', next: 'Next step', gather: 'Belongs here' };
 async function developNote(tab = activeTab()) {
   if (!tab?.editor || !isNote(tab.path)) { toast('Open a note to develop.'); return; }
   const st = devSt.get(tab.path);
@@ -8917,6 +8934,7 @@ async function developNote(tab = activeTab()) {
   try {
     recallMod ||= await import('./recall.js');
     if (!recallSt.index) { recallSt.at = 0; recallFresh(); await recallSt.loading; }
+    // The paragraphs as sent: what the answer's lines are lines of.
     const text = tab.editor.value;
     const paras = recallMod.parasOf(text);
     const refs = await devNear(tab, paras.filter((p) => recallMod.paraWorthy(p.text)).slice(0, 40).map((p) => p.text));
@@ -8925,7 +8943,10 @@ async function developNote(tab = activeTab()) {
       path: tab.path, text, refs, ...liveOpts(), thinkModel: S.settings.thinkModel === 'haiku' ? 'haiku' : 'sonnet',
       today: `${ymdOf(now)} (${now.toLocaleDateString('en-US', { weekday: 'short' })})`,
     });
-    const items = r.items.map((x) => ({ ...x, para: paras.find((p) => p.line === x.line)?.text || '' }));
+    const items = r.items.map((x) => {
+      const i = paras.findIndex((p) => p.line === x.line);
+      return { ...x, spot: i >= 0 ? recallMod.spotOf(paras, i) : null };
+    });
     devSt.set(tab.path, { busy: false, items });
     if (!items.length) toast('Nothing to add to this note for now.');
   } catch (e) {
@@ -8945,6 +8966,30 @@ async function devNear(tab, texts) {
   else for (const t of texts) for (const x of recallMod.nearFor(recallSt.index, tab.path, t, { cache: recallSt.cache, max: 4 }) || []) add(x, 1);
   return [...score.values()].filter((x) => x.path !== tab.path).sort((a, b) => b.s - a.s).slice(0, 12).map(({ path, line }) => ({ path, line }));
 }
+// The paragraph a card is about now, or null (gone, changed, or not told apart).
+const devPara = (paras, x) => recallMod.paraAt(paras, x.spot);
+// Answering one of its questions: open, the draft, sent, what came back.
+function devAnswer(tab, x) {
+  const a = x.ans;
+  if (a.busy) return; // one at a time (⌘↩ again while it is sent)
+  const text = tab.editor.value;
+  const p = devPara(recallMod.parasOf(text), x);
+  if (!p || !a.draft.trim()) return;
+  a.busy = true;
+  a.error = null;
+  a.sent = a.draft.trim();
+  a.result = null;
+  devRedraw(tab);
+  api('POST', '/api/recall/develop', {
+    path: tab.path, ...liveOpts(), thinkModel: S.settings.thinkModel === 'haiku' ? 'haiku' : 'sonnet',
+    followUp: { para: p.text, question: x.say, answer: a.sent }, refs: (x.refs || []).slice(0, 6).map((y) => ({ path: y.path, line: y.line })),
+  }).then((r) => { a.result = r.items; a.open = false; }, (e) => { a.error = e.message; }).finally(() => { a.busy = false; devRedraw(tab); });
+}
+// Drawn again (leaving the answer box: the margin waits while it is typed in).
+function devRedraw(tab) {
+  if (document.activeElement?.classList?.contains('dev-answer')) document.activeElement.blur();
+  if (tab.editor && isAttached(tab)) drawNotes(tab);
+}
 // Its cards, beside the paragraphs they are about (the title while it works).
 function devNotes(tab) {
   const st = devSt.get(tab.path);
@@ -8953,14 +8998,14 @@ function devNotes(tab) {
   const starts = [0];
   for (let i = text.indexOf('\n'); i >= 0; i = text.indexOf('\n', i + 1)) starts.push(i + 1);
   const paras = recallMod.parasOf(text);
+  const top = paras[0] || { line: 0, last: 0 };
   if (st.busy) {
-    const first = paras[0];
-    return [{ from: starts[first?.line || 0], to: starts[first?.line || 0], end: starts[first?.last || 0], el: h('div', { class: 'mnote recall k-dev think-wait', title: 'Claude is reading this note' },
+    return [{ from: starts[top.line], to: starts[top.line], end: starts[top.last], el: h('div', { class: 'mnote recall k-dev think-wait', title: 'Claude is reading this note' },
       h('div', { class: 'mnote-head' }, h('span', { class: 'recall-chip' }, 'Developing'), h('span', { class: 'margin-dots' }, h('i'), h('i'), h('i')))) }];
   }
   return st.items.map((x) => {
-    const p = paras.find((q) => q.text === x.para) || paras.find((q) => q.line >= x.line) || paras.at(-1) || { line: 0, last: 0 };
-    const gone = () => { st.items = st.items.filter((y) => y !== x); if (!st.items.length) devSt.delete(tab.path); drawNotes(tab); };
+    const p = devPara(paras, x);
+    const gone = () => { st.items = st.items.filter((y) => y !== x); if (!st.items.length) devSt.delete(tab.path); devRedraw(tab); };
     const link = (y) => askWrite(tab, null, (v) => {
       const name = y.name;
       if (v.includes(`[[${name}]]`)) return null;
@@ -8969,17 +9014,60 @@ function devNotes(tab) {
       return `${tail}\n${/^- \[\[[^\]]+\]\]$/.test(tail.split('\n').at(-1)) ? '' : '\n'}- [[${name}]]\n`;
     }, false);
     const refs = (x.refs || []).map((y) => recallSt.index?.paras?.byNote?.get(y.path)?.paras.find((z) => z.line === y.line) || y);
-    return { from: starts[p.line], to: starts[p.line], end: starts[p.last], el: h('div', { class: `mnote recall k-dev k-dev-${x.kind}` },
+    const at = p || top;
+    const el = h('div', { class: `mnote recall k-dev k-dev-${x.kind}${p ? '' : ' dev-changed'}` },
       h('div', { class: 'mnote-head' },
         h('span', { class: 'recall-chip' }, DEV_CHIP[x.kind] || 'A note'),
         h('span', { class: 'grow' }),
         h('button', { class: 'mnote-btn', title: 'Let this one go', onclick: gone }, '×')),
-      h('div', { class: 'recall-says' }, x.say),
+      p ? null : h('div', { class: 'dev-gone', title: x.spot?.text || '' }, `Its paragraph changed, or can't be told apart: “${(x.spot?.text || '').slice(0, 60)}${(x.spot?.text || '').length > 60 ? '…' : ''}”`),
+      // A question is read whole: it is to be answered.
+      h('div', { class: `recall-says${x.kind === 'question' ? ' whole' : ''}` }, x.say),
       x.kind === 'gather'
         ? h('div', { class: 'dev-gather' }, refs.map((y) => h('div', { class: 'dev-gather-row' }, recallRef(y),
           text.includes(`[[${y.name}]]`) ? h('span', { class: 'recall-rel' }, 'Linked') : h('button', { class: 'recall-ans', onmousedown: (e) => e.preventDefault(), onclick: () => link(y), title: `Put [[${y.name}]] at the end of this note` }, 'Link here'))))
-        : refs.length ? h('div', { class: 'recall-refs' }, refs.map(recallRef)) : null) };
+        : refs.length ? h('div', { class: 'recall-refs' }, refs.map(recallRef)) : null,
+      x.kind === 'question' ? devAnswerBox(tab, x, !!p) : null);
+    return { from: starts[at.line], to: starts[at.line], end: starts[at.last], el };
   });
+}
+// Under a question: Answer, the box, what was sent and what came back.
+function devAnswerBox(tab, x, here) {
+  const a = (x.ans ||= { id: `q${++devAsked}`, open: false, draft: '', sent: '', busy: false, error: null, result: null });
+  const out = [];
+  if (a.sent && (a.result || a.busy || a.error)) out.push(h('div', { class: 'dev-you' }, h('span', { class: 'dev-you-who' }, 'You'), a.sent));
+  if (a.busy) out.push(h('div', { class: 'dev-wait' }, h('span', { class: 'recall-chip' }, 'Thinking'), h('span', { class: 'margin-dots' }, h('i'), h('i'), h('i'))));
+  if (a.result) {
+    out.push(...(a.result.length ? a.result.map((r) => h('div', { class: `dev-grow k-dev-${r.kind}` }, h('span', { class: 'recall-chip' }, DEV_CHIP[r.kind] || 'A note'), h('div', { class: 'recall-says whole' }, r.say)))
+      : [h('div', { class: 'dev-none' }, 'Nothing to add to that.')]));
+  }
+  if (a.error) out.push(h('div', { class: 'dev-error' }, a.error));
+  if (!here) return out.length ? h('div', { class: 'dev-thread' }, out) : null;
+  if (a.open || a.error) {
+    const box = h('textarea', { class: 'dev-answer', 'data-q': a.id, rows: 3, placeholder: 'Your answer, in a sentence or two', oninput: (e) => { a.draft = e.target.value; },
+      onkeydown: (e) => {
+        e.stopPropagation();
+        // Never while a Korean (IME) word is being composed: Enter and Esc finish it.
+        if (e.isComposing || e.keyCode === 229) return;
+        if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) { e.preventDefault(); devAnswer(tab, x); }
+        else if (e.key === 'Escape' && !a.error) { e.preventDefault(); a.open = false; devRedraw(tab); }
+      } });
+    box.value = a.draft;
+    out.push(box,
+      h('div', { class: 'dev-answer-row' },
+        h('span', { class: 'dev-note' }, 'Kept until you close this note or Margin — not in the note.'),
+        h('span', { class: 'grow' }),
+        a.error ? null : h('button', { class: 'recall-ans quiet', onclick: () => { a.open = false; devRedraw(tab); } }, 'Cancel'),
+        h('button', { class: 'recall-ans', disabled: a.busy || undefined, onclick: () => devAnswer(tab, x) }, a.error ? 'Retry' : 'Send')));
+  } else if (!a.busy) {
+    out.push(h('div', { class: 'dev-answer-row' }, h('button', { class: 'recall-ans', onclick: () => {
+      a.open = true;
+      if (!a.draft && a.sent) a.draft = a.sent;
+      devRedraw(tab);
+      requestAnimationFrame(() => { const el = document.querySelector(`.dev-answer[data-q="${a.id}"]`); el?.focus(); el?.setSelectionRange(el.value.length, el.value.length); });
+    } }, a.result ? 'Answer again' : 'Answer')));
+  }
+  return h('div', { class: 'dev-thread' }, out);
 }
 
 // Settings: where the model is (download, reading the notes, ready), and its buttons.
