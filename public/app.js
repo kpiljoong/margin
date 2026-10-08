@@ -8623,7 +8623,7 @@ function recallNotes(tab) {
   if (ask && thought.within(ask.line)) ask = null;
   const cards = recallMod.recall(recallSt.index, tab.path, text, { cache: recallSt.cache, known: recallSt.known, semantic, judge }).flatMap((r) => {
     const key = `${tab.path}\n${r.kind}\n${lines[r.line].trim()}`;
-    if (off.has(key) || (r.kind === 'related' && thought.within(r.line))) return [];
+    if (off.has(key) || (r.kind === 'related' && (thought.within(r.line) || briefCites(tab, r)))) return [];
     const mine = ask?.line === r.line ? ask : null;
     if (mine) ask = null;
     return [{ from: starts[r.line], to: starts[r.line], end: starts[r.last ?? r.line], el: recallCard(tab, r, key, mine) }];
@@ -9175,6 +9175,13 @@ async function briefCheck(tab = activeTab(), { auto = false } = {}) {
   st.busy = false;
   if (tab.editor && isAttached(tab)) drawNotes(tab);
 }
+// A Related card whose notes a Brief card already cites says nothing more.
+function briefCites(tab, r) {
+  const st = briefOn() && briefSt.get(tab.path);
+  if (!st?.items.length || !r.refs?.length) return false;
+  const cited = new Set(st.items.flatMap((x) => (x.refs || []).map((y) => `${y.path}:${y.line}`)));
+  return r.refs.every((y) => cited.has(`${y.path}:${y.line}`));
+}
 // Typing: the headline and the rules' cards follow (after a moment).
 function briefEdited(tab) {
   if (!briefOn() || !tab.editor || !isNote(tab.path)) return;
@@ -9198,7 +9205,7 @@ function briefTyped(tab) {
 }
 // The headline (pinned at the top of the margin) and the cards beside lines.
 function briefNotes(tab) {
-  if (!briefOn() || !isNote(tab.path)) { tab.editor?.setHeadline(null); return []; }
+  if (!briefOn() || !isNote(tab.path) || isTemplate(tab.path)) { tab.editor?.setHeadline(null); return []; }
   if (!briefMod) { briefLoad(); return []; }
   const st = briefState(tab);
   const mode = briefMode(tab, st);

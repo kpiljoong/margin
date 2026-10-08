@@ -14,8 +14,12 @@
 import { meetingItems, agendaOf, previousOf } from './meeting.js';
 import { wordsOf, nearness } from './recall.js';
 
-const MEETING_NAME = /\b(meeting|minutes|standup|stand-up|sync|1:1|1-1|one-on-one|1on1|retro|retrospective|kickoff|kick-off|weekly|all-hands|review)\b|\uD68C\uC758|\uBBF8\uD305|\uD68C\uC758\uB85D|\uC8FC\uAC04|\uC2F1\uD06C|\uC2A4\uD0E0\uB4DC\uC5C5|\uD68C\uACE0|\uD0A5\uC624\uD504|\uBA74\uB2F4/i;
-const MEETING_LINE = /^\s*(?:\*\*)?(attendees|participants|present|agenda|\uCC38\uC11D\uC790?|\uCC38\uC5EC\uC790|\uC548\uAC74|\uC544\uC820\uB2E4)(?:\*\*)?\s*:?/im;
+// A meeting's name or title says so; some words only with a date or an agenda
+// ("sync" may be a protocol, "review" a code review, "kickoff" a plan's step).
+const MEETING_NAME = /\b(meeting|standup|stand-up|1:1|1-1|one-on-one|1on1|retro|retrospective|all-hands)\b|\uD68C\uC758|\uBBF8\uD305|\uD68C\uC758\uB85D|\uC2A4\uD0E0\uB4DC\uC5C5|\uD68C\uACE0|\uBA74\uB2F4/i;
+const MEETING_WEAK = /\b(sync|weekly|review|minutes|kickoff|kick-off|check-?in)\b|\uC8FC\uAC04|\uC2F1\uD06C|\uD0A5\uC624\uD504/i;
+// "Attendees: …" near the top.
+const ATTENDEES = /^\s*(?:[-*]\s*)?(?:\*\*)?(attendees|participants|present|\uCC38\uC11D\uC790?|\uCC38\uC5EC\uC790)(?:\*\*)?\s*:/im;
 const WRITING_NAME = /\b(blog|post|draft|essay|article|newsletter|op-ed)\b|\uBE14\uB85C\uADF8|\uCD08\uC548|\uC5D0\uC138\uC774|\uC6D0\uACE0|\uAE30\uACE0|\uCE7C\uB7FC|\uAE00\uAC10/i;
 const PLAN_NAME = /\b(plan|proposal|roadmap|strategy|rfc|spec|prd|design doc)\b|\uACC4\uD68D|\uAE30\uD68D|\uC81C\uC548|\uB85C\uB4DC\uB9F5|\uC804\uB7B5|\uC124\uACC4/i;
 const FRONT = /^---\n([\s\S]*?)\n---\n?/;
@@ -25,6 +29,10 @@ const DATE_IN = /(\d{4})-(\d{2})-(\d{2})/;
 const FRAME = /^(attendees|participants|present|agenda|notes?|action items?|actions|to-?dos?|next steps?|decisions?|summary|tl;?dr|wrap-?up|open questions?|questions|risks?|ideas?|links?|\uCC38\uC11D\uC790?|\uC548\uAC74|\uC544\uC820\uB2E4|\uBA54\uBAA8|\uB178\uD2B8|\uD560 ?\uC77C|\uC561\uC158 ?\uC544\uC774\uD15C|\uB2E4\uC74C ?\uB2E8\uACC4|\uACB0\uC815( ?\uC0AC\uD56D)?|\uC694\uC57D|\uC815\uB9AC|\uC9C8\uBB38|\uB9AC\uC2A4\uD06C|\uC544\uC774\uB514\uC5B4|\uB9C1\uD06C)(?![\p{L}\p{N}])/iu;
 const SUMMARY = /^#{1,6}\s+(summary|tl;?dr|wrap-?up|recap|\uC694\uC57D|\uC815\uB9AC|\uACB0\uB860)(?![\p{L}\p{N}])/imu;
 const NEXT_HEAD = /^#{1,6}\s+(next steps?|action items?|actions|to-?dos?|follow-?ups?|\uB2E4\uC74C ?\uB2E8\uACC4|\uC561\uC158 ?\uC544\uC774\uD15C|\uD560 ?\uC77C|\uD6C4\uC18D)(?![\p{L}\p{N}])/imu;
+// A decision or a next step written in words, not marked.
+const DECIDED = /\uACB0\uC815|\uD558\uAE30\uB85C|\uD655\uC815|\uD569\uC758|decided|agreed|we will|we'll|going with/i;
+const NEXT_WORDS = /\uB2E4\uC74C ?(\uC8FC|\uD68C\uC758|\uB2E8\uACC4|\uAE4C\uC9C0)|next (step|week|time)|follow-?up|action item|\uD6C4\uC18D|\uB2F4\uB2F9/i;
+const MANY = 4;
 const PLACEHOLDER = /\b(TODO|TBD|TK|FIXME|XXX)\b|\?\?\?|\[citation needed\]|\(link\)|\(\uB9C1\uD06C\)|\uCD94\uAC00 \uC608\uC815/;
 
 const nameOf = (path) => String(path).split('/').pop().replace(/\.(md|markdown)$/i, '');
@@ -39,7 +47,10 @@ export function modeOf(path, text) {
   const said = `${nameOf(path)}\n${titleOf(text)}\n${typed}`;
   const items = meetingItems(text);
   const tagged = items.filter((it) => ['decision', 'question', 'next'].includes(it.kind)).length;
-  if (MEETING_NAME.test(said) || MEETING_LINE.test(text) || previousOf(text) || agendaOf(text).length || tagged >= 2) return 'meeting';
+  const top = text.replace(FRONT, '').split('\n').slice(0, 15).join('\n');
+  const dated = DATE_IN.test(said);
+  const agenda = agendaOf(text).length > 0;
+  if (previousOf(text) || tagged >= 2 || ATTENDEES.test(top) || MEETING_NAME.test(said) || (MEETING_WEAK.test(said) && (dated || agenda))) return 'meeting';
   if (WRITING_NAME.test(said) || /(^|\/)(blog|posts?|drafts?|writing|\uAE00)\//i.test(path)) return 'writing';
   if (PLAN_NAME.test(said)) return 'plan';
   return null;
@@ -111,12 +122,15 @@ export function meetingBrief(text, { path = '', today = '', prev = '', others = 
   const todos = items.filter((it) => it.kind === 'todo');
   const dated = dateOfName(path) || today;
   const flags = [];
-  const usesOwners = todos.some((t) => t.owner) || MEETING_LINE.test(text);
-  for (const t of todos) {
-    if (t.done) continue;
-    if (usesOwners && !t.owner) flags.push({ kind: 'gap', line: t.line, say: 'Who does it? No one is on this to-do.', key: `owner|${t.body}` });
-    if (!t.due) flags.push({ kind: 'gap', line: t.line, say: 'By when? This to-do has no date.', key: `due|${t.body}` });
-    else {
+  const usesOwners = todos.some((t) => t.owner) || ATTENDEES.test(text);
+  const notDone = todos.filter((t) => !t.done);
+  // Many to-dos with no one or no date (a checklist): said once, not beside each.
+  const nobody = usesOwners ? notDone.filter((t) => !t.owner) : [];
+  const undated = notDone.filter((t) => !t.due);
+  const each = (list) => list.length <= MANY;
+  for (const t of notDone) {
+    if (!t.owner && usesOwners && each(nobody)) flags.push({ kind: 'gap', line: t.line, say: 'Who does it? No one is on this to-do.', key: `owner|${t.body}` });
+    if (!t.due) { if (each(undated)) flags.push({ kind: 'gap', line: t.line, say: 'By when? This to-do has no date.', key: `due|${t.body}` }); } else {
       if (dated && t.due < dated) flags.push({ kind: 'conflict', line: t.line, say: `Its date, ${t.due}, is before the meeting (${dated}).`, key: `past|${t.body}` });
       else if (today && t.due < today) flags.push({ kind: 'conflict', line: t.line, say: `Its date, ${t.due}, has passed and it isn't ticked.`, key: `past|${t.body}` });
       const wd = weekday(t.due);
@@ -134,8 +148,10 @@ export function meetingBrief(text, { path = '', today = '', prev = '', others = 
   // What the note as a whole still needs, once there is enough of it.
   const n = contentLines(text);
   const needs = [];
-  if (n >= 5 && !items.some((it) => it.kind === 'decision')) needs.push({ key: 'decision', say: 'No decision written down' });
-  if (n >= 5 && !todos.length && !NEXT_HEAD.test(text)) needs.push({ key: 'next', say: 'No next step or to-do' });
+  if (!each(nobody)) needs.push({ key: 'owners', say: `${nobody.length} to-dos with no one on them` });
+  if (!each(undated)) needs.push({ key: 'dates', say: `${undated.length} to-dos with no date` });
+  if (n >= 5 && !items.some((it) => it.kind === 'decision') && !DECIDED.test(text)) needs.push({ key: 'decision', say: 'No decision written down' });
+  if (n >= 5 && !todos.length && !NEXT_HEAD.test(text) && !NEXT_WORDS.test(text)) needs.push({ key: 'next', say: 'No next step or to-do' });
   if (n >= 12 && !SUMMARY.test(text)) needs.push({ key: 'summary', say: 'No summary' });
   const open = items.filter((it) => it.kind === 'question' && !items.some((d) => d.kind === 'decision' && d.line > it.line && d.section === it.section));
   if (open.length) needs.push({ key: 'open', say: `${open.length} open question${open.length > 1 ? 's' : ''}: decide, or carry to next time (#next)` });
@@ -157,7 +173,6 @@ export function writingBrief(text) {
   });
   const cover = topicsOf(text).map((t) => ({ ...t, from: 'outline' }));
   const needs = [];
-  if (!titleOf(text)) needs.push({ key: 'title', say: 'No title' });
   const n = contentLines(text);
   if (n >= 6 && cover.length && cover.some((c) => !c.done)) needs.push({ key: 'empty', say: `${cover.filter((c) => !c.done).length} section${cover.filter((c) => !c.done).length > 1 ? 's' : ''} with nothing yet` });
   return { mode: 'writing', cover, flags, needs };

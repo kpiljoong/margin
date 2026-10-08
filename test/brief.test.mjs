@@ -19,7 +19,10 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 test('what kind of note: a meeting, a draft, a plan, or none', () => {
   assert.equal(modeOf('Weekly 2026-10-08.md', '# Weekly\n\n- notes\n'), 'meeting');
   assert.equal(modeOf('x.md', '# Sync\n\nAttendees: Ann, Bo\n'), 'meeting');
-  assert.equal(modeOf('x.md', '# X\n\n## Status (5m)\n- fine\n'), 'meeting');
+  assert.equal(modeOf('x 2026-10-08.md', '# X\n\n## Warm-up (10m)\n- fine\n'), null, 'a dated workout with minutes');
+  assert.equal(modeOf('x.md', '# X\n\n## Status (5m)\n- fine\n'), null, 'minutes in headings alone: a lesson plan too');
+  assert.equal(modeOf('p2p sync system.md', '# Sync\n\nHow peers sync.\n'), null, 'sync: a protocol too');
+  assert.equal(modeOf('Design sync 2026-10-08.md', '# Design sync\n'), 'meeting');
   assert.equal(modeOf('x.md', '# X\n\n- We ship #decision\n- Beta? #question\n'), 'meeting');
   assert.equal(modeOf('\uC8FC\uAC04 \uD68C\uC758.md', '# a\n'), 'meeting');
   assert.equal(modeOf('blog/why notes fail.md', '# Why notes fail\n\nText.\n'), 'writing');
@@ -61,8 +64,14 @@ test('a meeting: its agenda covered as it is written, what the last one left, wh
   const later = carriedOver(prev, `${text}\n- A beta first: we need one for two weeks #decision\n- [x] Draft the store text @bo\n`);
   assert.deepEqual(later.map((c) => c.done), [true, true, false]);
   // A meeting with talk and nothing settled.
-  const loose = '# Sync\n\nAttendees: A, B\n\n- We talked about onboarding.\n- Some think the form, some the empty state.\n- Ann will look at the numbers.\n- Is it the form? #question\n- More next week.\n';
+  const loose = '# Sync\n\nAttendees: A, B\n\n- We talked about onboarding.\n- Some think the form, some the empty state.\n- Ann will look at the numbers.\n- Is it the form? #question\n- That was all.\n';
   assert.deepEqual(meetingBrief(loose).needs.map((n) => n.key), ['decision', 'next', 'open']);
+  assert.deepEqual(meetingBrief(loose.replace('That was all.', 'We agreed: the form goes. Ann follows up next week.')).needs.map((n) => n.key), ['open'], 'decided and next, in words');
+  // A checklist: many to-dos with no date, said once.
+  const list = `# Launch meeting\n\n${[1, 2, 3, 4, 5, 6].map((i) => `- [ ] Step ${i}`).join('\n')}\n`;
+  const lb = meetingBrief(list);
+  assert.deepEqual(lb.flags, []);
+  assert.deepEqual(lb.needs.map((n) => n.say), ['6 to-dos with no date', 'No decision written down']);
 });
 
 test('a draft: placeholders, a long paragraph, empty sections; a plan: dates', () => {
