@@ -169,6 +169,7 @@ export class MarkdownEditor {
     this.notesCol = h('div', 'ed-notes');
     this.anchorCol = h('div', 'ed-anchors');
     this.el.append(this.curLine, this.findLayer, this.hlLayer, this.ta, this.anchorCol, this.notesCol, this.popup, this.findBar);
+    this.el.addEventListener('wheel', (e) => this._marginWheel(e), { passive: false });
 
     this.ta.addEventListener('input', (e) => this._changed(e));
     this.ta.addEventListener('beforeinput', (e) => {
@@ -530,7 +531,7 @@ export class MarkdownEditor {
     this.hlLayer.scrollTop = this.ta.scrollTop;
     this.findLayer.scrollTop = this.ta.scrollTop;
     if (this.lockLayer) this.lockLayer.scrollTop = this.ta.scrollTop;
-    this.notesCol.style.transform = `translateY(${-this.ta.scrollTop}px)`;
+    this.notesCol.style.transform = `translateY(${-this.ta.scrollTop - (this._marginOff || 0)}px)`;
     this.anchorCol.style.transform = `translateY(${-this.ta.scrollTop}px)`;
     if (!this.curLine.hidden) this.curLine.style.transform = `translateY(${-this.ta.scrollTop}px)`;
     this.onScroll();
@@ -768,7 +769,7 @@ export class MarkdownEditor {
   // place inside a line from that line alone: never the text up to it for
   // each card, which in a long note took seconds.
   _placeNotes() {
-    if (!this.notes.length || !this.el.isConnected) { this.anchorCol.replaceChildren(); return; }
+    if (!this.notes.length || !this.el.isConnected) { this.anchorCol.replaceChildren(); this._notesBelow = 0; this._marginBy(0); return; }
     const o = this._off;
     const v = this.ta.value;
     const lh = this.lineHeight();
@@ -814,8 +815,45 @@ export class MarkdownEditor {
       return bar;
     });
     this.anchorCol.replaceChildren(...bars.filter(Boolean));
+    // Cards that go on below where the text can scroll to: the margin
+    // scrolls on by itself (_marginBy).
+    this._notesBelow = Math.max(0, Math.ceil(y + 16 - this.ta.scrollHeight));
+    this._marginBy(this._marginOff || 0);
     this._anchorKey = '';
     this._anchors();
+  }
+
+  // How far the margin has scrolled on past the text's end (0 … _notesBelow):
+  // the wheel, once the text is at its end, moves the cards on.
+  _marginBy(px) {
+    const off = Math.max(0, Math.min(this._notesBelow || 0, px));
+    const moved = off !== (this._marginOff || 0);
+    this._marginOff = off;
+    this.notesCol.style.transform = `translateY(${-this.ta.scrollTop - off}px)`;
+    if (moved) { this._anchorKey = ''; this._anchors(); }
+  }
+  // A part of a card brought into view (the text scrolls, then the margin).
+  revealInMargin(el) {
+    const ta = this.ta;
+    let d = el.getBoundingClientRect().bottom + 12 - this.el.getBoundingClientRect().bottom;
+    if (d <= 0) return;
+    const can = Math.max(0, ta.scrollHeight - ta.clientHeight - ta.scrollTop);
+    if (can) { ta.scrollTop += Math.min(d, can); d -= Math.min(d, can); this._syncScroll(); }
+    if (d > 0) this._marginBy((this._marginOff || 0) + d);
+  }
+  _marginWheel(e) {
+    if (e.ctrlKey || Math.abs(e.deltaX) > Math.abs(e.deltaY)) return;
+    const ta = this.ta;
+    const atEnd = ta.scrollTop + ta.clientHeight >= ta.scrollHeight - 1;
+    const off = this._marginOff || 0;
+    if ((e.deltaY > 0 && atEnd && off < this._notesBelow) || (e.deltaY < 0 && off > 0)) {
+      e.preventDefault();
+      this._marginBy(off + e.deltaY);
+    } else if (this.notesCol.contains(e.target) && !e.target.closest('textarea')) {
+      // Over a card: the text scrolls, as it would beside it.
+      e.preventDefault();
+      ta.scrollTop += e.deltaY;
+    }
   }
 
   _padTop() { return parseFloat(getComputedStyle(this.ta).paddingTop) || 0; }
@@ -868,7 +906,7 @@ export class MarkdownEditor {
       const e = this._spot(n.at.end - o, true);
       const path = document.createElementNS(NS, 'path');
       const yy = e.top + e.height - 1;
-      path.setAttribute('d', `M${e.left + 2} ${yy}H${this._anchorRight}V${n.at.card + 10}H${x0}`);
+      path.setAttribute('d', `M${e.left + 2} ${yy}H${this._anchorRight}V${n.at.card + 10 - (this._marginOff || 0)}H${x0}`);
       if (n.at.color) path.style.setProperty('--a', n.at.color);
       svg.append(path);
     }

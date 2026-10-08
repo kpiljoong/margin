@@ -437,7 +437,7 @@ input[type=checkbox] { accent-color: var(--accent); }
 .dev-you { font: 12.5px/1.4 var(--sans); color: var(--fg); padding: 4px 6px; border-radius: 5px; background: color-mix(in srgb, var(--fg) 6%, transparent); overflow-wrap: anywhere; }
 .dev-you-who { font: 600 10.5px/1 var(--sans); text-transform: uppercase; letter-spacing: .05em; color: var(--fg-dim); margin-right: 6px; }
 .dev-grow { padding-left: 7px; border-left: 2px solid color-mix(in srgb, var(--r) 60%, transparent); }
-.dev-grow.k-dev-sharper { --r: var(--accent); } .dev-grow.k-dev-next { --r: var(--accent-2); }
+.dev-grow.k-dev-sharper { --r: var(--accent); } .dev-grow.k-dev-next { --r: var(--accent-2); } .dev-grow.k-dev-question { --r: var(--warn); }
 .dev-wait { display: flex; align-items: center; }
 .dev-none { font: 12px/1.4 var(--sans); color: var(--fg-faint); }
 .dev-error { font: 12px/1.4 var(--sans); color: var(--warn); overflow-wrap: anywhere; }

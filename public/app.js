@@ -8968,7 +8968,8 @@ async function devNear(tab, texts) {
 }
 // The paragraph a card is about now, or null (gone, changed, or not told apart).
 const devPara = (paras, x) => recallMod.paraAt(paras, x.spot);
-// Answering one of its questions: open, the draft, sent, what came back.
+// Answering one of its questions: each answer and what came of it (a turn),
+// the answers before going with the next one; a box for the next, empty.
 function devAnswer(tab, x) {
   const a = x.ans;
   if (a.busy) return; // one at a time (⌘↩ again while it is sent)
@@ -8977,13 +8978,14 @@ function devAnswer(tab, x) {
   if (!p || !a.draft.trim()) return;
   a.busy = true;
   a.error = null;
-  a.sent = a.draft.trim();
-  a.result = null;
+  a.sending = a.draft.trim();
   devRedraw(tab);
+  const before = a.turns.slice(-4).map((t) => ({ answer: t.answer, said: t.items.map((y) => ({ kind: y.kind, say: y.say })) }));
   api('POST', '/api/recall/develop', {
     path: tab.path, ...liveOpts(), thinkModel: S.settings.thinkModel === 'haiku' ? 'haiku' : 'sonnet',
-    followUp: { para: p.text, question: x.say, answer: a.sent }, refs: (x.refs || []).slice(0, 6).map((y) => ({ path: y.path, line: y.line })),
-  }).then((r) => { a.result = r.items; a.open = false; }, (e) => { a.error = e.message; }).finally(() => { a.busy = false; devRedraw(tab); });
+    followUp: { para: p.text, question: x.say, before, answer: a.sending }, refs: (x.refs || []).slice(0, 6).map((y) => ({ path: y.path, line: y.line })),
+  }).then((r) => { a.turns.push({ answer: a.sending, items: r.items }); a.sending = ''; a.draft = ''; a.open = false; }, (e) => { a.error = e.message; })
+    .finally(() => { a.busy = false; devRedraw(tab); });
 }
 // Drawn again (leaving the answer box: the margin waits while it is typed in).
 function devRedraw(tab) {
@@ -9032,20 +9034,23 @@ function devNotes(tab) {
     return { from: starts[at.line], to: starts[at.line], end: starts[at.last], el, noAnchor: !p };
   });
 }
-// Under a question: Answer, the box, what was sent and what came back.
+// Under a question: the turns (You: an answer, what came of it), the one
+// being sent, and Answer (or Reply, when it asked back) with an empty box.
 function devAnswerBox(tab, x, here) {
-  const a = (x.ans ||= { id: `q${++devAsked}`, open: false, draft: '', sent: '', busy: false, error: null, result: null });
+  const a = (x.ans ||= { id: `q${++devAsked}`, open: false, draft: '', sending: '', busy: false, error: null, turns: [] });
   const out = [];
-  if (a.sent && (a.result || a.busy || a.error)) out.push(h('div', { class: 'dev-you' }, h('span', { class: 'dev-you-who' }, 'You'), a.sent));
-  if (a.busy) out.push(h('div', { class: 'dev-wait' }, h('span', { class: 'recall-chip' }, 'Thinking'), h('span', { class: 'margin-dots' }, h('i'), h('i'), h('i'))));
-  if (a.result) {
-    out.push(...(a.result.length ? a.result.map((r) => h('div', { class: `dev-grow k-dev-${r.kind}` }, h('span', { class: 'recall-chip' }, DEV_CHIP[r.kind] || 'A note'), h('div', { class: 'recall-says whole' }, r.say)))
+  const you = (t) => h('div', { class: 'dev-you' }, h('span', { class: 'dev-you-who' }, 'You'), t);
+  for (const t of a.turns) {
+    out.push(you(t.answer));
+    out.push(...(t.items.length ? t.items.map((r) => h('div', { class: `dev-grow k-dev-${r.kind}` }, h('span', { class: 'recall-chip' }, r.kind === 'question' ? 'Asks back' : DEV_CHIP[r.kind] || 'A note'), h('div', { class: 'recall-says whole' }, r.say)))
       : [h('div', { class: 'dev-none' }, 'Nothing to add to that.')]));
   }
+  if (a.busy) out.push(you(a.sending), h('div', { class: 'dev-wait' }, h('span', { class: 'recall-chip' }, 'Thinking'), h('span', { class: 'margin-dots' }, h('i'), h('i'), h('i'))));
   if (a.error) out.push(h('div', { class: 'dev-error' }, a.error));
   if (!here) return out.length ? h('div', { class: 'dev-thread' }, out) : null;
+  const asked = a.turns.at(-1)?.items.some((r) => r.kind === 'question');
   if (a.open || a.error) {
-    const box = h('textarea', { class: 'dev-answer', 'data-q': a.id, rows: 3, placeholder: 'Your answer, in a sentence or two', oninput: (e) => { a.draft = e.target.value; },
+    const box = h('textarea', { class: 'dev-answer', 'data-q': a.id, rows: 3, placeholder: asked ? 'Your answer to what it asked' : a.turns.length ? 'More to your answer' : 'Your answer, in a sentence or two', oninput: (e) => { a.draft = e.target.value; },
       onkeydown: (e) => {
         e.stopPropagation();
         // Never while a Korean (IME) word is being composed: Enter and Esc finish it.
@@ -9063,10 +9068,16 @@ function devAnswerBox(tab, x, here) {
   } else if (!a.busy) {
     out.push(h('div', { class: 'dev-answer-row' }, h('button', { class: 'recall-ans', onclick: () => {
       a.open = true;
-      if (!a.draft && a.sent) a.draft = a.sent;
       devRedraw(tab);
-      requestAnimationFrame(() => { const el = document.querySelector(`.dev-answer[data-q="${a.id}"]`); el?.focus(); el?.setSelectionRange(el.value.length, el.value.length); });
-    } }, a.result ? 'Answer again' : 'Answer')));
+      requestAnimationFrame(() => {
+        const el = document.querySelector(`.dev-answer[data-q="${a.id}"]`);
+        if (!el) return;
+        el.focus({ preventScroll: true });
+        el.setSelectionRange(el.value.length, el.value.length);
+        // The box and its Send in view.
+        tab.editor.revealInMargin(el.parentElement.querySelector('.dev-answer-row') || el);
+      });
+    } }, asked ? 'Reply' : a.turns.length ? 'Add to your answer' : 'Answer')));
   }
   return h('div', { class: 'dev-thread' }, out);
 }

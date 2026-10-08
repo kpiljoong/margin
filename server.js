@@ -701,19 +701,23 @@ async function recallDevelop(b) {
   return developKeep(key, { items: r.items.map((x) => ({ kind: x.kind, line: paras[x.at].line, say: x.say, refs: x.from.map((n) => found[n - 1]).filter(Boolean).map(refOut) })) });
 }
 // One of its questions answered (in the margin): the paragraph, the
-// question, the answer and the notes the question came from. → { items:
-// [{ kind: 'sharper' | 'next', say, refs }] }. Kept by what was sent.
+// question, the answers before and what came of them, the answer and the
+// notes the question came from. → { items: [{ kind: 'sharper' | 'next' |
+// 'question', say, refs }] }. Kept by what was sent.
 async function recallFollowUp(b) {
   const { followUp: f, refs = [], lang } = b;
   const str = (x, n) => typeof x === 'string' && x.trim() && x.length <= n;
-  if (typeof b.path !== 'string' || !f || typeof f !== 'object' || !str(f.para, 4000) || !str(f.question, 1000) || !str(f.answer, 2000) || !validRefs(refs, 6)) throw httpError(400, 'path, followUp: { para, question, answer }, refs');
+  const turns = f?.before ?? [];
+  const okTurn = (t) => t && str(t.answer, 2000) && Array.isArray(t.said) && t.said.length <= 3 && t.said.every((x) => x && typeof x.kind === 'string' && x.kind.length <= 20 && str(x.say, 1000));
+  if (typeof b.path !== 'string' || !f || typeof f !== 'object' || !str(f.para, 4000) || !str(f.question, 1000) || !str(f.answer, 2000)
+    || !Array.isArray(turns) || turns.length > 4 || !turns.every(okTurn) || !validRefs(refs, 6)) throw httpError(400, 'path, followUp: { para, question, before: [{ answer, said }], answer }, refs');
   const { agent, env, read } = await recallSending(b, 'Developing a note');
   const model = developModel(b);
   developedCache ||= new Map(Object.entries(readJson(DEVELOPED_FILE, {})));
   const found = sameOnce(refs.map(read).filter(Boolean));
-  const req = { para: f.para.replace(/\s+/g, ' ').trim().slice(0, 1500), question: f.question.trim(), answer: f.answer.trim(), found };
+  const req = { para: f.para.replace(/\s+/g, ' ').trim().slice(0, 1500), question: f.question.trim(), before: turns.map((t) => ({ answer: t.answer.trim(), said: t.said.map((x) => ({ kind: x.kind, say: x.say })) })), answer: f.answer.trim(), found };
   req.lang = lang === 'ko' || lang === 'en' ? lang : textLang([req.para, req.answer]) || 'en';
-  const key = crypto.createHash('sha1').update(JSON.stringify(['f1', model, req.lang, req.para, req.question, req.answer, found.map((x) => [x.path, x.line, x.text])])).digest('hex');
+  const key = crypto.createHash('sha1').update(JSON.stringify(['f2', model, req.lang, req.para, req.question, req.before, req.answer, found.map((x) => [x.path, x.line, x.text])])).digest('hex');
   if (developedCache.has(key)) return developedCache.get(key);
   const r = await developerFor(agent, env, model).followUp(req);
   if (!r.ok) throw httpError(502, r.error || 'Claude did not answer.');

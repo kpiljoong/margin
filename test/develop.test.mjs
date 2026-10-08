@@ -44,8 +44,10 @@ test('parseReply: each kind no more than it may be, the paragraph it is about, a
 test('a follow-up: the paragraph, the question, their answer as theirs; no more than a sharper and a next', () => {
   assert.equal(followText({ para: 'Notes should change.', question: 'Which one thing first?', answer: 'Checking claims against what I wrote before.', lang: 'en', found: [{ name: 'Log', text: 'The sift agent.' }] }),
     'The paragraph:\nNotes should change.\n\nThe question asked:\nWhich one thing first?\n\nTheir answer (their own words):\nChecking claims against what I wrote before.\n\nFrom their other notes:\n[1] from "Log": The sift agent.\n\nAnswer in English.');
-  assert.deepEqual(parseReply('kind: sharper\nsay: A.\n---\nkind: question\nsay: B?\n---\nkind: next\nsay: C.\nfrom: 1\n---\nkind: next\nsay: D.', 1, 1, FOLLOW_KINDS).map((x) => [x.kind, x.say, x.from]),
-    [['sharper', 'A.', []], ['next', 'C.', [1]]]);
+  assert.deepEqual(parseReply('kind: sharper\nsay: A.\n---\nkind: question\nsay: B?\n---\nkind: question\nsay: B2?\n---\nkind: next\nsay: C.\nfrom: 1\n---\nkind: ground\nsay: D.', 1, 1, FOLLOW_KINDS).map((x) => [x.kind, x.say, x.from]),
+    [['sharper', 'A.', []], ['question', 'B?', []], ['next', 'C.', [1]]], 'it may ask one thing back');
+  assert.match(followText({ para: 'P.', question: 'Q?', before: [{ answer: 'First.', said: [{ kind: 'question', say: 'Which one?' }] }], answer: 'This one.' }),
+    /The question asked:\nQ\?\n\nBefore:\nThey answered: First\.\nYou said \(question\): Which one\?\n\nTheir answer \(their own words\):\nThis one\./);
 });
 
 test('paraAt: a card finds its paragraph only when it can tell which; never another one', () => {
@@ -131,6 +133,10 @@ test('the server: what it sends (never a private note), what it says by paragrap
   assert.deepEqual((await dev(fu)).items, f.items);
   assert.equal(sent().length, 2, 'kept');
   assert.equal((await dev({ ...fu, followUp: { ...fu.followUp, answer: ' ' } })).status, 400);
+  const again = await dev({ ...fu, followUp: { ...fu.followUp, before: [{ answer: 'Checking claims against what I wrote.', said: f.items.map((y) => ({ kind: y.kind, say: y.say })) }], answer: 'Mostly my own interviews.' } });
+  assert.equal(again.status, 200, again.error);
+  assert.match(sent()[2], /Before:\nThey answered: Checking claims/);
+  assert.equal((await dev({ ...fu, followUp: { ...fu.followUp, before: [{ answer: 'x', said: 'no' }] } })).status, 400);
   assert.equal((await dev({ ...fu, path: 'secret.md' })).status, 403);
   fs.writeFileSync(path.join(ws, 'mine.md'), '---\nprivate: true\n---\nMine.\n');
   assert.equal((await dev({ ...body, path: 'mine.md' })).status, 403);
