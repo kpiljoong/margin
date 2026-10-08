@@ -743,6 +743,14 @@ export class MarkdownEditor {
   // end): a bar beside them, and when it is pointed at or the caret is in
   // them, a dashed line under them to it — none for a note only placed
   // there (noAnchor: what it was about can't be found).
+  // A headline pinned at the top of the margin (Brief, Labs): it stays as
+  // the text scrolls; the cards begin below it. null: none.
+  setHeadline(el) {
+    if (this._head && this._head !== el) this._head.remove();
+    this._head = el || null;
+    if (el && el.parentNode !== this.el) { el.classList.add('ed-headline'); this.el.append(el); }
+  }
+
   setNotes(notes) {
     this.notes = notes;
     this.anchorOn = [];
@@ -756,7 +764,7 @@ export class MarkdownEditor {
     }
     // The live margin keeps its column from the start, and a note that has had
     // remembered cards keeps it: the text you write doesn't move as cards come and go.
-    this.el.classList.toggle('with-notes', notes.length > 0 || this.el.classList.contains('live') || this.el.classList.contains('keep-notes'));
+    this.el.classList.toggle('with-notes', notes.length > 0 || !!this._head || this.el.classList.contains('live') || this.el.classList.contains('keep-notes'));
     this.notesCol.replaceChildren(...notes.map((n) => n.el));
     this._renderFind();
     this._placeNotes();
@@ -798,7 +806,8 @@ export class MarkdownEditor {
     });
     const right = this.ta.offsetLeft + this.ta.clientWidth - (parseFloat(getComputedStyle(this.ta).paddingRight) || 0);
     this._anchorRight = right + 10;
-    let y = 0;
+    // Below the headline, when there is one.
+    let y = this._head ? this._head.offsetHeight + 12 : 0;
     const bars = shown.map((n, k) => {
       const { end, top: want, bottom } = spots[k];
       const top = Math.max(want, y);

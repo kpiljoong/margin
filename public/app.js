@@ -265,6 +265,9 @@ const DEFAULT_SETTINGS = {
   emacsKeys: false, fillColumn: 70,
   // Labs: off until turned on in Settings.
   labSteadyDraw: false, labWheelPans: false,
+  // Labs, Brief: a secretary in the margin of meeting notes, drafts and
+  // plans; and asking Claude by itself after a pause.
+  labBrief: false, labBriefAuto: false,
   // Labs, experimental views (LAB_VIEWS): out of the palette, the menus and
   // the review until turned on.
   labViews: false,
@@ -3174,6 +3177,7 @@ function onEdit(tab) {
   livePreview(tab);
   liveOutline();
   scheduleAutosave(tab);
+  briefEdited(tab);
   const dirtyNow = tab.content !== tab.saved;
   if (dirtyNow !== tab.wasDirty) { tab.wasDirty = dirtyNow; renderTabs(); }
   renderStatus();
@@ -3440,6 +3444,7 @@ const COMMANDS = [
   ['Lens: places that disagree (experimental)…', () => setTimeout(() => lensRun('conflict'), 0)],
   ['Lens: decisions and open questions (experimental)…', () => setTimeout(() => lensRun('decisions'), 0)],
   ['Forks: this paragraph, other ways (experimental)…', () => setTimeout(forkRun, 0)],
+  ['Brief: this note \u2014 a secretary in the margin: what to cover, what it still needs, what doesn\u2019t add up (experimental)', lab('Brief', () => setTimeout(() => briefNote(), 0)), { labs: true }],
   ['Gather: pieces of notes into one (experimental)', lab('Gather', () => setTimeout(gatherView, 0)), { labs: true }],
   ['Lock this paragraph (experimental)', () => setTimeout(toggleLock, 0)],
   ['Origin: where this note\u2019s paragraphs came from (experimental)', () => setTimeout(originView, 0)],
@@ -4054,7 +4059,9 @@ function openSettings({ keys = false, live = false } = {}) {
       h('div', { class: 'set-toggles' },
         toggle('labViews', 'Experimental views', `${LAB_VIEWS}. Off: out of the palette, the menus and the review (nothing is lost; a key of your own to one offers to turn them on).`, () => renderContent(S.focus)),
         toggle('labSteadyDraw', 'Steady live drawing', 'While you type in a ```flow block, keep the picture until the line is whole and you pause, so boxes don’t jump at every key.'),
-        toggle('labWheelPans', 'Canvas: the wheel moves', 'Scrolling or two fingers move the canvas; pinch or ⌘/Ctrl + wheel zooms. Off: the wheel zooms.')),
+        toggle('labWheelPans', 'Canvas: the wheel moves', 'Scrolling or two fingers move the canvas; pinch or ⌘/Ctrl + wheel zooms. Off: the wheel zooms.'),
+        toggle('labBrief', 'Brief: a secretary in the margin', 'In a meeting note (a draft, a plan, when its name or title says so), a headline at the top of the margin: what it has to cover and what the last meeting left, ticked as you write; beside the lines, a to-do with nobody or no date, a date past or twice. Rules only, nothing sent; Check with Claude (in the headline) adds what goes against what and what doesn’t follow. Needs Experimental views on.', () => redrawRecall()),
+        toggle('labBriefAuto', 'Brief: check with Claude by itself', `After you pause for ${BRIEF_PAUSE / 1000} seconds in a note it briefs, at most every ${BRIEF_EVERY / 60000} minutes, once you have checked a note with Claude yourself.`)),
       h('div', { class: 'set-label', id: 'set-keys' }, 'Keyboard shortcuts'),
       h('p', { class: 'set-detail' }, `The keys after the leader (${kbd('leader') || '⌥X'}) are yours to change too: in ${LEADER_FILE}, a note in this folder. `,
         h('button', { class: 'btn small', onclick: () => { close(); editLeaderKeys(); } }, 'Edit leader keys'), ' ',
@@ -8561,7 +8568,7 @@ function drawNotes(tab) {
   ed.setNotes([...tab.comments.filter((c) => !c.resolved || tab.showResolved).map((c) => {
     const at = anchorOf(text, c);
     return { from: at ? at[0] : 0, to: at ? at[1] : 0, el: noteCard(tab, c, !at), cur: tab.noteCur === c.id };
-  }), ...recalled, ...devNotes(tab), ...(live ? liveNotes(tab) : [])]);
+  }), ...recalled, ...devNotes(tab), ...briefNotes(tab), ...(live ? liveNotes(tab) : [])]);
   if (live) liveHudShow(tab);
   else tab.live?.hud?.remove();
 }
@@ -9080,6 +9087,214 @@ function devAnswerBox(tab, x, here) {
     } }, asked ? 'Reply' : a.turns.length ? 'Add to your answer' : 'Answer')));
   }
   return h('div', { class: 'dev-thread' }, out);
+}
+
+// ---- Brief (Labs; public/brief.js, lib/brief.js): the margin as a
+// secretary. In a meeting note (a draft, a plan), a headline pinned at the
+// top of the margin: what it has to cover (the agenda; what the last meeting
+// left: its open questions, its #next lines, its to-dos), each ticked once
+// the note speaks of it, and what the note as a whole still needs; beside
+// the lines, what rules see at once (a to-do with nobody or no date, a date
+// past or on a weekend, one to-do with two dates, here or in another note).
+// Check with Claude adds what rules can't see — what goes against what, in
+// the note or with another note, a step that doesn't follow, what this
+// meeting has to settle, a question whose answer (the reason for a
+// decision) would be lost; it goes by itself too, when chosen, after a
+// pause. Nothing is written in the note but an answer, by its button.
+let briefMod = null;
+const briefSt = new Map(); // path → { mode, items, busy, sig, at, off: Set, small, prev: { name, path, text } }
+const BRIEF_MODES = { meeting: 'Meeting', writing: 'Draft', plan: 'Plan' };
+const BRIEF_CHIP = { cover: 'To settle', point: 'The point', gap: 'Needs', conflict: 'Doesn’t add up', logic: 'Doesn’t follow', ask: 'Why?' };
+const briefOn = () => labsOn() && !!S.settings.labBrief;
+function briefState(tab) {
+  let st = briefSt.get(tab.path);
+  if (!st) { st = { mode: null, items: [], busy: false, sig: '', at: 0, off: new Set(), small: false, prev: null }; briefSt.set(tab.path, st); }
+  return st;
+}
+const briefMode = (tab, st) => (st.mode === 'off' ? null : st.mode || briefMod.modeOf(tab.path, tab.editor.value));
+// The last meeting's note ("Previous meeting: [[…]]"), read once.
+function briefPrev(tab, st, text) {
+  const name = meetMod?.previousOf?.(text) ?? (/^\s*(?:\*\*)?Previous meeting:?(?:\*\*)?:?\s*\[\[([^\]|#]+)/im.exec(text.split('\n').slice(0, 20).join('\n')) || [])[1]?.trim();
+  if (!name) return null;
+  if (st.prev?.name === name) return st.prev;
+  const p = resolveLink(name, tab.path);
+  st.prev = { name, path: p, text: '' };
+  if (p) api('GET', `/api/file?path=${encodeURIComponent(p)}`).then((r) => { st.prev.text = r.content || ''; if (tab.editor && isAttached(tab)) drawNotes(tab); }).catch(() => {});
+  return st.prev;
+}
+function briefRules(tab, st, mode) {
+  const text = tab.editor.value;
+  const prev = mode === 'meeting' ? briefPrev(tab, st, text) : null;
+  return briefMod.briefOf(mode, text, { path: tab.path, today: ymdOf(new Date()), prev: prev?.text || '', others: recallSt.index?.items || [] });
+}
+async function briefLoad() {
+  if (briefMod) return;
+  [briefMod] = await Promise.all([import('./brief.js'), recallMod ? null : import('./recall.js').then((m) => { recallMod ||= m; })]);
+  for (const t of S.tabs) if (t.editor && t.comments && isAttached(t)) drawNotes(t);
+}
+// Check with Claude: the note, its last meeting, the paragraphs of other
+// notes near it, and what the rules said (not to be said again).
+async function briefCheck(tab = activeTab(), { auto = false } = {}) {
+  if (!tab?.editor || !isNote(tab.path)) { if (!auto) toast('Open a note to brief.'); return; }
+  await briefLoad();
+  const st = briefState(tab);
+  if (st.busy) return;
+  const mode = briefMode(tab, st) || (auto ? null : 'meeting');
+  if (!mode) return;
+  if (!store.getItem('an.briefOk')) {
+    if (auto) return;
+    if (!(await askConfirm('Brief sends this note (up to 8,000 characters), the last meeting’s note it names, and up to twelve paragraphs of other notes near it to Claude, through the Claude Code agent you signed in to, and shows what it finds beside the note. A private note, or one .agentnotesignore names, is never sent.', { okLabel: 'Check' }))) return;
+    store.setItem('an.briefOk', '1');
+  }
+  if (!st.mode) st.mode = mode;
+  const text = tab.editor.value;
+  st.busy = true;
+  st.sig = text;
+  st.at = Date.now();
+  drawNotes(tab);
+  try {
+    if (!recallSt.index) { recallSt.at = 0; recallFresh(); await recallSt.loading; }
+    const paras = recallMod.parasOf(text);
+    const rules = briefRules(tab, st, mode);
+    const noted = [...rules.flags.map((f) => `${text.split('\n')[f.line].trim().slice(0, 200)} — ${f.say}`), ...rules.needs.map((n) => n.say), ...rules.cover.filter((c) => c.from === 'last').map((c) => `From last time${c.done ? ' (covered)' : ''}: ${c.text}`)].slice(0, 30).map((x) => x.slice(0, 400));
+    const refs = await devNear(tab, paras.filter((p) => recallMod.paraWorthy(p.text)).slice(0, 40).map((p) => p.text));
+    const now = new Date();
+    const r = await api('POST', '/api/lab/brief', {
+      path: tab.path, text, mode, refs, noted, prev: st.prev?.path ? { path: st.prev.path } : null, ...liveOpts(),
+      thinkModel: S.settings.thinkModel === 'haiku' ? 'haiku' : 'sonnet', today: `${ymdOf(now)} (${now.toLocaleDateString('en-US', { weekday: 'short' })})`,
+    });
+    st.items = r.items.map((x) => {
+      const i = paras.findIndex((p) => p.line === x.line);
+      return { ...x, key: `${x.kind}|${x.say}`, spot: i >= 0 ? recallMod.spotOf(paras, i) : null };
+    });
+    if (!auto && !st.items.length) toast('Claude found nothing to add for now.');
+  } catch (e) {
+    if (!auto) toast(e.message, 'error');
+  }
+  st.busy = false;
+  if (tab.editor && isAttached(tab)) drawNotes(tab);
+}
+// Typing: the headline and the rules' cards follow (after a moment).
+function briefEdited(tab) {
+  if (!briefOn() || !tab.editor || !isNote(tab.path)) return;
+  clearTimeout(tab.briefDraw);
+  tab.briefDraw = setTimeout(() => { if (tab.editor && isAttached(tab)) drawNotes(tab); }, 800);
+  briefTyped(tab);
+}
+// By itself (Settings → Labs): after a pause of BRIEF_PAUSE in a note it
+// briefs, when the note changed since, no more than once in BRIEF_EVERY.
+const BRIEF_PAUSE = 25000;
+const BRIEF_EVERY = 120000;
+function briefTyped(tab) {
+  if (!briefOn() || !S.settings.labBriefAuto || !tab?.editor) return;
+  clearTimeout(tab.briefLater);
+  tab.briefLater = setTimeout(() => {
+    const st = briefSt.get(tab.path);
+    if (!st || !briefMod || !briefMode(tab, st) || st.busy || st.sig === tab.editor.value || !isAttached(tab)) return;
+    if (Date.now() - st.at < BRIEF_EVERY) { briefTyped(tab); return; }
+    briefCheck(tab, { auto: true });
+  }, BRIEF_PAUSE);
+}
+// The headline (pinned at the top of the margin) and the cards beside lines.
+function briefNotes(tab) {
+  if (!briefOn() || !isNote(tab.path)) { tab.editor?.setHeadline(null); return []; }
+  if (!briefMod) { briefLoad(); return []; }
+  const st = briefState(tab);
+  const mode = briefMode(tab, st);
+  if (!mode) { tab.editor.setHeadline(null); return []; }
+  const text = tab.editor.value;
+  const rules = briefRules(tab, st, mode);
+  const starts = [0];
+  for (let i = text.indexOf('\n'); i >= 0; i = text.indexOf('\n', i + 1)) starts.push(i + 1);
+  const paras = recallMod.parasOf(text);
+  const llm = st.items.filter((x) => !st.off.has(x.key)).map((x) => ({ ...x, p: recallMod.paraAt(paras, x.spot) }));
+  tab.editor.setHeadline(briefHead(tab, st, mode, rules, llm.filter((x) => x.kind === 'cover' || x.kind === 'point')));
+  const gone = (key) => () => { st.off.add(key); drawNotes(tab); };
+  const card = (kind, say, key, refs, extra) => h('div', { class: `mnote recall k-brief k-brief-${kind}` },
+    h('div', { class: 'mnote-head' }, h('span', { class: 'recall-chip' }, BRIEF_CHIP[kind] || 'Brief'), h('span', { class: 'grow' }),
+      h('button', { class: 'mnote-btn', title: 'Let this one go', onclick: gone(key) }, '×')),
+    h('div', { class: 'recall-says whole' }, say),
+    refs?.length ? h('div', { class: 'recall-refs' }, refs.map((y) => recallRef(recallSt.index?.paras?.byNote?.get(y.path)?.paras.find((z) => z.line === y.line) || y))) : null,
+    extra || null);
+  const out = rules.flags.filter((f) => !st.off.has(f.key)).map((f) => ({ from: starts[f.line], to: starts[f.line], end: starts[f.line], el: card(f.kind, f.say, f.key, f.refs) }));
+  for (const x of llm) {
+    if (x.kind === 'cover' || x.kind === 'point') continue;
+    const at = x.p || paras[0] || { line: 0, last: 0 };
+    out.push({ from: starts[at.line], to: starts[at.line], end: starts[at.last], noAnchor: !x.p, el: card(x.kind, x.say, x.key, x.refs, x.kind === 'ask' && x.p ? briefAnswer(tab, st, x) : null) });
+  }
+  return out;
+}
+// Why? answered: a line under the paragraph, in their words (by its button).
+function briefAnswer(tab, st, x) {
+  const a = (x.ansSt = st.answers?.get(x.key)) || ((st.answers ||= new Map()).set(x.key, { open: false, draft: '' }).get(x.key));
+  if (!a.open) return h('div', { class: 'dev-answer-row' }, h('button', { class: 'recall-ans', onclick: () => { a.open = true; drawNotes(tab); requestAnimationFrame(() => { const el = document.querySelector(`.dev-answer[data-b="${CSS.escape(x.key)}"]`); el?.focus({ preventScroll: true }); if (el) tab.editor.revealInMargin(el); }); } }, 'Answer'));
+  const put = () => {
+    const v = a.draft.trim();
+    if (!v) return;
+    const text = tab.editor.value;
+    const p = recallMod.paraAt(recallMod.parasOf(text), x.spot);
+    if (!p) { toast('That paragraph changed.'); return; }
+    const lines = text.split('\n');
+    const indent = (/^(\s*)[-*+]\s/.exec(lines[p.last]) || [])[1];
+    const line = indent != null ? `${indent}  - ${v}` : `${v}`;
+    const at = lines.slice(0, p.last + 1).join('\n').length;
+    tab.editor.replace(at, at, `\n${line}`);
+    st.off.add(x.key);
+    a.open = false;
+    devRedraw(tab);
+  };
+  const box = h('textarea', { class: 'dev-answer', 'data-b': x.key, rows: 2, placeholder: 'The reason, in a line: it goes under the paragraph', oninput: (e) => { a.draft = e.target.value; },
+    onkeydown: (e) => {
+      e.stopPropagation();
+      if (e.isComposing || e.keyCode === 229) return;
+      if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) { e.preventDefault(); put(); } else if (e.key === 'Escape') { e.preventDefault(); a.open = false; devRedraw(tab); }
+    } });
+  box.value = a.draft;
+  return h('div', { class: 'dev-thread' }, box, h('div', { class: 'dev-answer-row' }, h('span', { class: 'dev-note' }, 'Goes into the note, under it.'), h('span', { class: 'grow' }),
+    h('button', { class: 'recall-ans quiet', onclick: () => { a.open = false; devRedraw(tab); } }, 'Cancel'), h('button', { class: 'recall-ans', onclick: put }, 'Put it in')));
+}
+function briefHead(tab, st, mode, rules, heads) {
+  const cover = rules.cover;
+  const go = (line) => () => { if (line != null) { tab.editor.gotoLine(line + 1); tab.editor.focus(); } };
+  const nextMode = () => { const order = ['meeting', 'writing', 'plan', 'off']; st.mode = order[(order.indexOf(mode) + 1) % order.length]; st.items = []; drawNotes(tab); if (st.mode === 'off') toast('Brief is off for this note (Brief: this note, to bring it back).'); };
+  const head = h('div', { class: 'brief-top' },
+    h('button', { class: 'brief-mode', title: 'What kind of note this is (click: another)', onclick: nextMode }, `Brief · ${BRIEF_MODES[mode]}`),
+    h('span', { class: 'grow' }),
+    st.busy ? h('span', { class: 'margin-dots', title: 'Claude is reading this note' }, h('i'), h('i'), h('i'))
+      : h('button', { class: 'recall-ans', title: `${st.items.length ? 'Again: ' : ''}what rules can’t see — what goes against what, a step that doesn’t follow, what to settle (Claude)`, onclick: () => briefCheck(tab) }, st.items.length ? 'Check again' : 'Check'),
+    h('button', { class: 'mnote-btn', title: st.small ? 'Show' : 'Fold', onclick: () => { st.small = !st.small; drawNotes(tab); } }, st.small ? '▾' : '▴'));
+  if (st.small) return h('div', { class: 'brief small' }, head);
+  // What the last meeting left, put at the end of this note (as it was: a question, a to-do, a topic).
+  const carry = (c) => (e) => {
+    e.stopPropagation();
+    const line = c.kind === 'question' ? `- ${c.text} #question` : c.kind === 'todo' ? `- [ ] ${c.text}${c.owner ? ` @${c.owner}` : ''}${c.due ? ` \u{1F4C5} ${c.due}` : ''}` : `- ${c.text}`;
+    const v = tab.editor.value;
+    const tail = v.replace(/\s*$/, '');
+    tab.editor.replace(tail.length, v.length, `\n${line}\n`);
+    drawNotes(tab);
+  };
+  const row = (c) => h('div', { class: `brief-item${c.done ? ' done' : ''} b-${c.from}`, title: c.from === 'last' ? `From ${st.prev?.name || 'the last meeting'}` : '',
+    onclick: c.from === 'last' ? () => st.prev?.path && openAt(st.prev.path, c.text) : go(c.line) },
+  h('span', { class: 'brief-box' }, c.done ? '✓' : ''), h('span', { class: 'brief-text' }, c.text), c.owner ? h('span', { class: 'brief-who' }, `@${c.owner}`) : null, c.due ? h('span', { class: 'm-due' }, c.due.slice(5)) : null,
+  c.from === 'last' && !c.done ? h('button', { class: 'brief-carry', title: 'Put it at the end of this note', onclick: carry(c) }, '+ here') : null);
+  const mine = cover.filter((c) => c.from !== 'last');
+  const last = cover.filter((c) => c.from === 'last');
+  const of = (list) => (list.length ? ` · ${list.filter((c) => c.done).length} of ${list.length}` : '');
+  return h('div', { class: 'brief' }, head,
+    heads.length ? h('div', { class: 'brief-heads' }, heads.map((x) => h('button', { class: `brief-head k-brief-${x.kind}`, onclick: go(x.p?.line) }, h('span', { class: 'recall-chip' }, BRIEF_CHIP[x.kind]), h('span', {}, x.say)))) : null,
+    mine.length ? h('div', { class: 'brief-sec' }, h('div', { class: 'brief-label' }, `${mode === 'meeting' ? 'To cover' : 'Outline'}${of(mine)}`), mine.map(row)) : null,
+    last.length ? h('div', { class: 'brief-sec' }, h('div', { class: 'brief-label', title: st.prev?.name || '' }, `From last time${of(last)}`), last.map(row)) : null,
+    rules.needs.length ? h('div', { class: 'brief-needs' }, h('span', { class: 'brief-label' }, 'Still needs'), rules.needs.map((n) => h('span', { class: 'brief-need' }, n.say))) : null);
+}
+// The command: brief this note (as what it seems to be, or a meeting), and check it with Claude.
+async function briefNote(tab = activeTab()) {
+  if (!tab?.editor || !isNote(tab.path)) { toast('Open a note to brief.'); return; }
+  if (!S.settings.labBrief) setSetting('labBrief', true);
+  await briefLoad();
+  const st = briefState(tab);
+  if (st.mode === 'off' || !briefMode(tab, st)) st.mode = 'meeting';
+  drawNotes(tab);
+  briefCheck(tab);
 }
 
 // Settings: where the model is (download, reading the notes, ready), and its buttons.

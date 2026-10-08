@@ -1,0 +1,165 @@
+// node --test (npm test): Brief, Labs (public/brief.js, lib/brief.js,
+// server.js /api/lab/brief).
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import { spawn } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
+import { createRequire } from 'node:module';
+
+import { modeOf, meetingBrief, carriedOver, writingBrief, briefOf, dateOfName } from '../public/brief.js';
+
+const require = createRequire(import.meta.url);
+const { requestText, parseReply, systemOf } = require('../lib/brief.js');
+const ROOT = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+test('what kind of note: a meeting, a draft, a plan, or none', () => {
+  assert.equal(modeOf('Weekly 2026-10-08.md', '# Weekly\n\n- notes\n'), 'meeting');
+  assert.equal(modeOf('x.md', '# Sync\n\nAttendees: Ann, Bo\n'), 'meeting');
+  assert.equal(modeOf('x.md', '# X\n\n## Status (5m)\n- fine\n'), 'meeting');
+  assert.equal(modeOf('x.md', '# X\n\n- We ship #decision\n- Beta? #question\n'), 'meeting');
+  assert.equal(modeOf('\uC8FC\uAC04 \uD68C\uC758.md', '# a\n'), 'meeting');
+  assert.equal(modeOf('blog/why notes fail.md', '# Why notes fail\n\nText.\n'), 'writing');
+  assert.equal(modeOf('x.md', '---\ntype: blog post\n---\n# X\n'), 'writing');
+  assert.equal(modeOf('Q4 plan.md', '# Q4\n'), 'plan');
+  assert.equal(modeOf('groceries.md', '# Groceries\n\n- milk\n'), null);
+  assert.equal(dateOfName('a/Weekly 2026-10-05.md'), '2026-10-05');
+});
+
+test('a meeting: its agenda covered as it is written, what the last one left, what still needs settling', () => {
+  const text = [
+    '# Weekly 2026-10-08', '', 'Attendees: Ann, Bo', '',
+    '## Launch (10m)',
+    '- We ship on Friday #decision',
+    '- [ ] Submit to the store @bo \u{1F4C5} 2026-10-10',
+    '- [ ] Write the release notes \u{1F4C5} 2026-10-12',
+    '- [ ] Write release notes for the launch @ann \u{1F4C5} 2026-10-14',
+    '- [ ] Book the room @ann \u{1F4C5} 2026-10-01',
+    '- [ ] Call the printer @ann',
+    '', '## Pricing (10m)', '',
+  ].join('\n');
+  const prev = '# Weekly 2026-10-01\n- Do we need a beta first? #question\n- [ ] Draft the store text @bo\n- [x] Old thing\n- The offer range #next\n';
+  const others = [{ path: 'Roadmap.md', name: 'Roadmap', line: 3, raw: '- [ ] Submit app to the store \u{1F4C5} 2026-10-20', text: 'Submit app to the store', done: false }];
+  const b = meetingBrief(text, { path: 'Weekly 2026-10-08.md', today: '2026-10-08', prev, others });
+  assert.deepEqual(b.cover.filter((c) => c.from === 'agenda').map((c) => [c.text, c.done]), [['Launch', true], ['Pricing', false]]);
+  assert.deepEqual(b.cover.filter((c) => c.from === 'last').map((c) => [c.kind, c.text, c.done]), [['question', 'Do we need a beta first?', false], ['todo', 'Draft the store text', false], ['next', 'The offer range', false]]);
+  const said = b.flags.map((f) => `${f.kind} ${f.line} ${f.say}`);
+  assert.ok(said.includes('gap 7 Who does it? No one is on this to-do.'), said.join('\n'));
+  assert.ok(said.includes('gap 10 By when? This to-do has no date.'));
+  assert.ok(said.some((s) => /^conflict 9 Its date, 2026-10-01, is before the meeting/.test(s)));
+  assert.ok(said.includes('conflict 6 2026-10-10 is a Saturday.'));
+  assert.ok(said.some((s) => /^conflict 8 The same to-do is due 2026-10-12 a few lines up, 2026-10-14 here/.test(s)), 'one to-do, two dates');
+  const there = b.flags.find((f) => f.key.startsWith('elsewhere|'));
+  assert.equal(there.line, 6);
+  assert.match(there.say, /In Roadmap the same to-do is due 2026-10-20/);
+  assert.deepEqual(there.refs, [{ path: 'Roadmap.md', line: 3, name: 'Roadmap', raw: others[0].raw }]);
+  assert.deepEqual(b.needs.map((n) => n.key), []);
+  // Covered once spoken of; a to-do once it is here, ticked.
+  const later = carriedOver(prev, `${text}\n- A beta first: we need one for two weeks #decision\n- [x] Draft the store text @bo\n`);
+  assert.deepEqual(later.map((c) => c.done), [true, true, false]);
+  // A meeting with talk and nothing settled.
+  const loose = '# Sync\n\nAttendees: A, B\n\n- We talked about onboarding.\n- Some think the form, some the empty state.\n- Ann will look at the numbers.\n- Is it the form? #question\n- More next week.\n';
+  assert.deepEqual(meetingBrief(loose).needs.map((n) => n.key), ['decision', 'next', 'open']);
+});
+
+test('a draft: placeholders, a long paragraph, empty sections; a plan: dates', () => {
+  const draft = `# Why\n\n## Start\n\nIt began TODO.\n\n${'word '.repeat(200)}\n\n## Middle\n\n## End\n\nDone.\n`;
+  const w = writingBrief(draft);
+  assert.deepEqual(w.flags.map((f) => [f.line, f.say.slice(0, 20)]), [[4, 'Still to write: a pl'], [6, 'A long paragraph (20']]);
+  assert.deepEqual(w.cover.map((c) => [c.text, c.done]), [['Start', true], ['Middle', false], ['End', true]]);
+  assert.deepEqual(w.needs.map((n) => n.key), []);
+  const p = briefOf('plan', '# Plan\n\n## Build\n- [ ] Ship it \u{1F4C5} 2026-10-11\n- [ ] Test it\n', { today: '2026-10-08' });
+  assert.deepEqual(p.flags.map((f) => f.key), ['weekend|Ship it', 'due|Test it']);
+  assert.equal(briefOf(null, 'x'), null);
+});
+
+test('what goes to Claude, and what comes back', () => {
+  const msg = requestText({ mode: 'meeting', paras: ['We ship Friday.', 'Price 9,900.'], today: '2026-10-08 (Thu)', lang: 'ko', last: { name: 'Weekly 2026-10-01', text: '- Beta? #question' }, noted: ['No summary'], found: [{ name: 'Pricing', date: '2026-09-20', text: 'Annual only.' }] });
+  assert.match(msg, /^Today: 2026-10-08 \(Thu\)\n\nCalendar: this week: Fri 2026-10-09/);
+  assert.match(msg, /The meeting note:\nP1\. We ship Friday\.\nP2\. Price 9,900\./);
+  assert.match(msg, /The last meeting's note \(L\), "Weekly 2026-10-01":\n- Beta\? #question/);
+  assert.match(msg, /\[1\] from "Pricing" \(2026-09-20\): Annual only\./);
+  assert.match(msg, /Already noted \(don't repeat\):\n- No summary/);
+  assert.match(msg, /Korean/);
+  assert.doesNotMatch(requestText({ mode: 'writing', paras: ['x'], today: '2026-10-08' }), /Calendar|L\)/);
+  assert.match(systemOf('plan'), /premise the plan rests on/);
+  const items = parseReply([
+    'kind: conflict', 'at: P2', 'say: P2\uB294 [1]\uC5D0\uC11C \uC815\uD55C \uAC83\uACFC \uB2E4\uB984', 'from: 1, 7', '---',
+    'kind: conflict', 'say: "Quoted whole."', '---',
+    'kind: conflict', 'say: "One" and "two" differ.', '---',
+    'kind: conflict', 'say: A fourth.', '---',
+    'kind: point', 'say: Not a meeting kind.', '---',
+    'kind: ask', 'at: P9', 'say: Why Friday?',
+  ].join('\n'), 'meeting', 2, 1);
+  assert.deepEqual(items, [
+    { kind: 'conflict', at: 1, say: '\uC815\uD55C \uAC83\uACFC \uB2E4\uB984', from: [1] },
+    { kind: 'conflict', at: 0, say: 'Quoted whole.', from: [] },
+    { kind: 'conflict', at: 0, say: '"One" and "two" differ.', from: [] },
+    { kind: 'ask', at: 0, say: 'Why Friday?', from: [] },
+  ]);
+  assert.deepEqual(parseReply('kind: none'), []);
+});
+
+// A stand-in for the claude CLI: a conflict on P2 from [1] and an ask.
+const FAKE = `#!/usr/bin/env node
+const fs = require('fs');
+let buf = '';
+process.stdin.on('data', (d) => {
+  buf += d;
+  for (let i; (i = buf.indexOf('\\n')) >= 0;) {
+    const j = JSON.parse(buf.slice(0, i)); buf = buf.slice(i + 1);
+    if (j.type !== 'user') continue;
+    fs.appendFileSync(process.env.FAKE_LOG, JSON.stringify(j.message.content) + '\\n');
+    const text = 'kind: conflict\\nat: P2\\nsay: Decided otherwise before.\\nfrom: 1\\n---\\nkind: ask\\nat: P2\\nsay: Why Friday?';
+    const out = (o) => process.stdout.write(JSON.stringify(o) + '\\n');
+    out({ type: 'stream_event', event: { type: 'content_block_delta', delta: { text } } });
+    out({ type: 'result', subtype: 'success', total_cost_usd: 0.001, usage: { input_tokens: 10, output_tokens: 3 } });
+  }
+});
+`;
+
+test('the server: the note, its last meeting and the notes near it (never a private one), kept', { skip: process.platform === 'win32' }, async (t) => {
+  const ws = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'margin-brief-test-')));
+  const bin = fs.mkdtempSync(path.join(os.tmpdir(), 'margin-brief-bin-'));
+  t.after(() => { for (const d of [ws, bin]) fs.rmSync(d, { recursive: true, force: true }); });
+  fs.writeFileSync(path.join(bin, 'claude'), FAKE, { mode: 0o755 });
+  const log = path.join(bin, 'log');
+  const note = '# Weekly 2026-10-08\n\nPrevious meeting: [[Weekly 2026-10-01]]\n\n- We ship on Friday #decision\n';
+  fs.writeFileSync(path.join(ws, 'Weekly 2026-10-08.md'), note);
+  fs.writeFileSync(path.join(ws, 'Weekly 2026-10-01.md'), '# Weekly 2026-10-01\n\n- Beta first? #question\n');
+  fs.writeFileSync(path.join(ws, 'Roadmap 2026-09-28.md'), '# Roadmap\n\nWe ship on the 24th, after the beta.\n');
+  fs.writeFileSync(path.join(ws, 'secret.md'), '---\nprivate: true\n---\nThe secret plan.\n');
+  const proc = spawn(process.execPath, [path.join(ROOT, 'server.js'), ws, '--port', String(20000 + Math.floor(Math.random() * 20000)), '--no-open', '--agent', path.join(bin, 'claude')], { env: { ...process.env, FAKE_LOG: log }, stdio: ['ignore', 'pipe', 'pipe'] });
+  t.after(() => proc.kill());
+  let out = '';
+  proc.stdout.on('data', (d) => { out += d; });
+  for (let i = 0; i < 100 && !/\?t=\w+/.test(out); i++) await sleep(100);
+  const m = /http:\/\/127\.0\.0\.1:(\d+)\/\?t=(\w+)/.exec(out);
+  assert.ok(m, `the server started: ${out}`);
+  const brief = async (body) => {
+    const r = await fetch(`http://127.0.0.1:${m[1]}/api/lab/brief`, { method: 'POST', headers: { 'x-agent-notes-token': m[2], 'content-type': 'application/json' }, body: JSON.stringify(body) });
+    return { status: r.status, ...(await r.json()) };
+  };
+  const body = { path: 'Weekly 2026-10-08.md', text: note, mode: 'meeting', today: '2026-10-08 (Thu)', noted: ['No summary'], prev: { path: 'Weekly 2026-10-01.md' }, refs: [{ path: 'Roadmap 2026-09-28.md', line: 2 }, { path: 'secret.md', line: 3 }] };
+  const r = await brief(body);
+  assert.equal(r.status, 200, r.error);
+  assert.deepEqual(r.items, [
+    { kind: 'conflict', line: 4, say: 'Decided otherwise before.', refs: [{ path: 'Roadmap 2026-09-28.md', line: 2, name: 'Roadmap 2026-09-28', raw: 'We ship on the 24th, after the beta.' }] },
+    { kind: 'ask', line: 4, say: 'Why Friday?', refs: [] },
+  ]);
+  const sent = () => fs.readFileSync(log, 'utf8').trim().split('\n').map((l) => JSON.parse(l));
+  assert.match(sent()[0], /The last meeting's note \(L\), "Weekly 2026-10-01":\n# Weekly 2026-10-01/);
+  assert.match(sent()[0], /\[1\] from "Roadmap 2026-09-28" \(2026-09-28\): We ship on the 24th/);
+  assert.doesNotMatch(sent()[0], /secret/);
+  assert.deepEqual((await brief(body)).items, r.items, 'kept');
+  assert.equal(sent().length, 1);
+  // The last meeting's note when it is private: not sent.
+  const r2 = await brief({ ...body, prev: { path: 'secret.md' } });
+  assert.equal(r2.status, 200);
+  assert.doesNotMatch(sent()[1], /secret|last meeting/);
+  assert.equal((await brief({ ...body, mode: 'novel' })).status, 400);
+  assert.equal((await brief({ ...body, path: 'secret.md' })).status, 403);
+});

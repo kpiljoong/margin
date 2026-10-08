@@ -22,6 +22,7 @@ const { createEmbed } = require('./lib/embed');
 const { judgeMargin } = require('./lib/judge');
 const { thinkMargin } = require('./lib/think');
 const { developMargin } = require('./lib/develop');
+const { briefMargin } = require('./lib/brief');
 
 const APP_DIR = __dirname;
 const PUBLIC_DIR = path.join(APP_DIR, 'public');
@@ -742,6 +743,62 @@ const refOut = ({ path: p, line, name, raw }) => ({ path: p, line, name, raw });
 function sameOnce(found) {
   const seen = new Set();
   return found.filter((f) => { const k = f.text.replace(/\s+/g, ' ').trim().toLowerCase(); if (seen.has(k)) return false; seen.add(k); return true; });
+}
+
+// Brief (Labs; lib/brief.js, public/brief.js): a meeting note, a draft or a
+// plan, its last meeting's note ({ path }: read here, never a private or
+// ignored one), the paragraphs of other notes the page found near it, and
+// what the page's rules already flagged, to the thinks-along model.
+// → { items: [{ kind, line, say, refs }] }. Kept by what was sent
+// (.agent-notes/briefed.json).
+let briefer = null;
+let brieferModel = '';
+let briefedCache = null;
+const BRIEFED_FILE = path.join(DATA_DIR, 'briefed.json');
+async function labBrief(b) {
+  const { path: rel, text, mode, refs = [], noted = [], prev = null, today = '', lang } = b;
+  if (typeof rel !== 'string' || typeof text !== 'string' || !text.trim() || text.length > 200000 || !['meeting', 'writing', 'plan'].includes(mode)
+    || !validRefs(refs, 12) || !Array.isArray(noted) || noted.length > 30 || !noted.every((x) => typeof x === 'string' && x.length <= 400)
+    || (prev != null && typeof prev?.path !== 'string') || typeof today !== 'string' || today.length > 40) throw httpError(400, 'path, text, mode, refs, noted, prev: { path }, today');
+  const { agent, env, read } = await recallSending(b, 'Brief');
+  const model = developModel(b);
+  briefedCache ||= new Map(Object.entries(readJson(BRIEFED_FILE, {})));
+  const paras = [];
+  let size = 0;
+  for (const p of recallEsm.parasOf(text)) {
+    const t = p.text.replace(/\s+/g, ' ').trim().slice(0, 1200);
+    if (!t || size + t.length > 8000) break;
+    paras.push({ line: p.line, text: t });
+    size += t.length;
+  }
+  if (!paras.length) throw httpError(400, 'The note has nothing in it yet.');
+  const dated = (f) => (/\d{4}-\d{2}-\d{2}/.exec(f.name) || [])[0] || (() => { try { return new Date(fs.statSync(path.join(ROOT, f.path)).mtimeMs).toISOString().slice(0, 10); } catch { return ''; } })();
+  const found = sameOnce(refs.map(read).filter(Boolean)).map((f) => ({ ...f, date: dated(f) }));
+  let last = null;
+  if (prev) {
+    let a = null;
+    try { a = workspacePath(prev.path); } catch { /* none */ }
+    const f = a && relOf(a);
+    if (f && NOTE_EXT.has(extOf(a)) && !loadIgnore(ROOT)(f) && f !== relOf(workspacePath(rel)) && fs.existsSync(a) && !isPrivateNote(a)) {
+      const c = cachedText(f);
+      if (c) last = { name: path.basename(f).replace(/\.[^.]+$/, ''), text: c.text.slice(0, 4000) };
+    }
+  }
+  const want = lang === 'ko' || lang === 'en' ? lang : textLang(paras.map((p) => p.text)) || 'en';
+  const req = { mode, paras: paras.map((p) => p.text), today, lang: want, last, noted, found };
+  const key = crypto.createHash('sha1').update(JSON.stringify(['b1', model, mode, want, today.slice(0, 10), req.paras, last, noted, found.map((f) => [f.path, f.line, f.text])])).digest('hex');
+  if (briefedCache.has(key)) return briefedCache.get(key);
+  if (brieferModel !== model) { briefer?.stop(); briefer = null; }
+  brieferModel = model;
+  briefer ||= briefMargin({ bin: liveBin(agent), env, opts: { ...liveOpts, model, effort: '' } });
+  const r = await briefer.brief(req);
+  if (!r.ok) throw httpError(502, r.error || 'Claude did not answer.');
+  const out = { items: r.items.map((x) => ({ kind: x.kind, line: paras[x.at].line, say: x.say, refs: x.from.map((n) => found[n - 1]).filter(Boolean).map(refOut) })) };
+  briefedCache.set(key, out);
+  while (briefedCache.size > DEVELOPED_MAX) briefedCache.delete(briefedCache.keys().next().value);
+  ensureDataDir();
+  writeFileAtomic(BRIEFED_FILE, JSON.stringify(Object.fromEntries(briefedCache)));
+  return out;
 }
 
 // An answer to one of the margin's questions: a line at the end of KNOWN.md
@@ -2553,6 +2610,7 @@ async function routeApi(method, url, body) {
   if (method === 'POST' && p === '/api/recall/judge') return recallJudge(body || {});
   if (method === 'POST' && p === '/api/recall/think') return recallThink(body || {});
   if (method === 'POST' && p === '/api/recall/develop') return recallDevelop(body || {});
+  if (method === 'POST' && p === '/api/lab/brief') return labBrief(body || {});
   if (method === 'GET' && p === '/api/embed') return embedStatus();
   if (method === 'POST' && p === '/api/embed') return embedOn(body || {});
   if (method === 'POST' && p === '/api/embed/download') { embed.download(); return embedStatus(); }
@@ -2687,6 +2745,8 @@ function liveRestart() {
   thinker = null;
   developer?.stop();
   developer = null;
+  briefer?.stop();
+  briefer = null;
 }
 function liveAgent() {
   return claudeAgents().find((a) => a.label === liveOpts.agent) || (AGENT?.kind === 'claude' ? AGENT : claudeAgents()[0] || null);
@@ -2985,6 +3045,7 @@ function shutdown() {
   judge?.stop();
   thinker?.stop();
   developer?.stop();
+  briefer?.stop();
   embed.stop();
   for (const id of running.keys()) { try { cancelRun(id, 'server stopped'); } catch { /* ignore */ } }
   process.exit(0);

@@ -1988,3 +1988,43 @@ img.part { border-radius: 6px; box-shadow: 0 0 0 1px var(--border); }
 .image-frame img { display: block; }
 .image-region { position: absolute; border: 3px solid var(--accent-2); border-radius: 4px; box-shadow: 0 0 0 9999px rgba(0, 0, 0, .35); pointer-events: none; }
 @media (prefers-reduced-motion: reduce) { .desk-layer { transition: none; } }
+
+/* Brief (Labs): the headline pinned at the top of the margin, and its cards. */
+.ed-headline { position: absolute; top: 8px; right: 22px; width: var(--notes-w); z-index: 5; display: none; }
+.ed.with-notes .ed-headline { display: block; }
+.brief { box-sizing: border-box; max-height: 46vh; overflow: auto; padding: 7px 9px 8px; border-radius: 8px; border: 1px solid color-mix(in srgb, var(--accent) 35%, var(--border)); background: color-mix(in srgb, var(--accent) 5%, var(--bg)); box-shadow: 0 6px 18px -10px rgb(0 0 0 / .35); font: 12.5px/1.4 var(--sans); color: var(--fg); --r: var(--accent); }
+.brief.small { padding-bottom: 6px; }
+.brief-top { display: flex; align-items: center; gap: 6px; }
+.brief-top .grow { flex: 1; }
+.brief-mode { all: unset; cursor: pointer; font: 600 10.5px/1 var(--sans); text-transform: uppercase; letter-spacing: .06em; color: var(--accent); }
+.brief-mode:hover { text-decoration: underline; }
+.brief-count { font-size: 11px; color: var(--fg-faint); }
+.brief-sec { margin-top: 7px; display: flex; flex-direction: column; gap: 1px; }
+.brief-label { font: 600 10px/1.2 var(--sans); text-transform: uppercase; letter-spacing: .05em; color: var(--fg-dim); margin-bottom: 2px; }
+.brief-item { all: unset; cursor: pointer; display: flex; align-items: baseline; gap: 6px; padding: 1px 3px; border-radius: 4px; }
+.brief-item:hover { background: color-mix(in srgb, var(--accent) 10%, transparent); }
+.brief-box { flex: none; width: 11px; height: 11px; border-radius: 3px; border: 1.3px solid var(--fg-faint); font-size: 9px; line-height: 11px; text-align: center; color: var(--ok); transform: translateY(1px); }
+.brief-item.done .brief-box { border-color: var(--ok); }
+.brief-item.done .brief-text { color: var(--fg-faint); text-decoration: line-through; text-decoration-color: color-mix(in srgb, var(--fg-faint) 60%, transparent); }
+.brief-item.b-last .brief-box { border-style: dashed; }
+.brief-text { overflow-wrap: anywhere; }
+.brief-who { font-size: 11px; color: var(--fg-dim); }
+.brief-heads { margin-top: 7px; display: flex; flex-direction: column; gap: 4px; }
+.brief-head { all: unset; cursor: pointer; display: block; padding: 4px 7px; border-radius: 5px; border-left: 3px solid var(--r); background: color-mix(in srgb, var(--r) 9%, var(--bg)); font-weight: 600; }
+.brief-head .recall-chip { display: block; margin-bottom: 2px; }
+.brief-head.k-brief-cover { --r: var(--warn); }
+.brief-needs { margin-top: 7px; display: flex; flex-wrap: wrap; align-items: center; gap: 4px; }
+.brief-needs .brief-label { margin: 0 2px 0 0; }
+.brief-need { padding: 0 7px; border-radius: 9px; font-size: 11.5px; background: color-mix(in srgb, var(--warn) 14%, var(--bg)); color: var(--fg); }
+.mnote.recall.k-brief { --r: var(--accent-2); }
+.mnote.recall:is(.k-brief-conflict, .k-brief-logic) { --r: var(--danger, #d0503c); }
+.mnote.recall.k-brief-gap { --r: var(--warn); }
+.mnote.recall.k-brief-ask { --r: var(--accent); }
+.brief-top .recall-ans, .brief-mode, .brief-count { white-space: nowrap; }
+.brief-top .mnote-btn { font-size: 12px; }
+.brief-item { position: relative; }
+.brief-item .m-due { font-size: 11px; color: var(--fg-dim); white-space: nowrap; }
+.brief-who { white-space: nowrap; }
+.brief-carry { all: unset; cursor: pointer; position: absolute; right: 2px; top: 0; padding: 0 6px; border-radius: 8px; font-size: 11px; color: var(--fg); background: var(--bg); box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent) 40%, transparent); display: none; }
+.brief-item:hover .brief-carry, .brief-carry:focus-visible { display: inline; }
+.brief-carry:hover { color: var(--fg); background: color-mix(in srgb, var(--accent) 16%, transparent); }
