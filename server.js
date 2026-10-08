@@ -613,9 +613,13 @@ async function recallJudge(b) {
 // being written, what comes before it, and the paragraphs of other notes the
 // page found near it ({ path, line }, read here as for recallJudge); when
 // the model asks to look something up, the local model looks (if it is on).
-// → { kind, due, say, refs: [{ path, line, name, raw }] } (kind 'none':
-// nothing to say). Kept by what was sent (.agent-notes/thought.json).
+// Its own model (Settings: Sonnet unless Haiku is chosen; it isn't waited
+// on, and the better one tells a subject from a shared word), through the
+// live margin's agent. → { items: [{ kind, due, say, refs: [{ path, line,
+// name, raw }] }] } (none: nothing to say). Kept by what was sent
+// (.agent-notes/thought.json).
 let thinker = null;
+let thinkerModel = '';
 let thoughtCache = null;
 const THOUGHT_FILE = path.join(DATA_DIR, 'thought.json');
 const THOUGHT_MAX = 2000;
@@ -624,24 +628,26 @@ async function recallThink(b) {
   if (typeof rel !== 'string' || typeof text !== 'string' || !text.trim() || text.length > 20000 || typeof before !== 'string' || before.length > 20000
     || !validRefs(refs, 6) || typeof today !== 'string' || today.length > 40) throw httpError(400, 'path, text, before, refs: [{ path, line }], today');
   const { agent, env, read } = await recallSending(b, 'Thinking along');
+  const model = ['haiku', 'sonnet', 'opus'].includes(b.thinkModel) ? b.thinkModel : 'sonnet';
   thoughtCache ||= new Map(Object.entries(readJson(THOUGHT_FILE, {})));
   const found = refs.map(read).filter(Boolean);
   const para = text.replace(/\s+/g, ' ').trim().slice(0, 1500);
   const want = lang === 'ko' || lang === 'en' ? lang : textLang([para]) || 'en';
   const req = { text: para, before: before.slice(-1500), today, lang: want, found };
-  const key = crypto.createHash('sha1').update(JSON.stringify([want, today.slice(0, 10), para, req.before, found.map((f) => [f.path, f.line, f.text])])).digest('hex');
-  const said = (r) => ({ kind: r.kind, due: r.due, say: r.say, refs: r.from.map((n) => r.found[n - 1]).filter(Boolean).map(({ path: p, line, name, raw }) => ({ path: p, line, name, raw })) });
+  const key = crypto.createHash('sha1').update(JSON.stringify(['v2', model, want, today.slice(0, 10), para, req.before, found.map((f) => [f.path, f.line, f.text])])).digest('hex');
   if (thoughtCache.has(key)) return thoughtCache.get(key);
-  thinker ||= thinkMargin({ bin: liveBin(agent), env, opts: liveOpts });
+  if (thinkerModel !== model) { thinker?.stop(); thinker = null; }
+  thinkerModel = model;
+  thinker ||= thinkMargin({ bin: liveBin(agent), env, opts: { ...liveOpts, model, effort: '' } });
   // What the model asks to look up: the paragraphs the local model finds
   // well above the rest (none while it is off or still reading).
   const search = async (query) => {
     const r = await embed.near(relOf(workspacePath(rel)), [query]);
-    return (r?.results?.[0] || []).filter((x) => x.z >= 2.5).map(read).filter(Boolean);
+    return (r?.results?.[0] || []).filter((x) => x.z >= 2).map(read).filter(Boolean);
   };
   const r = await thinker.think(req, search);
   if (!r.ok) throw httpError(502, r.error || 'Claude did not answer.');
-  const out = said(r);
+  const out = { items: r.items.map((x) => ({ kind: x.kind, due: x.due, say: x.say, refs: x.from.map((n) => r.found[n - 1]).filter(Boolean).map(({ path: p, line, name, raw }) => ({ path: p, line, name, raw })) })) };
   thoughtCache.set(key, out);
   while (thoughtCache.size > THOUGHT_MAX) thoughtCache.delete(thoughtCache.keys().next().value);
   ensureDataDir();

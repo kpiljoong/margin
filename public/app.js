@@ -288,7 +288,7 @@ const DEFAULT_SETTINGS = {
   // and reads them with Claude: how a paragraph met the others (sent).
   recallJudge: false,
   // and thinks along with Claude: a word on a paragraph just written (sent).
-  recallThink: false,
+  recallThink: false, thinkModel: 'sonnet',
 };
 const ACCENTS = ['#7aa2f7', '#bb9af7', '#2ac3de', '#9ece6a', '#e0af68', '#ff9e64', '#f7768e', '#c0caf5'];
 const LINE_HEIGHTS = { 1.5: 'Compact', 1.7: 'Normal', 1.9: 'Relaxed' };
@@ -4031,7 +4031,9 @@ function openSettings({ keys = false, live = false } = {}) {
         S.settings.recallModel ? modelBox() : null,
         toggle('recallJudge', 'The margin reads them with Claude', 'When a paragraph meets others, Claude says how in a line \u2014 the same thing, answers it, goes against it, adds to it \u2014 and leaves out the ones not really about it. That paragraph and the three it met are sent to Claude, through the Claude Code agent you signed in to (the live margin\u2019s model, Haiku unless chosen), a few seconds after you stop typing; never the paragraph you are writing, a private note, or one .agentnotesignore names. What it said is kept: a paragraph is read again only when it changes.', () => { judgeSt.got = new Map(); judgeSt.error = null; redrawRecall(); }),
         S.settings.recallJudge && judgeSt.error ? h('p', { class: 'set-detail' }, h('span', { class: 'set-warn' }, judgeSt.error)) : null,
-        toggle('recallThink', 'The margin thinks along (Claude)', 'A paragraph you have just written \u2014 once you leave it, or pause on a finished sentence \u2014 gets a word beside it when that helps: a to-do (and by when, a day to put in the line), a thought on what you are weighing from what your notes said before, or what you are trying to remember, found in your notes (with the local model on, it looks for it). Most paragraphs get nothing. That paragraph, the text before it in the note and up to five paragraphs of other notes near it are sent to Claude through the Claude Code agent you signed in to (the live margin\u2019s model); never a private note, nor one .agentnotesignore names. At most 80 paragraphs a day; what it said is kept.', () => { thinkSt.got = new Map(); thinkSt.error = null; for (const t of S.tabs) t.thinkSeen = null; redrawRecall(); }),
+        toggle('recallThink', 'The margin thinks along (Claude)', 'A paragraph you have just written \u2014 once you leave it, or pause on a finished sentence \u2014 gets one or two words beside it when that helps, mostly from what your notes already know: a to-do (and by when, a day to put in the line), what you are trying to remember, found in your notes (with the local model on, it looks for it), what they said before on what you are weighing, one that goes against it, a question they leave open, a next step, a risk. Most paragraphs get nothing. That paragraph, the text before it in the note and up to five paragraphs of other notes near it are sent to Claude through the Claude Code agent you signed in to; never a private note, nor one .agentnotesignore names. At most 80 paragraphs a day; what it said is kept.', () => { thinkSt.got = new Map(); thinkSt.error = null; for (const t of S.tabs) t.thinkSeen = null; redrawRecall(); }),
+        S.settings.recallThink ? h('div', { class: 'set-grid' }, h('div', { class: 'set-label' }, 'Thinks with'), segRow('thinkModel', { sonnet: 'Sonnet', haiku: 'Haiku' })) : null,
+        S.settings.recallThink ? h('p', { class: 'set-detail' }, 'Sonnet tells a note on the same thing from one that only shares a word, and gets dates right; it takes a few seconds (nothing waits on it). Haiku is quicker and cheaper, and says the wrong thing more often.') : null,
         S.settings.recallThink && thinkSt.error ? h('p', { class: 'set-detail' }, h('span', { class: 'set-warn' }, thinkSt.error)) : null,
         toggle('recallAsk', 'The margin asks', 'Now and then one question beside a line, about what it can\u2019t tell: the same to-do in other words? does this decision replace that one? is this paragraph about that one? by when? what is the note about? An answer goes in the line itself, or in KNOWN.md (a note of yours, plain lines), and what it remembers follows it. At most 20 a day; Not now waits a day.'),
         toggle('followTab', 'Tree follows the active tab', 'Selecting a tab opens its folders in the file tree and scrolls to it (also ⇅ at the top of the tree). Off: use ◎ in the tree.')),
@@ -8771,7 +8773,7 @@ function thinkAsk(tab, text, p) {
   const now = new Date();
   thinkSt.queue.push({ tab, k, body: {
     path: tab.path, text: p.text, before: text.split('\n').slice(0, p.line).join('\n').slice(-1500), refs,
-    today: `${ymdOf(now)} (${now.toLocaleDateString('en-US', { weekday: 'short' })})`, ...liveOpts(),
+    today: `${ymdOf(now)} (${now.toLocaleDateString('en-US', { weekday: 'short' })})`, ...liveOpts(), thinkModel: S.settings.thinkModel === 'haiku' ? 'haiku' : 'sonnet',
   } });
   thinkPump();
 }
@@ -8787,9 +8789,10 @@ async function thinkPump() {
       let r = null;
       try { r = await api('POST', '/api/recall/think', body); thinkSt.error = null; } catch (e) { thinkSt.error = e.message; }
       thinkSt.asked.delete(k);
-      thinkSt.got.set(k, r && r.kind !== 'none' ? r : null);
+      const said = r?.items?.length ? r : null;
+      thinkSt.got.set(k, said);
       if (thinkSt.got.size > 3000) thinkSt.got = new Map([...thinkSt.got].slice(-1500));
-      if (r && r.kind !== 'none' && tab.editor && tab.comments && isAttached(tab)) drawNotes(tab);
+      if (said && tab.editor && tab.comments && isAttached(tab)) drawNotes(tab);
     }
   } finally { thinkSt.busy = false; }
 }
@@ -8810,12 +8813,14 @@ function thinkCards(tab, text, lines, off) {
   }
   return { cards: out, within: (l) => spans.some(([a, b]) => l >= a && l <= b) };
 }
-const THINK_CHIP = { todo: 'To do', thinking: 'A thought', recall: 'From your notes' };
+const THINK_CHIP = { todo: 'To do', recall: 'From your notes', thinking: 'A thought', against: 'Goes against', question: 'A question', next: 'Next step', risk: 'A risk', other: 'A note' };
+// What it said on a paragraph (one or two things, each with the notes it
+// comes from; a to-do with By when?).
 function thinkCard(tab, p, r, key, lastLine) {
   const byNote = recallSt.index?.paras?.byNote;
-  const refs = (r.refs || []).map((y) => byNote?.get(y.path)?.paras.find((x) => x.line === y.line) || y);
-  let days = null;
-  if (r.kind === 'todo' && !/📅|\bdue:/i.test(p.text)) {
+  const refsOf = (x) => (x.refs || []).map((y) => byNote?.get(y.path)?.paras.find((z) => z.line === y.line) || y);
+  const days = (x) => {
+    if (x.kind !== 'todo' || /📅|\bdue:/i.test(p.text)) return null;
     const btn = (label, run, cls = '') => h('button', { class: `recall-ans${cls}`, onmousedown: (e) => e.preventDefault(), onclick: run }, label);
     const due = (date) => () => askWrite(tab, null, (v) => {
       const ls = v.split('\n');
@@ -8823,16 +8828,21 @@ function thinkCard(tab, p, r, key, lastLine) {
       ls[p.last] = recallMod.withDue(ls[p.last], date);
       const nv = ls.join('\n');
       // The same paragraph with its day: said and done (not asked again).
-      const now = recallMod.parasOf(nv).find((x) => x.line === p.line);
+      const now = recallMod.parasOf(nv).find((z) => z.line === p.line);
       if (now) thinkSt.got.set(`${tab.path}\u0000${now.text}`, null);
       return nv;
     }, false);
-    days = h('div', { class: 'recall-ask' }, h('div', { class: 'recall-q' }, 'By when?'), h('div', { class: 'recall-answers' },
-      dayButtons(btn, due, r.due)));
-  }
-  return h('div', { class: `mnote recall k-think k-think-${r.kind}` },
+    return h('div', { class: 'recall-ask' }, h('div', { class: 'recall-q' }, 'By when?'), h('div', { class: 'recall-answers' },
+      dayButtons(btn, due, x.due)));
+  };
+  const said = (x) => {
+    const refs = refsOf(x);
+    return [h('div', { class: 'recall-says' }, x.say), refs.length ? h('div', { class: 'recall-refs' }, refs.map(recallRef)) : null, days(x)];
+  };
+  const [a, b] = r.items;
+  return h('div', { class: `mnote recall k-think k-think-${a.kind}` },
     h('div', { class: 'mnote-head' },
-      h('span', { class: 'recall-chip' }, THINK_CHIP[r.kind] || 'A thought'),
+      h('span', { class: 'recall-chip' }, THINK_CHIP[a.kind] || 'A note'),
       h('span', { class: 'grow' }),
       h('button', { class: 'mnote-btn', title: 'Not this (it won’t come back on this paragraph)', onclick: () => {
         const o = recallOff();
@@ -8840,9 +8850,8 @@ function thinkCard(tab, p, r, key, lastLine) {
         store.setItem('an.recallOff', JSON.stringify([...o].slice(-500)));
         drawNotes(tab);
       } }, '×')),
-    h('div', { class: 'recall-says' }, r.say),
-    refs.length ? h('div', { class: 'recall-refs' }, refs.map(recallRef)) : null,
-    days);
+    said(a),
+    b ? h('div', { class: `think-more k-think-${b.kind}` }, h('span', { class: 'recall-chip' }, THINK_CHIP[b.kind] || 'A note'), said(b)) : null);
 }
 // Settings: where the model is (download, reading the notes, ready), and its buttons.
 function modelBox() {

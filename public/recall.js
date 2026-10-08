@@ -407,7 +407,7 @@ export function nearFor(index, path, text, { semantic = null, cache = null, max 
   if (!index?.paras) return [];
   if (semantic) {
     const r = semantic(text);
-    return r ? r.list.filter((x) => x.z >= 2).slice(0, max).map(({ x }) => ({ path: x.path, line: x.line })) : null;
+    return r ? r.list.filter((x) => x.z >= 1).slice(0, max).map(({ x }) => ({ path: x.path, line: x.line })) : null;
   }
   const k = `p${SEP}${path}${SEP}${text}`;
   let near = cache?.get(k);
