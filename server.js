@@ -21,6 +21,7 @@ const { tiersOf, agentLines } = require('./lib/tiers');
 const { createEmbed } = require('./lib/embed');
 const { judgeMargin } = require('./lib/judge');
 const { thinkMargin } = require('./lib/think');
+const { developMargin } = require('./lib/develop');
 
 const APP_DIR = __dirname;
 const PUBLIC_DIR = path.join(APP_DIR, 'public');
@@ -657,6 +658,53 @@ async function recallThink(b) {
   while (thoughtCache.size > THOUGHT_MAX) thoughtCache.delete(thoughtCache.keys().next().value);
   ensureDataDir();
   writeFileAtomic(THOUGHT_FILE, JSON.stringify(Object.fromEntries(thoughtCache)));
+  return out;
+}
+
+// Develop this note (a command; lib/develop.js): the note's paragraphs and
+// the paragraphs of other notes the page found near them ({ path, line },
+// read here as for recallJudge, never a private or ignored note), to the
+// thinks-along model. → { items: [{ kind, line (of the paragraph it is
+// about), say, refs: [{ path, line, name, raw }] }] }. Kept by what was sent
+// (.agent-notes/developed.json).
+let developer = null;
+let developerModel = '';
+let developedCache = null;
+const DEVELOPED_FILE = path.join(DATA_DIR, 'developed.json');
+const DEVELOPED_MAX = 300;
+async function recallDevelop(b) {
+  const { path: rel, text, refs = [], today = '', lang } = b;
+  if (typeof rel !== 'string' || typeof text !== 'string' || !text.trim() || text.length > 200000
+    || !validRefs(refs, 12) || typeof today !== 'string' || today.length > 40) throw httpError(400, 'path, text, refs: [{ path, line }], today');
+  const { agent, env, read } = await recallSending(b, 'Developing a note');
+  const model = ['haiku', 'sonnet', 'opus'].includes(b.thinkModel) ? b.thinkModel : 'sonnet';
+  developedCache ||= new Map(Object.entries(readJson(DEVELOPED_FILE, {})));
+  // The note's paragraphs, as many as fit in 8,000 characters.
+  const paras = [];
+  let size = 0;
+  for (const p of recallEsm.parasOf(text)) {
+    const t = p.text.replace(/\s+/g, ' ').trim().slice(0, 1200);
+    if (!t || size + t.length > 8000) break;
+    paras.push({ line: p.line, text: t });
+    size += t.length;
+  }
+  if (!paras.length) throw httpError(400, 'The note has nothing to develop yet.');
+  const links = new Set([...text.matchAll(/\[\[([^\]|#]+)/g)].map((m) => m[1].trim().toLowerCase()));
+  const found = refs.map(read).filter(Boolean).map((f) => ({ ...f, linked: links.has(f.name.toLowerCase()) || links.has(f.path.replace(/\.[^.]+$/, '').toLowerCase()) }));
+  const want = lang === 'ko' || lang === 'en' ? lang : textLang(paras.map((p) => p.text)) || 'en';
+  const req = { paras: paras.map((p) => p.text), today, lang: want, found };
+  const key = crypto.createHash('sha1').update(JSON.stringify(['v1', model, want, today.slice(0, 10), req.paras, found.map((f) => [f.path, f.line, f.text, f.linked])])).digest('hex');
+  if (developedCache.has(key)) return developedCache.get(key);
+  if (developerModel !== model) { developer?.stop(); developer = null; }
+  developerModel = model;
+  developer ||= developMargin({ bin: liveBin(agent), env, opts: { ...liveOpts, model, effort: '' } });
+  const r = await developer.develop(req);
+  if (!r.ok) throw httpError(502, r.error || 'Claude did not answer.');
+  const out = { items: r.items.map((x) => ({ kind: x.kind, line: paras[x.at].line, say: x.say, refs: x.from.map((n) => found[n - 1]).filter(Boolean).map(({ path: p, line, name, raw }) => ({ path: p, line, name, raw })) })) };
+  developedCache.set(key, out);
+  while (developedCache.size > DEVELOPED_MAX) developedCache.delete(developedCache.keys().next().value);
+  ensureDataDir();
+  writeFileAtomic(DEVELOPED_FILE, JSON.stringify(Object.fromEntries(developedCache)));
   return out;
 }
 
@@ -2468,6 +2516,7 @@ async function routeApi(method, url, body) {
   if (method === 'POST' && p === '/api/recall/known') return addKnown(body || {});
   if (method === 'POST' && p === '/api/recall/judge') return recallJudge(body || {});
   if (method === 'POST' && p === '/api/recall/think') return recallThink(body || {});
+  if (method === 'POST' && p === '/api/recall/develop') return recallDevelop(body || {});
   if (method === 'GET' && p === '/api/embed') return embedStatus();
   if (method === 'POST' && p === '/api/embed') return embedOn(body || {});
   if (method === 'POST' && p === '/api/embed/download') { embed.download(); return embedStatus(); }
@@ -2600,6 +2649,8 @@ function liveRestart() {
   judge = null;
   thinker?.stop();
   thinker = null;
+  developer?.stop();
+  developer = null;
 }
 function liveAgent() {
   return claudeAgents().find((a) => a.label === liveOpts.agent) || (AGENT?.kind === 'claude' ? AGENT : claudeAgents()[0] || null);
@@ -2897,6 +2948,7 @@ function shutdown() {
   desk?.stop();
   judge?.stop();
   thinker?.stop();
+  developer?.stop();
   embed.stop();
   for (const id of running.keys()) { try { cancelRun(id, 'server stopped'); } catch { /* ignore */ } }
   process.exit(0);

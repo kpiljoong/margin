@@ -3522,6 +3522,7 @@ const COMMANDS = [
   ['Toggle sidebar', toggleSidebar, { key: 'sidebar' }],
   ['New drawing (Excalidraw)…', () => newDrawing()],
   ['New desk \u2014 notes and cards laid out to think with, and the margin to sort, question and merge them (experimental)…', () => newDesk()],
+  ['Develop this note \u2014 Claude, beside it: the claim sharper, questions, your notes for and against it, a next step, notes that belong here', () => developNote()],
   ['Open on a desk \u2014 this note, its open questions and to-dos as cards that know where they came from, and the notes it links to (experimental)', () => noteOnDesk()],
   ['New Mermaid diagram file (.mmd)…', () => setTimeout(() => newMermaidFile(), 0)],
   ['Reload files from disk', () => loadTree().then(syncOpenTabs)],
@@ -8552,7 +8553,7 @@ function drawNotes(tab) {
   ed.setNotes([...tab.comments.filter((c) => !c.resolved || tab.showResolved).map((c) => {
     const at = anchorOf(text, c);
     return { from: at ? at[0] : 0, to: at ? at[1] : 0, el: noteCard(tab, c, !at), cur: tab.noteCur === c.id };
-  }), ...recalled, ...(live ? liveNotes(tab) : [])]);
+  }), ...recalled, ...devNotes(tab), ...(live ? liveNotes(tab) : [])]);
   if (live) liveHudShow(tab);
   else tab.live?.hud?.remove();
 }
@@ -8897,6 +8898,90 @@ function thinkCard(tab, p, r, key, lastLine) {
     said(a),
     b ? h('div', { class: `think-more k-think-${b.kind}` }, h('span', { class: 'recall-chip' }, THINK_CHIP[b.kind] || 'A note'), said(b)) : null);
 }
+// ---- Develop this note (a command; lib/develop.js): the note and the
+// paragraphs of other notes near its paragraphs go to Claude, and what it
+// says stands beside the paragraphs it is about — the claim said sharper,
+// questions, notes that back it or go against it, a next step, and other
+// notes' paragraphs that belong here (Link here puts a link at the end).
+// Kept for the session, until × or the next Develop.
+const devSt = new Map(); // path → { busy, items: [{ kind, para, line, say, refs }] }
+const DEV_CHIP = { sharper: 'Sharper', question: 'A question', ground: 'Your notes back it', against: 'Goes against it', next: 'Next step', gather: 'Belongs here' };
+async function developNote(tab = activeTab()) {
+  if (!tab?.editor || !isNote(tab.path)) { toast('Open a note to develop.'); return; }
+  const st = devSt.get(tab.path);
+  if (st?.busy) return;
+  if (!store.getItem('an.developOk') && !(await askConfirm('Develop sends this note (up to 8,000 characters) and up to twelve paragraphs of other notes near it to Claude, through the Claude Code agent you signed in to, and shows what it says beside the note. A private note, or one .agentnotesignore names, is never sent.', { okLabel: 'Develop' }))) return;
+  store.setItem('an.developOk', '1');
+  devSt.set(tab.path, { busy: true, items: [] });
+  drawNotes(tab);
+  try {
+    recallMod ||= await import('./recall.js');
+    if (!recallSt.index) { recallSt.at = 0; recallFresh(); await recallSt.loading; }
+    const text = tab.editor.value;
+    const paras = recallMod.parasOf(text);
+    const refs = await devNear(tab, paras.filter((p) => recallMod.paraWorthy(p.text)).slice(0, 40).map((p) => p.text));
+    const now = new Date();
+    const r = await api('POST', '/api/recall/develop', {
+      path: tab.path, text, refs, ...liveOpts(), thinkModel: S.settings.thinkModel === 'haiku' ? 'haiku' : 'sonnet',
+      today: `${ymdOf(now)} (${now.toLocaleDateString('en-US', { weekday: 'short' })})`,
+    });
+    const items = r.items.map((x) => ({ ...x, para: paras.find((p) => p.line === x.line)?.text || '' }));
+    devSt.set(tab.path, { busy: false, items });
+    if (!items.length) toast('Nothing to add to this note for now.');
+  } catch (e) {
+    devSt.delete(tab.path);
+    toast(e.message, 'error');
+  }
+  if (tab.editor && isAttached(tab)) drawNotes(tab);
+}
+// The paragraphs of other notes near the note's: by the local model when it
+// has read the notes, else by their words; those near more of them first.
+async function devNear(tab, texts) {
+  const score = new Map();
+  const add = (x, s) => { const k = `${x.path}\u0000${x.line}`; const o = score.get(k) || { path: x.path, line: x.line, s: 0 }; o.s += s; score.set(k, o); };
+  let r = null;
+  if (embedReady() && texts.length) { try { r = await api('POST', '/api/embed/near', { path: tab.path, texts }); } catch { /* by the words */ } }
+  if (r?.results) r.results.forEach((list) => list.filter((x) => x.z >= 1.5).forEach((x) => add(x, x.z)));
+  else for (const t of texts) for (const x of recallMod.nearFor(recallSt.index, tab.path, t, { cache: recallSt.cache, max: 4 }) || []) add(x, 1);
+  return [...score.values()].filter((x) => x.path !== tab.path).sort((a, b) => b.s - a.s).slice(0, 12).map(({ path, line }) => ({ path, line }));
+}
+// Its cards, beside the paragraphs they are about (the title while it works).
+function devNotes(tab) {
+  const st = devSt.get(tab.path);
+  if (!st || !recallMod) return [];
+  const text = tab.editor.value;
+  const starts = [0];
+  for (let i = text.indexOf('\n'); i >= 0; i = text.indexOf('\n', i + 1)) starts.push(i + 1);
+  const paras = recallMod.parasOf(text);
+  if (st.busy) {
+    const first = paras[0];
+    return [{ from: starts[first?.line || 0], to: starts[first?.line || 0], end: starts[first?.last || 0], el: h('div', { class: 'mnote recall k-dev think-wait', title: 'Claude is reading this note' },
+      h('div', { class: 'mnote-head' }, h('span', { class: 'recall-chip' }, 'Developing'), h('span', { class: 'margin-dots' }, h('i'), h('i'), h('i')))) }];
+  }
+  return st.items.map((x) => {
+    const p = paras.find((q) => q.text === x.para) || paras.find((q) => q.line >= x.line) || paras.at(-1) || { line: 0, last: 0 };
+    const gone = () => { st.items = st.items.filter((y) => y !== x); if (!st.items.length) devSt.delete(tab.path); drawNotes(tab); };
+    const link = (y) => askWrite(tab, null, (v) => {
+      const name = y.name;
+      if (v.includes(`[[${name}]]`)) return null;
+      // At the end, after the links put there before (or a blank line).
+      const tail = v.replace(/\s*$/, '');
+      return `${tail}\n${/^- \[\[[^\]]+\]\]$/.test(tail.split('\n').at(-1)) ? '' : '\n'}- [[${name}]]\n`;
+    }, false);
+    const refs = (x.refs || []).map((y) => recallSt.index?.paras?.byNote?.get(y.path)?.paras.find((z) => z.line === y.line) || y);
+    return { from: starts[p.line], to: starts[p.line], end: starts[p.last], el: h('div', { class: `mnote recall k-dev k-dev-${x.kind}` },
+      h('div', { class: 'mnote-head' },
+        h('span', { class: 'recall-chip' }, DEV_CHIP[x.kind] || 'A note'),
+        h('span', { class: 'grow' }),
+        h('button', { class: 'mnote-btn', title: 'Let this one go', onclick: gone }, '×')),
+      h('div', { class: 'recall-says' }, x.say),
+      x.kind === 'gather'
+        ? h('div', { class: 'dev-gather' }, refs.map((y) => h('div', { class: 'dev-gather-row' }, recallRef(y),
+          text.includes(`[[${y.name}]]`) ? h('span', { class: 'recall-rel' }, 'Linked') : h('button', { class: 'recall-ans', onmousedown: (e) => e.preventDefault(), onclick: () => link(y), title: `Put [[${y.name}]] at the end of this note` }, 'Link here'))))
+        : refs.length ? h('div', { class: 'recall-refs' }, refs.map(recallRef)) : null) };
+  });
+}
+
 // Settings: where the model is (download, reading the notes, ready), and its buttons.
 function modelBox() {
   const line = h('p', { class: 'set-detail' }, 'Checking\u2026');

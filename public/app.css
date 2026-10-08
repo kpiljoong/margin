@@ -429,6 +429,9 @@ input[type=checkbox] { accent-color: var(--accent); }
 /* the margin remembers: what the other notes say about a line */
 .mnote.recall { border-left-color: color-mix(in srgb, var(--r) 70%, transparent); background: color-mix(in srgb, var(--r) 6%, var(--bg)); cursor: default; --r: var(--accent); }
 .mnote.recall.k-done, .mnote.recall.k-decided, .mnote.recall.k-answers { --r: var(--ok); } .mnote.recall.k-before { --r: var(--warn); } .mnote.recall.k-asked { --r: var(--accent-2); } .mnote.recall.k-related { --r: var(--fg-dim); } .mnote.recall.k-think { --r: var(--accent); } .mnote.recall:is(.k-think-todo, .k-think-against, .k-think-risk), .think-more:is(.k-think-todo, .k-think-against, .k-think-risk) { --r: var(--warn); }
+.mnote.recall.k-dev { --r: var(--accent-2); } .mnote.recall:is(.k-dev-against, .k-dev-question) { --r: var(--warn); } .mnote.recall.k-dev-sharper { --r: var(--accent); }
+.dev-gather { display: flex; flex-direction: column; gap: 4px; margin-top: 5px; }
+.dev-gather-row { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
 .think-more { --r: var(--accent); margin-top: 6px; padding-top: 5px; border-top: 1px solid color-mix(in srgb, var(--r) 30%, transparent); }
 .think-more > .recall-chip { display: block; margin-bottom: 3px; }
 .margin-dots { display: inline-flex; gap: 3px; align-items: center; margin-left: 6px; }
