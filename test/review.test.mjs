@@ -9,7 +9,7 @@ import path from 'node:path';
 import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { createRequire } from 'node:module';
-import { reviewDesk, toNote, thisTimeOf, thisTimeText } from '../public/desk.js';
+import { reviewDesk, toNote, thisTimeOf, thisTimeText, wrapUp } from '../public/desk.js';
 import { meetingItems } from '../public/meeting.js';
 
 const require = createRequire(import.meta.url);
@@ -67,6 +67,50 @@ test('a session: to-dos in the vault\'s format or none, the most important first
   assert.match(review.sessionText({ topic: { title: 'Trip', goal: 'Book it', goalState: 'unknown' }, notes: [{ path: 'a.md', date: '2026-10-01', text: 'A.' }], todos: ['- [ ] x'] }), /Goal \(unknown\): Book it[\s\S]*N1 a\.md \(2026-10-01\):\nA\.[\s\S]*Older paragraphs:\n\(none found\)[\s\S]*Open to-dos:\nT1 - \[ \] x/);
 });
 
+test('dates as written: what "tomorrow" meant on the day the note was written, a day due; a date to look at besides the five', () => {
+  const text = '# Ideas\n\n\uB0B4\uC77C\uAE4C\uC9C0 \uACF5\uBAA8 \uB05D\uB0B4\uC57C \uD568 📅 2026-10-09\n\uB2E4\uC74C \uC8FC\uC5D0 \uC815\uB9AC\uD558\uAE30\n```\ntomorrow in code\n```\n## Tomorrow heading\nNothing dated.\n- [ ] Book it 📅 2026-10-12 📅 2026-10-14';
+  assert.deepEqual(review.datesIn(text, '2026-10-08'), [
+    { line: '\uB0B4\uC77C\uAE4C\uC9C0 \uACF5\uBAA8 \uB05D\uB0B4\uC57C \uD568 📅 2026-10-09', means: '"tomorrow" then = 2026-10-09; due 2026-10-09', day: '2026-10-09' },
+    { line: '\uB2E4\uC74C \uC8FC\uC5D0 \uC815\uB9AC\uD558\uAE30', means: '"next week" then = the week of 2026-10-15', day: '2026-10-15' },
+    { line: '- [ ] Book it 📅 2026-10-12 📅 2026-10-14', means: 'due 2026-10-12 and 2026-10-14', day: '2026-10-12' },
+  ]);
+  assert.deepEqual(review.datesIn('Tomorrow, then.', ''), [], 'not knowing when it was written: nothing it meant');
+  const blocks = ['mine:', ...[1, 2, 3, 4, 5, 6].flatMap((i) => ['---', `kind: ${i % 2 ? 'missing' : 'date'}`, `say: ${i}.`])].join('\n');
+  const p = review.parseSession(`${blocks}\n---\nkind: missing\nsay: 7.\n---\nkind: missing\nsay: 8.\n---\nkind: missing\nsay: 9.`, {});
+  assert.deepEqual(p.items.map((x) => x.say), ['1.', '3.', '5.', '7.', '8.', '2.', '4.'], 'five, then at most two dates');
+  assert.match(review.sessionText({ topic: { title: 'T', goal: 'G' }, notes: [{ path: 'a.md', date: '2026-10-08', text: 'x' }], dates: [{ n: 1, written: '2026-10-08', line: '\uB0B4\uC77C\uAE4C\uC9C0', means: '"tomorrow" then = 2026-10-09' }] }), /Dates as written \(when the note was written, what they meant then\):\n- N1 \(written 2026-10-08\): "\uB0B4\uC77C\uAE4C\uC9C0" — "tomorrow" then = 2026-10-09$/);
+});
+
+test('a review wrapped up: from what was done on the desk and the notes as they are now, never from what was only suggested', () => {
+  const todo = '- [x] Apply for the ESTA ✅ 2026-10-09\n- [ ] Book the hotel\n- [ ] Pack\n';
+  const items = meetingItems(todo);
+  const card = (it, from) => ({ id: it.key, type: 'text', text: it.text, x: 0, y: 0, width: 300, height: 80, from: { file: '99-assistant/todo.md', line: it.line, kind: 'todo', key: it.key, ...from } });
+  const desk = { nodes: [
+    { id: 'g', type: 'text', text: '**Trip**\n\nGoal (a guess): Book it all', x: 0, y: 0, width: 300, height: 80 },
+    { id: 't', type: 'text', text: thisTimeText({ goal: 'Book it all by the 20th', focus: ['The Napa tour', 'The return flight'], decided: ['The Napa tour: a whole day'] }), x: 0, y: 0, width: 300, height: 80 },
+    card(items[0], { sent: true }), card(items[1], { sent: true }), card(items[2], { to: { done: true } }),
+  ], edges: [] };
+  assert.deepEqual(thisTimeOf(desk), { goal: 'Book it all by the 20th', focus: ['The Napa tour', 'The return flight'], decided: ['The Napa tour: a whole day'] });
+  const ledger = [
+    { type: 'taken', title: 'To decide', text: 'Napa: half or whole?\n\nTo-do: `- [ ] Book the Napa tour #project/trip`' },
+    { type: 'taken', title: 'Missing', text: 'The pickup.\n\nTo-do: `- [ ] Book the Napa tour #project/trip`' },
+    { type: 'let go', title: 'A question', text: 'Phones?' },
+    { type: 'marked done', text: 'x' },
+  ];
+  const w = wrapUp({ desk, ledger, notes: new Map([['99-assistant/todo.md', todo]]), now: '2026-10-09 15:00' });
+  assert.deepEqual(w.todos, ['- [ ] Book the Napa tour #project/trip']);
+  assert.equal(w.text, [
+    '**Wrap-up** · 2026-10-09 15:00', '',
+    'Goal: Book it all by the 20th (yours)', '',
+    '**Decided**', '- The Napa tour: a whole day', '',
+    '**Changed in the notes**', '- Apply for the ESTA ✅ 2026-10-09 — [[99-assistant/todo]]', '',
+    '**Not in the notes yet**', '- Book the hotel — [[99-assistant/todo]] (proposed, in the red pen review)', '- Pack — [[99-assistant/todo]] (marked here, not proposed yet)', '',
+    '**From the margin**: 2 taken, 1 let go', '- To decide: Napa: half or whole?', '- Missing: The pickup.', '',
+    '**Next**', '- [ ] Book the Napa tour #project/trip', '- Still to settle: The return flight',
+  ].join('\n'));
+  assert.match(wrapUp({ desk: { nodes: [desk.nodes[0]] } }).text, /Goal: Book it all \(a guess\)[\s\S]*- \(nothing written under Decided\)[\s\S]*- \(nothing yet\)[\s\S]*0 taken, 0 let go[\s\S]*- \(none written\)$/);
+});
+
 test('a to-do of the assistant\'s list done: [x] and the day at its end, its link and marks kept', () => {
   const list = '# Todo\n\n- [ ] ESTA \uC2E0\uCCAD\uD558\uAE30 ⏫ [[99-assistant/inbox-archive/2026-09#2026-09-27 0538 df|\uC6D0\uBB38]]\n- [ ] Old one ↪ \uC62E\uAE40 [[x]]\n';
   const it = meetingItems(list).find((i) => /ESTA/.test(i.text));
@@ -87,7 +131,7 @@ test('a topic laid out: its goal and question, the to-dos that may be done (know
     at: '2026-10-09',
   });
   assert.deepEqual(desk.nodes.filter((n) => n.type === 'group').map((n) => n.label), ['The goal', 'Check the state (x: done)', 'Its notes']);
-  assert.deepEqual(thisTimeOf(desk), { goal: '', focus: [] }, 'This time: theirs to write, empty');
+  assert.deepEqual(thisTimeOf(desk), { goal: '', focus: [], decided: [] }, 'This time: theirs to write, empty');
   const goal = desk.nodes.find((n) => n.type === 'text' && /Goal/.test(n.text));
   assert.equal(goal.text, '**Honeymoon**\n\nGoal (a guess): Book it all\n\n? Before the 27th?');
   const todo = desk.nodes.find((n) => n.from);
@@ -100,7 +144,7 @@ test('a topic laid out: its goal and question, the to-dos that may be done (know
   assert.ok(margin.every((m, i) => i === 0 || m.y > margin[i - 1].y), 'one under another, the first on top');
   assert.ok(margin[0].x > Math.max(...desk.nodes.map((n) => n.x + n.width)) - 1, 'beside the cards');
   const written = { nodes: [{ id: 'a', type: 'text', text: thisTimeText().replace('Goal: ', 'Goal: Book it all by the 20th').replace('- ', '- The Napa tour\n- Return flight A or B\n2. Phones\n- x\n') }] };
-  assert.deepEqual(thisTimeOf(written), { goal: 'Book it all by the 20th', focus: ['The Napa tour', 'Return flight A or B', 'Phones'] });
+  assert.deepEqual(thisTimeOf(written), { goal: 'Book it all by the 20th', focus: ['The Napa tour', 'Return flight A or B', 'Phones'], decided: [] });
   assert.match(reviewDesk({ title: 'T', items: [{ kind: 'decide', say: 'N.', focus: 1 }] }).margin[0].title, /^Your pick/);
   assert.deepEqual(reviewDesk({ title: 'T', goalState: 'stated', goal: 'G', goalFrom: 'a/b.md', notes: ['a/b.md'] }).desk.nodes.filter((n) => n.type === 'group').map((n) => n.label), ['The goal', 'Its notes'], 'nothing may be done: no such group');
 });
@@ -187,7 +231,7 @@ test('the server: topics of the recent notes (not the assistant\'s records, neve
   assert.equal(sent().length, 2);
   // They write "This time" on it; prepared again: another desk (the first kept), what they chose sent and first.
   const mineCard = desk.nodes.find((n) => n.type === 'text' && n.text.startsWith('**This time**'));
-  mineCard.text = mineCard.text.replace('Goal: ', 'Goal: Book it all by the 20th').replace(/- $/, '- The Napa tour');
+  mineCard.text = mineCard.text.replace('Goal: ', 'Goal: Book it all by the 20th').replace('To settle now:\n- ', 'To settle now:\n- The Napa tour');
   fs.writeFileSync(path.join(ws, d.path), JSON.stringify(desk));
   const d2 = await api('POST', '/api/lab/review/desk', { topic, again: true });
   assert.equal(d2.status, 200, d2.error);
@@ -197,6 +241,14 @@ test('the server: topics of the recent notes (not the assistant\'s records, neve
   assert.match(sent()[2], /Goal \(stated by them\): Book it all by the 20th\n\nThey chose to settle this time:\n1\. The Napa tour/);
   const mg2 = await api('GET', `/api/desk/margin?path=${encodeURIComponent(d2.path)}`);
   assert.deepEqual(mg2.cards.map((c) => c.title), ['Your pick \u00B7 To decide', 'To decide', 'A question']);
-  assert.match(JSON.parse(fs.readFileSync(path.join(ws, d2.path), 'utf8')).nodes.find((n) => n.text?.startsWith('**This time**')).text, /Goal: Book it all by the 20th\nTo settle now:\n- The Napa tour$/, 'carried over');
+  assert.match(JSON.parse(fs.readFileSync(path.join(ws, d2.path), 'utf8')).nodes.find((n) => n.text?.startsWith('**This time**')).text, /Goal: Book it all by the 20th\nTo settle now:\n- The Napa tour\nDecided:\n- $/, 'carried over');
+  // What is done on a review's desk, kept beside it in order.
+  assert.equal((await api('POST', '/api/lab/review/ledger', { path: d2.path, event: { type: 'taken', title: 'To decide', text: 'Napa.' } })).n, 1);
+  assert.equal((await api('POST', '/api/lab/review/ledger', { path: d2.path, event: { type: 'let go', title: 'A question' } })).n, 2);
+  assert.equal((await api('POST', '/api/lab/review/ledger', { path: d2.path, event: { type: 'decided by itself' } })).status, 400);
+  assert.equal((await api('POST', '/api/lab/review/ledger', { path: 'trip/plan.md', event: { type: 'taken' } })).status, 400);
+  assert.deepEqual((await api('GET', `/api/lab/review/ledger?path=${encodeURIComponent(d2.path)}`)).events.map((e) => [e.type, e.title]), [['taken', 'To decide'], ['let go', 'A question']]);
+  // Its dates as written went with it: the Napa to-do's day, past.
+  assert.match(sent()[1], /Dates as written \(when the note was written, what they meant then\):\n- N1 \(written [\d-]+\): "- \[ \] Book the Napa tour 📅 2026-01-02" — due 2026-01-02/);
   assert.equal((await api('POST', '/api/lab/review/desk', { topic: { ...topic, notes: ['secret.md'] }, again: true })).status, 400, 'a private note alone: nothing to read');
 });

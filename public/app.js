@@ -4637,6 +4637,11 @@ function deskView(tab, c) {
         // What the margin wrote and was not kept yet: beside the desk, in .agent-notes/desk/.
         loadMargin: async () => (await api('GET', `/api/desk/margin?path=${encodeURIComponent(tab.path)}`)).cards,
         saveMargin: (cards) => api('PUT', '/api/desk/margin', { path: tab.path, cards }).catch((e) => toast(`The margin\u2019s cards were not kept: ${e.message}`, 'error')),
+        // A review's desk (Reviews/): what is done on it, kept beside it, for its wrap-up (w).
+        review: /^Reviews\//i.test(tab.path),
+        onEvent: (type, info) => api('POST', '/api/lab/review/ledger', { path: tab.path, event: { type, ...info } }).catch(() => {}),
+        ledger: async () => (await api('GET', `/api/lab/review/ledger?path=${encodeURIComponent(tab.path)}`)).events,
+        todoFile: S.files.some((f) => f.path === '99-assistant/todo.md') ? '99-assistant/todo.md' : null,
         privateOf: async (paths) => (await api('POST', '/api/private', { paths })).private || {},
         // Over time: the notes and the meetings before and after them, read on the server (nothing sent).
         trail: (paths) => api('POST', '/api/desk/trail', { paths }),

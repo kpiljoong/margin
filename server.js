@@ -24,7 +24,7 @@ const { thinkMargin } = require('./lib/think');
 const { developMargin } = require('./lib/develop');
 const { briefMargin } = require('./lib/brief');
 const { themesMargin, themeNote } = require('./lib/themes');
-const { reviewMargin } = require('./lib/review');
+const { reviewMargin, datesIn } = require('./lib/review');
 
 const APP_DIR = __dirname;
 const PUBLIC_DIR = path.join(APP_DIR, 'public');
@@ -1120,7 +1120,15 @@ async function labReviewDesk(b) {
   const sent = todos.slice(0, 60);
   const projects = new Set(reviewFolders().filter((f) => f.startsWith('01-projects/')).map((f) => f.slice(12)));
   const topic = thisTime.goal ? { title: t.title.trim(), goal: thisTime.goal, goalState: 'theirs' } : { title: t.title.trim(), goal: (t.goal || '').trim(), goalState: ['stated', 'guessed', 'unknown'].includes(t.goalState) ? t.goalState : 'guessed' };
-  const r = await r0.session({ topic, focus: thisTime.focus, notes, older, todos: sent.map((x) => `${x.text} (${x.file})`), today: day, projects });
+  // Its dates as written, and what they meant when written (the day a note
+  // was written: its front matter's date, the date in its name, or when it
+  // was last changed): those past or due, newest notes first, twenty.
+  const dates = notes.flatMap((n, i) => {
+    const c = cachedText(n.path);
+    const written = (/^---\r?\n[\s\S]*?^date:\s*(\d{4}-\d{2}-\d{2})/m.exec(c?.text || '') || [])[1] || (/\d{4}-\d{2}-\d{2}/.exec(path.basename(n.path)) || [])[0] || n.date;
+    return datesIn(n.text, written).filter((d) => d.day && d.day <= day).map((d) => ({ n: i + 1, written, ...d }));
+  }).slice(0, 20);
+  const r = await r0.session({ topic, focus: thisTime.focus, notes, older, todos: sent.map((x) => `${x.text} (${x.file})`), dates, today: day, projects });
   if (!r.ok) throw httpError(502, r.error || 'Claude did not answer.');
   // Their state to check: a note of the topic says it was done or says
   // otherwise (which note, linked), or its day has passed (seen here) — never
@@ -1135,7 +1143,25 @@ async function labReviewDesk(b) {
   fs.mkdirSync(path.dirname(abs), { recursive: true });
   writeFileAtomic(abs, deskEsm.stringifyDesk(desk));
   saveDeskMargin({ path: name, cards: margin });
-  return { path: name, read: notes.length, older: older.length, todos: sent.length, check: check.length, items: items.length, focus: thisTime.focus.length, focusFound };
+  return { path: name, read: notes.length, older: older.length, todos: sent.length, check: check.length, items: items.length, dates: dates.length, focus: thisTime.focus.length, focusFound };
+}
+
+// What was done on a review's desk (taken, let go, marked done, proposed,
+// wrapped up), in order, beside it in .agent-notes/review-ledger/ — what
+// happened there, not what was suggested; its wrap-up reads it.
+const LEDGER_TYPES = new Set(['taken', 'let go', 'marked done', 'unmarked', 'proposed', 'to-dos proposed', 'wrap-up']);
+const ledgerOf = (rel) => `${resolveInside(path.join(DATA_DIR, 'review-ledger'), rel)}.json`;
+const reviewLedger = (rel) => { const d = readJson(ledgerOf(rel), null); return Array.isArray(d?.events) ? d.events : []; };
+function addReviewLedger({ path: relPath, event }) {
+  const rel = relOf(workspacePath(relPath));
+  if (!/\.canvas$/i.test(rel)) throw httpError(400, 'Not a desk');
+  if (!event || !LEDGER_TYPES.has(event.type)) throw httpError(400, 'event: { type, title, text, file }');
+  const e = { type: event.type, at: new Date().toISOString(), ...(cleanStr(event.title, 200) ? { title: cleanStr(event.title, 200) } : {}), ...(cleanStr(event.text, 4000) ? { text: cleanStr(event.text, 4000) } : {}), ...(cleanStr(event.file, 1000) ? { file: cleanStr(event.file, 1000) } : {}) };
+  const events = [...reviewLedger(rel), e].slice(-500);
+  const file = ledgerOf(rel);
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  writeFileAtomic(file, JSON.stringify({ events }));
+  return { ok: true, n: events.length };
 }
 
 // An answer to one of the margin's questions: a line at the end of KNOWN.md
@@ -2952,6 +2978,8 @@ async function routeApi(method, url, body) {
   if (method === 'POST' && p === '/api/lab/themes/check') return labThemeCheck(body || {});
   if (method === 'POST' && p === '/api/lab/review/topics') return labReviewTopics(body || {});
   if (method === 'POST' && p === '/api/lab/review/desk') return labReviewDesk(body || {});
+  if (method === 'GET' && p === '/api/lab/review/ledger') return { events: reviewLedger(relOf(workspacePath(q('path')))) };
+  if (method === 'POST' && p === '/api/lab/review/ledger') return addReviewLedger(body || {});
   if (method === 'GET' && p === '/api/embed') return embedStatus();
   if (method === 'POST' && p === '/api/embed') return embedOn(body || {});
   if (method === 'POST' && p === '/api/embed/download') { embed.download(); return embedStatus(); }
