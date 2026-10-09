@@ -996,7 +996,7 @@ export class Desk {
     const title = cardTitle(n);
     if (n.type === 'group') { e.head.textContent = title; e.body.replaceChildren(); return; }
     // What the changes to the notes ask of this one (not proposed yet: on the card that shows them).
-    const asked = n.type === 'file' ? this.ai.filter((a) => a.changes && !a.proposed).flatMap((a) => a.changes).filter((c) => c.file === n.file).length : 0;
+    const asked = n.type === 'file' ? this.ai.filter((a) => a.changes && !a.proposed).flatMap((a) => this.liveChanges(a)).filter((c) => c.file === n.file).length : 0;
     e.changes.hidden = !asked;
     e.changes.textContent = asked ? `${asked} to change` : '';
     e.changes.title = asked ? 'Lines of it that no longer agree with what you decided: on the card \u201CChanges to the notes\u201D' : '';
@@ -2133,10 +2133,11 @@ export class Desk {
       decided.hidden = !(x.kind === 'review' && x.title === 'Wrap-up' && x.decisions?.length && this.opts.changes);
       withdraw.hidden = !(x.kind === 'review' && x.title === 'Wrap-up' && x.withdrawals?.length);
       propose.hidden = !(x.kind === 'review' && x.changes?.length);
-      propose.textContent = x.proposed ? 'Proposed \u2713 (again)' : 'Propose in the notes';
+      const live = x.changes ? this.liveChanges(x).length : 0;
+      propose.textContent = `${x.proposed ? 'Proposed \u2713 (again)' : 'Propose in the notes'}${x.changes && live < x.changes.length ? ` (${live} of ${x.changes.length} from what is decided now)` : ''}`;
       keep.disabled = x.state !== 'done';
       // What was jotted, sorted: taken into "This time" (a to-do, kept as a card).
-      const ticks = x.jot?.ticks && (x.jot.kind === 'done' || x.jot.kind === 'decided');
+      const ticks = x.jot?.ticks && !x.jot.replaces && (x.jot.kind === 'done' || x.jot.kind === 'decided');
       keep.textContent = x.jot?.replaces ? { withdrawn: 'Call it off', later: 'Put it off', open: 'Open it again', decided: 'Decide this instead' }[x.jot.kind] : ticks ? (x.jot.kind === 'done' ? 'Mark it done' : 'Decided, and its to-do done') : x.jot && x.jot.kind !== 'todo' ? 'Into This time' : 'Keep';
       keep.title = x.jot?.replaces ? `Your decision \u201C${decisionOf(x.jot.replaces).words}\u201D taken out of Decided in \u201CThis time\u201D (${x.jot.kind === 'withdrawn' ? 'kept under Withdrawn' : x.jot.kind === 'later' ? 'this under Later' : x.jot.kind === 'open' ? 'this under To settle now' : 'this under Decided'}); nothing done is undone, nothing in a note changes (Tab)` : ticks ? `${x.jot.kind === 'decided' ? 'Put it under Decided in \u201CThis time\u201D, and mark' : 'Mark'} the to-do it ticks off done (\u201C${x.jot.ticks.text}\u201D${x.jot.ticks.file ? `: proposed to ${x.jot.ticks.file} with the others, in its red pen review` : ': on its card here'}) (Tab)` : x.jot && x.jot.kind !== 'todo' ? 'Put it in \u201CThis time\u201D, under its part (Tab)' : 'Keep it as a card of the desk (Tab)';
       const n = this.batchOf(x).length;
@@ -2187,7 +2188,8 @@ export class Desk {
         if (these.length) { this.ai = this.ai.filter((x) => !these.includes(x)); settled.push(...these); }
       }
       // Done, and the to-do it does known: that to-do marked done (its card, or one made for it), proposed with the others.
-      const t = a.jot?.kind === 'done' || a.jot?.kind === 'decided' ? a.jot.ticks : null;
+      // (One changing a decision does no to-do: whatever its card says, as kept before.)
+      const t = !a.jot?.replaces && (a.jot?.kind === 'done' || a.jot?.kind === 'decided') ? a.jot.ticks : null;
       // A decision that settles a to-do: in "This time" too.
       if (t && a.jot.kind === 'decided') { mineText = addToThisTime(mineText, { kind: 'decided', words: a.jot.say, note: a.jot.about, settles: a.jot.settles }); this.event('noted', { title: a.title, text: a.jot.say, ...(a.jot.about ? { file: a.jot.about } : {}) }); }
       // One taken on this desk: ticked on its card (and so not next any more).
@@ -2197,7 +2199,7 @@ export class Desk {
         continue;
       }
       // Put off: in "This time" under Later; a to-do of this desk it puts off, not next any more.
-      const off = a.jot?.kind === 'later' && a.jot.ticks?.card ? a.jot.ticks : null;
+      const off = a.jot?.kind === 'later' && !a.jot.replaces && a.jot.ticks?.card ? a.jot.ticks : null;
       if (off) all = all.map((n) => (n.id === off.card ? { ...n, text: String(n.text).split(`To-do: \`- [ ] ${off.text}\``).join(`To-do, later: \`${off.text}\``) } : n));
       if (t) {
         const to = { done: true, ...(t.tasks ? { on: today() } : {}) };
@@ -2374,11 +2376,22 @@ export class Desk {
       this.show(card, true);
     } catch (e) { wait.textContent = `Not read: ${e.message}`; wait.classList.add('error'); } finally { clearInterval(tick); this.planning = false; }
   }
+  // A changes card's changes that come of a decision decided now.
+  liveChanges(a) {
+    const now = new Set(thisTimeOf(this.d).decided.map((l) => norm(decisionOf(l).words)));
+    return (a.changes || []).filter((c) => c.about && now.has(norm(c.about)));
+  }
   // Each note's changes in its red pen review (the note as it is now: a line
   // no longer as it was is left, and said).
   async proposeChanges(a) {
+    // Only what comes of a decision decided now: one called off, put off or
+    // changed since (or not known) is not proposed — to be prepared again.
+    const live = this.liveChanges(a);
+    const stale = [...new Set((a.changes || []).filter((c) => !live.includes(c)).map((c) => c.about || '(a decision not known)'))];
+    if (stale.length) this.say(`Not proposed \u2014 from a decision no longer decided as it was: ${stale.join('; ')} \u2014 prepare the changes again (Into the notes) for what is decided now.`, 'error');
+    if (!live.length) return;
     const by = new Map();
-    for (const c of a.changes || []) by.set(c.file, [...(by.get(c.file) || []), c]);
+    for (const c of live) by.set(c.file, [...(by.get(c.file) || []), c]);
     const done = [];
     let missed = 0;
     const failed = [];
@@ -2434,8 +2447,8 @@ export class Desk {
     const TITLE = { decided: 'Decided', later: 'Later', open: 'Still open', todo: 'To do', done: 'Done', withdrawn: 'Withdrawn' };
     const batch = newId();
     for (const it of items) {
-      const body = [it.say, it.about ? `\nAbout: [[${it.about.replace(/\.md$/i, '')}]]` : '', it.settles ? `\nSettles: ${it.settles}` : '', it.todo ? `\nTo-do: \`${it.todo}\`` : '', it.replaces ? `\n${{ withdrawn: 'Calls off', later: 'Puts off', open: 'Opens again', decided: 'Instead of' }[it.kind]} your decision: ${decisionOf(it.replaces).words}` : '', it.ticks ? `\n${it.kind === 'later' ? 'Puts off' : 'Ticks off'}: ${it.ticks.text}${it.ticks.file ? ` \u2014 [[${it.ticks.file.replace(/\.md$/i, '')}]]` : ' (on this desk)'}` : ''].filter(Boolean).join('\n');
-      this.addAi({ kind: 'review', batch, title: `Jotted \u00B7 ${TITLE[it.kind] || 'Margin'}`, text: body, jot: { kind: it.kind, say: it.say, about: it.about || '', settles: it.settles || '', of: card.id, ...(it.ticks ? { ticks: it.ticks } : {}), ...(it.replaces ? { replaces: it.replaces } : {}) }, x: 0, y: 0, width: STREAM_W - STREAM_IN, height: 74 + 21 * body.split('\n').length, state: 'done' }, false);
+      const body = [it.say, it.about ? `\nAbout: [[${it.about.replace(/\.md$/i, '')}]]` : '', it.settles ? `\nSettles: ${it.settles}` : '', it.todo ? `\nTo-do: \`${it.todo}\`` : '', it.replaces ? `\n${{ withdrawn: 'Calls off', later: 'Puts off', open: 'Opens again', decided: 'Instead of' }[it.kind]} your decision: ${decisionOf(it.replaces).words}` : '', it.ticks && !it.replaces ? `\n${it.kind === 'later' ? 'Puts off' : 'Ticks off'}: ${it.ticks.text}${it.ticks.file ? ` \u2014 [[${it.ticks.file.replace(/\.md$/i, '')}]]` : ' (on this desk)'}` : ''].filter(Boolean).join('\n');
+      this.addAi({ kind: 'review', batch, title: `Jotted \u00B7 ${TITLE[it.kind] || 'Margin'}`, text: body, jot: { kind: it.kind, say: it.say, about: it.about || '', settles: it.settles || '', of: card.id, ...(it.ticks && !it.replaces ? { ticks: it.ticks } : {}), ...(it.replaces ? { replaces: it.replaces } : {}) }, x: 0, y: 0, width: STREAM_W - STREAM_IN, height: 74 + 21 * body.split('\n').length, state: 'done' }, false);
     }
     this.streamNow();
     this.jotStatus.textContent = `${items.length} sorted, under it: Tab takes the first (marked), Esc lets it go, \u21E7Tab takes all ${items.length}.`;
