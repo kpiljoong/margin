@@ -181,6 +181,8 @@ process.stdin.on('data', (d) => {
     fs.appendFileSync(process.env.FAKE_LOG, JSON.stringify(j.message.content) + '\\n');
     const text = /^Folders:/.test(j.message.content)
       ? 'title: Honeymoon\\nfolder: none\\nnotes: ' + (j.message.content.match(/^\\[\\d+\\] (?:trip\\/plan\\.md|trip\\/flights\\.md|workout\\.md)/gm) || []).map((l) => l.match(/\\d+/)[0]).join(', ') + '\\ngoal: Book it all before the trip\\ngoal from: guess\\nask: Is the trip on the 27th?'
+      : /^Title:/.test(j.message.content)
+      ? '\\x60\\x60\\x60markdown\\n# Honeymoon\\n\\n## Decided\\n- Dinner at the pier [[flights]]\\n\\n## Still open\\n- Napa: half a day or a whole one? [[plan]] [[nowhere|elsewhere]]\\n\\x60\\x60\\x60'
       : j.message.content.includes('\\nD1. ')
       ? 'note: N1\\nline: 3\\nwas: LA first, then SF\\nnow: LA first, then SF, then New York. Dinner at the pier. Napa tour: half a day or a whole one?\\nfor: D1\\n---\\nnote: N1\\nafter: 5\\nadd: - Dinner at the pier #decision\\nfor: D1'
       : j.message.content.includes('They jotted:')
@@ -327,6 +329,15 @@ test('the server: topics of the recent notes (not the assistant\'s records, neve
   assert.ok(parts.some((m) => /Decided:\nD1\. Dinner at the pier\n\nNotes:\nN1 trip\/plan\.md:\n1\| # Plan/.test(m)), 'its notes read in parts at once');
   assert.ok(parts.some((m) => /\nN1 trip\/flights\.md:/.test(m)));
   assert.ok(parts.every((m) => !/secret/.test(m)));
+  // Where it stands, from all its notes at once: one note beside them (nothing written here), links only to its notes.
+  const st = await api('POST', '/api/lab/review/state', { path: d2.path });
+  assert.equal(st.status, 200, st.error);
+  assert.deepEqual([st.file, st.exists, st.read], ['trip/Honeymoon \u2014 where it stands.md', false, 2]);
+  assert.equal(st.text, '# Honeymoon\n\n## Decided\n- Dinner at the pier [[flights]]\n\n## Still open\n- Napa: half a day or a whole one? [[plan]] elsewhere\n');
+  assert.equal(review.parseState('Sure:\n# T\n- D1. Fly into SF [[plan]]', [{ path: 'trip/plan.md' }]), '# T\n- Fly into SF [[plan]]\n', 'from its title, a decision without its number');
+  assert.equal(review.parseState('No note here', []), '');
+  assert.match(sent().at(-1), /^Title: Honeymoon\n\nGoal: Book it all by the 20th\n\nDecided:\nD1\. Dinner at the pier\n\nPut off:\n1\. Napa\n\nCalled off \(no longer decided\):\n\(none\)\n\nNotes:\nN1 \[\[plan\]\]:\n# Plan/);
+  assert.ok(!fs.existsSync(path.join(ws, st.file)));
   // A review's margin kept beside it as it was: what was jotted (and the to-do it does), a pick, a wrap-up's decisions, the changes.
   const kept = [
     { id: 'j1', kind: 'review', title: 'Jotted \u00B7 Done', text: 'Paid.', x: 1, y: 2, width: 300, height: 90, batch: 'b', jot: { kind: 'done', say: 'Paid.', about: 'trip/plan.md', settles: '', of: 'raw', ticks: { file: '99-assistant/todo.md', line: 2, key: 'todo:esta', text: 'ESTA', tasks: true }, evil: 'x' } },

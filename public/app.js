@@ -4706,6 +4706,8 @@ function deskView(tab, c) {
           return open ? true : id;
         },
         openReview: (id) => openReview(id),
+        state: async () => { await deskSaved(tab); return api('POST', '/api/lab/review/state', { ...reviewOpts(), path: tab.path }); },
+        writeNote: async (p, text) => { const f = await api('POST', '/api/file', { path: p, content: text }); await loadTree(); return f.path; },
         runs: async (ids) => (await api('GET', `/api/run-status?ids=${encodeURIComponent(ids.join(','))}`)).runs,
         dockMin: store.getItem('an.deskDock') === 'min',
         onDock: (min) => store.setItem('an.deskDock', min ? 'min' : ''),

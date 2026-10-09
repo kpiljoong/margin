@@ -25,6 +25,13 @@ export const WORDS = {
     of: (i, n) => `${i}/${n}`,
     todoQ: '\uC774 \uD560 \uC77C, \uB05D\uB0AC\uB098\uC694?',
     todoIs: (t) => `\uD560 \uC77C\uB85C \uBC1B\uC73C\uBA74: ${t}`,
+    stateNote: '\uD604\uC7AC \uC0C1\uD0DC \uB178\uD2B8 \uB9CC\uB4E4\uAE30',
+    writing: (s) => `\uB178\uD2B8\uB97C \uBAA8\uB450 \uC77D\uACE0 \uD604\uC7AC \uC0C1\uD0DC\uB97C \uC4F0\uB294 \uC911… ${s}\uCD08 (1\uBD84\uCBE4)`,
+    notWritten: (e) => `\uC4F0\uC9C0 \uBABB\uD588\uC5B4\uC694: ${e}`,
+    stateMade: (n) => `\uB178\uD2B8 ${n}\uAC1C\uB97C \uBAA8\uC544 \uD604\uC7AC \uC0C1\uD0DC \uB178\uD2B8\uB97C \uB9CC\uB4E4\uC5C8\uC5B4\uC694 — \uC815\uD55C \uAC83, \uC9C0\uAE08 \uAE30\uC900 \uACC4\uD68D, \uC544\uC9C1 \uC5F4\uB9B0 \uAC83(\uB178\uD2B8\uB07C\uB9AC \uB2E4\uB978 \uAC74 \uC591\uCABD \uB2E4), \uB2E4\uC74C \uD560 \uC77C. \uD56D\uBAA9\uB9C8\uB2E4 \uADFC\uAC70 \uB178\uD2B8\uAC00 \uB9C1\uD06C\uB3FC \uC788\uC5B4\uC694. \uC6D0\uB798 \uB178\uD2B8\uB4E4\uC740 \uADF8\uB300\uB85C\uC608\uC694.`,
+    stateProposed: (n) => `\uB178\uD2B8 ${n}\uAC1C\uB85C \uD604\uC7AC \uC0C1\uD0DC\uB97C \uB2E4\uC2DC \uC37C\uC5B4\uC694. \uAE30\uC874 \uB178\uD2B8 \uC704\uC5D0 \uBE68\uAC04 \uD39C\uC73C\uB85C \uC81C\uC548\uD588\uC5B4\uC694. \uC6D0\uB798 \uB178\uD2B8\uB4E4\uC740 \uADF8\uB300\uB85C\uC608\uC694.`,
+    stateSame: '\uD604\uC7AC \uC0C1\uD0DC \uB178\uD2B8\uAC00 \uC774\uBBF8 \uADF8\uB300\uB85C\uC608\uC694.',
+    seeChanges: '\uBC14\uB010 \uBD80\uBD84 \uBCF4\uAE30',
     enough: '\uC624\uB298\uC740 \uC5EC\uAE30\uAE4C\uC9C0',
     rest: (n) => (n ? `\uB098\uBA38\uC9C0 ${n}\uAC00\uC9C0\uB294 \uB2E4\uC74C\uC5D0 \uC5EC\uCB64\uBCFC\uAC8C\uC694.` : '\uB2E4 \uC5EC\uCB64\uBD24\uC5B4\uC694.'),
     where: '\uB178\uD2B8\uC5D0\uC11C \uAD00\uB828 \uC788\uC5B4 \uBCF4\uC774\uB294 \uC904 (\uB204\uB974\uBA74 \uADF8 \uC904\uC774 \uC5F4\uB824\uC694):',
@@ -85,6 +92,13 @@ export const WORDS = {
     of: (i, n) => `${i}/${n}`,
     todoQ: 'Is this to-do done?',
     todoIs: (t) => `As a to-do: ${t}`,
+    stateNote: 'Write where it stands',
+    writing: (s) => `Reading all its notes and writing where it stands… ${s}s (about a minute)`,
+    notWritten: (e) => `Not written: ${e}`,
+    stateMade: (n) => `Written from its ${n} notes: one note of where it stands — decided, the plan as it stands, what is still open (where notes disagree, both sides), next — each point linked to its note. Its notes are as they were.`,
+    stateProposed: (n) => `Written again from its ${n} notes: proposed over the one there, in its red pen review. Its notes are as they were.`,
+    stateSame: 'The note of where it stands says so already.',
+    seeChanges: 'What changes',
     enough: 'Enough for today',
     rest: (n) => (n ? `The other ${n} next time.` : 'All asked.'),
     where: 'Lines in the notes that look related (opens it there):',
@@ -475,6 +489,7 @@ export class Talk {
         const m = await this.desk.markWithdrawn({ withdrawals: r.withdrawals });
         if (m.done.length) this.reviews(m.done, W.markedN(m.done.length, m.failed.length)); else { this.say(W.markedN(0)); b.disabled = false; }
       }) : null,
+      this.desk.opts.state ? btn(W.stateNote, async (b) => { b.disabled = true; if (!(await this.stateNote())) b.disabled = false; }) : null,
       r.waiting.length && this.desk.opts.openReview ? btn(W.look, () => this.reviews(r.waiting.map((w) => ({ file: w.file, id: w.id })))) : null,
       btn(W.finish, async () => { this.done(acts); await this.desk.wrapUp(); this.say(W.finished); }, 'ghost'));
     this.ending = acts;
@@ -505,6 +520,33 @@ export class Talk {
       }),
       btn(W.show, () => { this.desk.showTalk(false); this.desk.show(r.card, true); }, 'ghost'));
     return true;
+  }
+  // Where the topic stands, from all its notes at once: a note of it beside
+  // them (made when there is none; one there already: the new one proposed
+  // over it, in its red pen review). Its notes are not changed. → whether it was written.
+  async stateNote() {
+    const W = this.W;
+    const wait = this.say(W.writing(0), 'ai wait');
+    const t0 = Date.now();
+    const tick = setInterval(() => { wait.textContent = W.writing(Math.round((Date.now() - t0) / 1000)); }, 1000);
+    let r;
+    try { r = await this.desk.opts.state(); } catch (e) { r = { error: e.message }; } finally { clearInterval(tick); wait.remove(); }
+    if (r?.error) { this.say(W.notWritten(r.error)); return false; }
+    const open = (p) => btn(name(p), () => this.desk.opts.openNote(p, 1), 'ghost');
+    try {
+      if (!r.exists) {
+        const p = await this.desk.opts.writeNote(r.file, r.text);
+        const row = this.say(W.stateMade(r.read));
+        this.acts(row, open(p));
+        this.desk.event('noted', { title: 'Where it stands', text: '', file: p });
+        return true;
+      }
+      const id = await this.desk.opts.proposeNote(r.file, () => r.text, { open: false });
+      if (id === false) { this.say(W.stateSame); return true; }
+      const row = this.say(W.stateProposed(r.read));
+      this.acts(row, open(r.file), ...(this.desk.opts.openReview && id && id !== true ? [btn(W.seeChanges, () => this.desk.opts.openReview(id), 'ghost')] : []));
+      return true;
+    } catch (e) { this.say(W.notWritten(e.message)); return false; }
   }
   // Red pen reviews, each to open.
   reviews(list, said = '') {

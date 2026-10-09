@@ -1083,6 +1083,39 @@ async function reviewTodos(mine, ignored) {
 // One topic on a desk: Reviews/<title> <day>.canvas (once a day: the same
 // opens again; prepared again, another beside it — "(2)" — never over what
 // was done on the first), what the margin says of it beside it.
+// Where a topic stands now, from all its notes at once (they are spread over
+// many, and don't all agree): one note — its goal, what was decided, the plan
+// made to agree with it, what is still open (where notes disagree, both
+// sides), next — each point linked to its note. Written by Claude, from the
+// desk's notes (not a private or ignored one) and "This time"; returned with
+// where it would go (beside the topic's notes), nothing written here.
+async function labReviewState(b) {
+  const rel = relOf(workspacePath(String(b.path || '')));
+  if (!/^Reviews\/.+\.canvas$/i.test(rel) || !fs.existsSync(workspacePath(rel))) throw httpError(400, 'Not a review\u2019s desk');
+  const deskEsm = await import(require('url').pathToFileURL(path.join(__dirname, 'public', 'desk.js')).href);
+  const desk = deskEsm.parseDesk(fs.readFileSync(workspacePath(rel), 'utf8'));
+  const thisTime = deskEsm.thisTimeOf(desk);
+  const goalCard = desk.nodes.find((n) => n.type === 'text' && /^\*\*[^*]+\*\*\n\nGoal \(/.test(String(n.text || '')));
+  const title = (/^\*\*([^*]+)\*\*/.exec(goalCard?.text || '') || [])[1] || path.basename(rel, '.canvas').replace(/ \d{4}-\d{2}-\d{2}(?: \(\d+\))?$/, '');
+  const goal = thisTime.goal || (/\nGoal \([^)]*\): ([^\n]*)/.exec(goalCard?.text || '') || [])[1]?.replace(/\s*\u2014 \[\[.*$/, '') || '';
+  const ignored = loadIgnore(ROOT);
+  const mine = [...new Set(desk.nodes.filter((n) => n.type === 'file' && /\.md$/i.test(n.file || '')).map((n) => { try { return relOf(workspacePath(n.file)); } catch { return ''; } }))].filter((p) => p && reviewable(p, ignored)).slice(0, 16);
+  // Where it goes: beside its notes (the folder most of them are in), named for the topic.
+  const ko = /[\uac00-\ud7a3]/.test(title);
+  const folders = mine.map((p) => path.posix.dirname(p)).filter((f) => f !== '.');
+  const folder = folders.sort((x, y) => folders.filter((f) => f === y).length - folders.filter((f) => f === x).length)[0] || '';
+  const file = `${folder ? `${folder}/` : ''}${title.replace(/[\\/:*?"<>|#^[\]]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 80)} \u2014 ${ko ? '\uD604\uC7AC \uC0C1\uD0DC' : 'where it stands'}.md`;
+  // (Not itself, when it is one of them.)
+  let left = 80000;
+  const notes = mine.filter((p) => p !== file).map((p) => { const c = cachedText(p); const text = c ? reviewText(c).slice(0, Math.min(8000, Math.max(0, left))) : ''; left -= text.length; return { path: p, text }; }).filter((n) => n.text.trim());
+  if (!notes.length) throw httpError(400, 'None of its notes can be read (gone, private or ignored).');
+  const decided = thisTime.decided.map((l) => deskEsm.decisionOf(l).words).filter(Boolean);
+  const withdrawn = (thisTime.withdrawn || []).map((l) => deskEsm.decisionOf(l).words.replace(/\s*\u2014 withdrawn \d{4}-\d{2}-\d{2}$/, ''));
+  const r = await reviewUp(b).state({ topic: { title, goal }, decided, later: thisTime.later || [], withdrawn, notes });
+  if (!r.ok) throw httpError(502, r.error || 'Claude did not answer.');
+  return { text: r.text, file, exists: fs.existsSync(workspacePath(file)), read: notes.length };
+}
+
 // The topics reviewed before, each as its newest desk left it: what was put
 // off and is due by today, how many of its notes changed since, the notes
 // new in their folders since — to go on with it (nothing sent; read here).
@@ -3123,6 +3156,7 @@ async function routeApi(method, url, body) {
   if (method === 'POST' && p === '/api/lab/review/topics') return labReviewTopics(body || {});
   if (method === 'POST' && p === '/api/lab/review/desk') return labReviewDesk(body || {});
   if (method === 'GET' && p === '/api/lab/review/resume') return labReviewResume();
+  if (method === 'POST' && p === '/api/lab/review/state') return labReviewState(body || {});
   if (method === 'POST' && p === '/api/lab/review/jot') return labReviewJot(body || {});
   if (method === 'POST' && p === '/api/lab/review/changes') return labReviewChanges(body || {});
   if (method === 'GET' && p === '/api/lab/review/ledger') return { events: reviewLedger(relOf(workspacePath(q('path')))) };
