@@ -1232,7 +1232,7 @@ function addReviewLedger({ path: relPath, event }) {
   const rel = relOf(workspacePath(relPath));
   if (!/\.canvas$/i.test(rel)) throw httpError(400, 'Not a desk');
   if (!event || !LEDGER_TYPES.has(event.type)) throw httpError(400, 'event: { type, title, text, file }');
-  const e = { type: event.type, at: new Date().toISOString(), ...(cleanStr(event.title, 200) ? { title: cleanStr(event.title, 200) } : {}), ...(cleanStr(event.text, 4000) ? { text: cleanStr(event.text, 4000) } : {}), ...(cleanStr(event.file, 1000) ? { file: cleanStr(event.file, 1000) } : {}), ...(cleanStr(event.card, 64) ? { card: cleanStr(event.card, 64) } : {}), ...(Array.isArray(event.about) ? { about: event.about.slice(0, 20).map((a) => cleanStr(a, 400)).filter(Boolean) } : {}) };
+  const e = { type: event.type, at: new Date().toISOString(), ...(cleanStr(event.title, 200) ? { title: cleanStr(event.title, 200) } : {}), ...(cleanStr(event.text, 4000) ? { text: cleanStr(event.text, 4000) } : {}), ...(cleanStr(event.file, 1000) ? { file: cleanStr(event.file, 1000) } : {}), ...(cleanStr(event.card, 64) ? { card: cleanStr(event.card, 64) } : {}), ...(cleanStr(event.review, 64) ? { review: cleanStr(event.review, 64) } : {}), ...(Array.isArray(event.about) ? { about: event.about.slice(0, 20).map((a) => cleanStr(a, 400)).filter(Boolean) } : {}) };
   const events = [...reviewLedger(rel), e].slice(-500);
   const file = ledgerOf(rel);
   fs.mkdirSync(path.dirname(file), { recursive: true });
@@ -1623,6 +1623,7 @@ function reviewCardParts(c) {
   }
   if (cleanStr(c?.pick, 400)) out.pick = cleanStr(c.pick, 400);
   if (c?.proposed === true) out.proposed = true;
+  if (Array.isArray(c?.waiting)) out.waiting = c.waiting.slice(0, 20).map((w) => ({ file: cleanStr(w?.file, 1000), id: cleanStr(w?.id, 64), known: w?.known === true })).filter((w) => w.file && w.id);
   if (Array.isArray(c?.withdrawals)) out.withdrawals = c.withdrawals.slice(0, 20).map((w) => ({ note: cleanStr(w?.note, 1000), rec: cleanStr(w?.rec, 400), words: cleanStr(w?.words, 400), on: cleanStr(w?.on, 10) })).filter((w) => w.note && w.rec);
   if (Number.isFinite(c?.at) && c.at > 0) out.at = Math.round(c.at);
   if (Array.isArray(c?.decisions)) out.decisions = c.decisions.slice(0, 20).map((d) => ({ words: cleanStr(d?.words, 400) })).filter((d) => d.words);

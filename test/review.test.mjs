@@ -476,4 +476,16 @@ test('a decision called off: only one there still as it was; kept under Withdraw
     notes: new Map([['trip/plan.md', '# Plan\n- Dinner at the pier #decision\n'], ['trip/old.md', '- Dinner at the pier, maybe #decision']]) });
   assert.match(w.text, /\*\*Withdrawn\*\*\n- Dinner at the pier \(withdrawn 2026-10-09\)\n {2}- still recorded as decided in \[\[trip\/plan\]\]\n {2}- changes were proposed for it to \[\[trip\/day1\]\]: look at what they say now\n/);
   assert.deepEqual(w.withdrawals, [{ note: 'trip/plan.md', rec: '- Dinner at the pier #decision', words: 'Dinner at the pier', on: '2026-10-09' }], 'only the line as recorded; another like it is not');
+  // Its changes' reviews: one still waiting said so (some of its changes, which not known); one done, or of what is decided now, not.
+  const ledger = [
+    { type: 'changes proposed', file: 'trip/day1.md', review: 'r1', about: ['Dinner at the pier', 'Napa: a whole day'] },
+    { type: 'changes proposed', file: 'trip/day2.md', review: 'r2', about: ['Dinner at the pier'] },
+    { type: 'changes proposed', file: 'trip/napa.md', review: 'r3', about: ['Napa: a whole day'] },
+    { type: 'changes proposed', file: 'trip/day3.md', review: 'r4', about: ['Dinner at the pier'] },
+  ];
+  const r = wrapUp({ desk: { nodes: [{ id: 't', type: 'text', text: off }] }, ledger, runs: new Map([['r1', 'review'], ['r2', 'applied'], ['r3', 'review']]) });
+  assert.deepEqual(r.waiting, [{ file: 'trip/day1.md', id: 'r1', known: true }, { file: 'trip/day3.md', id: 'r4', known: false }]);
+  assert.match(r.text, /\*\*Reviews with changes from a decision not decided now\*\*\n- \[\[trip\/day1\]\]: some of its changes were proposed from \u201CDinner at the pier\u201D \(called off\) \u2014 its red pen review is still waiting\n- \[\[trip\/day3\]\]: [^\n]* \u2014 its review could not be checked\n/);
+  // Taken back into Decided (undone): no longer said.
+  assert.deepEqual(wrapUp({ desk: { nodes: [{ id: 't', type: 'text', text: t }] }, ledger, runs: new Map([['r1', 'review']]) }).waiting, []);
 });

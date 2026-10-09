@@ -344,8 +344,10 @@ export function withoutDecided(text, line) {
 // that are on the desk now, as they read now (one taken back, or deleted,
 // is not). → { text, todos: [line] (as the assistant's list writes them),
 // decisions: [{ words, note, inNote }], withdrawals: [{ note, rec, words, on }]
-// (a decision called off, still recorded as decided in a note) }.
-export function wrapUp({ desk, ledger = [], notes = new Map(), now = '' }) {
+// (a decision called off, still recorded as decided in a note), waiting:
+// [{ file, id, known }] (a red pen review of changes proposed from a decision
+// not decided now, still waiting: runs, id → status, when known) }.
+export function wrapUp({ desk, ledger = [], notes = new Map(), now = '', runs = null }) {
   const mine = thisTimeOf(desk);
   const goalCard = (desk?.nodes || []).find((x) => x.type === 'text' && /^\*\*[^*]+\*\*\n\nGoal \(/.test(String(x.text || '')));
   const g = /\nGoal \(([^)]*)\): ([^\n]*)/.exec(goalCard?.text || '');
@@ -406,6 +408,27 @@ export function wrapUp({ desk, ledger = [], notes = new Map(), now = '' }) {
     ...(w.marked.length ? [`  - still recorded as decided in ${w.marked.map(name).join(', ')}`] : []),
     ...(w.touched.length ? [`  - changes were proposed for it to ${w.touched.map(name).join(', ')}: look at what they say now`] : []),
   ]);
+  // Changes proposed from a decision not decided now (called off, put off,
+  // changed since), their review still waiting: to look at — which of its
+  // changes come of it is not known here (none is judged, none held back).
+  const active = new Set(decisions.map((d) => norm(d.words)));
+  const was = (w) => {
+    if (mine.withdrawn.some((l) => norm(decisionOf(l).words.replace(/\s*\u2014 withdrawn \d{4}-\d{2}-\d{2}$/, '')) === norm(w))) return 'called off';
+    if (mine.later.some((l) => norm(decisionOf(l).words) === norm(w))) return 'put off';
+    const e = ledger.filter((x) => ['withdrawn', 'deferred', 'reopened', 'replaced'].includes(x.type) && (x.about || []).some((a) => norm(a) === norm(w))).at(-1);
+    return { withdrawn: 'called off', deferred: 'put off', reopened: 'opened again', replaced: 'changed' }[e?.type] || 'no longer under Decided';
+  };
+  const reviews = new Map();
+  for (const e of ledger.filter((x) => x.type === 'changes proposed' && x.review && x.file)) reviews.set(e.review, e);
+  const behind = [];
+  const behindLines = [];
+  for (const [id, e] of reviews) {
+    const off = (e.about || []).filter((a) => !active.has(norm(a)));
+    const st = runs?.get(id);
+    if (!off.length || (st && st !== 'review')) continue;
+    behind.push({ file: e.file, id, known: st === 'review' });
+    behindLines.push(`- ${name(e.file)}: some of its changes were proposed from ${off.map((a) => `\u201C${a}\u201D (${was(a)})`).join(', ')} \u2014 ${st === 'review' ? 'its red pen review is still waiting' : 'its review could not be checked'}`);
+  }
   const section = (title, lines, none) => [`**${title}**`, ...(lines.length ? lines : [none])];
   const text = [
     `**Wrap-up**${now ? ` \u00B7 ${now}` : ''}`, '',
@@ -413,6 +436,7 @@ export function wrapUp({ desk, ledger = [], notes = new Map(), now = '' }) {
     ...section('Decided', decisions.map((d) => `- ${d.words}${d.inNote ? ` \u2014 in ${name(d.note)}` : ' (not in the notes yet)'}`), '- (nothing written under Decided)'), '',
     ...(mine.later.length ? [...section('Later', mine.later.map((d) => `- ${d}`), ''), ''] : []),
     ...(withdrawnLines.length ? [...section('Withdrawn', withdrawnLines, ''), ''] : []),
+    ...(behindLines.length ? [...section('Reviews with changes from a decision not decided now', behindLines, ''), ''] : []),
     ...section('Next', [...todos, ...open.map((f) => `- Still to settle: ${f}`)], '- (none written)'), '',
     ...section('Changed in the notes', changed, '- (nothing yet)'),
     ...(waiting.length ? ['', ...section('Not in the notes yet', waiting, '')] : []),
@@ -421,7 +445,7 @@ export function wrapUp({ desk, ledger = [], notes = new Map(), now = '' }) {
     `**From the margin**: ${kept.length} taken and on the desk${taken.length > kept.length ? ` (${taken.length - kept.length} taken back or deleted)` : ''}, ${let_.length} let go`,
     ...kept.map((e) => { const t = e.text.split('\n')[0]; return `- ${e.title || 'A card'}: ${t.length > 70 ? `${t.slice(0, 70)}\u2026` : t}`; }),
   ].join('\n');
-  return { text, todos, decisions, withdrawals: withdrawals.flatMap((w) => w.marked.map((note) => ({ note, rec: w.rec, words: w.words, on: w.on }))) };
+  return { text, todos, decisions, waiting: behind, withdrawals: withdrawals.flatMap((w) => w.marked.map((note) => ({ note, rec: w.rec, words: w.words, on: w.on }))) };
 }
 // A line as it was and as it would read, as one: what goes struck out, what
 // comes marked (==…==), what stays as it is — a long stretch of it cut
@@ -610,7 +634,7 @@ function button(label, title, run, cls = '') {
 }
 // The margin's cards as kept beside the desk: done ones, what shows them.
 export const marginCards = (ai) => ai.filter((a) => a.state === 'done' && String(a.text || '').trim()).slice(-200)
-  .map(({ id, kind, batch, of, title, text, x, y, width, height, paths, jot, decisions, changes, at, pick, proposed, withdrawals }) => ({ id, kind, ...(batch ? { batch } : {}), ...(of ? { of } : {}), ...(title ? { title } : {}), text, x, y, width, height, ...(paths?.length ? { paths } : {}), ...(jot ? { jot } : {}), ...(decisions?.length ? { decisions } : {}), ...(changes?.length ? { changes } : {}), ...(at ? { at } : {}), ...(pick ? { pick } : {}), ...(proposed ? { proposed } : {}), ...(withdrawals?.length ? { withdrawals } : {}) }));
+  .map(({ id, kind, batch, of, title, text, x, y, width, height, paths, jot, decisions, changes, at, pick, proposed, withdrawals, waiting }) => ({ id, kind, ...(batch ? { batch } : {}), ...(of ? { of } : {}), ...(title ? { title } : {}), text, x, y, width, height, ...(paths?.length ? { paths } : {}), ...(jot ? { jot } : {}), ...(decisions?.length ? { decisions } : {}), ...(changes?.length ? { changes } : {}), ...(at ? { at } : {}), ...(pick ? { pick } : {}), ...(proposed ? { proposed } : {}), ...(withdrawals?.length ? { withdrawals } : {}), ...(waiting?.length ? { waiting } : {}) }));
 const SVG = 'http://www.w3.org/2000/svg';
 const svg = (tag, cls) => { const e = document.createElementNS(SVG, tag); if (cls) e.setAttribute('class', cls); return e; };
 
@@ -2119,8 +2143,9 @@ export class Desk {
     const todos = button('Add the to-dos\u2026', 'Its next to-dos at the end of the assistant\u2019s list, proposed in the red pen review (those there already are left out)', () => this.addTodos(a));
     const decided = button('Carry the decisions into the notes\u2026', 'Every line of its notes that no longer agrees with what you decided, and each decision recorded once: shown first, note by note (its notes and decisions go to Claude); nothing changes until you propose it', () => this.changesPlan());
     const withdraw = button('Mark them withdrawn in their notes\u2026', 'Each decision called off, where a note still records it as decided (that line, as written): struck out, with the day, proposed in its red pen review. Nothing else in the notes is changed back', () => this.markWithdrawn(a));
+    const reviews = button('Their reviews\u2026', 'The red pen reviews still waiting with changes proposed from a decision not decided now: each to open, to look at what it changes (which of its changes come of that decision is not known here)', () => this.waitingReviews(a));
     const propose = button('Propose in the notes', 'Each note\u2019s changes in its red pen review, to accept or not', () => this.proposeChanges(a));
-    const foot = el('div', 'desk-ai-foot', keep, all, note, read, todos, decided, withdraw, propose, drop);
+    const foot = el('div', 'desk-ai-foot', keep, all, note, read, todos, decided, withdraw, reviews, propose, drop);
     const e = el('div', 'desk-card t-ai', head, body, foot);
     e.dataset.id = a.id;
     e.show = (x) => {
@@ -2135,6 +2160,7 @@ export class Desk {
       decided.hidden = !(x.kind === 'review' && x.title === 'Wrap-up' && x.decisions?.length && this.opts.changes);
       withdraw.hidden = !(x.kind === 'review' && x.title === 'Wrap-up' && x.withdrawals?.length);
       propose.hidden = !(x.kind === 'review' && x.changes?.length);
+      reviews.hidden = !(x.kind === 'review' && x.title === 'Wrap-up' && x.waiting?.length && this.opts.openReview);
       const live = x.changes ? this.liveChanges(x).length : 0;
       propose.textContent = `${x.proposed ? 'Proposed \u2713 (again)' : 'Propose in the notes'}${x.changes && live < x.changes.length ? ` (${live} of ${x.changes.length} from what is decided now)` : ''}`;
       keep.disabled = x.state !== 'done';
@@ -2337,11 +2363,14 @@ export class Desk {
     for (const f of files) { try { notes.set(f, await this.opts.readNote(f)); } catch { notes.set(f, ''); } }
     let ledger = [];
     try { ledger = (await this.opts.ledger?.()) || []; } catch { /* none kept */ }
+    // The red pen reviews, as they are now (not known: said so).
+    let runs = null;
+    try { const rs = await this.opts.runs?.(); if (rs) runs = new Map(rs.map((r) => [r.id, r.status])); } catch { /* not known */ }
     const d = new Date();
-    const { text, decisions, withdrawals } = wrapUp({ desk: this.d, ledger, notes, now: `${today()} ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}` });
+    const { text, decisions, withdrawals, waiting } = wrapUp({ desk: this.d, ledger, notes, runs, now: `${today()} ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}` });
     // One wrap-up: the one not kept before, replaced.
     this.ai = this.ai.filter((a) => !(a.kind === 'review' && a.title === 'Wrap-up'));
-    const card = this.addAi({ kind: 'review', title: 'Wrap-up', x: 0, y: 0, width: 460, height: 420, text, state: 'done', at: Date.now(), decisions: decisions.filter((x) => !x.inNote).map(({ words }) => ({ words })), withdrawals }, false);
+    const card = this.addAi({ kind: 'review', title: 'Wrap-up', x: 0, y: 0, width: 460, height: 420, text, state: 'done', at: Date.now(), decisions: decisions.filter((x) => !x.inNote).map(({ words }) => ({ words })), withdrawals, waiting }, false);
     this.streamNow();
     this.show(card, true);
     this.event('wrap-up', { text: '' });
@@ -2408,13 +2437,20 @@ export class Desk {
         const id = await this.opts.proposeNote(file, (text) => { r = withChanges(text, cs); return r.text; }, { open: false });
         missed += r.missed;
         // What it proposed, as the lines would read (the wrap-up looks for them in the note).
-        if (id && r.made) { done.push({ file, id }); this.event('changes proposed', { file, text: r.done.map((c) => c.add || c.now).join('\n').slice(0, 4000), about: [...new Set(r.done.map((c) => c.about).filter(Boolean))] }); }
+        if (id && r.made) { done.push({ file, id }); this.event('changes proposed', { file, review: id, text: r.done.map((c) => c.add || c.now).join('\n').slice(0, 4000), about: [...new Set(r.done.map((c) => c.about).filter(Boolean))] }); }
       } catch (e) { failed.push(`${file.split('/').pop().replace(/\.md$/i, '')}: ${e.message}`); }
     }
     // Their reviews, waiting: one by one from here (none opened by itself).
     const row = this.say(`Proposed in ${done.length} note${done.length === 1 ? '' : 's'}, each waiting in its red pen review${missed ? `; ${missed} line${missed === 1 ? ' was' : 's were'} no longer as read, left` : ''}${failed.length ? `; not proposed \u2014 ${failed.join('; ')}` : ''}.`);
     if (this.opts.openReview) for (const d of done) row.append(button(d.file.split('/').pop().replace(/\.md$/i, ''), `Its red pen review: ${d.file}`, () => this.opts.openReview(d.id), 'desk-review-link'));
     if (done.length) { a.proposed = true; this.render(); this.foldDock(false); this.dockShow(); }
+  }
+  // The reviews a wrap-up found waiting with changes of a decision not decided now: one by one from here.
+  waitingReviews(a) {
+    const row = this.say(`Waiting with changes from a decision not decided now (which of them, not known): look at each before accepting.`);
+    for (const w of a.waiting || []) row.append(button(w.file.split('/').pop().replace(/\.md$/i, ''), `Its red pen review: ${w.file}${w.known ? '' : ' (could not be checked: it may be done)'}`, () => this.opts.openReview(w.id), 'desk-review-link'));
+    this.foldDock(false);
+    this.dockShow();
   }
   // A decision called off, where a note still records it as decided: that
   // line struck out with the day (no longer a decision), proposed.
