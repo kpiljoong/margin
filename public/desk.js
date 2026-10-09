@@ -474,12 +474,17 @@ export function reviewDesk({ title, goal = '', goalState = 'guessed', goalFrom =
   ].filter((g) => g.cards.length);
   const nodes = [];
   const cards = [];
+  // The margin's column before its notes (what to look at first, seen first).
+  const laid = groupLayout(groups, 0, 0);
+  const notesAt = laid.find((g) => g.name === 'Its notes');
+  const shift = notesAt && items.length ? 380 + 2 * PAD : 0;
   let right = 0;
-  for (const g of groupLayout(groups, 0, 0)) {
-    nodes.push({ id: newId(), type: 'group', label: g.name, ...g.box });
-    right = Math.max(right, g.box.x + g.box.width);
+  for (const g of laid) {
+    const dx = g === notesAt ? shift : 0;
+    nodes.push({ id: newId(), type: 'group', label: g.name, ...g.box, x: g.box.x + dx });
+    if (g !== notesAt) right = Math.max(right, g.box.x + g.box.width);
     const these = groups.find((x) => x.name === g.name).cards;
-    for (const p of g.at) { const c = these.find((x) => x.id === p.id); cards.push({ ...c, x: p.x, y: p.y }); }
+    for (const p of g.at) { const c = these.find((x) => x.id === p.id); cards.push({ ...c, x: p.x + dx, y: p.y }); }
   }
   const KIND = { decide: 'To decide', missing: 'Missing', conflict: 'Doesn\u2019t agree', ask: 'A question', consider: 'To consider', date: 'A date to look at' };
   let y = HEAD;
@@ -607,10 +612,20 @@ export class Desk {
     this.ai = [...back, ...this.ai];
     this.marginRead = true;
     this.savedMargin = JSON.stringify(marginCards(back));
+    // A review's desk opens on its goal and what the margin says, near enough to read.
+    if (this.opts.review && back.length) this.reviewView(back);
     if (back.length) {
       this.render();
       this.say(`${back.length} of the margin\u2019s cards from before, not kept yet: Tab keeps the newest, \u21E7Tab all that came with it, Esc lets it go.`);
     }
+  }
+  reviewView(margin) {
+    const ns = [...this.d.nodes.filter((n) => n.type === 'group' && n.label !== 'Its notes'), ...margin.filter((a) => !a.jot)];
+    const b = boundsOf(ns);
+    const r = this.el.getBoundingClientRect();
+    if (!b || !r.width) return;
+    const z = Math.max(0.62, Math.min(1, (r.width - this.side() - 80) / b.width));
+    this.goTo({ x: 40 - b.x * z, y: 40 - b.y * z, z }, false);
   }
   saveMargin() {
     if (!this.marginRead || !this.opts.saveMargin) return;
@@ -2157,9 +2172,9 @@ export class Desk {
   reflowed(nodes) {
     const col = this.ai.filter((a) => a.kind === 'review' && !a.jot && a.title !== 'Wrap-up' && !a.changes).sort((p, q) => p.y - q.y);
     if (col.length) {
-      const right = Math.max(...nodes.filter((n) => n.type === 'group').map((n) => n.x + n.width), 0);
+      const x = Math.min(...col.map((a) => a.x));
       let y = Math.min(...col.map((a) => a.y));
-      for (const a of col) { a.x = right + 40; a.y = y; y += this.tall(a) + 12; }
+      for (const a of col) { a.x = x; a.y = y; y += this.tall(a) + 12; }
     }
     return nodes;
   }

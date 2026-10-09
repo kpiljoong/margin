@@ -153,7 +153,9 @@ test('a topic laid out: its goal and question, the to-dos that may be done (know
   assert.equal(margin[0].text, 'Half a day or a whole one.\n\n_First: It sets the nights_\n\nFrom: [[trip/plan]]\n\nTo-do: `- [ ] Decide it`');
   assert.match(margin[3].text, /_Then: later_/);
   assert.ok(margin.every((m, i) => i === 0 || m.y > margin[i - 1].y), 'one under another, the first on top');
-  assert.ok(margin[0].x > Math.max(...desk.nodes.map((n) => n.x + n.width)) - 1, 'beside the cards');
+  const box = (l) => desk.nodes.find((n) => n.label === l);
+  assert.ok(margin[0].x > box('Check the state (x: done)').x + box('Check the state (x: done)').width - 1 && margin[0].x + margin[0].width < box('Its notes').x, 'beside the cards, before its notes');
+  assert.ok(desk.nodes.filter((n) => n.type === 'file').every((n) => n.x > box('Its notes').x), 'its notes in their group');
   const written = { nodes: [{ id: 'a', type: 'text', text: thisTimeText().replace('Goal: ', 'Goal: Book it all by the 20th').replace('- ', '- The Napa tour\n- Return flight A or B\n2. Phones\n- x\n') }] };
   assert.deepEqual(thisTimeOf(written), { goal: 'Book it all by the 20th', focus: ['The Napa tour', 'Return flight A or B', 'Phones'], decided: [], later: [] });
   assert.match(reviewDesk({ title: 'T', items: [{ kind: 'decide', say: 'N.', focus: 1 }] }).margin[0].title, /^Your pick/);
