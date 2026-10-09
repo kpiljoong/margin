@@ -1274,7 +1274,7 @@ async function labReviewJot(b) {
   const todos = [...cards, ...(await reviewTodos(mine, ignored)).sort((x, y) => onDesk.has(`${y.file}\u0000${y.key}`) - onDesk.has(`${x.file}\u0000${x.key}`))].slice(0, 60);
   const r = await r0.jot({ topic: { title, goal: goal.trim() }, thisTime, notes, todos: todos.map((x) => `${x.text} (${x.file || 'on this desk'})`), jot: b.text.trim(), asked: cleanStr(b.asked, 1000), today: reviewToday(), projects });
   if (!r.ok) throw httpError(502, r.error || 'Claude did not answer.');
-  return { items: r.items.map((x) => ({ kind: x.kind, say: x.say, about: x.about ? notes[x.about - 1].path : '', settles: x.settles ? thisTime.focus[x.settles - 1] : '', todo: x.todo, ...(x.ticks ? { ticks: todos[x.ticks - 1] } : {}), ...(x.replaces ? { replaces: thisTime.decided[x.replaces - 1] } : {}) })) };
+  return { items: r.items.map((x) => ({ kind: x.kind, say: x.say, ...(x.answers ? { answers: true } : {}), about: x.about ? notes[x.about - 1].path : '', settles: x.settles ? thisTime.focus[x.settles - 1] : '', todo: x.todo, ...(x.ticks ? { ticks: todos[x.ticks - 1] } : {}), ...(x.replaces ? { replaces: thisTime.decided[x.replaces - 1] } : {}) })) };
 }
 
 // What they decided on a review's desk (and put off), carried into its

@@ -2559,17 +2559,26 @@ export class Desk {
     this.jotStatus.textContent = 'Sorting what you jotted\u2026';
     let r;
     try { r = await this.opts.jot(text, o); } catch (e) { this.jotStatus.textContent = `Not sorted: ${e.message} \u2014 it is on the desk as you wrote it.`; return { card, error: e.message }; }
-    const items = r?.items || [];
-    if (!items.length) { this.jotStatus.textContent = 'Nothing to sort in it \u2014 it is on the desk as you wrote it.'; return { card, cards: [] }; }
+    // A question of theirs is answered, not noted: one that is all questions leaves nothing on the desk.
+    const replies = (r?.items || []).filter((it) => it.kind === 'question').map((it) => ({ say: it.say, about: it.about || '' }));
+    const items = (r?.items || []).filter((it) => it.kind !== 'question');
+    if (!items.length && replies.length) {
+      const steps = this.undo.length;
+      this.change({ ...this.d, nodes: this.streamed(this.d.nodes.filter((n) => n.id !== card.id)) });
+      if (this.undo.length > steps) this.undo.pop();
+      this.jotStatus.textContent = replies.map((x) => x.say).join(' ');
+      return { card: null, cards: [], replies };
+    }
+    if (!items.length) { this.jotStatus.textContent = 'Nothing to sort in it \u2014 it is on the desk as you wrote it.'; return { card, cards: [], replies }; }
     const TITLE = { decided: 'Decided', later: 'Later', open: 'Still open', todo: 'To do', done: 'Done', withdrawn: 'Withdrawn' };
     const batch = newId();
     for (const it of items) {
       const body = [it.say, it.about ? `\nAbout: [[${it.about.replace(/\.md$/i, '')}]]` : '', it.settles ? `\nSettles: ${it.settles}` : '', it.todo ? `\nTo-do: \`${it.todo}\`` : '', it.replaces ? `\n${{ withdrawn: 'Calls off', later: 'Puts off', open: 'Opens again', decided: 'Instead of' }[it.kind]} your decision: ${decisionOf(it.replaces).words}` : '', it.ticks && !it.replaces ? `\n${it.kind === 'later' ? 'Puts off' : 'Ticks off'}: ${it.ticks.text}${it.ticks.file ? ` \u2014 [[${it.ticks.file.replace(/\.md$/i, '')}]]` : ' (on this desk)'}` : ''].filter(Boolean).join('\n');
-      this.addAi({ kind: 'review', batch, title: `Jotted \u00B7 ${TITLE[it.kind] || 'Margin'}`, text: body, jot: { kind: it.kind, say: it.say, about: it.about || '', settles: it.settles || '', of: card.id, ...(it.ticks && !it.replaces ? { ticks: it.ticks } : {}), ...(it.replaces ? { replaces: it.replaces } : {}) }, x: 0, y: 0, width: STREAM_W - STREAM_IN, height: 74 + 21 * body.split('\n').length, state: 'done' }, false);
+      this.addAi({ kind: 'review', batch, title: `Jotted \u00B7 ${TITLE[it.kind] || 'Margin'}`, text: body, jot: { kind: it.kind, say: it.say, about: it.about || '', settles: it.settles || '', of: card.id, ...(it.answers ? { answers: true } : {}), ...(it.ticks && !it.replaces ? { ticks: it.ticks } : {}), ...(it.replaces ? { replaces: it.replaces } : {}) }, x: 0, y: 0, width: STREAM_W - STREAM_IN, height: 74 + 21 * body.split('\n').length, state: 'done' }, false);
     }
     this.streamNow();
     this.jotStatus.textContent = `${items.length} sorted, under it: Tab takes the first (marked; here too, with nothing written), Esc lets it go, \u21E7Tab takes all ${items.length}.`;
-    return { card, cards: this.ai.filter((a) => a.batch === batch) };
+    return { card, cards: this.ai.filter((a) => a.batch === batch), replies };
   }
   // A jot taken back before it was noted (to write it again): it and what it was sorted into, gone.
   // (One of them taken already, on the desk: only the rest go; the jot stays with it.)

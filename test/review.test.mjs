@@ -363,6 +363,20 @@ test('what is jotted as an answer: what was just asked goes with it', () => {
   assert.doesNotMatch(review.jotText({ topic: { title: 'Trip', goal: '' }, jot: 'SF' }), /just asked/);
 });
 
+test('what is jotted: a question of theirs answered (not noted); what answers what was asked said so', () => {
+  const items = review.parseJot([
+    'kind: question', 'say: Not yet: the taco place is still open in the notes.', 'about: N1', 'answers: no', 'settles: 1', 'ticks: T1', '---',
+    'kind: decided', 'say: Entry city: SF', 'answers: yes', '---',
+    'kind: open', 'say: Lunch: still thinking', 'answers: no',
+  ].join('\n'), { nNotes: 1, nFocus: 1, nTodos: 1 });
+  assert.deepEqual(items, [
+    { kind: 'question', say: 'Not yet: the taco place is still open in the notes.', about: 1, settles: 0, todo: '' },
+    { kind: 'decided', say: 'Entry city: SF', answers: true, about: 0, settles: 0, todo: '' },
+    { kind: 'open', say: 'Lunch: still thinking', about: 0, settles: 0, todo: '' },
+  ]);
+  assert.match(review.JOT.join('\n'), /- question: they ask you something/);
+});
+
 test('what is jotted, sorted: one block a thing, numbers in range, a to-do in the vault\'s format; "This time" with it put in', () => {
   const items = review.parseJot([
     'kind: decided', 'say: "\uC800\uB141\uC740 \uBD80\uB450\uC5D0\uC11C"', 'about: N2', 'settles: 2', '---',

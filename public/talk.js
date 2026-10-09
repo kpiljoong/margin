@@ -80,6 +80,7 @@ export const WORDS = {
     finished: '\uC815\uB9AC\uD588\uC5B4\uC694. \uB2E4\uC74C\uC5D0 \uC5F4\uBA74 \uC5EC\uAE30\uC11C \uC774\uC5B4\uAC08\uAC8C\uC694.',
     back: '← \uB300\uD654\uB85C \uB3CC\uC544\uAC00\uAE30',
     desk: '\uAE30\uB85D \uBCF4\uAE30', talk: '\uB300\uD654\uB85C',
+    backTo: '\uC544\uAE4C \uC9C8\uBB38\uC73C\uB85C',
     notes: (n) => `\uC774 \uC8FC\uC81C\uC758 \uB178\uD2B8 ${n}\uAC1C`, links: '\uC5F0\uACB0', todosOpen: (n) => `\uD560 \uC77C ${n}`, decisionsIn: (n) => `\uACB0\uC815 ${n}`, nowAbout: '\uC9C0\uAE08 \uC9C8\uBB38\uACFC \uAD00\uB828',
     placeholder: '\uB9D0\uD558\uB4EF \uC368 \uC8FC\uC138\uC694 — \uC815\uD55C \uAC83, \uBBF8\uB8EC \uAC83, \uACE0\uBBFC \uC911\uC778 \uAC83, \uD560 \uC77C… (Enter, ⇧Enter \uC904\uBC14\uAFC8)',
   },
@@ -148,6 +149,7 @@ export const WORDS = {
     finished: 'Wrapped up. Next time we go on from here.',
     back: '← Back to the talk',
     desk: 'Show the record', talk: 'Talk it through',
+    backTo: 'Back to the question',
     notes: (n) => `${n} notes of this topic`, links: 'Links', todosOpen: (n) => `${n} to do`, decisionsIn: (n) => `${n} decided`, nowAbout: 'About this question',
     placeholder: 'Write as you’d say it — decided, later, still weighing, to do… (Enter; ⇧Enter: a new line)',
   },
@@ -401,7 +403,7 @@ export class Talk {
     if (q.a) return questionOf(q.a, this.lang).say;
     return `${todoText(String(q.n.text || '').split('\n\n')[0])} — ${this.W.todoQ}`;
   }
-  next() {
+  next(brief = false) {
     const q = this.queue()[0];
     this.current = (!this.early && q) || null;
     // (Enough for today: the rest asked next time, not now.)
@@ -410,7 +412,7 @@ export class Talk {
     const i = this.total - this.queue().length + 1;
     if (q.a) {
       const x = questionOf(q.a, this.lang);
-      const row = this.say([`_${W.of(Math.max(1, i), Math.max(this.total, i))} · ${x.label}_`, '', x.say, ...(x.why ? ['', `_${x.why}_`] : []), ...(x.todo ? ['', `_${W.todoIs(x.todo.replace(/^- \[ \] /, ''))}_`] : [])].join('\n'), 'ai ask');
+      const row = this.say([`_${brief ? `${W.backTo} · ` : ''}${W.of(Math.max(1, i), Math.max(this.total, i))} · ${x.label}_`, '', x.say, ...(x.why && !brief ? ['', `_${x.why}_`] : []), ...(x.todo && !brief ? ['', `_${W.todoIs(x.todo.replace(/^- \[ \] /, ''))}_`] : [])].join('\n'), 'ai ask');
       const acts = this.acts(row,
         x.todo ? btn(W.takeTodo, () => { this.done(acts); this.desk.keep(q.a); this.say(W.taken); this.next(); }) : null,
         btn(W.skip, () => { this.done(acts); this.passed.add(q.id); this.say(W.skipped); this.next(); }, 'ghost'),
@@ -418,11 +420,11 @@ export class Talk {
         this.enough(() => acts));
       this.asking = acts;
       this.about(x.from);
-      this.showFrom(row, x.from, [x.say, x.why].join(' '));
+      if (!brief) this.showFrom(row, x.from, [x.say, x.why].join(' '));
     } else {
       const n = q.n;
       const text = String(n.text || '').split('\n\n');
-      const row = this.say([`_${W.of(Math.max(1, i), Math.max(this.total, i))} · ${W.todoQ}_`, '', todoText(text[0]), ...(text[1] ? ['', `_${todoWhy(text[1], this.lang)}_`] : [])].join('\n'), 'ai ask');
+      const row = this.say([`_${brief ? `${W.backTo} · ` : ''}${W.of(Math.max(1, i), Math.max(this.total, i))} · ${W.todoQ}_`, '', todoText(text[0]), ...(text[1] && !brief ? ['', `_${todoWhy(text[1], this.lang)}_`] : [])].join('\n'), 'ai ask');
       const acts = this.acts(row,
         btn(W.done, async () => {
           this.done(acts);
@@ -438,7 +440,7 @@ export class Talk {
       // Its own note, and the one the desk says differs.
       const files = [n.from.file, ...[...String(text[1] || '').matchAll(/\[\[([^\]|#]+)/g)].map((m) => `${m[1]}.md`)];
       this.about(files);
-      this.showFrom(row, [...new Set(files)], text[0]);
+      if (!brief) this.showFrom(row, [...new Set(files)], text[0]);
     }
     this.focus();
   }
@@ -644,10 +646,18 @@ export class Talk {
     let r;
     try { r = await this.desk.jot(text, { asked: this.askOf(asked) }); } catch (e) { r = { error: e.message }; } finally { this.busy = false; wait.remove(); }
     if (r?.error) { this.say(W.notSorted(r.error)); this.again(asked); return; }
+    // What they asked: answered from what is written (and where), nothing noted.
+    for (const x of r?.replies || []) {
+      const row = this.say(x.say);
+      if (x.about) this.about([x.about], true);
+      if (x.about) row.append(el('p', 'talk-dim', `— ${name(x.about)}`));
+    }
     const cards = r?.cards || [];
-    if (!cards.length) { this.say(W.nothing); this.again(asked); return; }
+    if (!cards.length) { if (!r?.replies?.length) this.say(W.nothing); this.again(asked, !!r?.replies?.length); return; }
     const short = (t) => (t.length > 50 ? `${t.slice(0, 50)}…` : t);
-    const row = this.say([asked ? W.answering(short(this.askOf(asked))) : W.willNote, '', ...sortedLines(cards, this.lang).map((l) => `- ${l}`)].join('\n'));
+    // Said as its answer only when it is one (what they wrote may be about something else).
+    const answering = asked && cards.some((c) => c.jot?.answers);
+    const row = this.say([answering ? W.answering(short(this.askOf(asked))) : W.willNote, '', ...sortedLines(cards, this.lang).map((l) => `- ${l}`)].join('\n'));
     const acts = this.acts(row,
       btn(W.note, async () => {
         this.done(acts);
@@ -660,6 +670,8 @@ export class Talk {
         this.say(held ? `${W.noted} ${W.held(held)}` : W.noted);
         await this.propose(this.desk.d.nodes.filter((n) => n.from?.kind === 'todo' && n.from.to && !n.from.sent && !before.has(n.id)).map((n) => n.id));
         if (this.current !== asked) return; // (asked on since)
+        // Not about what was asked: asked again (more briefly).
+        if (asked && !answering && this.queue().some((x) => x.id === asked.id)) { this.again(asked, true); return; }
         // Still asked (what they wrote may be about something else): settled, they say.
         if (asked && this.queue().some((x) => x.id === asked.id)) {
           const ask = this.say(W.settled(short(this.askOf(asked))));
@@ -682,11 +694,12 @@ export class Talk {
     this.focus();
   }
   // The same thing still asked (its buttons again); nothing asked: the end said again, as it is now.
-  again(asked) {
+  // (brief: what it asked, without its why and its lines again.)
+  again(asked, brief = false) {
     if (!asked || this.early) { if (this.closed) this.closing(this.early); else this.focus(); return; }
     this.passed.delete(asked.id);
     this.total = Math.max(this.total, this.queue().length);
-    this.next();
+    this.next(brief && this.queue()[0]?.id === asked.id);
   }
   // ---- the end: where it stands, and what to do with it
   async closing(early = false) {
