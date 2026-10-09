@@ -24,6 +24,7 @@ const { thinkMargin } = require('./lib/think');
 const { developMargin } = require('./lib/develop');
 const { briefMargin } = require('./lib/brief');
 const { themesMargin, themeNote } = require('./lib/themes');
+const { reviewMargin } = require('./lib/review');
 
 const APP_DIR = __dirname;
 const PUBLIC_DIR = path.join(APP_DIR, 'public');
@@ -980,6 +981,141 @@ async function labThemeCheck(b) {
   };
 }
 
+// A review (Labs, lib/review.js): the topics of the last weeks, as the
+// vault's own folders; one laid out on a desk of its own (Reviews/), with
+// what the margin says of it. The notes the assistant (Sift) keeps for itself
+// — backups, logs, its review queue, its rules — are not notes of a topic;
+// its rules are what the review follows (to-dos as its list writes them).
+let reviewer = null;
+let reviewerKey = '';
+const REVIEW_SKIP = /^(?:99-assistant\/(?:backup|log|review|rules|inbox-archive)|reviews|themes|excalidraw)\//i;
+const REVIEW_TODO = '99-assistant/todo.md';
+const reviewRules = () => ['placement', 'frontmatter', 'todo-format'].map((f) => { try { return fs.readFileSync(path.join(ROOT, '99-assistant', 'rules', `${f}.md`), 'utf8').slice(0, 4000); } catch { return ''; } }).filter(Boolean).join('\n\n');
+function reviewUp(b) {
+  setLiveOpts(b);
+  const agent = liveAgent();
+  if (!agent) throw httpError(400, 'A review needs the Claude Code agent (Settings → Agents).');
+  const model = developModel(b);
+  const rules = reviewRules();
+  const key = `${model}\u0000${rules}`;
+  if (reviewerKey !== key) { reviewer?.stop(); reviewer = null; }
+  reviewerKey = key;
+  const env = { ...process.env };
+  delete env.ELECTRON_RUN_AS_NODE;
+  reviewer ||= reviewMargin({ bin: liveBin(agent), env, opts: { ...liveOpts, model, effort: '' }, rules });
+  return reviewer;
+}
+const reviewToday = () => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; };
+const reviewText = (c) => c.text.replace(/^\uFEFF/, '').replace(/^---\r?\n[\s\S]*?\r?\n---\r?\n?/, '').trim();
+// A note a review may read: a note of theirs (not private, ignored, a template,
+// a theme or review of Margin's, nor the assistant's own records).
+function reviewable(rel, ignored = loadIgnore(ROOT)) {
+  return NOTE_EXT.has(extOf(rel)) && !isTemplatePath(rel) && rel !== KNOWN_FILE && !REVIEW_SKIP.test(rel) && !/\.excalidraw\.md$/i.test(rel)
+    && !isThemeNote(rel) && !ignored(rel) && fs.existsSync(path.join(ROOT, rel)) && !isPrivateNote(path.join(ROOT, rel));
+}
+// The notes of the last weeks, newest first (not the assistant's to-do
+// list: its lines go with a topic, as to-dos); a copy (the same name but for
+// "(next)", "(copy)", " 2", and the same words) once, with how many there are.
+function reviewNotes(days) {
+  const ignored = loadIgnore(ROOT);
+  const since = Date.now() - days * 86400000;
+  const out = [];
+  const seen = new Map();
+  const list = workspaceFiles().map((rel) => ({ rel, c: cachedText(rel) })).filter(({ c }) => c && c.mtimeMs >= since).sort((x, y) => y.c.mtimeMs - x.c.mtimeMs);
+  for (const { rel, c } of list) {
+    if (out.length >= 120 || rel === REVIEW_TODO || !reviewable(rel, ignored)) continue;
+    const text = reviewText(c);
+    if (text.length < 40) continue;
+    const k = `${path.basename(rel).replace(/\.[^.]+$/, '').replace(/\s*\((?:next|copy|\d+)\)/gi, '').replace(/\s+(?:copy|\d+)$/i, '').trim()}\u0000${text.replace(/\s+/g, ' ').slice(0, 300)}`;
+    // The one kept: the newest, or of two as new the one named as the first was.
+    if (seen.has(k)) { const n = seen.get(k); n.copies++; if (n.date === new Date(c.mtimeMs).toISOString().slice(0, 10) && rel.length < n.path.length) n.path = rel; continue; }
+    const n = { path: rel, date: new Date(c.mtimeMs).toISOString().slice(0, 10), text, copies: 0 };
+    seen.set(k, n);
+    out.push(n);
+  }
+  return out;
+}
+const reviewFolders = () => ['01-projects', '02-areas'].flatMap((d) => { try { return fs.readdirSync(path.join(ROOT, d), { withFileTypes: true }).filter((e) => e.isDirectory() && !e.name.startsWith('.')).map((e) => `${d}/${e.name}`); } catch { return []; } });
+
+async function labReviewTopics(b) {
+  const days = Number.isInteger(b.days) && b.days >= 7 && b.days <= 90 ? b.days : 28;
+  const r0 = reviewUp(b);
+  const notes = reviewNotes(days);
+  if (notes.length < 2) return { topics: [], read: notes.length };
+  const folders = reviewFolders();
+  const r = await r0.topics({ folders, notes, today: reviewToday() });
+  if (!r.ok) throw httpError(502, r.error || 'Claude did not answer.');
+  return {
+    read: notes.length,
+    topics: r.topics.map((t) => ({ ...t, notes: t.notes.map((n) => notes[n - 1].path), goalFrom: t.goalFrom ? notes[t.goalFrom - 1].path : '' })),
+  };
+}
+
+// One topic on a desk: Reviews/<title> <day>.canvas (once a day: the same
+// opens again), what the margin says of it beside it.
+async function labReviewDesk(b) {
+  const t = b.topic;
+  const str = (v, max) => typeof v === 'string' && v.length <= max;
+  if (!t || typeof t !== 'object' || !str(t.title, 200) || !t.title.trim() || !Array.isArray(t.notes) || !t.notes.length || t.notes.length > 40 || !t.notes.every((p) => str(p, 1000))
+    || ![t.goal ?? '', t.ask ?? '', t.folder ?? '', t.goalFrom ?? ''].every((v) => str(v, 1000))) throw httpError(400, 'topic: { title, notes: [path], goal, goalState, goalFrom, ask, folder }');
+  const day = reviewToday();
+  const name = `Reviews/${t.title.replace(/[\\/:*?"<>|#^[\]]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 80)} ${day}.canvas`;
+  const abs = workspacePath(name);
+  if (fs.existsSync(abs) && !b.again) return { path: name, existed: true };
+  const r0 = reviewUp(b);
+  const ignored = loadIgnore(ROOT);
+  const mine = [...new Set(t.notes.map((p) => relOf(workspacePath(p))))].filter((p) => reviewable(p, ignored));
+  if (!mine.length) throw httpError(400, 'None of its notes can be read (gone, private or ignored).');
+  const notes = mine.map((p) => { const c = cachedText(p); return { path: p, date: c ? new Date(c.mtimeMs).toISOString().slice(0, 10) : '', text: c ? reviewText(c) : '' }; });
+  // Older paragraphs near it (the local model): never its own, the assistant's records, a private note.
+  const older = [];
+  if (embed.status().state === 'ready') {
+    const own = new Set(mine);
+    const best = new Map();
+    const res = await embed.near(mine[0], [t.title, t.goal || '', ...notes.map((n) => n.text.slice(0, 400))].filter(Boolean).slice(0, 16));
+    (res?.results || []).forEach((l) => l.filter((x) => x.z >= 1.5 && !own.has(x.path) && reviewable(x.path, ignored)).forEach((x) => { const k = `${x.path}\u0000${x.line}`; best.set(k, { ...x, s: (best.get(k)?.s || 0) + x.z }); }));
+    recallEsm ||= await import(require('url').pathToFileURL(path.join(__dirname, 'public', 'recall.js')).href);
+    for (const x of [...best.values()].sort((p, q) => q.s - p.s)) {
+      if (older.length >= 10) break;
+      const c = cachedText(x.path);
+      const para = c && recallEsm.parasOf(c.text).find((q) => x.line >= q.line && x.line <= q.last);
+      if (para && para.text.length > 15) older.push({ path: x.path, text: para.text.replace(/\s+/g, ' ').slice(0, 500) });
+    }
+  }
+  // Its open to-dos: in its notes, and in the assistant's list (not one moved elsewhere: "↪").
+  const meet = await import(require('url').pathToFileURL(path.join(__dirname, 'public', 'meeting.js')).href);
+  const todos = [];
+  const take = (file, tasks) => {
+    const c = cachedText(file);
+    if (!c) return;
+    const lines = c.text.split('\n');
+    for (const it of meet.meetingItems(c.text)) if (it.kind === 'todo' && !it.done && !/↪/u.test(lines[it.line] || '')) todos.push({ file, line: it.line, key: it.key, text: it.text, tasks });
+  };
+  for (const p of mine) take(p, false);
+  if (fs.existsSync(path.join(ROOT, REVIEW_TODO)) && !isPrivateNote(path.join(ROOT, REVIEW_TODO)) && !ignored(REVIEW_TODO)) {
+    const before = todos.length;
+    take(REVIEW_TODO, true);
+    todos.splice(before, Math.max(0, todos.length - before - 80)); // its newest eighty
+  }
+  const sent = todos.slice(0, 60);
+  const projects = new Set(reviewFolders().filter((f) => f.startsWith('01-projects/')).map((f) => f.slice(12)));
+  const topic = { title: t.title.trim(), goal: (t.goal || '').trim(), goalState: ['stated', 'guessed', 'unknown'].includes(t.goalState) ? t.goalState : 'guessed' };
+  const r = await r0.session({ topic, notes, older, todos: sent.map((x) => `${x.text} (${x.file})`), today: day, projects });
+  if (!r.ok) throw httpError(502, r.error || 'Claude did not answer.');
+  // Done already? Those it says may be, and those of this topic whose day has passed.
+  const why = new Map(r.maybe.map((m) => [m.t, m.why]));
+  const late = (x) => { const d = /\u{1F4C5}\s*(\d{4}-\d{2}-\d{2})/u.exec(x.text)?.[1]; return d && d < day; };
+  const check = sent.map((x, i) => ({ ...x, n: i + 1 })).filter((x) => why.has(x.n) || ((r.mine.includes(x.n) || x.file !== REVIEW_TODO) && late(x)))
+    .map((x) => ({ ...x, why: why.get(x.n) || 'Its day has passed: nothing since in the notes found.' }));
+  const deskEsm = await import(require('url').pathToFileURL(path.join(__dirname, 'public', 'desk.js')).href);
+  const items = r.items.map((x) => ({ ...x, from: [...x.notes.map((n) => notes[n - 1].path), ...x.older.map((n) => older[n - 1].path)] }));
+  const { desk, margin } = deskEsm.reviewDesk({ title: topic.title, goal: topic.goal, goalState: topic.goalState, goalFrom: topic.goalState === 'stated' ? relOf(workspacePath(t.goalFrom || mine[0])) : '', ask: t.ask || '', todos: check, notes: mine, items, at: day });
+  fs.mkdirSync(path.dirname(abs), { recursive: true });
+  writeFileAtomic(abs, deskEsm.stringifyDesk(desk));
+  saveDeskMargin({ path: name, cards: margin });
+  return { path: name, read: notes.length, older: older.length, todos: sent.length, check: check.length, items: items.length };
+}
+
 // An answer to one of the margin's questions: a line at the end of KNOWN.md
 // (made with a heading the first time).
 const KNOWN_HEAD = '# Known\n\nWhat you told Margin when it asked (Settings \u2192 The margin asks). Plain lines: change or delete any.\n';
@@ -1347,7 +1483,7 @@ function saveDrawer({ path: relPath, scraps }) {
   return { path: rel, scraps: noteDrawer(rel) };
 }
 
-const DESK_KINDS = new Set(['summary', 'merge', 'question', 'answer', 'trail']);
+const DESK_KINDS = new Set(['summary', 'merge', 'question', 'answer', 'trail', 'review']);
 function deskMarginCards(rel) {
   const d = readJson(deskMarginOf(rel), null);
   return Array.isArray(d?.cards) ? d.cards : [];
@@ -2792,6 +2928,8 @@ async function routeApi(method, url, body) {
   if (method === 'POST' && p === '/api/lab/brief') return labBrief(body || {});
   if (method === 'POST' && p === '/api/lab/themes') return labThemes(body || {});
   if (method === 'POST' && p === '/api/lab/themes/check') return labThemeCheck(body || {});
+  if (method === 'POST' && p === '/api/lab/review/topics') return labReviewTopics(body || {});
+  if (method === 'POST' && p === '/api/lab/review/desk') return labReviewDesk(body || {});
   if (method === 'GET' && p === '/api/embed') return embedStatus();
   if (method === 'POST' && p === '/api/embed') return embedOn(body || {});
   if (method === 'POST' && p === '/api/embed/download') { embed.download(); return embedStatus(); }
@@ -2930,6 +3068,8 @@ function liveRestart() {
   briefer = null;
   themer?.stop();
   themer = null;
+  reviewer?.stop();
+  reviewer = null;
 }
 function liveAgent() {
   return claudeAgents().find((a) => a.label === liveOpts.agent) || (AGENT?.kind === 'claude' ? AGENT : claudeAgents()[0] || null);
@@ -3230,6 +3370,7 @@ function shutdown() {
   developer?.stop();
   briefer?.stop();
   themer?.stop();
+  reviewer?.stop();
   embed.stop();
   for (const id of running.keys()) { try { cancelRun(id, 'server stopped'); } catch { /* ignore */ } }
   process.exit(0);

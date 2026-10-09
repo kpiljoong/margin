@@ -3446,6 +3446,7 @@ const COMMANDS = [
   ['Forks: this paragraph, other ways (experimental)…', () => setTimeout(forkRun, 0)],
   ['Brief: this note \u2014 a secretary in the margin: what to cover, what it still needs, what doesn\u2019t add up (experimental)', lab('Brief', () => setTimeout(() => briefNote(), 0)), { labs: true }],
   ['Themes: what keeps coming back in your recent notes (experimental)', lab('Themes', () => setTimeout(themesView, 0)), { labs: true }],
+  ['Review: a topic of your recent notes, on a desk \u2014 its goal, what may be done already, what to settle (experimental)', lab('Review', () => setTimeout(() => reviewTopics(), 0)), { labs: true }],
   ['Gather: pieces of notes into one (experimental)', lab('Gather', () => setTimeout(gatherView, 0)), { labs: true }],
   ['Lock this paragraph (experimental)', () => setTimeout(toggleLock, 0)],
   ['Origin: where this note\u2019s paragraphs came from (experimental)', () => setTimeout(originView, 0)],
@@ -9355,6 +9356,38 @@ async function briefNote(tab = activeTab()) {
 // the last two months — a claim in several notes, written at different
 // times — with the paragraphs it comes back in, Claude's reading of them (a
 // suggestion) and what isn't checked yet; Make a note puts it in Themes/.
+// ---- A review (Labs; lib/review.js): the topics of the last four weeks of
+// notes (most filed by the assistant from quick memos, and not read again),
+// each with its goal — written in a note, a guess, or not known — and one
+// picked laid out on a desk of its own (Reviews/): the goal and the question
+// that would settle it, the to-dos that may be done already (x marks one
+// done in its note, with the day, proposed in the red pen review), its
+// notes, and beside them what the margin says, most important first (Tab
+// keeps one, Esc lets it go). Nothing in a note changes but by those.
+let reviewSt = null; // { at, topics, read }
+const REVIEW_GOAL = { stated: 'in a note', guessed: 'a guess', unknown: 'not known' };
+const reviewOpts = () => ({ ...liveOpts(), thinkModel: S.settings.thinkModel === 'haiku' ? 'haiku' : 'sonnet' });
+async function reviewTopics(again = false) {
+  if (!store.getItem('an.reviewOk') && !(await askConfirm('A review sends the notes you changed in the last four weeks (up to 120; not the assistant\u2019s own records) to Claude, through the Claude Code agent you signed in to, to find what you are dealing with. The topic you pick goes again with older paragraphs near it and your open to-dos, to lay it out on a desk in Reviews/. A private note, or one .agentnotesignore names, is never sent. Nothing in your notes changes but by what you take there.', { okLabel: 'Find topics' }))) return;
+  store.setItem('an.reviewOk', '1');
+  if (again || !reviewSt || Date.now() - reviewSt.at > 3600000) {
+    toast('Reading your recent notes for topics\u2026');
+    try { const r = await api('POST', '/api/lab/review/topics', reviewOpts()); reviewSt = { at: Date.now(), topics: r.topics, read: r.read }; } catch (e) { toast(e.message, 'error'); return; }
+  }
+  if (!reviewSt.topics.length) { toast(`No topic stands out in ${reviewSt.read} recent notes.`); return; }
+  const items = [...reviewSt.topics.map((t) => ({ icon: '\u25CE', label: t.title, hint: `${t.goal ? `${t.goal.slice(0, 60)} \u00B7 ` : ''}goal: ${REVIEW_GOAL[t.goalState] || 'a guess'} \u00B7 ${t.notes.length} note${t.notes.length === 1 ? '' : 's'}`, t })), { icon: '\u21BB', label: 'Read the notes again', again: true }];
+  picker({ placeholder: 'Review a topic\u2026', source: (q) => items.map((it) => ({ it, m: fuzzy(q, it.label) })).filter((x) => x.m).map(({ it, m }) => ({ icon: it.icon, label: marked(it.label, m.idx), hint: it.hint, run: () => (it.again ? reviewTopics(true) : reviewDesk(it.t)) })) });
+}
+async function reviewDesk(t, again = false) {
+  toast(`Laying out \u201C${t.title}\u201D\u2026`);
+  try {
+    const r = await api('POST', '/api/lab/review/desk', { ...reviewOpts(), topic: t, again });
+    await loadTree();
+    await openFile(r.path);
+    if (r.existed) toast('Today\u2019s review of it, as you left it.', '', { label: 'Prepare again', run: () => reviewDesk(t, true) });
+  } catch (e) { toast(e.message, 'error'); }
+}
+
 async function themesView() {
   if (!(await askConfirm('Themes sends paragraphs of the notes you changed in the last two months (up to 120 of them, those like others first when the local model has read your notes) to Claude, through the Claude Code agent you signed in to. A private note, or one .agentnotesignore names, is never sent. Nothing is written until you make a note of a theme.', { okLabel: 'Find themes' }))) return;
   const overlay = $('#overlay');

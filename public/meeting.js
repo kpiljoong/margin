@@ -202,7 +202,11 @@ export function moveItem(text, item, to) {
 function moveOne(text, item, to) {
   const l = text.slice(item.from, item.to);
   let line = l;
-  if (to.done != null && item.kind === 'todo') line = l.replace(/\[[ xX]\]/, to.done ? '[x]' : '[ ]');
+  if (to.done != null && item.kind === 'todo') {
+    line = l.replace(/\[[ xX]\]/, to.done ? '[x]' : '[ ]');
+    // When (Obsidian Tasks, as the assistant's to-do list writes them): at the end, after all that was there.
+    if (to.done && to.on && !/\u2705/u.test(line)) line = `${line.replace(/\s+$/, '')} \u2705 ${to.on}`;
+  }
   else if (item.kind === 'todo' && to.kind === 'todo') {
     if (to.owner === item.owner) return text;
     if (!to.owner) line = l.replace(OWNER, '$1').replace(/\s{2,}/g, ' ').replace(/\s+$/, '');

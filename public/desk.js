@@ -224,6 +224,48 @@ export function noteDesk(file, text, links = [], at = '') {
   return { nodes: [...nodes, { id: newId(), type: 'file', file, x: 0, y: 0, width: 480, height: 680 }, ...cards], edges: [] };
 }
 
+// A topic laid out for a review (Labs; server.js /api/lab/review/desk): its
+// goal (and the question that would settle it), the to-dos that may be done
+// already — each a card that knows its line, so x marks it done there (with
+// the day, as the assistant's list writes them), proposed in the red pen
+// review — and its notes. What the margin says of it goes beside them, in
+// the margin (not kept until kept: Tab), most important first.
+// → { desk, margin: [card] }.
+const GOAL_STATE = { stated: 'in a note', guessed: 'a guess', unknown: 'not known' };
+export function reviewDesk({ title, goal = '', goalState = 'guessed', goalFrom = '', ask = '', todos = [], notes = [], items = [], at = '' }) {
+  const size = (s) => {
+    const w = [...s].reduce((sum, c) => sum + (c.codePointAt(0) > 0x2e80 ? 2 : 1), 0);
+    return 74 + 21 * Math.max(1, Math.ceil(w / 40));
+  };
+  const goalText = [`**${title}**`, '', `Goal (${GOAL_STATE[goalState] || GOAL_STATE.guessed}): ${goal || '\u2014'}${goalFrom ? ` \u2014 [[${goalFrom.replace(/\.md$/i, '')}]]` : ''}`, ...(ask ? ['', `? ${ask}`] : [])].join('\n');
+  const groups = [
+    { name: 'The goal', cards: [{ id: newId(), type: 'text', text: goalText, x: 0, y: 0, width: 360, height: size(goalText) + 40 }] },
+    { name: 'Done already? (x: done)', cards: todos.map((t) => {
+      const text = t.why ? `${t.text}\n\n_${t.why}_` : t.text;
+      return { id: newId(), type: 'text', text, x: 0, y: 0, width: 340, height: size(text), from: { file: t.file, line: t.line, kind: 'todo', key: t.key, at, ...(t.tasks ? { tasks: true } : {}) } };
+    }) },
+    { name: 'Its notes', cards: notes.slice(0, 16).map((p) => ({ id: newId(), type: 'file', file: p, x: 0, y: 0, width: 340, height: 260 })) },
+  ].filter((g) => g.cards.length);
+  const nodes = [];
+  const cards = [];
+  let right = 0;
+  for (const g of groupLayout(groups, 0, 0)) {
+    nodes.push({ id: newId(), type: 'group', label: g.name, ...g.box });
+    right = Math.max(right, g.box.x + g.box.width);
+    const these = groups.find((x) => x.name === g.name).cards;
+    for (const p of g.at) { const c = these.find((x) => x.id === p.id); cards.push({ ...c, x: p.x, y: p.y }); }
+  }
+  const KIND = { decide: 'To decide', missing: 'Missing', conflict: 'Doesn\u2019t agree', ask: 'A question', consider: 'To consider' };
+  let y = HEAD;
+  const margin = items.map((x, i) => {
+    const text = [x.say, x.why ? `\n_${i < 3 ? 'First' : 'Then'}: ${x.why}_` : '', x.from?.length ? `\nFrom: ${x.from.map((p) => `[[${p.replace(/\.md$/i, '')}]]`).join(', ')}` : '', x.todo ? `\nTo-do: \`${x.todo}\`` : ''].filter(Boolean).join('\n');
+    const card = { id: newId(), kind: 'review', title: KIND[x.kind] || 'Margin', text, x: right + PAD, y, width: 380, height: size(text) + 30 };
+    y += card.height + PAD / 2;
+    return card;
+  });
+  return { desk: { nodes: [...nodes, ...cards], edges: [] }, margin };
+}
+
 // The notes a note links to ([[…]], not ![[…]] nor in code), once each, as written.
 export function linksOf(text) {
   const out = [];
@@ -250,7 +292,7 @@ export function toNote(text, cards) {
     const to = c.from?.to;
     const it = to && meetingItems(t).find((i) => i.key === c.from.key);
     if (!it) continue;
-    if (to.done && it.kind === 'todo') t = moveItem(t, it, { done: true });
+    if (to.done && it.kind === 'todo') t = moveItem(t, it, { done: true, on: to.on });
     else if (to.decided != null && it.kind === 'question') {
       t = moveItem(t, it, { kind: 'decision' });
       const words = String(to.decided).trim();
@@ -789,7 +831,8 @@ export class Desk {
     if (act === 'noted') { if (n.from.noted) this.opts.openNote(n.from.noted); return; }
     const set = (to) => this.change({ ...this.d, nodes: this.d.nodes.map((x) => (x.id === n.id ? { ...x, from: { ...x.from, to } } : x)) });
     if (act === 'undo') { set(undefined); return; }
-    if (act === 'done' && n.from.kind === 'todo') { set({ done: true }); return; }
+    // A to-do of a list kept as Obsidian Tasks writes it: with the day it was done.
+    if (act === 'done' && n.from.kind === 'todo') { set({ done: true, ...(n.from.tasks ? { on: today() } : {}) }); return; }
     if (act !== 'decide' || n.from.kind !== 'question') return;
     // In what words: typed in the card (none: as it was asked).
     const e = this.els.get(n.id);
