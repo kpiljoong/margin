@@ -237,12 +237,14 @@ const GOAL_STATE = { stated: 'in a note', theirs: 'yours', guessed: 'a guess', u
 const THIS_TIME = '**This time**';
 const STREAM_W = 380; // a review's column of what was jotted
 const STREAM_IN = 24;
-const THIS_TIME_SAYS = 'where this review stands, yours: the goal in your words, what to settle now, what you decided, what you put off (what you jot goes here when you take it; edit it as you like). The next review of the topic starts from it.';
+const THIS_TIME_SAYS = 'where this review stands \u00B7 yours to edit; what you jot and take comes here, and the next review starts from it';
 const norm = (s) => String(s).replace(/\s+/g, ' ').trim().toLowerCase();
-const HEADS = /^\s*(?:To settle now|Decided|Later):/i;
+// Its parts, headed "**Decided**" (or, as first written, "Decided:").
+const HEADS = /^\s*(?:\*\*)?(To settle now|Decided|Later)(?:\*\*)?:?\s*$/i;
+const headOf = (label) => (l) => (HEADS.exec(l) || [])[1]?.toLowerCase() === label.toLowerCase();
 export function thisTimeText({ goal = '', focus = [], decided = [], later = [] } = {}) {
   const list = (xs) => (xs.length ? xs.map((f) => `- ${f}`) : ['- ']);
-  return [`${THIS_TIME} \u2014 ${THIS_TIME_SAYS}`, '', `Goal: ${goal}`, 'To settle now:', ...list(focus), 'Decided:', ...list(decided), 'Later:', ...list(later)].join('\n');
+  return [`${THIS_TIME} \u2014 ${THIS_TIME_SAYS}`, '', `Goal: ${goal}`, '', '**To settle now**', ...list(focus), '', '**Decided**', ...list(decided), '', '**Later**', ...list(later)].join('\n');
 }
 // "This time" as they wrote it on a desk: { goal, focus: [at most three],
 // decided: [what they wrote as decided], later: [what they put off] } (a
@@ -253,7 +255,7 @@ export function thisTimeOf(desk) {
   const lines = n.text.split('\n');
   const goal = (/^\s*Goal:\s*(.*)$/i.exec(lines.find((l) => /^\s*Goal:/i.test(l)) || '') || [])[1]?.trim() || '';
   const under = (head) => {
-    const at = lines.findIndex((l) => head.test(l));
+    const at = lines.findIndex(head);
     if (at < 0) return [];
     const out = [];
     for (const l of lines.slice(at + 1)) {
@@ -263,7 +265,7 @@ export function thisTimeOf(desk) {
     }
     return out;
   };
-  return { goal: goal.slice(0, 300), focus: under(/^\s*To settle now:/i).slice(0, 3), decided: under(/^\s*Decided:/i).slice(0, 12), later: under(/^\s*Later:/i).slice(0, 12) };
+  return { goal: goal.slice(0, 300), focus: under(headOf('To settle now')).slice(0, 3), decided: under(headOf('Decided')).slice(0, 12), later: under(headOf('Later')).slice(0, 12) };
 }
 // A decision as written under Decided → { words, note } (note: the path of
 // the note it goes in, from " → [[note]]", or '').
@@ -275,13 +277,21 @@ export function decisionOf(line) {
 // 'open' — to settle), in their words (and a decision's note: " → [[note]]");
 // what it settles (settles: those words, under "To settle now") taken out
 // of them — as they would have written it.
-const SECTION = { decided: 'Decided:', later: 'Later:', open: 'To settle now:' };
+const SECTION = { decided: 'Decided', later: 'Later', open: 'To settle now' };
 export function addToThisTime(text, { kind, words, note = '', settles = '' }) {
-  let lines = String(text || thisTimeText()).split('\n');
+  // As written now: what it is for said, its parts headed in bold, a line between them.
+  let lines = [];
+  for (const l of String(text || thisTimeText()).split('\n')) {
+    const h = HEADS.exec(l);
+    if (!h && /^\s*Goal:/i.test(l)) { lines.push(l, ''); continue; }
+    if (!h) { if (l.trim() || lines.at(-1)?.trim()) lines.push(l); continue; }
+    if (lines.at(-1)?.trim()) lines.push('');
+    lines.push(`**${Object.values(SECTION).find((x) => x.toLowerCase() === h[1].toLowerCase())}**`);
+  }
   if (lines[0].startsWith(THIS_TIME)) lines[0] = `${THIS_TIME} \u2014 ${THIS_TIME_SAYS}`;
   const item = (l) => { const w = l.replace(/^\s*(?:[-*]|\d+[.)])\s*/, '').trim(); return w.length > 1; };
   const range = (head) => {
-    const at = lines.findIndex((l) => l.trim().toLowerCase() === head.toLowerCase() || l.trim().toLowerCase().startsWith(head.toLowerCase()));
+    const at = lines.findIndex(headOf(head));
     if (at < 0) return null;
     let end = at + 1;
     while (end < lines.length && !HEADS.test(lines[end])) end++;
@@ -293,7 +303,7 @@ export function addToThisTime(text, { kind, words, note = '', settles = '' }) {
     if (at >= 0) lines.splice(r[0] + 1 + at, 1);
   }
   const head = SECTION[kind] || SECTION.open;
-  if (!range(head)) { while (lines.length && !lines.at(-1).trim()) lines.pop(); lines.push(head); }
+  if (!range(head)) { while (lines.length && !lines.at(-1).trim()) lines.pop(); lines.push('', `**${head}**`); }
   const [at, end] = range(head);
   const line = `- ${String(words).trim()}${note ? ` \u2192 [[${note.replace(/\.md$/i, '')}]]` : ''}`;
   const blank = lines.slice(at + 1, end).findIndex((l) => /^\s*[-*]?\s*$/.test(l) && l.trim());
@@ -356,30 +366,74 @@ export function wrapUp({ desk, ledger = [], notes = new Map(), now = '' }) {
     `Goal: ${goal || '\u2014'}`, '',
     ...section('Decided', decisions.map((d) => `- ${d.words}${d.inNote ? ` \u2014 in ${name(d.note)}` : ' (not in the notes yet)'}`), '- (nothing written under Decided)'), '',
     ...(mine.later.length ? [...section('Later', mine.later.map((d) => `- ${d}`), ''), ''] : []),
+    ...section('Next', [...todos, ...open.map((f) => `- Still to settle: ${f}`)], '- (none written)'), '',
     ...section('Changed in the notes', changed, '- (nothing yet)'),
     ...(waiting.length ? ['', ...section('Not in the notes yet', waiting, '')] : []),
     ...(unsure.length ? ['', ...section('Changed in its note since \u2014 not confirmed', unsure, '')] : []), '',
     `**From the margin**: ${kept.length} taken and on the desk${taken.length > kept.length ? ` (${taken.length - kept.length} taken back or deleted)` : ''}, ${let_.length} let go`,
-    ...kept.map((e) => `- ${e.title || 'A card'}: ${e.text.split('\n')[0].slice(0, 120)}`), '',
-    ...section('Next', [...todos, ...open.map((f) => `- Still to settle: ${f}`)], '- (none written)'),
+    ...kept.map((e) => { const t = e.text.split('\n')[0]; return `- ${e.title || 'A card'}: ${t.length > 70 ? `${t.slice(0, 70)}\u2026` : t}`; }),
   ].join('\n');
   return { text, todos, decisions };
 }
+// A line as it was and as it would read, as one: what goes struck out, what
+// comes marked (==…==), what stays as it is — a long stretch of it cut
+// (…) — its own marks (**, ~~, ==) left out, as shown on a card.
+export function inlineDiff(was, now) {
+  const plain = (t) => t.replace(/\*\*|~~|==|`/g, '').replace(/(^|\s)\*(?=\S)|(?<=\S)\*(\s|$)/g, '$1$2');
+  const tok = (t) => plain(t).split(/(\s+|[\u00B7,.:;!?()[\]|/\u2192])/).filter(Boolean);
+  // A line struck out whole: so.
+  const struck = /^~~([\s\S]+)~~$/.exec(now.trim());
+  if (struck && plain(struck[1]).trim() === plain(was).trim()) return `~~${plain(was).trim()}~~`;
+  // What it strikes out (~~…~~) shows as gone.
+  const a = tok(was.trim());
+  const b = tok(now.trim().replace(/~~(?=\S)[\s\S]*?\S~~/g, '').replace(/\s{2,}/g, ' '));
+  const L = Array.from({ length: a.length + 1 }, () => new Array(b.length + 1).fill(0));
+  for (let x = a.length - 1; x >= 0; x--) for (let y = b.length - 1; y >= 0; y--) L[x][y] = a[x] === b[y] ? L[x + 1][y + 1] + 1 : Math.max(L[x + 1][y], L[x][y + 1]);
+  const ops = []; // [kind, text]: '=' the same, '-' gone, '+' come
+  const push = (k, t) => { if (ops.at(-1)?.[0] === k) ops.at(-1)[1] += t; else ops.push([k, t]); };
+  let x = 0;
+  let y = 0;
+  while (x < a.length || y < b.length) {
+    if (x < a.length && y < b.length && a[x] === b[y]) { push('=', a[x]); x++; y++; } else if (x < a.length && (y >= b.length || L[x + 1][y] >= L[x][y + 1])) { push('-', a[x]); x++; } else { push('+', b[y]); y++; }
+  }
+  // Changes with only a space or a mark between them: one stretch gone, one come.
+  const hunks = [];
+  for (let k = 0; k < ops.length; k++) {
+    const [kind, t] = ops[k];
+    const between = kind === '=' && /^[\s,]*$/.test(t) && hunks.at(-1)?.change && ops.slice(k + 1).some((o) => o[0] !== '=') && ops[k + 1]?.[0] !== '=';
+    if (kind === '=' && !between) { hunks.push({ same: t }); continue; }
+    if (!hunks.at(-1)?.change) hunks.push({ change: true, gone: '', come: '' });
+    const h = hunks.at(-1);
+    if (kind !== '+') h.gone += t;
+    if (kind !== '-') h.come += t;
+  }
+  const keep = 24;
+  return hunks.map((h, i) => {
+    if (h.change) {
+      const t = h.gone.trim() ? h.gone : h.come;
+      return /^\s*/.exec(t)[0] + [h.gone.trim() ? `~~${h.gone.trim()}~~` : '', h.come.trim() ? `==${h.come.trim()}==` : ''].filter(Boolean).join(' ') + /\s*$/.exec(t)[0];
+    }
+    const t = h.same;
+    if (t.length <= keep * 2) return t;
+    if (i === 0) return `\u2026${t.slice(-keep)}`;
+    if (i === hunks.length - 1) return `${t.slice(0, keep)}\u2026`;
+    return `${t.slice(0, keep)} \u2026 ${t.slice(-keep)}`;
+  }).join('');
+}
 // What they decided, carried into the notes (server.js /api/lab/review/changes):
-// a card that shows, note by note, each line as it was and as it would read,
-// and each decision recorded. → its text.
-export function changesText({ decided = [], later = [], changes = [] }) {
+// a card that shows, note by note, each line as it would read (what goes
+// struck out, what comes marked), and each decision recorded. → its text.
+export function changesText({ decided = [], changes = [] }) {
   const name = (f) => `[[${String(f).replace(/\.md$/i, '')}]]`;
-  const legend = [...decided.map((d, i) => `- D${i + 1}: ${d}`), ...later.map((d, i) => `- L${i + 1}: ${d} (later)`)];
+  const legend = decided.map((d, i) => `- D${i + 1} ${d}`);
   const files = [...new Set(changes.map((c) => c.file))];
-  const esc = (t) => String(t).replace(/`/g, '\u02CB');
+  const show = (t) => t.replace(/\*\*|~~|==|`/g, '');
   return [
-    `**Changes to the notes** \u2014 ${changes.length} in ${files.length} note${files.length === 1 ? '' : 's'}, from what you decided`, '',
+    `**Changes to the notes** \u2014 ${changes.length} in ${files.length} note${files.length === 1 ? '' : 's'}`, '',
     ...legend, '',
-    ...(files.length ? files.flatMap((f) => [`**${name(f)}**`, ...changes.filter((c) => c.file === f).sort((a, b) => (a.line || a.after) - (b.line || b.after)).flatMap((c) => (c.add
-      ? [`- after line ${c.after}, add (${c.for}):`, `  \`${esc(c.add)}\``]
-      : [`- line ${c.line} (${c.for}):`, `  was \`${esc(c.was.trim())}\``, `  now \`${esc(c.now.trim())}\``])), '']) : ['Nothing in the notes goes against it.', '']),
-    files.length ? '_Nothing is changed yet: \u201CPropose in the notes\u201D puts these in each note\u2019s red pen review, to accept or not._' : '',
+    ...(files.length ? files.flatMap((f) => [`**${name(f)}**`, ...changes.filter((c) => c.file === f).sort((a, b) => (a.line || a.after) - (b.line || b.after))
+      .map((c) => (c.add ? `- ${c.for} \u00B7 added after line ${c.after}: ==${show(c.add.replace(/^- /, ''))}==` : `- ${c.for} \u00B7 line ${c.line}: ${inlineDiff(c.was, c.now)}`)), '']) : ['Nothing in the notes goes against it.', '']),
+    files.length ? '_Nothing is changed yet: \u201CPropose in the notes\u201D puts each note\u2019s in its red pen review, to accept or not._' : '',
   ].join('\n').trim();
 }
 // A note's text with its changes made: a line changed where it is as it
@@ -718,6 +772,7 @@ export class Desk {
     const f = Math.min(1, Math.max(0, (FAR[0] - z) / (FAR[0] - FAR[1])));
     this.el.classList.toggle('far', f > 0);
     this.el.classList.toggle('farthest', f >= 1);
+    if (!f && this.fitLater) this.fitStream();
     this.world.style.setProperty('--far', f.toFixed(3));
     this.world.style.setProperty('--iz', String(1 + (1 / z - 1) * f));
     // What the margin would be given ("in view") follows the camera.
@@ -1989,9 +2044,12 @@ export class Desk {
       decided.hidden = !(x.kind === 'review' && x.title === 'Wrap-up' && x.decisions?.length && this.opts.changes);
       propose.hidden = !(x.kind === 'review' && x.changes?.length);
       keep.disabled = x.state !== 'done';
+      // What was jotted, sorted: taken into "This time" (a to-do, kept as a card).
+      keep.textContent = x.jot?.ticks ? 'Mark it done' : x.jot && x.jot.kind !== 'todo' ? 'Into This time' : 'Keep';
+      keep.title = x.jot && x.jot.kind !== 'todo' ? 'Put it in \u201CThis time\u201D, under its part (Tab)' : 'Keep it as a card of the desk (Tab)';
       const n = this.batchOf(x).length;
       all.hidden = n < 2;
-      all.textContent = `Keep all ${n}`;
+      all.textContent = x.jot ? `Take all ${n}` : `Keep all ${n}`;
     };
     return e;
   }
@@ -2011,9 +2069,28 @@ export class Desk {
     let mine = this.d.nodes.find((x) => x.type === 'text' && String(x.text || '').startsWith(THIS_TIME));
     const was = mine?.text;
     let mineText = was;
+    let all = this.d.nodes;
     for (const a of list) {
+      // Done, and the to-do it does known: that to-do marked done (its card, or one made for it), proposed with the others.
+      const t = (a.jot?.kind === 'done' || a.jot?.kind === 'decided') ? a.jot.ticks : null;
+      // A decision that settles a to-do: in "This time" too.
+      if (t && a.jot.kind === 'decided') mineText = addToThisTime(mineText, { kind: 'decided', words: a.jot.say, note: a.jot.about, settles: a.jot.settles });
+      // One taken on this desk: ticked on its card (and so not next any more).
+      if (t?.card) {
+        all = all.map((n) => (n.id === t.card ? { ...n, text: String(n.text).replace(/To-do: `- \[ \] /, 'To-do: `- [x] ') } : n));
+        this.event('marked done', { text: t.text, card: t.card });
+        continue;
+      }
+      if (t) {
+        const to = { done: true, ...(t.tasks ? { on: today() } : {}) };
+        const there = all.find((n) => n.from?.kind === 'todo' && n.from.file === t.file && n.from.key === t.key);
+        if (there) all = all.map((n) => (n === there ? { ...n, from: { ...n.from, to } } : n));
+        else nodes.push({ id: newId(), type: 'text', text: t.text, x: a.x, y: a.y, width: a.width, height: 120, jotOf: a.jot.of, from: { file: t.file, line: t.line, kind: 'todo', key: t.key, at: today(), ...(t.tasks ? { tasks: true } : {}), to } });
+        this.event('marked done', { file: t.file, text: t.text });
+        continue;
+      }
       if (a.jot && a.jot.kind !== 'todo') {
-        mineText = addToThisTime(mineText, { kind: a.jot.kind, words: a.jot.say, note: a.jot.kind === 'decided' ? a.jot.about : '', settles: a.jot.settles });
+        mineText = addToThisTime(mineText, { kind: a.jot.kind === 'done' ? 'decided' : a.jot.kind, words: a.jot.say, note: a.jot.kind === 'decided' ? a.jot.about : '', settles: a.jot.settles });
         this.event('noted', { title: a.title, text: a.jot.say, ...(a.jot.about ? { file: a.jot.about } : {}) });
         continue;
       }
@@ -2026,7 +2103,6 @@ export class Desk {
       if (a.kind === 'review' && a.title !== 'Wrap-up') this.event('taken', { title: a.title, text: a.text, card: n.id });
       nodes.push(n);
     }
-    let all = this.d.nodes;
     if (mineText != null && mineText !== was) {
       const h = Math.max(mine?.height || 0, 74 + 21 * mineText.split('\n').length);
       if (mine) all = all.map((n) => (n === mine ? { ...n, text: mineText, height: h } : n));
@@ -2035,6 +2111,8 @@ export class Desk {
     }
     this.sel = new Set(nodes.map((n) => n.id));
     this.change({ ...this.d, nodes: this.streamed([...all, ...nodes.filter((n) => !all.includes(n))]), edges: [...this.d.edges, ...edges] });
+    this.fitStream();
+    if (this.jotStatus && list.some((a) => a.jot)) this.jotStatus.textContent = '';
     if (mineText != null && mineText !== was) this.say('Put in \u201CThis time\u201D (\u2318Z takes it back).');
   }
   drop(a) {
@@ -2053,7 +2131,10 @@ export class Desk {
     const g = nodes.find((n) => n.type === 'group' && n.label === 'The goal');
     const top = nodes.filter((n) => n.type === 'text' && (String(n.text).startsWith(THIS_TIME) || /^\*\*[^*]+\*\*\n\nGoal \(/.test(String(n.text))));
     const x0 = g ? g.x + 40 : 0;
-    let y = Math.max(g ? g.y + g.height : 0, ...top.map((n) => n.y + this.tall(n))) + 48;
+    // Its group as tall as its cards (This time grows).
+    const bottom = Math.max(0, ...top.map((n) => n.y + this.tall(n)));
+    if (g && bottom + 16 > g.y + g.height) nodes = nodes.map((n) => (n === g ? { ...n, height: bottom + 16 - g.y } : n));
+    let y = Math.max(g ? g.y + g.height : 0, bottom) + 48;
     const isJot = (n) => n.type === 'text' && (n.jotted || /^\*\*Jotted\*\* \u00B7/.test(String(n.text)));
     const heads = [...nodes.filter(isJot).map((n, i) => ({ n, at: n.jotted || i })), ...this.ai.filter((a) => a.kind === 'review' && !a.jot && (a.title === 'Wrap-up' || a.changes)).map((a) => ({ n: a, at: a.at || 0 }))].sort((p, q) => q.at - p.at);
     const pos = new Map();
@@ -2077,10 +2158,43 @@ export class Desk {
     }
     return nodes;
   }
-  tall(n) { return Math.max(n.height || 0, this.els.get(n.id)?.offsetHeight || 0); }
+  // How tall a card is drawn (not far away: its title is drawn larger there).
+  tall(n) { return Math.max(n.height || 0, this.el.classList.contains('far') ? 0 : this.els.get(n.id)?.offsetHeight || 0); }
   streamNow() {
     const next = this.streamed(this.d.nodes);
     if (next.some((n, i) => n !== this.d.nodes[i])) this.change({ ...this.d, nodes: next }); else this.render();
+    this.fitStream();
+  }
+  // Its cards (This time, what was jotted) as tall as what they say, once
+  // drawn — not a step of their own to take back.
+  fitStream() {
+    if (!this.opts.review) return;
+    cancelAnimationFrame(this.fitting);
+    this.fitting = requestAnimationFrame(() => {
+      if (this.el.classList.contains('far')) { this.fitLater = true; return; } // (measured when near again)
+      this.fitLater = false;
+      const ours = (n) => n.type === 'text' && (String(n.text).startsWith(THIS_TIME) || n.jotted || n.jotOf || /^\*\*Jotted\*\* \u00B7/.test(String(n.text)));
+      let changed = false;
+      const nodes = this.d.nodes.map((n) => {
+        const e = ours(n) && this.els.get(n.id);
+        if (!e) return n;
+        const was = e.style.height;
+        e.style.height = 'auto';
+        const h = Math.max(60, Math.ceil(e.offsetHeight));
+        e.style.height = was;
+        if (Math.abs(h - n.height) < 4) return n;
+        changed = true;
+        return { ...n, height: h };
+      });
+      // Placed again, as drawn now (a card first drawn may measure otherwise).
+      const where = () => this.ai.map((a) => `${a.x},${a.y}`).join(' ');
+      const before = where();
+      const next = this.streamed(nodes);
+      changed ||= next.some((n, i) => n !== nodes[i]);
+      if (!changed && where() === before) return;
+      if (changed) { this.d = { ...this.d, nodes: next }; this.opts.onChange(stringifyDesk(this.d)); }
+      this.render();
+    });
   }
   // What was done on a review's desk, for its wrap-up (opts.onEvent: kept beside it).
   event(type, info) { if (this.opts.review) this.opts.onEvent?.(type, info); }
@@ -2092,6 +2206,8 @@ export class Desk {
     try { ledger = (await this.opts.ledger?.()) || []; } catch { /* none kept */ }
     const d = new Date();
     const { text, decisions } = wrapUp({ desk: this.d, ledger, notes, now: `${today()} ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}` });
+    // One wrap-up: the one not kept before, replaced.
+    this.ai = this.ai.filter((a) => !(a.kind === 'review' && a.title === 'Wrap-up'));
     const card = this.addAi({ kind: 'review', title: 'Wrap-up', x: 0, y: 0, width: 460, height: 420, text, state: 'done', at: Date.now(), decisions: decisions.filter((x) => !x.inNote).map(({ words }) => ({ words })) }, false);
     this.streamNow();
     this.show(card, true);
@@ -2122,6 +2238,7 @@ export class Desk {
     try {
       const r = await this.opts.changes();
       wait.remove();
+      this.ai = this.ai.filter((x) => !(x.kind === 'review' && x.changes));
       const card = this.addAi({ kind: 'review', title: 'Changes to the notes', x: 0, y: 0, width: 520, height: 300, text: changesText(r), state: 'done', at: Date.now(), changes: r.changes }, false);
       this.streamNow();
       this.show(card, true);
@@ -2150,9 +2267,12 @@ export class Desk {
   // to-do for the wrap-up) — or let go (Esc).
   async jot(text) {
     const d = new Date();
-    const raw = `**Jotted** \u00B7 ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}\n\n${text}`;
+    // As written, a line a line (a list when more than one).
+    const lines = text.split('\n').map((l) => l.trim()).filter(Boolean);
+    const raw = `**Jotted** \u00B7 ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}\n\n${lines.length > 1 ? lines.map((l) => (/^[-*] /.test(l) ? l : `- ${l}`)).join('\n') : text}`;
     const card = { id: newId(), type: 'text', text: raw, x: 0, y: 0, width: STREAM_W, height: 74 + 21 * raw.split('\n').length, jotted: Date.now() };
     this.change({ ...this.d, nodes: this.streamed([...this.d.nodes, card]) });
+    this.fitStream();
     this.show(card);
     this.event('jotted', { text, card: card.id });
     this.jotStatus.textContent = 'Sorting what you jotted\u2026';
@@ -2160,14 +2280,14 @@ export class Desk {
     try { r = await this.opts.jot(text); } catch (e) { this.jotStatus.textContent = `Not sorted: ${e.message} \u2014 it is on the desk as you wrote it.`; return; }
     const items = r?.items || [];
     if (!items.length) { this.jotStatus.textContent = 'Nothing to sort in it \u2014 it is on the desk as you wrote it.'; return; }
-    const TITLE = { decided: 'Decided', later: 'Later', open: 'Still open', todo: 'To do' };
+    const TITLE = { decided: 'Decided', later: 'Later', open: 'Still open', todo: 'To do', done: 'Done' };
     const batch = newId();
     for (const it of items) {
-      const body = [it.say, it.about ? `\nAbout: [[${it.about.replace(/\.md$/i, '')}]]` : '', it.settles ? `\nSettles: ${it.settles}` : '', it.todo ? `\nTo-do: \`${it.todo}\`` : ''].filter(Boolean).join('\n');
-      this.addAi({ kind: 'review', batch, title: `Jotted \u00B7 ${TITLE[it.kind]}`, text: body, jot: { kind: it.kind, say: it.say, about: it.about || '', settles: it.settles || '', of: card.id }, x: 0, y: 0, width: STREAM_W - STREAM_IN, height: 74 + 21 * body.split('\n').length, state: 'done' }, false);
+      const body = [it.say, it.about ? `\nAbout: [[${it.about.replace(/\.md$/i, '')}]]` : '', it.settles ? `\nSettles: ${it.settles}` : '', it.todo ? `\nTo-do: \`${it.todo}\`` : '', it.ticks ? `\nTicks off: ${it.ticks.text}${it.ticks.file ? ` \u2014 [[${it.ticks.file.replace(/\.md$/i, '')}]]` : ' (on this desk)'}` : ''].filter(Boolean).join('\n');
+      this.addAi({ kind: 'review', batch, title: `Jotted \u00B7 ${TITLE[it.kind] || 'Margin'}`, text: body, jot: { kind: it.kind, say: it.say, about: it.about || '', settles: it.settles || '', of: card.id, ...(it.ticks ? { ticks: it.ticks } : {}) }, x: 0, y: 0, width: STREAM_W - STREAM_IN, height: 74 + 21 * body.split('\n').length, state: 'done' }, false);
     }
     this.streamNow();
-    this.jotStatus.textContent = `${items.length} sorted, beside it: Tab takes the newest, \u21E7Tab all ${items.length}, Esc lets one go.`;
+    this.jotStatus.textContent = `${items.length} sorted, under it: Tab takes the newest, \u21E7Tab all ${items.length}, Esc lets one go.`;
   }
   async makeNote(a) {
     const path = await this.opts.makeNote(a.text);

@@ -1060,6 +1060,26 @@ async function labReviewTopics(b) {
   };
 }
 
+// A topic's open to-dos: in its notes, and in the assistant's list (its
+// newest eighty; not one moved elsewhere: "↪"). → [{ file, line, key, text, tasks }]
+async function reviewTodos(mine, ignored) {
+  const meet = await import(require('url').pathToFileURL(path.join(__dirname, 'public', 'meeting.js')).href);
+  const todos = [];
+  const take = (file, tasks) => {
+    const c = cachedText(file);
+    if (!c) return;
+    const lines = c.text.split('\n');
+    for (const it of meet.meetingItems(c.text)) if (it.kind === 'todo' && !it.done && !/↪/u.test(lines[it.line] || '')) todos.push({ file, line: it.line, key: it.key, text: it.text, tasks });
+  };
+  for (const p of mine) take(p, false);
+  if (fs.existsSync(path.join(ROOT, REVIEW_TODO)) && !isPrivateNote(path.join(ROOT, REVIEW_TODO)) && !ignored(REVIEW_TODO)) {
+    const before = todos.length;
+    take(REVIEW_TODO, true);
+    todos.splice(before, Math.max(0, todos.length - before - 80)); // its newest eighty
+  }
+  return todos;
+}
+
 // One topic on a desk: Reviews/<title> <day>.canvas (once a day: the same
 // opens again; prepared again, another beside it — "(2)" — never over what
 // was done on the first), what the margin says of it beside it.
@@ -1112,21 +1132,7 @@ async function labReviewDesk(b) {
     }
   }
   // Its open to-dos: in its notes, and in the assistant's list (not one moved elsewhere: "↪").
-  const meet = await import(require('url').pathToFileURL(path.join(__dirname, 'public', 'meeting.js')).href);
-  const todos = [];
-  const take = (file, tasks) => {
-    const c = cachedText(file);
-    if (!c) return;
-    const lines = c.text.split('\n');
-    for (const it of meet.meetingItems(c.text)) if (it.kind === 'todo' && !it.done && !/↪/u.test(lines[it.line] || '')) todos.push({ file, line: it.line, key: it.key, text: it.text, tasks });
-  };
-  for (const p of mine) take(p, false);
-  if (fs.existsSync(path.join(ROOT, REVIEW_TODO)) && !isPrivateNote(path.join(ROOT, REVIEW_TODO)) && !ignored(REVIEW_TODO)) {
-    const before = todos.length;
-    take(REVIEW_TODO, true);
-    todos.splice(before, Math.max(0, todos.length - before - 80)); // its newest eighty
-  }
-  const sent = todos.slice(0, 60);
+  const sent = (await reviewTodos(mine, ignored)).slice(0, 60);
   const projects = new Set(reviewFolders().filter((f) => f.startsWith('01-projects/')).map((f) => f.slice(12)));
   const topic = thisTime.goal ? { title: t.title.trim(), goal: thisTime.goal, goalState: 'theirs' } : { title: t.title.trim(), goal: (t.goal || '').trim(), goalState: ['stated', 'guessed', 'unknown'].includes(t.goalState) ? t.goalState : 'guessed' };
   // Its dates as written, and what they meant when written — the day a note
@@ -1178,9 +1184,14 @@ async function labReviewJot(b) {
   const mine = [...new Set(desk.nodes.filter((n) => n.type === 'file' && /\.md$/i.test(n.file || '')).map((n) => { try { return relOf(workspacePath(n.file)); } catch { return ''; } }))].filter((p) => p && reviewable(p, ignored)).slice(0, 16);
   const notes = mine.map((p) => { const c = cachedText(p); return { path: p, text: c ? reviewText(c) : '' }; });
   const projects = new Set(reviewFolders().filter((f) => f.startsWith('01-projects/')).map((f) => f.slice(12)));
-  const r = await r0.jot({ topic: { title, goal: goal.trim() }, thisTime, notes, jot: b.text.trim(), today: reviewToday(), projects });
+  // Its open to-dos: those on the desk first (what a jot may say is done).
+  const onDesk = new Set(desk.nodes.filter((n) => n.from?.kind === 'todo').map((n) => `${n.from.file}\u0000${n.from.key}`));
+  // and the to-dos taken on it (a card's "To-do: `- [ ] …`"), first of all.
+  const cards = desk.nodes.flatMap((n) => [...String(n.type === 'text' && n.text || '').matchAll(/To-do: `- \[ \] ([^`]+)`/g)].map((m) => ({ card: n.id, text: m[1] })));
+  const todos = [...cards, ...(await reviewTodos(mine, ignored)).sort((x, y) => onDesk.has(`${y.file}\u0000${y.key}`) - onDesk.has(`${x.file}\u0000${x.key}`))].slice(0, 60);
+  const r = await r0.jot({ topic: { title, goal: goal.trim() }, thisTime, notes, todos: todos.map((x) => `${x.text} (${x.file || 'on this desk'})`), jot: b.text.trim(), today: reviewToday(), projects });
   if (!r.ok) throw httpError(502, r.error || 'Claude did not answer.');
-  return { items: r.items.map((x) => ({ kind: x.kind, say: x.say, about: x.about ? notes[x.about - 1].path : '', settles: x.settles ? thisTime.focus[x.settles - 1] : '', todo: x.todo })) };
+  return { items: r.items.map((x) => ({ kind: x.kind, say: x.say, about: x.about ? notes[x.about - 1].path : '', settles: x.settles ? thisTime.focus[x.settles - 1] : '', todo: x.todo, ...(x.ticks ? { ticks: todos[x.ticks - 1] } : {}) })) };
 }
 
 // What they decided on a review's desk (and put off), carried into its
@@ -1193,17 +1204,18 @@ async function labReviewChanges(b) {
   const deskEsm = await import(require('url').pathToFileURL(path.join(__dirname, 'public', 'desk.js')).href);
   const desk = deskEsm.parseDesk(fs.readFileSync(workspacePath(rel), 'utf8'));
   const thisTime = deskEsm.thisTimeOf(desk);
+  // What is put off changes nothing in them: what is decided does.
   const decided = thisTime.decided.map((l) => deskEsm.decisionOf(l).words).filter(Boolean);
-  if (!decided.length && !thisTime.later.length) return { decided, later: [], changes: [] };
+  if (!decided.length) return { decided, changes: [] };
   const r0 = reviewUp(b);
   const goalCard = desk.nodes.find((n) => n.type === 'text' && /^\*\*[^*]+\*\*\n\nGoal \(/.test(String(n.text || '')));
   const title = (/^\*\*([^*]+)\*\*/.exec(goalCard?.text || '') || [])[1] || path.basename(rel, '.canvas');
   const ignored = loadIgnore(ROOT);
   const mine = [...new Set(desk.nodes.filter((n) => n.type === 'file' && /\.md$/i.test(n.file || '')).map((n) => { try { return relOf(workspacePath(n.file)); } catch { return ''; } }))].filter((p) => p && reviewable(p, ignored)).slice(0, 16);
   const notes = mine.map((p) => ({ path: p, text: (cachedText(p)?.text || '').replace(/^\uFEFF/, '') })).filter((n) => n.text.trim());
-  const r = await r0.apply({ topic: { title, goal: thisTime.goal || (/\nGoal \([^)]*\): ([^\n]*)/.exec(goalCard?.text || '') || [])[1] || '' }, decided, later: thisTime.later, notes });
+  const r = await r0.apply({ topic: { title, goal: thisTime.goal || (/\nGoal \([^)]*\): ([^\n]*)/.exec(goalCard?.text || '') || [])[1] || '' }, decided, notes });
   if (!r.ok) throw httpError(502, r.error || 'Claude did not answer.');
-  return { decided, later: thisTime.later, changes: r.changes.map(({ n, ...x }) => ({ file: notes[n - 1].path, ...x })) };
+  return { decided, changes: r.changes.map(({ n, ...x }) => ({ file: notes[n - 1].path, ...x })) };
 }
 
 // What was done on a review's desk (taken, let go, marked done, proposed,
