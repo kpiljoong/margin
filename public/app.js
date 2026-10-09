@@ -646,10 +646,11 @@ function restoreKept(tab, focus) {
   });
 }
 
-async function openFile(path, { line, focus = true, group, side = false, text = false } = {}) {
+async function openFile(path, { line, focus = true, group, side = false, text = false, mode, beside } = {}) {
   if (isDrawing(path) && !text) return openDrawing(path, { focus, group, side });
   let tab = S.tabs.find((t) => t.kind === 'file' && t.path === path);
-  const target = side ? ensureSecondGroup() && (S.focus === 1 && S.groups.length > 1 ? 0 : 1) : (group ?? S.focus);
+  // (Beside a given pane: the other one, whichever is in focus.)
+  const target = side ? ensureSecondGroup() && ((beside ?? S.focus) === 1 && S.groups.length > 1 ? 0 : 1) : (group ?? S.focus);
   if (!tab) {
     try {
       const f = await api('GET', `/api/file?path=${encodeURIComponent(path)}`);
@@ -660,6 +661,8 @@ async function openFile(path, { line, focus = true, group, side = false, text = 
       S.tabs.push(tab);
     } catch (e) { toast(e.message, 'error'); return; }
   } else if (side && tab.group !== target) moveTab(tab, target, false);
+  // (Beside a desk: the note alone, not split again in a narrow pane.)
+  if (mode && S.groups[target] && S.groups[target].mode !== mode) { S.groups[target].mode = mode; persist(); }
   activate(tab.id);
   if (line != null) requestAnimationFrame(() => gotoLine(line));
   else if (focus) requestAnimationFrame(() => { if (isAttached(tab)) tab.editor.focus(); });
@@ -4660,7 +4663,7 @@ function deskView(tab, c) {
           }
           return out;
         },
-        openNote: (p, line) => openFile(p, { side: true, line }),
+        openNote: (p, line) => openFile(p, { side: true, line, mode: 'edit', beside: tab.group }),
         // What the margin wrote and was not kept yet: beside the desk, in .agent-notes/desk/.
         loadMargin: async () => (await api('GET', `/api/desk/margin?path=${encodeURIComponent(tab.path)}`)).cards,
         saveMargin: (cards) => api('PUT', '/api/desk/margin', { path: tab.path, cards }).catch((e) => toast(`The margin\u2019s cards were not kept: ${e.message}`, 'error')),
