@@ -334,8 +334,9 @@ export class Talk {
   }
   next() {
     const q = this.queue()[0];
-    this.current = q || null;
-    if (!q) { this.closing(); return; }
+    this.current = (!this.early && q) || null;
+    // (Enough for today: the rest asked next time, not now.)
+    if (!this.current) { this.closing(this.early); return; }
     const W = this.W;
     const i = this.total - this.queue().length + 1;
     if (q.a) {
@@ -356,7 +357,9 @@ export class Talk {
         btn(W.done, async () => {
           this.done(acts);
           this.desk.fromAct(n, 'done');
-          await this.propose([n.id]);
+          // (Not asked on meanwhile, back from the record.)
+          this.busy = true;
+          try { await this.propose([n.id]); } finally { this.busy = false; }
           this.next();
         }),
         btn(W.notYet, () => { this.done(acts); this.passed.add(q.id); this.next(); }, 'ghost'),
@@ -389,7 +392,7 @@ export class Talk {
   }
   // Enough for today: the rest asked next time; where it stands said now.
   enough(acts) {
-    return btn(this.W.enough, () => { this.done(acts()); this.say(this.W.rest(this.queue().length)); this.closing(true); }, 'ghost talk-enough');
+    return btn(this.W.enough, () => { this.done(acts()); this.done(this.pending); this.early = true; this.current = null; this.say(this.W.rest(this.queue().length)); this.closing(true); }, 'ghost talk-enough');
   }
   // Back from the record (where a card may have been taken or let go): what it asked, if it is still there.
   resume() {
@@ -462,7 +465,7 @@ export class Talk {
   }
   // The same thing still asked (its buttons again); nothing asked: the end said again, as it is now.
   again(asked) {
-    if (!asked) { if (this.closed) this.closing(); else this.focus(); return; }
+    if (!asked || this.early) { if (this.closed) this.closing(this.early); else this.focus(); return; }
     this.passed.delete(asked.id);
     this.total = Math.max(this.total, this.queue().length);
     this.next();

@@ -334,7 +334,9 @@ test('the server: topics of the recent notes (not the assistant\'s records, neve
   assert.equal(st.status, 200, st.error);
   assert.deepEqual([st.file, st.exists, st.read], ['trip/Honeymoon \u2014 where it stands.md', false, 2]);
   assert.equal(st.text, '# Honeymoon\n\n## Decided\n- Dinner at the pier [[flights]]\n\n## Still open\n- Napa: half a day or a whole one? [[plan]] elsewhere\n');
-  assert.equal(review.parseState('Sure:\n# T\n- D1. Fly into SF [[plan]]', [{ path: 'trip/plan.md' }]), '# T\n- Fly into SF [[plan]]\n', 'from its title, a decision without its number');
+  assert.equal(review.parseState('Sure:\n# T\n- D1. Fly into SF [[plan]]', [{ path: 'trip/plan.md' }], 1), '# T\n- Fly into SF [[plan]]\n', 'from its title, a decision without its number');
+  assert.equal(review.parseState('# T\n- D1: Seoul\n- D2. Busan [[trip/plan]] [[other/x|x]]', [{ path: 'trip/plan.md' }], 1), '# T\n- D1: Seoul\n- D2. Busan [[trip/plan]] x\n', 'a day kept; a link by its path kept');
+  assert.equal(review.parseState('Here:\n\x60\x60\x60markdown\n# T\n- a\n\x60\x60\x60\nHope this helps.', []), '# T\n- a\n', 'nothing after its fence');
   assert.equal(review.parseState('No note here', []), '');
   assert.match(sent().at(-1), /^Title: Honeymoon\n\nGoal: Book it all by the 20th\n\nDecided:\nD1\. Dinner at the pier\n\nPut off:\n1\. Napa\n\nCalled off \(no longer decided\):\n\(none\)\n\nNotes:\nN1 \[\[plan\]\]:\n# Plan/);
   assert.ok(!fs.existsSync(path.join(ws, st.file)));

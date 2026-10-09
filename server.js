@@ -1102,12 +1102,14 @@ async function labReviewState(b) {
   const mine = [...new Set(desk.nodes.filter((n) => n.type === 'file' && /\.md$/i.test(n.file || '')).map((n) => { try { return relOf(workspacePath(n.file)); } catch { return ''; } }))].filter((p) => p && reviewable(p, ignored)).slice(0, 16);
   // Where it goes: beside its notes (the folder most of them are in), named for the topic.
   const ko = /[\uac00-\ud7a3]/.test(title);
-  const folders = mine.map((p) => path.posix.dirname(p)).filter((f) => f !== '.');
-  const folder = folders.sort((x, y) => folders.filter((f) => f === y).length - folders.filter((f) => f === x).length)[0] || '';
-  const file = `${folder ? `${folder}/` : ''}${title.replace(/[\\/:*?"<>|#^[\]]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 80)} \u2014 ${ko ? '\uD604\uC7AC \uC0C1\uD0DC' : 'where it stands'}.md`;
-  // (Not itself, when it is one of them.)
+  // (The vault's top counts as a folder too.)
+  const folders = mine.map((p) => { const f = path.posix.dirname(p); return f === '.' ? '' : f; });
+  const folder = [...folders].sort((x, y) => folders.filter((f) => f === y).length - folders.filter((f) => f === x).length)[0] || '';
+  const named = [...title.replace(/[\\/:*?"<>|#^[\]]/g, ' ').replace(/\s+/g, ' ').trim()].slice(0, 80).join('').trim() || (ko ? '\uC8FC\uC81C' : 'Topic');
+  const file = `${folder ? `${folder}/` : ''}${named} \u2014 ${ko ? '\uD604\uC7AC \uC0C1\uD0DC' : 'where it stands'}.md`;
+  // (Not itself, nor one made before under another name.)
   let left = 80000;
-  const notes = mine.filter((p) => p !== file).map((p) => { const c = cachedText(p); const text = c ? reviewText(c).slice(0, Math.min(8000, Math.max(0, left))) : ''; left -= text.length; return { path: p, text }; }).filter((n) => n.text.trim());
+  const notes = mine.filter((p) => p !== file && !/ \u2014 (?:where it stands|\uD604\uC7AC \uC0C1\uD0DC)\.md$/.test(p)).map((p) => { const c = cachedText(p); const text = c ? reviewText(c).slice(0, Math.min(8000, Math.max(0, left))) : ''; left -= text.length; return { path: p, text }; }).filter((n) => n.text.trim());
   if (!notes.length) throw httpError(400, 'None of its notes can be read (gone, private or ignored).');
   const decided = thisTime.decided.map((l) => deskEsm.decisionOf(l).words).filter(Boolean);
   const withdrawn = (thisTime.withdrawn || []).map((l) => deskEsm.decisionOf(l).words.replace(/\s*\u2014 withdrawn \d{4}-\d{2}-\d{2}$/, ''));
