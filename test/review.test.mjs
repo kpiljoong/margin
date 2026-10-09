@@ -361,21 +361,24 @@ test('decisions carried into the notes: every line no longer agreeing, as it was
     'note: N1', 'line: 3', 'was: Day 1: fly into SF', 'now: Day 1: fly into SF', 'for: D1', '---',
     'note: N2', 'after: 2', 'add: - Fly into LA #decision', 'for: D1', '---',
     'note: N2', 'after: 9', 'add: - Napa later #decision', 'for: D1', '---',
-    'note: N1', 'after: 1', 'add: Fly into LA', 'for: D1',
+    'note: N1', 'after: 1', 'add: Fly into LA', 'for: D1', '---',
+    'note: N1', 'after: 4', 'add: - [ ] Rework the days for flying into LA', 'for: D1',
   ].join('\n'), notes, 1);
   assert.deepEqual(ch, [
     { n: 1, line: 3, was: 'Day 1: fly into SF', now: 'Day 1: fly into LA', for: 'D1' },
     { n: 1, line: 8, was: 'Option B: LA in', now: 'Option B: LA in (\u2705 chosen)', for: 'D1' },
     { n: 1, line: 7, was: 'Option A: SF in', now: '~~Option A: SF in~~', for: 'D1' },
     { n: 2, after: 2, add: '- Fly into LA #decision', for: 'D1' },
+    { n: 1, after: 4, add: '- [ ] Rework the days for flying into LA', for: 'D1', todo: true },
   ], 'a line known by its first words (found elsewhere once: there); one not in the note, one for a decision that isn\u2019t, one said by too few words, one unchanged, a line past the end, an add not a #decision: left out');
   const changes = ch.map(({ n, ...x }) => ({ file: notes[n - 1].path, ...x }));
   const text = changesText({ decided: ['Fly into LA'], changes });
-  assert.match(text, /^\*\*Changes to the notes\*\* \u2014 4 in 2 notes\n\n- D1 Fly into LA\n\n\*\*\[\[trip\/plan\]\]\*\*\n- D1 \u00B7 line 3: Day 1: fly into ~~SF~~ ==LA==\n- D1 \u00B7 line 7: ~~Option A: SF in~~\n- D1 \u00B7 line 8: Option B: LA in ==\(\u2705 chosen\)==\n/);
+  assert.match(text, /- D1 \u00B7 added after line 4: ==To-do: Rework the days for flying into LA==/);
+  assert.match(text, /^\*\*Changes to the notes\*\* \u2014 5 in 2 notes\n\n- D1 Fly into LA\n\n\*\*\[\[trip\/plan\]\]\*\*\n- D1 \u00B7 line 3: Day 1: fly into ~~SF~~ ==LA==\n- D1 \u00B7 added after line 4: ==To-do: Rework the days for flying into LA==\n- D1 \u00B7 line 7: ~~Option A: SF in~~\n- D1 \u00B7 line 8: Option B: LA in ==\(\u2705 chosen\)==\n/);
   assert.match(text, /\*\*\[\[trip\/air\]\]\*\*\n- D1 \u00B7 added after line 2: ==Fly into LA #decision==/);
   assert.match(changesText({ decided: ['X'], changes: [] }), /Nothing in the notes goes against it\./);
   // Made on the note as it is now: moved down a line since, one line changed by them since.
-  const plan = withChanges('# Plan\nNew line\n\nDay 1: fly into SF\nDay 2: SF\n\n## Flights\nOption A: SF in, or not\nOption B: LA in', changes.filter((c) => c.file === 'trip/plan.md'));
+  const plan = withChanges('# Plan\nNew line\n\nDay 1: fly into SF\nDay 2: SF\n\n## Flights\nOption A: SF in, or not\nOption B: LA in', changes.filter((c) => c.file === 'trip/plan.md' && !c.add));
   assert.deepEqual(plan, { text: '# Plan\nNew line\n\nDay 1: fly into LA\nDay 2: SF\n\n## Flights\nOption A: SF in, or not\nOption B: LA in (\u2705 chosen)', made: 2, missed: 1 });
   const air = withChanges(notes[1].text, changes.filter((c) => c.file === 'trip/air.md'));
   assert.equal(air.text, 'A or B?\nAir: undecided\n- Fly into LA #decision');
@@ -399,8 +402,10 @@ test('changes read three ways at once, a decision recorded once (not when a note
     { n: 1, line: 1, was: 'a', now: 'A', for: 'D1' }, { n: 3, line: 1, was: 'p', now: 'P', for: 'D1' }, { n: 3, line: 2, was: 'q', now: 'Q', for: 'D1' },
     { n: 1, after: 2, add: '- Fly into LA #decision', for: 'D1' }, { n: 3, after: 1, add: '- Fly into LA #decision', for: 'D1' },
     { n: 1, after: 1, add: '- Dinner at the pier #decision', for: 'D2' },
+    { n: 1, after: 3, add: '- [ ] Rework the days', for: 'D1', todo: true },
   ], { decided: ['Fly into LA', 'dinner at the  pier', 'The cafe'], notes: ns });
   assert.deepEqual(r.filter((c) => c.add), [
+    { n: 1, after: 3, add: '- [ ] Rework the days', for: 'D1', todo: true },
     { n: 3, after: 1, add: '- Fly into LA #decision', for: 'D1' },
     { n: 1, after: 3, add: '- The cafe #decision', for: 'D3' },
   ], 'where it was put in the note most changed for it; one in a note already: not again; one not put anywhere: at the end of the first');

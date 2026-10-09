@@ -432,7 +432,7 @@ export function changesText({ decided = [], changes = [] }) {
     `**Changes to the notes** \u2014 ${changes.length} in ${files.length} note${files.length === 1 ? '' : 's'}`, '',
     ...legend, '',
     ...(files.length ? files.flatMap((f) => [`**${name(f)}**`, ...changes.filter((c) => c.file === f).sort((a, b) => (a.line || a.after) - (b.line || b.after))
-      .map((c) => (c.add ? `- ${c.for} \u00B7 added after line ${c.after}: ==${show(c.add.replace(/^- /, ''))}==` : `- ${c.for} \u00B7 line ${c.line}: ${inlineDiff(c.was, c.now)}`)), '']) : ['Nothing in the notes goes against it.', '']),
+      .map((c) => (c.add ? `- ${c.for} \u00B7 added after line ${c.after}: ==${show(c.add.replace(/^- (?:\[ \] )?/, c.todo ? 'To-do: ' : ''))}==` : `- ${c.for} \u00B7 line ${c.line}: ${inlineDiff(c.was, c.now)}`)), '']) : ['Nothing in the notes goes against it.', '']),
     files.length ? '_Nothing is changed yet: \u201CPropose in the notes\u201D puts each note\u2019s in its red pen review, to accept or not._' : '',
   ].join('\n').trim();
 }
@@ -2045,7 +2045,7 @@ export class Desk {
       propose.hidden = !(x.kind === 'review' && x.changes?.length);
       keep.disabled = x.state !== 'done';
       // What was jotted, sorted: taken into "This time" (a to-do, kept as a card).
-      keep.textContent = x.jot?.ticks ? 'Mark it done' : x.jot && x.jot.kind !== 'todo' ? 'Into This time' : 'Keep';
+      keep.textContent = x.jot?.ticks && x.jot.kind === 'done' ? 'Mark it done' : x.jot && x.jot.kind !== 'todo' ? 'Into This time' : 'Keep';
       keep.title = x.jot && x.jot.kind !== 'todo' ? 'Put it in \u201CThis time\u201D, under its part (Tab)' : 'Keep it as a card of the desk (Tab)';
       const n = this.batchOf(x).length;
       all.hidden = n < 2;
@@ -2072,7 +2072,7 @@ export class Desk {
     let all = this.d.nodes;
     for (const a of list) {
       // Done, and the to-do it does known: that to-do marked done (its card, or one made for it), proposed with the others.
-      const t = (a.jot?.kind === 'done' || a.jot?.kind === 'decided') ? a.jot.ticks : null;
+      const t = a.jot?.kind === 'done' || a.jot?.kind === 'decided' ? a.jot.ticks : null;
       // A decision that settles a to-do: in "This time" too.
       if (t && a.jot.kind === 'decided') mineText = addToThisTime(mineText, { kind: 'decided', words: a.jot.say, note: a.jot.about, settles: a.jot.settles });
       // One taken on this desk: ticked on its card (and so not next any more).
@@ -2081,6 +2081,9 @@ export class Desk {
         this.event('marked done', { text: t.text, card: t.card });
         continue;
       }
+      // Put off: in "This time" under Later; a to-do of this desk it puts off, not next any more.
+      const off = a.jot?.kind === 'later' && a.jot.ticks?.card;
+      if (off) all = all.map((n) => (n.id === off ? { ...n, text: String(n.text).replace(/To-do: `- \[ \] ([^`]*)`/, 'To-do, later: `$1`') } : n));
       if (t) {
         const to = { done: true, ...(t.tasks ? { on: today() } : {}) };
         const there = all.find((n) => n.from?.kind === 'todo' && n.from.file === t.file && n.from.key === t.key);
