@@ -349,6 +349,10 @@ export class Talk {
     this.el = el('div', 'talk', head, el('div', 'talk-mid', el('div', 'talk-main', el('div', 'talk-body', this.log), el('div', 'talk-foot', this.input)), this.side));
     // On the desk (the record): the way back, always in sight.
     this.back = btn(this.W.back, () => this.desk.showTalk(true), 'desk-to-talk');
+    // Where it was read to, kept: the pane drawn again (a note opened beside it) puts it back at the top.
+    const body = this.el.querySelector('.talk-body');
+    body.addEventListener('scroll', () => { if (body.clientHeight) this.readTo = body.scrollTop; }, { passive: true });
+    new ResizeObserver(() => { if (body.clientHeight && this.readTo && Math.abs(body.scrollTop - this.readTo) > 2) body.scrollTop = this.readTo; }).observe(body);
     this.el.tabIndex = -1; // (a click in it stays in it: text to select, not the desk's focus)
     // Its keys are its own (the desk's are not pressed through it).
     for (const t of ['keydown', 'pointerdown', 'wheel', 'dblclick', 'paste']) this.el.addEventListener(t, (e) => e.stopPropagation(), t === 'wheel' ? { passive: true } : undefined);
