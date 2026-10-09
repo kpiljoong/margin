@@ -171,7 +171,7 @@ process.stdin.on('data', (d) => {
     if (j.type !== 'user') continue;
     fs.appendFileSync(process.env.FAKE_LOG, JSON.stringify(j.message.content) + '\\n');
     const text = /^Folders:/.test(j.message.content)
-      ? 'title: Honeymoon\\nfolder: none\\nnotes: 1, 2\\ngoal: Book it all before the trip\\ngoal from: guess\\nask: Is the trip on the 27th?'
+      ? 'title: Honeymoon\\nfolder: none\\nnotes: ' + (j.message.content.match(/^\\[\\d+\\] (?:trip\\/plan\\.md|trip\\/flights\\.md|workout\\.md)/gm) || []).map((l) => l.match(/\\d+/)[0]).join(', ') + '\\ngoal: Book it all before the trip\\ngoal from: guess\\nask: Is the trip on the 27th?'
       : 'mine: T1, T2\\nstate: T2 done N2\\n---\\nkind: decide\\nsay: Half a day or a whole one in Napa.\\nwhy: It sets the nights\\nfrom: N1\\ntodo: - [ ] Decide the Napa tour #project/nope\\n---\\nkind: ask\\nsay: Are the flights booked?';
     const out = (o) => process.stdout.write(JSON.stringify(o) + '\\n');
     out({ type: 'stream_event', event: { type: 'content_block_delta', delta: { text } } });
@@ -193,6 +193,7 @@ test('the server: topics of the recent notes (not the assistant\'s records, neve
   // The same beginning, another end (a decision made since): not a copy.
   fs.writeFileSync(path.join(ws, 'trip/napa 2.md'), `# Napa\n\n${'The Napa tour, half a day or a whole one, as the guide says. '.repeat(6)}\n\nDecided: a whole day.\n`);
   fs.writeFileSync(path.join(ws, 'trip/napa.md'), `# Napa\n\n${'The Napa tour, half a day or a whole one, as the guide says. '.repeat(6)}\n\nNot decided yet.\n`);
+  fs.writeFileSync(path.join(ws, 'workout.md'), '---\ndate: 2026-10-09\n---\n04:32\n\nhttps://www.youtube.com/watch?v=vK479y3cqdg\n\n05:09\n');
   fs.writeFileSync(path.join(ws, 'secret.md'), '---\nprivate: true\n---\nThe secret plan for the trip, long enough to be read.\n');
   fs.writeFileSync(path.join(ws, '99-assistant/log/2026-10-05.md'), '- 18:48 a record of the assistant, long enough to be a note\n');
   fs.writeFileSync(path.join(ws, '99-assistant/rules/todo-format.md'), '# Todo rules\n\n- [ ] <what to do> [\u{1F4C5} YYYY-MM-DD]\n');
@@ -219,7 +220,7 @@ test('the server: topics of the recent notes (not the assistant\'s records, neve
   assert.match(sent()[0], /Decided: a whole day/);
   assert.match(sent()[0], /Not decided yet/);
   assert.doesNotMatch(sent()[0], /secret|a record of the assistant|Todo rules|Apply for the ESTA/, 'not private, not the assistant\'s records, rules or list');
-  assert.equal(tp.topics[0].notes.length, 2);
+  assert.deepEqual(tp.topics[0].notes.sort(), ['trip/flights.md', 'trip/plan.md'], 'a note sharing no word with its topic (a workout\'s times and a link) left out');
   const topic = { ...tp.topics[0], notes: ['trip/plan.md', 'trip/flights.md'] };
   const d = await api('POST', '/api/lab/review/desk', { topic });
   assert.equal(d.status, 200, d.error);

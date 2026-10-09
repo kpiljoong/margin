@@ -1045,9 +1045,18 @@ async function labReviewTopics(b) {
   const folders = reviewFolders();
   const r = await r0.topics({ folders, notes, today: reviewToday() });
   if (!r.ok) throw httpError(502, r.error || 'Claude did not answer.');
+  // A note put in a topic it shares no word with — nor with its title and
+  // goal, nor with its other notes (links and numbers aside) — is a slip of
+  // the numbers, not of it.
+  const words = (t) => new Set(String(t).toLowerCase().replace(/https?:\/\/\S+/g, ' ').split(/[\s\p{P}\p{S}\p{N}]+/u).filter((w) => w.length >= 2));
+  const of = (t) => {
+    const own = new Map(t.notes.map((n) => [n, words(notes[n - 1].text.slice(0, 3000))]));
+    const head = words(`${t.title} ${t.goal}`);
+    return t.notes.filter((n) => { const w = own.get(n); return [...w].some((x) => head.has(x) || t.notes.some((m) => m !== n && own.get(m).has(x))); });
+  };
   return {
     read: notes.length,
-    topics: r.topics.map((t) => ({ ...t, notes: t.notes.map((n) => notes[n - 1].path), goalFrom: t.goalFrom ? notes[t.goalFrom - 1].path : '' })),
+    topics: r.topics.map((t) => ({ ...t, notes: of(t) })).filter((t) => t.notes.length).map((t) => ({ ...t, notes: t.notes.map((n) => notes[n - 1].path), goalFrom: t.goalFrom && t.notes.includes(t.goalFrom) ? notes[t.goalFrom - 1].path : '' })),
   };
 }
 
