@@ -351,6 +351,7 @@ test('what is jotted, sorted: one block a thing, numbers in range, a to-do in th
   t = addToThisTime(t, { kind: 'open', words: 'Where to have lunch' });
   t = addToThisTime(t, { kind: 'decided', words: 'The cafe, for sure' });
   assert.equal(t, [thisTimeText().split('\n')[0], '', 'Goal: G', '', '**To settle now**', '- Lunch', '- Where to have lunch', '', '**Decided**', '- Dinner at the pier \u2192 [[trip/plan]]', '- The cafe, for sure', '', '**Later**', '- Napa: decide later'].join('\n'));
+  assert.equal(addToThisTime(t, { kind: 'decided', words: 'The cafe,  for sure' }), t, 'there already: not again');
   const mine = thisTimeOf({ nodes: [{ type: 'text', text: t }] });
   assert.deepEqual([mine.focus, mine.decided, mine.later], [['Lunch', 'Where to have lunch'], ['Dinner at the pier \u2192 [[trip/plan]]', 'The cafe, for sure'], ['Napa: decide later']]);
   assert.deepEqual(decisionOf(mine.decided[0]), { words: 'Dinner at the pier', note: 'trip/plan.md' });

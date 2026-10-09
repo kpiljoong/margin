@@ -307,6 +307,8 @@ export function addToThisTime(text, { kind, words, note = '', settles = '' }) {
   if (!range(head)) { while (lines.length && !lines.at(-1).trim()) lines.pop(); lines.push('', `**${head}**`); }
   const [at, end] = range(head);
   const line = `- ${String(words).trim()}${note ? ` \u2192 [[${note.replace(/\.md$/i, '')}]]` : ''}`;
+  // There already, as it is: not again.
+  if (lines.slice(at + 1, end).some((l) => norm(l) === norm(line))) return lines.join('\n');
   const blank = lines.slice(at + 1, end).findIndex((l) => /^\s*[-*]?\s*$/.test(l) && l.trim());
   if (blank >= 0) lines[at + 1 + blank] = line;
   else {
@@ -2268,6 +2270,7 @@ export class Desk {
     this.fitStream();
     if (this.jotStatus && list.some((a) => a.jot)) this.jotStatus.textContent = '';
     if (mineText != null && mineText !== was) this.say('Put in \u201CThis time\u201D (\u2318Z gives it back to the margin).');
+    else if (!nodes.length && list.some((a) => a.jot && a.jot.kind !== 'todo')) this.say('In \u201CThis time\u201D already, as it is (\u2318Z gives the card back).');
   }
   drop(a) {
     if (!a) return;
