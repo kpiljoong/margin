@@ -4642,6 +4642,8 @@ function deskView(tab, c) {
         onEvent: (type, info) => api('POST', '/api/lab/review/ledger', { path: tab.path, event: { type, ...info } }).catch(() => {}),
         ledger: async () => (await api('GET', `/api/lab/review/ledger?path=${encodeURIComponent(tab.path)}`)).events,
         todoFile: S.files.some((f) => f.path === '99-assistant/todo.md') ? '99-assistant/todo.md' : null,
+        // What they jot on it, sorted by Claude (decided, later, still open, to do).
+        jot: (text) => api('POST', '/api/lab/review/jot', { ...reviewOpts(), path: tab.path, text }),
         privateOf: async (paths) => (await api('POST', '/api/private', { paths })).private || {},
         // Over time: the notes and the meetings before and after them, read on the server (nothing sent).
         trail: (paths) => api('POST', '/api/desk/trail', { paths }),

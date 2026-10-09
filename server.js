@@ -1142,7 +1142,7 @@ async function labReviewDesk(b) {
     const written = fd || nd || n.date;
     return datesIn(n.text, written, { source, today: day }).filter((d) => d.day && d.day <= day).map((d) => ({ n: i + 1, written, source, ...d }));
   }).slice(0, 20);
-  const r = await r0.session({ topic, focus: thisTime.focus, notes, older, todos: sent.map((x) => `${x.text} (${x.file})`), dates, today: day, projects });
+  const r = await r0.session({ topic, focus: thisTime.focus, decided: (thisTime.decided || []).map((l) => deskEsm.decisionOf(l).words), later: thisTime.later || [], notes, older, todos: sent.map((x) => `${x.text} (${x.file})`), dates, today: day, projects });
   if (!r.ok) throw httpError(502, r.error || 'Claude did not answer.');
   // Their state to check: a note of the topic says it was done or says
   // otherwise (which note, linked), or its day has passed (seen here) — never
@@ -1160,10 +1160,33 @@ async function labReviewDesk(b) {
   return { path: name, read: notes.length, older: older.length, todos: sent.length, check: check.length, items: items.length, dates: dates.length, focus: thisTime.focus.length, focusFound };
 }
 
+// What they jotted on a review's desk, sorted (decided, later, still open,
+// to do): each thing with the note of the desk it is most about. Sent: the
+// topic, its "This time", its notes (not a private or ignored one) and the jot.
+async function labReviewJot(b) {
+  const rel = relOf(workspacePath(String(b.path || '')));
+  if (!/^Reviews\/.+\.canvas$/i.test(rel) || !fs.existsSync(workspacePath(rel))) throw httpError(400, 'Not a review\u2019s desk');
+  if (typeof b.text !== 'string' || !b.text.trim() || b.text.length > 4000) throw httpError(400, 'text: what was jotted (at most 4000 characters)');
+  const r0 = reviewUp(b);
+  const deskEsm = await import(require('url').pathToFileURL(path.join(__dirname, 'public', 'desk.js')).href);
+  const desk = deskEsm.parseDesk(fs.readFileSync(workspacePath(rel), 'utf8'));
+  const goalCard = desk.nodes.find((n) => n.type === 'text' && /^\*\*[^*]+\*\*\n\nGoal \(/.test(String(n.text || '')));
+  const title = (/^\*\*([^*]+)\*\*/.exec(goalCard?.text || '') || [])[1] || path.basename(rel, '.canvas').replace(/ \d{4}-\d{2}-\d{2}(?: \(\d+\))?$/, '');
+  const thisTime = deskEsm.thisTimeOf(desk);
+  const goal = thisTime.goal || (/\nGoal \([^)]*\): ([^\n]*)/.exec(goalCard?.text || '') || [])[1]?.replace(/\s*\u2014 \[\[.*$/, '') || '';
+  const ignored = loadIgnore(ROOT);
+  const mine = [...new Set(desk.nodes.filter((n) => n.type === 'file' && /\.md$/i.test(n.file || '')).map((n) => { try { return relOf(workspacePath(n.file)); } catch { return ''; } }))].filter((p) => p && reviewable(p, ignored)).slice(0, 16);
+  const notes = mine.map((p) => { const c = cachedText(p); return { path: p, text: c ? reviewText(c) : '' }; });
+  const projects = new Set(reviewFolders().filter((f) => f.startsWith('01-projects/')).map((f) => f.slice(12)));
+  const r = await r0.jot({ topic: { title, goal: goal.trim() }, thisTime, notes, jot: b.text.trim(), today: reviewToday(), projects });
+  if (!r.ok) throw httpError(502, r.error || 'Claude did not answer.');
+  return { items: r.items.map((x) => ({ kind: x.kind, say: x.say, about: x.about ? notes[x.about - 1].path : '', settles: x.settles ? thisTime.focus[x.settles - 1] : '', todo: x.todo })) };
+}
+
 // What was done on a review's desk (taken, let go, marked done, proposed,
 // wrapped up), in order, beside it in .agent-notes/review-ledger/ — what
 // happened there, not what was suggested; its wrap-up reads it.
-const LEDGER_TYPES = new Set(['taken', 'let go', 'marked done', 'unmarked', 'proposed', 'to-dos proposed', 'wrap-up']);
+const LEDGER_TYPES = new Set(['taken', 'let go', 'marked done', 'unmarked', 'proposed', 'to-dos proposed', 'wrap-up', 'jotted', 'noted', 'decisions proposed']);
 // A card taken: which card of the desk it became (card).
 const ledgerOf = (rel) => `${resolveInside(path.join(DATA_DIR, 'review-ledger'), rel)}.json`;
 const reviewLedger = (rel) => { const d = readJson(ledgerOf(rel), null); return Array.isArray(d?.events) ? d.events : []; };
@@ -2993,6 +3016,7 @@ async function routeApi(method, url, body) {
   if (method === 'POST' && p === '/api/lab/themes/check') return labThemeCheck(body || {});
   if (method === 'POST' && p === '/api/lab/review/topics') return labReviewTopics(body || {});
   if (method === 'POST' && p === '/api/lab/review/desk') return labReviewDesk(body || {});
+  if (method === 'POST' && p === '/api/lab/review/jot') return labReviewJot(body || {});
   if (method === 'GET' && p === '/api/lab/review/ledger') return { events: reviewLedger(relOf(workspacePath(q('path')))) };
   if (method === 'POST' && p === '/api/lab/review/ledger') return addReviewLedger(body || {});
   if (method === 'GET' && p === '/api/embed') return embedStatus();
