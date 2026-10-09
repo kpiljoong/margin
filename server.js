@@ -1148,7 +1148,7 @@ async function labReviewDesk(b) {
     const written = fd || nd || n.date;
     return datesIn(n.text, written, { source, today: day }).filter((d) => d.day && d.day <= day).map((d) => ({ n: i + 1, written, source, ...d }));
   }).slice(0, 20);
-  const r = await r0.session({ topic, focus: thisTime.focus, decided: (thisTime.decided || []).map((l) => deskEsm.decisionOf(l).words), later: thisTime.later || [], notes, older, todos: sent.map((x) => `${x.text} (${x.file})`), dates, today: day, projects });
+  const r = await r0.session({ topic, focus: thisTime.focus, decided: (thisTime.decided || []).map((l) => deskEsm.decisionOf(l).words), later: thisTime.later || [], withdrawn: (thisTime.withdrawn || []).map((l) => deskEsm.decisionOf(l).words.replace(/\s*\u2014 withdrawn \d{4}-\d{2}-\d{2}$/, '')), notes, older, todos: sent.map((x) => `${x.text} (${x.file})`), dates, today: day, projects });
   if (!r.ok) throw httpError(502, r.error || 'Claude did not answer.');
   // Their state to check: a note of the topic says it was done or says
   // otherwise (which note, linked), or its day has passed (seen here) — never

@@ -444,6 +444,12 @@ test('changes read three ways at once, a decision recorded once (not when a note
   ], 'where it was put in the note most changed for it; one in a note already: not again; one not put anywhere: at the end of the first');
 });
 
+test('a review after: what was called off goes as no longer decided', () => {
+  const m = review.sessionText({ topic: { title: 'T', goal: 'G', goalState: 'theirs' }, decided: ['SF first'], later: ['Napa'], withdrawn: ['Dinner at the pier'], notes: [] });
+  assert.match(m, /They decided:\n- SF first\n\nThey put off for later:\n- Napa\n\nThey called off \(no longer decided\):\n- Dinner at the pier/);
+  assert.match(review.SESSION.join('\n'), /called off is not current/);
+});
+
 test('a decision called off: only one there still as it was; kept under Withdrawn; where a note records it, and where changes went for it', () => {
   const items = review.parseJot([
     'kind: withdrawn', 'say: Dinner at the pier: cancelled', 'replaces: 2', '---',
