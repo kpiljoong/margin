@@ -1612,6 +1612,24 @@ function deskMarginCards(rel) {
   const d = readJson(deskMarginOf(rel), null);
   return Array.isArray(d?.cards) ? d.cards : [];
 }
+const JOT_KINDS = new Set(['decided', 'later', 'open', 'todo', 'done']);
+function reviewCardParts(c) {
+  const out = {};
+  const int = (v) => (Number.isInteger(v) && v >= 0 && v <= 1e6 ? v : undefined);
+  const j = c?.jot;
+  if (j && typeof j === 'object' && JOT_KINDS.has(j.kind)) {
+    const t = j.ticks && typeof j.ticks === 'object' ? { file: cleanStr(j.ticks.file, 1000) || undefined, line: int(j.ticks.line), key: cleanStr(j.ticks.key, 2000) || undefined, text: cleanStr(j.ticks.text, 2000), tasks: j.ticks.tasks === true || undefined, card: cleanStr(j.ticks.card, 64) || undefined } : null;
+    out.jot = { kind: j.kind, say: cleanStr(j.say, 400), about: cleanStr(j.about, 1000), settles: cleanStr(j.settles, 400), of: cleanStr(j.of, 64), ...(t?.text ? { ticks: t } : {}) };
+  }
+  if (cleanStr(c?.pick, 400)) out.pick = cleanStr(c.pick, 400);
+  if (Number.isFinite(c?.at) && c.at > 0) out.at = Math.round(c.at);
+  if (Array.isArray(c?.decisions)) out.decisions = c.decisions.slice(0, 20).map((d) => ({ words: cleanStr(d?.words, 400) })).filter((d) => d.words);
+  if (Array.isArray(c?.changes)) {
+    out.changes = c.changes.slice(0, 80).map((x) => ({ file: cleanStr(x?.file, 1000), for: cleanStr(x?.for, 8), line: int(x?.line), was: cleanStr(x?.was, 4000) || undefined, now: cleanStr(x?.now, 4000) || undefined, after: int(x?.after), anchor: typeof x?.anchor === 'string' ? x.anchor.slice(0, 4000) : undefined, add: cleanStr(x?.add, 400) || undefined, todo: x?.todo === true || undefined }))
+      .filter((x) => x.file && (x.add ? x.after != null : x.line && x.was != null && x.now));
+  }
+  return out;
+}
 function saveDeskMargin({ path: relPath, cards }) {
   const rel = relOf(workspacePath(relPath));
   if (!/\.canvas$/i.test(rel)) throw httpError(400, 'Not a desk');
@@ -1622,6 +1640,8 @@ function saveDeskMargin({ path: relPath, cards }) {
     batch: cleanStr(c?.batch, 64) || undefined, of: cleanStr(c?.of, 64) || undefined, title: cleanStr(c?.title, 200) || undefined,
     text: cleanStr(c?.text, 50000), x: num(c?.x), y: num(c?.y), width: num(c?.width, 60), height: num(c?.height, 40),
     paths: Array.isArray(c?.paths) ? c.paths.slice(0, 24).map((p) => cleanStr(p, 1000)).filter(Boolean) : undefined,
+    // A review's: what was jotted, sorted (and the to-do it does); which of what they chose it is about; a wrap-up's decisions; the changes to its notes.
+    ...reviewCardParts(c),
   })).filter((c) => c.id && c.text.trim());
   const file = deskMarginOf(rel);
   if (!clean.length) fs.rmSync(file, { force: true });

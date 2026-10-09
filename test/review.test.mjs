@@ -308,6 +308,20 @@ test('the server: topics of the recent notes (not the assistant\'s records, neve
   assert.ok(parts.some((m) => /Decided:\nD1\. Dinner at the pier\n\nNotes:\nN1 trip\/plan\.md:\n1\| # Plan/.test(m)), 'its notes read in parts at once');
   assert.ok(parts.some((m) => /\nN1 trip\/flights\.md:/.test(m)));
   assert.ok(parts.every((m) => !/secret/.test(m)));
+  // A review's margin kept beside it as it was: what was jotted (and the to-do it does), a pick, a wrap-up's decisions, the changes.
+  const kept = [
+    { id: 'j1', kind: 'review', title: 'Jotted \u00B7 Done', text: 'Paid.', x: 1, y: 2, width: 300, height: 90, batch: 'b', jot: { kind: 'done', say: 'Paid.', about: 'trip/plan.md', settles: '', of: 'raw', ticks: { file: '99-assistant/todo.md', line: 2, key: 'todo:esta', text: 'ESTA', tasks: true }, evil: 'x' } },
+    { id: 'p1', kind: 'review', title: 'Your pick \u00B7 To decide', text: 'Napa?', x: 1, y: 2, width: 300, height: 90, pick: 'Napa', at: 1791000000000 },
+    { id: 'c1', kind: 'review', title: 'Changes to the notes', text: 'C', x: 1, y: 2, width: 300, height: 90, changes: [{ file: 'trip/plan.md', line: 3, was: 'a', now: 'b', for: 'D1' }, { file: 'trip/plan.md', after: 4, anchor: '', add: '- x #decision', for: 'D1' }, { file: 'trip/plan.md', for: 'D1' }], decisions: [{ words: 'X' }, { nope: 1 }] },
+    { id: 'k1', kind: 'review', title: 'Jotted', text: 'K', x: 1, y: 2, width: 300, height: 90, jot: { kind: 'advice', say: 'no' } },
+  ];
+  assert.equal((await api('PUT', '/api/desk/margin', { path: d2.path, cards: kept })).status, 200);
+  const back = (await api('GET', `/api/desk/margin?path=${encodeURIComponent(d2.path)}`)).cards;
+  assert.deepEqual(back[0].jot, { kind: 'done', say: 'Paid.', about: 'trip/plan.md', settles: '', of: 'raw', ticks: { file: '99-assistant/todo.md', line: 2, key: 'todo:esta', text: 'ESTA', tasks: true } });
+  assert.deepEqual([back[1].pick, back[1].at], ['Napa', 1791000000000]);
+  assert.deepEqual(back[2].changes, [{ file: 'trip/plan.md', for: 'D1', line: 3, was: 'a', now: 'b' }, { file: 'trip/plan.md', for: 'D1', after: 4, anchor: '', add: '- x #decision' }], 'one neither a line nor an add: left out');
+  assert.deepEqual(back[2].decisions, [{ words: 'X' }]);
+  assert.equal(back[3].jot, undefined, 'a kind not of a jot: none');
   assert.equal(fs.readFileSync(path.join(ws, 'trip/plan.md'), 'utf8'), before, 'nothing written');
 });
 
