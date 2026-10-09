@@ -4176,7 +4176,8 @@ function folderMenu(e, dir) {
     { label: 'New folder here…', run: () => newFolder(dir) },
     { label: 'New drawing here…', run: () => newDrawing(dir) },
     { label: 'New desk here…', run: () => newDesk(dir) },
-    labsOn() ? { label: 'Talk through its notes (review)…', run: () => reviewFolder(dir) } : null,
+    // (Always there: with Labs off, pressing it offers to turn them on.)
+    { label: 'Talk through its notes (review)…', run: lab('Review', () => reviewFolder(dir)) },
     { label: 'New Mermaid diagram here…', run: () => newMermaidFile(dir) },
     revealItem(dir),
     { label: 'Dired: edit as text…', run: () => openDired(dir) },
