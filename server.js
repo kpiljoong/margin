@@ -1109,22 +1109,23 @@ async function labReviewResume() {
     try { desk = deskEsm.parseDesk(fs.readFileSync(path.join(dir, d.file), 'utf8')); } catch { continue; }
     const goalCard = desk.nodes.find((n) => n.type === 'text' && /^\*\*[^*]+\*\*\n\nGoal \(/.test(String(n.text || '')));
     const g = /\nGoal \(([^)]*)\): ([^\n]*)/.exec(goalCard?.text || '');
-    const from = /\s*\u2014 \[\[([^\]]+)\]\]\s*$/.exec(g?.[2] || '');
+    const from = /\s*\u2014 \[\[([^\]|#]+)[^\]]*\]\]\s*$/.exec(g?.[2] || '');
     const thisTime = deskEsm.thisTimeOf(desk);
     const mine = [...new Set(desk.nodes.filter((n) => n.type === 'file' && /\.md$/i.test(n.file || '')).map((n) => n.file))].filter((p) => { try { return reviewable(relOf(workspacePath(p)), ignored); } catch { return false; } });
     if (!mine.length) continue;
     const changed = mine.filter((p) => (cachedText(p)?.mtimeMs || 0) > d.mtime);
     const folders = new Set(mine.map((p) => path.posix.dirname(p)).filter((f) => f !== '.'));
     const newer = all.filter((rel) => folders.has(path.posix.dirname(rel)) && !mine.includes(rel) && (cachedText(rel)?.mtimeMs || 0) > d.mtime && reviewable(rel, ignored)).slice(0, 6);
-    const due = thisTime.later.filter((l) => { const ds = String(l).match(/\d{4}-\d{2}-\d{2}/g); return ds && ds[0] <= today; });
+    // Due: by the last day it names ("next week (… to 2026-10-18)": by its end).
+    const due = thisTime.later.filter((l) => { const ds = String(l).match(/\d{4}-\d{2}-\d{2}/g); return ds && ds.at(-1) <= today; });
     topics.push({
       title: (/^\*\*([^*]+)\*\*/.exec(goalCard?.text || '') || [])[1] || base,
       path: `Reviews/${d.file}`, day: d.day, due, changed: changed.length, newer: newer.length, decided: thisTime.decided.length, later: thisTime.later.length,
-      topic: { title: (/^\*\*([^*]+)\*\*/.exec(goalCard?.text || '') || [])[1] || base, notes: [...mine, ...newer].slice(0, 16), goal: thisTime.goal || (g && g[2] !== '\u2014' ? g[2].replace(/\s*\u2014 \[\[[^\]]+\]\]\s*$/, '') : ''), goalState: { 'in a note': 'stated', 'a guess': 'guessed', 'not known': 'unknown' }[g?.[1]] || 'guessed', goalFrom: from ? `${from[1]}.md` : '', ask: '', folder: '' },
+      topic: { title: (/^\*\*([^*]+)\*\*/.exec(goalCard?.text || '') || [])[1] || base, notes: [...mine, ...newer].slice(0, 16), goal: (thisTime.goal || (g && g[2] !== '\u2014' ? g[2].replace(/\s*\u2014 \[\[[^\]]+\]\]\s*$/, '') : '')).slice(0, 300), goalState: { 'in a note': 'stated', 'a guess': 'guessed', 'not known': 'unknown' }[g?.[1]] || 'guessed', goalFrom: from ? `${from[1]}.md` : '', ask: '', folder: '' },
     });
   }
   const weight = (t) => t.due.length * 100 + (t.day < today ? t.changed + t.newer : 0);
-  return { today, topics: topics.sort((a, b) => weight(b) - weight(a) || a.day.localeCompare(b.day)) };
+  return { today, topics: topics.sort((a, b) => weight(b) - weight(a) || b.day.localeCompare(a.day)) };
 }
 
 async function labReviewDesk(b) {

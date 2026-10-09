@@ -9398,9 +9398,15 @@ async function briefNote(tab = activeTab()) {
 let reviewSt = null; // { at, topics, read }
 const REVIEW_GOAL = { stated: 'in a note', guessed: 'a guess', unknown: 'not known' };
 const reviewOpts = () => ({ ...liveOpts(), thinkModel: S.settings.thinkModel === 'haiku' ? 'haiku' : 'sonnet' });
-async function reviewTopics(again = false) {
-  if (!store.getItem('an.reviewOk') && !(await askConfirm('A review sends the notes you changed in the last four weeks (up to 120; not the assistant\u2019s own records) to Claude, through the Claude Code agent you signed in to, to find what you are dealing with. The topic you pick goes again with older paragraphs near it and your open to-dos, to lay it out on a desk in Reviews/. A private note, or one .agentnotesignore names, is never sent. Nothing in your notes changes but by what you take there.', { okLabel: 'Find topics' }))) return;
+// Asked once: what a review sends, and where.
+const reviewConsent = async () => {
+  if (store.getItem('an.reviewOk')) return true;
+  if (!(await askConfirm('A review sends the notes you changed in the last four weeks (up to 120; not the assistant\u2019s own records) to Claude, through the Claude Code agent you signed in to, to find what you are dealing with. The topic you pick goes again with older paragraphs near it and your open to-dos, to lay it out on a desk in Reviews/. A private note, or one .agentnotesignore names, is never sent. Nothing in your notes changes but by what you take there.', { okLabel: 'Find topics' }))) return false;
   store.setItem('an.reviewOk', '1');
+  return true;
+};
+async function reviewTopics(again = false) {
+  if (!(await reviewConsent())) return;
   if (again || !reviewSt || Date.now() - reviewSt.at > 3600000) {
     toast('Reading your recent notes for topics\u2026');
     try { const r = await api('POST', '/api/lab/review/topics', reviewOpts()); reviewSt = { at: Date.now(), topics: r.topics, read: r.read }; } catch (e) { toast(e.message, 'error'); return; }
@@ -9410,6 +9416,7 @@ async function reviewTopics(again = false) {
   picker({ placeholder: 'Review a topic\u2026', source: (q) => items.map((it) => ({ it, m: fuzzy(q, it.label) })).filter((x) => x.m).map(({ it, m }) => ({ icon: it.icon, label: marked(it.label, m.idx), hint: it.hint, run: () => (it.again ? reviewTopics(true) : reviewDesk(it.t)) })) });
 }
 async function reviewDesk(t, again = false) {
+  if (!(await reviewConsent())) return;
   toast(`Laying out \u201C${t.title}\u201D\u2026`);
   try {
     const r = await api('POST', '/api/lab/review/desk', { ...reviewOpts(), topic: t, again });

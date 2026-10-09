@@ -4,7 +4,7 @@
 // in a locked-down window. Native bits live here: folder picker, recent
 // workspaces, agent settings, menus.
 
-const { app, BrowserWindow, Menu, dialog, shell, ipcMain, session, globalShortcut } = require('electron');
+const { app, BrowserWindow, Menu, dialog, shell, ipcMain, session, globalShortcut, net } = require('electron');
 const fs = require('fs');
 const path = require('path');
 const { fork, execFileSync } = require('child_process');
@@ -159,29 +159,43 @@ function stopServer() {
   if (child && child.exitCode === null) child.kill('SIGTERM');
 }
 
-// The network as the system has it, for what the server fetches (the
-// margin's model): the certificates it trusts (a company's own, as the
-// browser does) and its proxy for the web (Settings, or a PAC file) — one
-// set in the environment kept as it is.
-async function systemNetwork() {
-  const argv = ['--use-system-ca'];
-  const env = {};
-  if (process.env.HTTPS_PROXY || process.env.https_proxy || process.env.HTTP_PROXY || process.env.http_proxy) return { argv: [...argv, '--use-env-proxy'], env };
+// The margin's model, fetched for the server through the system's network
+// (Chromium's: its proxy, a PAC file, the certificates it trusts — as the
+// browser gets it): only its files' hosts, only into models/ here, as a
+// .part the server then checks (its size and SHA-256) and keeps or not.
+const MODEL_HOSTS = new Set(['cdn.jsdelivr.net', 'unpkg.com', 'huggingface.co']);
+async function fetchModelFile(child, m) {
+  const say = (x) => { try { child.send({ ...x, id: m.id }); } catch { /* gone */ } };
+  let out = null;
   try {
-    const p = await session.defaultSession.resolveProxy('https://huggingface.co/');
-    const m = /^(PROXY|HTTPS)\s+([^\s;]+)/.exec(String(p || '').trim());
-    if (m) {
-      env.HTTPS_PROXY = env.HTTP_PROXY = `${m[1] === 'HTTPS' ? 'https' : 'http'}://${m[2]}`;
-      env.NO_PROXY = '127.0.0.1,localhost,::1';
-      argv.push('--use-env-proxy');
+    const u = new URL(String(m.url));
+    const dir = path.join(app.getPath('userData'), 'models') + path.sep;
+    const to = path.resolve(String(m.to));
+    if (u.protocol !== 'https:' || !MODEL_HOSTS.has(u.host) || !to.startsWith(dir) || !to.endsWith('.part') || !(m.size > 0)) throw new Error('not one of the model\u2019s files');
+    const res = await net.fetch(u.href);
+    if (!res.ok || !res.body) throw new Error(`HTTP ${res.status}`);
+    out = fs.createWriteStream(to);
+    const reader = res.body.getReader();
+    let n = 0;
+    let told = 0;
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      n += value.length;
+      if (n > m.size) { reader.cancel().catch(() => {}); throw new Error('larger than expected (a page in its place?)'); }
+      if (!out.write(value)) await new Promise((r) => out.once('drain', r));
+      if (n - told >= 1 << 20) { told = n; say({ type: 'model-file-got', got: n }); }
     }
-  } catch { /* direct */ }
-  return { argv, env };
+    await new Promise((r, j) => out.end((e) => (e ? j(e) : r())));
+    say({ type: 'model-file-done', got: n });
+  } catch (e) {
+    out?.destroy();
+    say({ type: 'model-file-done', error: e.message });
+  }
 }
 
-async function startServer(workspace) {
+function startServer(workspace) {
   stopServer();
-  const net = await systemNetwork();
   // Only external CLI agents need the user's full PATH. Running the login
   // shell lazily avoids touching shell startup files (and any folder-access
   // prompts they trigger) for people who never enable an agent.
@@ -190,14 +204,16 @@ async function startServer(workspace) {
     const args = [workspace, '--no-open', '--port', '4321'];
     if (config.agentDefault) args.push('--default-agent', config.agentDefault);
     const child = fork(path.join(APP_ROOT, 'server.js'), args, {
-      execArgv: [...process.execArgv, ...net.argv],
-      env: { ...process.env, ...net.env, ELECTRON_RUN_AS_NODE: '1', AGENT_NOTES_AGENTS: JSON.stringify(agentProfiles()) },
+      // (Its certificates as the system's too: a company's own, as the browser trusts them.)
+      execArgv: [...process.execArgv, '--use-system-ca'],
+      env: { ...process.env, ELECTRON_RUN_AS_NODE: '1', MARGIN_MODEL_FETCH: '1', AGENT_NOTES_AGENTS: JSON.stringify(agentProfiles()) },
       stdio: ['ignore', 'pipe', 'pipe', 'ipc'],
     });
     let stderr = '';
     child.stdout.on('data', (d) => process.stdout.write(d));
     child.stderr.on('data', (d) => { stderr += d; process.stderr.write(d); });
     child.on('message', (m) => {
+      if (m && m.type === 'model-file') { fetchModelFile(child, m); return; }
       if (m && m.type === 'ready') {
         serverInfo = { url: m.url, origin: new URL(m.url).origin, root: m.root };
         resolve(serverInfo);

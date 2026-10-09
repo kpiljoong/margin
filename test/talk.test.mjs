@@ -61,5 +61,6 @@ test('where a note says what a question is about: its line with the most words o
   const note = '---\ntitle: \uD56D\uACF5\uAD8C \uC785\uAD6D \uBE44\uAD50\n---\n# \uD56D\uACF5\uAD8C \uC785\uAD6D \uBE44\uAD50\n\n- \uAE30\uC900 \uC5EC\uC815: \uC778\uCC9C→\uC0CC\uD504\uB780\uC2DC\uC2A4\uCF54 \uC785\uAD6D, LA \uCD9C\uAD6D \uCD94\uCC9C\n- \uB80C\uD130\uCE74\uB294 \uB098\uC911\uC5D0\n';
   assert.deepEqual(evidence(note, '\uD56D\uACF5\uAD8C \uC785\uAD6D \uB3C4\uC2DC: \uC0CC\uD504\uB780\uC2DC\uC2A4\uCF54 \uC785\uAD6D \uCD94\uCC9C vs LA \uC785\uAD6D'), [{ line: 5, text: '- \uAE30\uC900 \uC5EC\uC815: \uC778\uCC9C→\uC0CC\uD504\uB780\uC2DC\uC2A4\uCF54 \uC785\uAD6D, LA \uCD9C\uAD6D \uCD94\uCC9C' }]);
   assert.deepEqual(evidence(note, '\uB274\uC695 \uBBF8\uC220\uAD00 \uD6C4\uBCF4'), [], 'nothing much in common: none');
+  assert.deepEqual(evidence('- \uD504\uB85C\uC81D\uD2B8 \uB9C8\uAC10\uC740 \uAE08\uC694\uC77C\n', '\uC774 \uD504\uB85C\uC81D\uD2B8 \uC5B8\uC81C \uB05D\uB098\uB098'), [], 'one word in common (its letter pairs counted once): none');
   assert.deepEqual(questionOf({ title: 'Doesn’t agree', text: 'A or B\n\nFrom: [[trip/air]], [[trip/plan.md]]' }).from, ['trip/air.md', 'trip/plan.md']);
 });

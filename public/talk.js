@@ -160,32 +160,28 @@ export function questionOf(a, lang = 'en') {
   return { label: pick ? (L['Your pick'] || 'Your pick') : (L[kind] || kind), say, why, todo, from };
 }
 
-// Where a note says what a question is about: its line sharing the most
-// words with it (a Korean word by its pairs of letters too, so endings
-// don't hide it), at least three; none in its front matter, a heading or
-// a short line. → [{ line (from 0), text }] (at most k).
+// Where a note says what a question is about: its line with the most of
+// its words (a Korean word found by most of its pairs of letters too, so an
+// ending doesn't hide it — and counted once), at least two of them, a rarer
+// word counting more; none in its front matter, a heading or a short line.
+// → [{ line (from 0), text }] (at most k).
 export function evidence(text, about, k = 1) {
-  const words = (t) => {
-    const out = new Set();
-    for (const w of String(t).toLowerCase().match(/[\p{L}\p{N}]+/gu) || []) {
-      if (w.length >= 2) out.add(w);
-      if (/[\uac00-\ud7a3]/.test(w) && w.length > 2) for (let i = 0; i < w.length - 1; i++) out.add(w.slice(i, i + 2));
-    }
-    return out;
-  };
-  const q = words(about);
+  const wordsOf = (t) => [...new Set((String(t).toLowerCase().match(/[\p{L}\p{N}]+/gu) || []).filter((w) => w.length >= 2))];
+  const pairs = (w) => Array.from({ length: w.length - 1 }, (_, i) => w.slice(i, i + 2));
+  const q = wordsOf(about);
   const lines = String(text).split('\n');
   const front = lines[0]?.trim() === '---' ? lines.findIndex((l, i) => i > 0 && l.trim() === '---') : -1;
-  const cands = lines.map((l, i) => ({ line: i, text: l.trim() })).filter((c) => c.line > front && c.text.length >= 8 && !/^(#|```|---)/.test(c.text)).map((c) => ({ ...c, w: words(c.text) }));
+  const cands = lines.map((l, i) => ({ line: i, text: l.trim() })).filter((c) => c.line > front && c.text.length >= 8 && !/^(#|```|---)/.test(c.text)).map((c) => {
+    const ws = new Set(wordsOf(c.text));
+    const ps = new Set([...ws].flatMap(pairs));
+    const has = q.filter((w) => ws.has(w) || (/[\uAC00-\uD7A3]/.test(w) && w.length > 2 && pairs(w).filter((p) => ps.has(p)).length * 2 >= w.length - 1));
+    return { ...c, has };
+  });
   // A word in fewer lines tells more (a name, a place) than one in many.
   const df = new Map();
-  for (const c of cands) for (const w of c.w) if (q.has(w)) df.set(w, (df.get(w) || 0) + 1);
-  const hits = [];
-  for (const c of cands) {
-    const shared = [...c.w].filter((w) => q.has(w));
-    if (shared.length >= 3) hits.push({ line: c.line, text: c.text, n: shared.reduce((sum, w) => sum + Math.log(1 + cands.length / df.get(w)), 0) });
-  }
-  return hits.sort((a, b) => b.n - a.n || a.line - b.line).slice(0, k).map(({ line, text: t }) => ({ line, text: t }));
+  for (const c of cands) for (const w of c.has) df.set(w, (df.get(w) || 0) + 1);
+  return cands.filter((c) => c.has.length >= 2).map((c) => ({ ...c, n: c.has.reduce((sum, w) => sum + Math.log(1 + cands.length / df.get(w)), 0) }))
+    .sort((a, b) => b.n - a.n || a.line - b.line).slice(0, k).map(({ line, text: t }) => ({ line, text: t }));
 }
 
 // What a jot was sorted into, a line each, as said back.
