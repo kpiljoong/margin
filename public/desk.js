@@ -851,6 +851,12 @@ export class Desk {
   // ---- the plane
   // The width the panel takes at the right (and its gap).
   side() { return this.dock.offsetLeft > this.el.clientWidth / 2 ? this.dock.offsetWidth + 24 : 0; } // (none when it is below, in a narrow pane)
+  // What covers the desk from below in a narrow pane: the panel, and the jot line over it.
+  below() {
+    if (this.side() || this.dock.hidden || !this.dock.offsetHeight) return 0;
+    const top = Math.min(this.dock.offsetTop, ...[this.jotEl].filter((j) => j?.offsetHeight).map((j) => j.offsetTop + (j.firstElementChild?.offsetTop || 0)));
+    return Math.max(0, this.el.clientHeight - top);
+  }
   toWorld(cx, cy) {
     const r = this.el.getBoundingClientRect();
     return { x: (cx - r.left - this.cam.x) / this.cam.z, y: (cy - r.top - this.cam.y) / this.cam.z };
@@ -904,11 +910,12 @@ export class Desk {
     const r = this.el.getBoundingClientRect();
     const { x, y } = this.cam;
     const z = read ? Math.max(this.cam.z, Math.min(0.9, (r.width - this.side() - 60) / n.width)) : this.cam.z;
-    if (z !== this.cam.z) { this.goTo({ z, x: (r.width - this.side()) / 2 - (n.x + n.width / 2) * z, y: Math.min(r.height / 3, 80) - n.y * z }); return; }
+    const h = r.height - this.below();
+    if (z !== this.cam.z) { this.goTo({ z, x: (r.width - this.side()) / 2 - (n.x + n.width / 2) * z, y: Math.min(h / 3, 80) - n.y * z }); return; }
     const sx = n.x * z + x;
     const sy = n.y * z + y;
-    if (sx > 20 && sy > 20 && sx + n.width * z < r.width - this.side() && sy + Math.min(n.height, 300) * z < r.height - 20) return;
-    this.goTo({ z, x: (r.width - this.side()) / 2 - (n.x + n.width / 2) * z, y: r.height / 3 - n.y * z });
+    if (sx > 20 && sy > 20 && sx + n.width * z < r.width - this.side() && sy + Math.min(n.height, 300) * z < h - 20) return;
+    this.goTo({ z, x: (r.width - this.side()) / 2 - (n.x + n.width / 2) * z, y: (this.below() ? Math.min(h / 3, 40) : h / 3) - n.y * z });
   }
   wheel(e) {
     const body = e.target.closest?.('.desk-card.sel .desk-body');
@@ -2368,7 +2375,8 @@ export class Desk {
     try { ledger = (await this.opts.ledger?.()) || []; } catch { /* none kept */ }
     // The red pen reviews, as they are now (not known: said so).
     let runs = null;
-    try { const rs = await this.opts.runs?.(); if (rs) runs = new Map(rs.map((r) => [r.id, r.status])); } catch { /* not known */ }
+    const ids = [...new Set(ledger.filter((e) => e.type === 'changes proposed' && e.review).map((e) => e.review))];
+    try { const rs = ids.length ? await this.opts.runs?.(ids) : []; if (rs) runs = new Map(rs.map((r) => [r.id, r.status])); } catch { /* not known */ }
     const d = new Date();
     const { text, decisions, withdrawals, waiting } = wrapUp({ desk: this.d, ledger, notes, runs, now: `${today()} ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}` });
     // One wrap-up: the one not kept before, replaced.

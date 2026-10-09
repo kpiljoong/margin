@@ -4705,7 +4705,7 @@ function deskView(tab, c) {
           return open ? true : id;
         },
         openReview: (id) => openReview(id),
-        runs: async () => (await api('GET', '/api/runs')).runs,
+        runs: async (ids) => (await api('GET', `/api/run-status?ids=${encodeURIComponent(ids.join(','))}`)).runs,
         dockMin: store.getItem('an.deskDock') === 'min',
         onDock: (min) => store.setItem('an.deskDock', min ? 'min' : ''),
         pickNote: () => new Promise((resolve) => {

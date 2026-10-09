@@ -271,6 +271,8 @@ test('the server: topics of the recent notes (not the assistant\'s records, neve
   assert.equal((await api('POST', '/api/lab/review/ledger', { path: d2.path, event: { type: 'taken', title: 'To decide', text: 'Napa.' } })).n, 1);
   assert.equal((await api('POST', '/api/lab/review/ledger', { path: d2.path, event: { type: 'let go', title: 'A question' } })).n, 2);
   assert.equal((await api('POST', '/api/lab/review/ledger', { path: d2.path, event: { type: 'decided by itself' } })).status, 400);
+  // The red pen reviews a wrap-up asks about, however old: one not there, gone.
+  assert.deepEqual((await api('GET', '/api/run-status?ids=nope,../x')).runs, [{ id: 'nope', status: 'gone' }]);
   assert.equal((await api('POST', '/api/lab/review/ledger', { path: 'trip/plan.md', event: { type: 'taken' } })).status, 400);
   assert.deepEqual((await api('GET', `/api/lab/review/ledger?path=${encodeURIComponent(d2.path)}`)).events.map((e) => [e.type, e.title]), [['taken', 'To decide'], ['let go', 'A question']]);
   // Its dates as written went with it: the Napa to-do's day, past.

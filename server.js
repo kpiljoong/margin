@@ -3103,6 +3103,11 @@ async function routeApi(method, url, body) {
   if (method === 'POST' && p === '/api/git/commit') return gitCommit({ message: (body || {}).message, paths: (body || {}).paths });
   if (method === 'GET' && p === '/api/scope') return resolveScope(q('scope'), q('focus'), q('task') || '');
   if (method === 'GET' && p === '/api/runs') return { runs: listRuns() };
+  // The state of these runs (a review's wrap-up: its red pen reviews), however old; one no longer there: gone.
+  if (method === 'GET' && p === '/api/run-status') {
+    const ids = String(q('ids') || '').split(',').filter((id) => /^[\w-]+$/.test(id)).slice(0, 100);
+    return { runs: ids.map((id) => { try { return { id, status: readMeta(id).status }; } catch { return { id, status: 'gone' }; } }) };
+  }
   if (method === 'GET' && p === '/api/agents/status') {
     const fresh = q('fresh') === '1';
     const list = await Promise.all(AGENTS.map(async (a) => ({ id: a.id, ...(await agentStatus(a, fresh)) })));
