@@ -664,6 +664,7 @@ export class Desk {
     this.hint = el('div', 'desk-hint', 'Double-click: a card · Space: read one · drag a note from the tree, or a picture (or paste one) · drop a card on a card: a group · drop cards on the margin, or s q t o l m · / talk · z all');
     this.el = el('div', 'desk', this.grid, this.world, this.marquee, this.dock, this.hint, this.opts.review && this.opts.jot ? this.buildJot() : null);
     this.el.tabIndex = 0;
+    this.el.classList.toggle('review', !!this.opts.review);
     this.el.desk = this; // for tests
     this.el.addEventListener('pointerdown', (e) => this.down(e));
     this.el.addEventListener('wheel', (e) => this.wheel(e), { passive: false });

@@ -1932,6 +1932,10 @@ li.callout-hot { background: color-mix(in srgb, var(--accent) 16%, transparent);
   .desk-dock.min { height: auto; bottom: 12px; }
   .desk-hint { display: none; }
   .desk-jot { right: 14px; bottom: calc(42% + 24px); }
+  /* A review's desk, narrow: the panel smaller, the desk and what is jotted seen. */
+  .desk.review .desk-dock:not(.min) { height: 30%; }
+  .desk.review .desk-jot { bottom: calc(30% + 24px); }
+  .desk.review:has(.desk-dock.min) .desk-jot { bottom: 64px; }
 }
 .desk.far .desk-card.t-group { border-width: calc(1.5px * var(--iz, 1)); }
 
