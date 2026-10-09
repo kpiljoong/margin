@@ -368,6 +368,9 @@ test('what is jotted, sorted: one block a thing, numbers in range, a to-do in th
   assert.deepEqual(w.decisions.map((d) => [d.words, d.note, d.inNote]), [['Dinner at the pier', 'trip/plan.md', true], ['The cafe, for sure', 'trip/cafe.md', true]]);
   assert.match(wrapUp({ desk, notes: new Map([['trip/plan.md', '# Plan\n']]) }).text, /- Dinner at the pier \(not in the notes yet\)/);
   assert.match(w.text, /\*\*Next\*\*\n- Still to settle: Lunch\n- Still to settle: Where to have lunch\n/);
+  // What was proposed to the notes: in them now, or not yet.
+  const carriedW = wrapUp({ desk, ledger: [{ type: 'changes proposed', file: 'trip/plan.md', text: 'Day 1: fly into LA\n- Dinner at the pier #decision' }, { type: 'changes proposed', file: 'trip/air.md', text: 'Air: LA' }], notes: new Map([['trip/plan.md', '# Plan\nDay 1:  fly into LA\n'], ['trip/air.md', 'Air: SF']]) });
+  assert.match(carriedW.text, /\*\*Decisions carried into the notes\*\*\n- \[\[trip\/plan\]\]: 1 of 2 in it, the rest not \(yet\)\n- \[\[trip\/air\]\]: 1 proposed, not in it yet \(its red pen review\)\n/);
 });
 
 test('decisions carried into the notes: every line no longer agreeing, as it was and as it would read; shown, then made on the notes as they are', () => {

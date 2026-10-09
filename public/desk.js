@@ -360,6 +360,16 @@ export function wrapUp({ desk, ledger = [], notes = new Map(), now = '' }) {
     const where = [d.note, ...notes.keys()].filter(Boolean).find((f) => has(notes.get(f)));
     return { ...d, note: where || d.note, inNote: !!where };
   });
+  // What was proposed to the notes from what was decided: in them now (each line as it would read), or not yet.
+  const proposedTo = new Map();
+  for (const e of ledger.filter((x) => x.type === 'changes proposed' && x.file)) proposedTo.set(e.file, String(e.text || '').split('\n').filter((l) => l.trim()));
+  const carried = [...proposedTo].map(([f, ls]) => {
+    const text = notes.get(f);
+    if (typeof text !== 'string') return `- ${name(f)}: ${ls.length} proposed (its note could not be read)`;
+    const have = new Set(text.split('\n').map(norm));
+    const k = ls.filter((l) => have.has(norm(l))).length;
+    return `- ${name(f)}: ${k === ls.length ? `all ${k} in it` : k ? `${k} of ${ls.length} in it, the rest not (yet)` : `${ls.length} proposed, not in it yet (its red pen review)`}`;
+  });
   const section = (title, lines, none) => [`**${title}**`, ...(lines.length ? lines : [none])];
   const text = [
     `**Wrap-up**${now ? ` \u00B7 ${now}` : ''}`, '',
@@ -370,6 +380,7 @@ export function wrapUp({ desk, ledger = [], notes = new Map(), now = '' }) {
     ...section('Changed in the notes', changed, '- (nothing yet)'),
     ...(waiting.length ? ['', ...section('Not in the notes yet', waiting, '')] : []),
     ...(unsure.length ? ['', ...section('Changed in its note since \u2014 not confirmed', unsure, '')] : []), '',
+    ...(carried.length ? [...section('Decisions carried into the notes', carried, ''), ''] : []),
     `**From the margin**: ${kept.length} taken and on the desk${taken.length > kept.length ? ` (${taken.length - kept.length} taken back or deleted)` : ''}, ${let_.length} let go`,
     ...kept.map((e) => { const t = e.text.split('\n')[0]; return `- ${e.title || 'A card'}: ${t.length > 70 ? `${t.slice(0, 70)}\u2026` : t}`; }),
   ].join('\n');
@@ -2323,7 +2334,8 @@ export class Desk {
       try {
         const id = await this.opts.proposeNote(file, (text) => { r = withChanges(text, cs); return r.text; }, { open: false });
         missed += r.missed;
-        if (id && r.made) { done.push({ file, id }); this.event('changes proposed', { file, text: cs.map((c) => c.add || `${c.was} \u2192 ${c.now}`).join('\n').slice(0, 4000) }); }
+        // What it proposed, as the lines would read (the wrap-up looks for them in the note).
+        if (id && r.made) { done.push({ file, id }); this.event('changes proposed', { file, text: cs.map((c) => c.add || c.now).join('\n').slice(0, 4000) }); }
       } catch (e) { failed.push(`${file.split('/').pop().replace(/\.md$/i, '')}: ${e.message}`); }
     }
     // Their reviews, waiting: one by one from here (none opened by itself).
