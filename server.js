@@ -821,7 +821,7 @@ async function labThemes(b) {
   const since = Date.now() - days * 86400000;
   const notes = [];
   for (const rel of workspaceFiles()) {
-    if (!NOTE_EXT.has(extOf(rel)) || isTemplatePath(rel) || rel === KNOWN_FILE || /^themes\//i.test(rel) || ignored(rel)) continue;
+    if (!NOTE_EXT.has(extOf(rel)) || isTemplatePath(rel) || rel === KNOWN_FILE || isThemeNote(rel) || ignored(rel)) continue;
     const c = cachedText(rel);
     if (!c || c.mtimeMs < since || isPrivateNote(path.join(ROOT, rel))) continue;
     notes.push({ rel, c });
@@ -883,6 +883,15 @@ async function labThemes(b) {
 // was made, not one of its own; of those, the first twelve go. → { items: [{ verdict: 'supports' |
 // 'counters' | 'outside', why, ref: { path, line, name, raw, date, text } }],
 // maybe: { reading, check } (a hypothesis, when some go against it) }.
+// A theme note (Themes, Labs): in Themes/, or with "theme: <day>" in its
+// front matter. What it says is Claude's reading and quotes of older notes —
+// never a new case of a theme, nor a piece of one.
+function isThemeNote(rel) {
+  if (/^themes\//i.test(rel)) return true;
+  const c = cachedText(rel);
+  return !!c && /^---\r?\n(?:(?!---)[^\n]*\n)*?theme:\s*\d{4}-\d{2}-\d{2}/.test(c.text.slice(0, 600));
+}
+
 // What would show a reading wrong (lib/themes.js), kept by the reading: a
 // theme checked again with the same reading doesn't ask again. None when
 // Claude doesn't answer: the theme is searched for without it.
@@ -928,7 +937,7 @@ async function labThemeCheck(b) {
   // reading wrong; the six nearest of each search, together, nearest first.
   if (embed.status().state === 'ready') {
     const ignored = loadIgnore(ROOT);
-    const may = workspaceFiles().filter((f) => NOTE_EXT.has(extOf(f)) && f !== here && !isTemplatePath(f) && f !== KNOWN_FILE && !ignored(f)
+    const may = workspaceFiles().filter((f) => NOTE_EXT.has(extOf(f)) && f !== here && !isTemplatePath(f) && f !== KNOWN_FILE && !ignored(f) && !isThemeNote(f)
       && since({ date: dateOf(f) }) && !isPrivateNote(path.join(ROOT, f)));
     if (may.length) {
       let t0 = Date.now();
@@ -946,9 +955,9 @@ async function labThemeCheck(b) {
       }
     }
   }
-  // Judged: those that may be (read here: never private or ignored; since;
-  // not its own; once), the first twelve.
-  const found = sameOnce(candidates.map(read).filter(Boolean)).map((f) => ({ ...f, date: dateOf(f.path) }))
+  // Judged: those that may be (read here: never private or ignored, nor a
+  // theme note; since; not its own; once), the first twelve.
+  const found = sameOnce(candidates.map(read).filter((f) => f && !isThemeNote(f.path))).map((f) => ({ ...f, date: dateOf(f.path) }))
     .filter((f) => !own.has(k(f.text)) && since(f))
     .slice(0, 12);
   if (!found.length) return { items: [], maybe: null, read: 0, searched, counter, ms };

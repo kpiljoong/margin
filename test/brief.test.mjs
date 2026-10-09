@@ -204,6 +204,14 @@ test('the server: the note, its last meeting and the notes near it (never a priv
   assert.doesNotMatch(sent().at(-1), /secret|back then\.\n\[|^\[\d\] from "Old/m);
   assert.match(sent().at(-1), /New paragraphs:\n\[1\] from "Demo 2026-10-12" \(2026-10-12\): People stopped/);
   assert.equal((await check({ path: 'Themes.md', theme: { ...theme, title: '' }, refs: [] })).status, 400);
+  // Another theme note (in Themes/, or marked "theme:") is no new case: never sent.
+  fs.mkdirSync(path.join(ws, 'Themes'));
+  fs.writeFileSync(path.join(ws, 'Themes', 'Other 2026-10-12.md'), '# Other\n\nA reading of another theme, new enough to count.\n');
+  fs.writeFileSync(path.join(ws, 'Marked 2026-10-12.md'), '---\ntheme: 2026-10-11\n---\n# Marked\n\nA reading kept outside Themes, new enough to count.\n');
+  const c2 = await check({ path: 'Themes.md', theme, refs: [{ path: 'Themes/Other 2026-10-12.md', line: 2 }, { path: 'Marked 2026-10-12.md', line: 5 }, { path: 'Demo 2026-10-12.md', line: 2 }] });
+  assert.equal(c2.status, 200, c2.error);
+  assert.equal(c2.read, 1);
+  assert.doesNotMatch(sent().at(-1), /A reading of another theme|A reading kept outside/);
 });
 
 const themes = require('../lib/themes.js');
