@@ -883,30 +883,85 @@ async function labThemes(b) {
 // was made, not one of its own; of those, the first twelve go. → { items: [{ verdict: 'supports' |
 // 'counters' | 'outside', why, ref: { path, line, name, raw, date, text } }],
 // maybe: { reading, check } (a hypothesis, when some go against it) }.
+// What would show a reading wrong (lib/themes.js), kept by the reading: a
+// theme checked again with the same reading doesn't ask again. None when
+// Claude doesn't answer: the theme is searched for without it.
+let counteredCache = null;
+const COUNTERED_FILE = path.join(DATA_DIR, 'countered.json');
+async function counterFor(theme, lang, model) {
+  counteredCache ||= new Map(Object.entries(readJson(COUNTERED_FILE, {})));
+  const key = crypto.createHash('sha1').update(JSON.stringify(['c1', model, lang, theme.title.trim(), (theme.reading || '').trim()])).digest('hex');
+  if (counteredCache.has(key)) return counteredCache.get(key);
+  if (!(theme.reading || '').trim()) return [];
+  const r = await themer.counter({ title: theme.title.trim(), reading: theme.reading.trim(), lang }).catch(() => null);
+  if (!r?.ok || !r.queries.length) return [];
+  counteredCache.set(key, r.queries);
+  while (counteredCache.size > 300) counteredCache.delete(counteredCache.keys().next().value);
+  ensureDataDir();
+  writeFileAtomic(COUNTERED_FILE, JSON.stringify(Object.fromEntries(counteredCache)));
+  return r.queries;
+}
 async function labThemeCheck(b) {
   const { theme, refs = [] } = b;
   const str = (x, n) => typeof x === 'string' && x.length <= n;
   if (!theme || typeof theme !== 'object' || !str(theme.title, 300) || !theme.title.trim() || !str(theme.reading ?? '', 2000) || !str(theme.made ?? '', 10)
     || ![theme.scenes, theme.unfit ?? []].every((l) => Array.isArray(l) && l.length <= 40 && l.every((x) => x && str(x.text, 2000) && str(x.name, 300))) || !validRefs(refs, 40)) throw httpError(400, 'path, theme: { title, reading, made, scenes: [{ text, name }], unfit }, refs');
   const { agent, env, read } = await recallSending(b, 'Checking a theme');
+  const here = relOf(workspacePath(b.path));
   const k = (x) => String(x).toLowerCase().replace(/[\s\p{P}\p{S}]+/gu, '').slice(0, 120);
   const own = new Set([...theme.scenes, ...(theme.unfit || [])].map((x) => k(x.text)));
-  const dated = (f) => (/\d{4}-\d{2}-\d{2}/.exec(f.name) || [])[0] || (() => { try { return new Date(fs.statSync(path.join(ROOT, f.path)).mtimeMs).toISOString().slice(0, 10); } catch { return ''; } })();
-  const found = sameOnce(refs.map(read).filter(Boolean)).map((f) => ({ ...f, date: dated(f) }))
-    .filter((f) => !own.has(k(f.text)) && (!theme.made || !f.date || f.date >= theme.made))
-    // Of those that may be judged (sent, since, not its own), the first twelve.
-    .slice(0, 12);
-  if (!found.length) return { items: [], maybe: null, read: 0 };
+  const dateOf = (f) => (/\d{4}-\d{2}-\d{2}/.exec(path.basename(f)) || [])[0] || (() => { try { return new Date(fs.statSync(path.join(ROOT, f)).mtimeMs).toISOString().slice(0, 10); } catch { return ''; } })();
+  const since = (f) => !theme.made || !f.date || f.date >= theme.made;
   const lang = b.lang === 'ko' || b.lang === 'en' ? b.lang : textLang([theme.title, theme.reading || '']) || 'en';
   const model = developModel(b);
   if (themerModel !== model) { themer?.stop(); themer = null; }
   themerModel = model;
   themer ||= themesMargin({ bin: liveBin(agent), env, opts: { ...liveOpts, model, effort: '' } });
+  const ms = { counter: 0, search: 0, judge: 0 };
+  let candidates = refs;
+  let counter = [];
+  let searched = 'page';
+  // With the local model: searched here, among the notes that may be judged
+  // alone (written since it was made, not private or ignored, not this one)
+  // — before the six nearest of each search are taken, so older ones can't
+  // take their places — for the theme, its cases, and what would show its
+  // reading wrong; the six nearest of each search, together, nearest first.
+  if (embed.status().state === 'ready') {
+    const ignored = loadIgnore(ROOT);
+    const may = workspaceFiles().filter((f) => NOTE_EXT.has(extOf(f)) && f !== here && !isTemplatePath(f) && f !== KNOWN_FILE && !ignored(f)
+      && since({ date: dateOf(f) }) && !isPrivateNote(path.join(ROOT, f)));
+    if (may.length) {
+      let t0 = Date.now();
+      counter = await counterFor(theme, lang, model);
+      ms.counter = Date.now() - t0;
+      t0 = Date.now();
+      const queries = [theme.title, theme.reading, ...theme.scenes.map((x) => x.text), ...(theme.unfit || []).map((x) => x.text)].filter(Boolean).slice(0, 16).map((t) => t.slice(0, 2000));
+      const r = await embed.near(here, [...queries, ...counter], may);
+      ms.search = Date.now() - t0;
+      if (r?.results) {
+        const best = new Map();
+        for (const list of r.results) for (const x of list) { const key = `${x.path}\u0000${x.line}`; if (!best.has(key) || best.get(key).z < x.z) best.set(key, x); }
+        candidates = [...best.values()].sort((x, y) => y.z - x.z).map(({ path: p, line }) => ({ path: p, line }));
+        searched = 'model';
+      }
+    }
+  }
+  // Judged: those that may be (read here: never private or ignored; since;
+  // not its own; once), the first twelve.
+  const found = sameOnce(candidates.map(read).filter(Boolean)).map((f) => ({ ...f, date: dateOf(f.path) }))
+    .filter((f) => !own.has(k(f.text)) && since(f))
+    .slice(0, 12);
+  if (!found.length) return { items: [], maybe: null, read: 0, searched, counter, ms };
   const req = { theme: { title: theme.title.trim(), reading: (theme.reading || '').trim(), scenes: theme.scenes.slice(0, 12).map((x) => ({ text: x.text.slice(0, 400), name: x.name })), unfit: (theme.unfit || []).slice(0, 12).map((x) => ({ text: x.text.slice(0, 400), name: x.name })) }, found, lang };
+  const t0 = Date.now();
   const r = await themer.check(req);
+  ms.judge = Date.now() - t0;
   if (!r.ok) throw httpError(502, r.error || 'Claude did not answer.');
   return {
     read: found.length,
+    searched,
+    counter,
+    ms,
     maybe: r.maybe,
     items: r.verdicts.filter((v) => v.verdict !== 'none').map((v) => { const f = found[v.n - 1]; return { verdict: v.verdict, why: v.why, ref: { path: f.path, line: f.line, name: f.name, raw: f.raw, date: f.date, text: f.text } }; }),
   };

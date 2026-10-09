@@ -293,3 +293,9 @@ test('a theme checked against what came since: the message and the verdicts', ()
     { verdicts: [{ n: 1, verdict: 'supports', why: 'Stuck again.' }, { n: 2, verdict: 'counters', why: 'Picked at once.' }, { n: 3, verdict: 'outside', why: 'an expert' }, { n: 4, verdict: 'none', why: 'lunch' }], maybe: { reading: 'Those new to notes apps stall.', check: 'Ask which app they used before.' } });
   assert.equal(themes.parseCheck('1. supports: yes\nmaybe: narrower', 1).maybe, null, 'no hypothesis when nothing goes against it');
 });
+
+test('what would show a reading wrong: search words, at most two', () => {
+  assert.match(themes.counterText({ title: 'Stall', reading: 'New users stall.', lang: 'ko' }), /^The title: Stall\n\nThe reading: New users stall\.\n\nAnswer in Korean/);
+  assert.deepEqual(themes.parseCounter('1. A new user started writing at once.\n- "Two of three began without help."\n- A third line.\nok'), ['A new user started writing at once.', 'Two of three began without help.']);
+  assert.match(themes.COUNTER_SYSTEM, /went otherwise/);
+});
