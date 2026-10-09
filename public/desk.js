@@ -450,9 +450,12 @@ export function withChanges(text, changes) {
     return all.length === 1 ? all[0] : -1;
   };
   for (const c of changes.filter((x) => !x.add)) { const i = at(c); if (i < 0) missed++; else { lines[i] = c.now; made++; } }
-  for (const c of changes.filter((x) => x.add).sort((a, b) => b.after - a.after)) {
+  // Added after the line they were put after, found again by its words (bottom first; two after one line, in their order).
+  const adds = changes.map((c, i) => ({ c, i })).filter((x) => x.c.add).map((x) => ({ ...x, at: x.c.anchor == null ? Math.min(x.c.after, lines.length) : at({ line: x.c.after, was: x.c.anchor }) + 1 }));
+  for (const { c, at: i } of adds.sort((p, q) => q.at - p.at || q.i - p.i)) {
     if (lines.some((l) => norm(l) === norm(c.add))) continue;
-    lines.splice(Math.min(Math.max(0, c.after), lines.length), 0, c.add);
+    if (i <= 0) { missed++; continue; }
+    lines.splice(i, 0, c.add);
     made++;
   }
   return { text: lines.join('\n'), made, missed };
@@ -592,6 +595,8 @@ export class Desk {
     this.proposal = null; // { kind: 'group' | 'links' | 'row', ... }
     this.undo = [];
     this.redo = [];
+    this.taken = []; // { at: the undo step, cards: what the margin wrote, taken in it }
+    this.retaken = [];
     this.talk = [];
     this.talkKey = newId();
     this.build();
@@ -900,6 +905,7 @@ export class Desk {
     this.drawEdges();
     this.camera();
     this.dockShow();
+    if (this.fitLater && this.el.isConnected) this.fitStream();
   }
   card(n) {
     const e = el('div', `desk-card t-${n.type}`);
@@ -1032,8 +1038,9 @@ export class Desk {
   // Every change: kept for undo, written to the file.
   change(next) {
     this.undo.push(stringifyDesk(this.d));
-    if (this.undo.length > 100) this.undo.shift();
+    if (this.undo.length > 100) { this.undo.shift(); this.taken = this.taken.map((t) => ({ ...t, at: t.at - 1 })).filter((t) => t.at > 0); }
     this.redo = [];
+    this.retaken = [];
     this.d = next;
     this.render();
     this.opts.onChange(stringifyDesk(this.d));
@@ -1290,7 +1297,15 @@ export class Desk {
   back(redo = false) {
     const from = redo ? this.redo : this.undo;
     if (!from.length) return;
+    // Cards taken from the margin in that step: back to it, or taken again.
+    const mine = redo ? this.retaken : this.taken;
+    const step = mine.at(-1)?.at === from.length ? mine.pop() : null;
     (redo ? this.undo : this.redo).push(stringifyDesk(this.d));
+    if (step) {
+      const gone = new Set(step.cards.map((a) => a.id));
+      if (redo) this.ai = this.ai.filter((a) => !gone.has(a.id)); else this.ai = [...this.ai.filter((a) => !gone.has(a.id)), ...step.cards];
+      (redo ? this.taken : this.retaken).push({ at: (redo ? this.undo : this.redo).length, cards: step.cards });
+    }
     this.d = parseDesk(from.pop());
     this.render();
     this.opts.onChange(stringifyDesk(this.d));
@@ -2094,13 +2109,13 @@ export class Desk {
       if (t && a.jot.kind === 'decided') mineText = addToThisTime(mineText, { kind: 'decided', words: a.jot.say, note: a.jot.about, settles: a.jot.settles });
       // One taken on this desk: ticked on its card (and so not next any more).
       if (t?.card) {
-        all = all.map((n) => (n.id === t.card ? { ...n, text: String(n.text).replace(/To-do: `- \[ \] /, 'To-do: `- [x] ') } : n));
+        all = all.map((n) => (n.id === t.card ? { ...n, text: String(n.text).split(`To-do: \`- [ ] ${t.text}\``).join(`To-do: \`- [x] ${t.text}\``) } : n));
         this.event('marked done', { text: t.text, card: t.card });
         continue;
       }
       // Put off: in "This time" under Later; a to-do of this desk it puts off, not next any more.
-      const off = a.jot?.kind === 'later' && a.jot.ticks?.card;
-      if (off) all = all.map((n) => (n.id === off ? { ...n, text: String(n.text).replace(/To-do: `- \[ \] ([^`]*)`/, 'To-do, later: `$1`') } : n));
+      const off = a.jot?.kind === 'later' && a.jot.ticks?.card ? a.jot.ticks : null;
+      if (off) all = all.map((n) => (n.id === off.card ? { ...n, text: String(n.text).split(`To-do: \`- [ ] ${off.text}\``).join(`To-do, later: \`${off.text}\``) } : n));
       if (t) {
         const to = { done: true, ...(t.tasks ? { on: today() } : {}) };
         const there = all.find((n) => n.from?.kind === 'todo' && n.from.file === t.file && n.from.key === t.key);
@@ -2131,9 +2146,11 @@ export class Desk {
     }
     this.sel = new Set(nodes.map((n) => n.id));
     this.change({ ...this.d, nodes: this.streamed([...all, ...nodes.filter((n) => !all.includes(n))]), edges: [...this.d.edges, ...edges] });
+    // ⌘Z gives them back to the margin (⇧⌘Z takes them again).
+    this.taken.push({ at: this.undo.length, cards: list });
     this.fitStream();
     if (this.jotStatus && list.some((a) => a.jot)) this.jotStatus.textContent = '';
-    if (mineText != null && mineText !== was) this.say('Put in \u201CThis time\u201D (\u2318Z takes it back).');
+    if (mineText != null && mineText !== was) this.say('Put in \u201CThis time\u201D (\u2318Z gives it back to the margin).');
   }
   drop(a) {
     if (!a) return;
@@ -2147,6 +2164,8 @@ export class Desk {
   // cards one under another; closed up when one goes.
   streamed(nodes) {
     if (!this.opts.review) return nodes;
+    // What was sorted of a jot no longer on the desk (taken back, deleted) goes with it.
+    this.ai = this.ai.filter((a) => !a.jot?.of || nodes.some((n) => n.id === a.jot.of));
     this.reflowed(nodes);
     const g = nodes.find((n) => n.type === 'group' && n.label === 'The goal');
     const top = nodes.filter((n) => n.type === 'text' && (String(n.text).startsWith(THIS_TIME) || /^\*\*[^*]+\*\*\n\nGoal \(/.test(String(n.text))));
@@ -2191,7 +2210,7 @@ export class Desk {
     if (!this.opts.review) return;
     cancelAnimationFrame(this.fitting);
     this.fitting = requestAnimationFrame(() => {
-      if (this.el.classList.contains('far')) { this.fitLater = true; return; } // (measured when near again)
+      if (this.el.classList.contains('far') || !this.el.isConnected) { this.fitLater = true; return; } // (measured when near, and shown, again)
       this.fitLater = false;
       const ours = (n) => n.type === 'text' && (String(n.text).startsWith(THIS_TIME) || n.jotted || n.jotOf || /^\*\*Jotted\*\* \u00B7/.test(String(n.text)));
       let changed = false;
@@ -2200,9 +2219,10 @@ export class Desk {
         if (!e) return n;
         const was = e.style.height;
         e.style.height = 'auto';
-        const h = Math.max(60, Math.ceil(e.offsetHeight));
+        const drawn = Math.ceil(e.offsetHeight);
         e.style.height = was;
-        if (Math.abs(h - n.height) < 4) return n;
+        const h = Math.max(60, drawn);
+        if (!drawn || Math.abs(h - n.height) < 4) return n;
         changed = true;
         return { ...n, height: h };
       });

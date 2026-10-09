@@ -301,7 +301,7 @@ test('the server: topics of the recent notes (not the assistant\'s records, neve
   assert.deepEqual(c.decided, ['Dinner at the pier'], 'what is put off: not sent');
   assert.deepEqual(c.changes, [
     { file: 'trip/plan.md', line: 3, was: 'LA first, then SF, then New York. Napa tour: half a day or a whole one?', now: 'LA first, then SF, then New York. Dinner at the pier. Napa tour: half a day or a whole one?', for: 'D1' },
-    { file: 'trip/plan.md', after: 5, add: '- Dinner at the pier #decision', for: 'D1' },
+    { file: 'trip/plan.md', after: 5, anchor: '- [ ] Book the Napa tour \u{1F4C5} 2026-01-02', add: '- Dinner at the pier #decision', for: 'D1' },
   ]);
   const parts = sent().slice(-2);
   assert.ok(parts.some((m) => /Decided:\nD1\. Dinner at the pier\n\nNotes:\nN1 trip\/plan\.md:\n1\| # Plan/.test(m)), 'its notes read in parts at once');
@@ -364,15 +364,17 @@ test('decisions carried into the notes: every line no longer agreeing, as it was
     'note: N2', 'after: 2', 'add: - Fly into LA #decision', 'for: D1', '---',
     'note: N2', 'after: 9', 'add: - Napa later #decision', 'for: D1', '---',
     'note: N1', 'after: 1', 'add: Fly into LA', 'for: D1', '---',
+    'note: N1', 'add: - Without a place #decision', 'for: D1', '---',
+    'note: N1', 'after: 0', 'add: - Above it all #decision', 'for: D1', '---',
     'note: N1', 'after: 4', 'add: - [ ] Rework the days for flying into LA', 'for: D1',
   ].join('\n'), notes, 1);
   assert.deepEqual(ch, [
     { n: 1, line: 3, was: 'Day 1: fly into SF', now: 'Day 1: fly into LA', for: 'D1' },
     { n: 1, line: 8, was: 'Option B: LA in', now: 'Option B: LA in (\u2705 chosen)', for: 'D1' },
     { n: 1, line: 7, was: 'Option A: SF in', now: '~~Option A: SF in~~', for: 'D1' },
-    { n: 2, after: 2, add: '- Fly into LA #decision', for: 'D1' },
-    { n: 1, after: 4, add: '- [ ] Rework the days for flying into LA', for: 'D1', todo: true },
-  ], 'a line known by its first words (found elsewhere once: there); one not in the note, one for a decision that isn\u2019t, one said by too few words, one unchanged, a line past the end, an add not a #decision: left out');
+    { n: 2, after: 2, anchor: 'Air: undecided', add: '- Fly into LA #decision', for: 'D1' },
+    { n: 1, after: 4, anchor: 'Day 2: SF', add: '- [ ] Rework the days for flying into LA', for: 'D1', todo: true },
+  ], 'a line known by its first words (found elsewhere once: there); one not in the note, one for a decision that isn\u2019t, one said by too few words, one unchanged, a line past the end, an add not a #decision, one after no line (none, or 0: above its front matter): left out');
   const changes = ch.map(({ n, ...x }) => ({ file: notes[n - 1].path, ...x }));
   const text = changesText({ decided: ['Fly into LA'], changes });
   assert.match(text, /- D1 \u00B7 added after line 4: ==To-do: Rework the days for flying into LA==/);
@@ -382,6 +384,11 @@ test('decisions carried into the notes: every line no longer agreeing, as it was
   // Made on the note as it is now: moved down a line since, one line changed by them since.
   const plan = withChanges('# Plan\nNew line\n\nDay 1: fly into SF\nDay 2: SF\n\n## Flights\nOption A: SF in, or not\nOption B: LA in', changes.filter((c) => c.file === 'trip/plan.md' && !c.add));
   assert.deepEqual(plan, { text: '# Plan\nNew line\n\nDay 1: fly into LA\nDay 2: SF\n\n## Flights\nOption A: SF in, or not\nOption B: LA in (\u2705 chosen)', made: 2, missed: 1 });
+  // Added after the line it was put after, found by its words when the note moved on; two after one, in their order.
+  const two = [{ add: '- one #decision', after: 2, anchor: 'Day 2: SF' }, { add: '- two #decision', after: 2, anchor: 'Day 2: SF' }];
+  assert.equal(withChanges('Day 1\nDay 2: SF\nDay 3', two).text, 'Day 1\nDay 2: SF\n- one #decision\n- two #decision\nDay 3');
+  assert.equal(withChanges('New\nDay 1\nDay 2: SF\nDay 3', two).text, 'New\nDay 1\nDay 2: SF\n- one #decision\n- two #decision\nDay 3');
+  assert.deepEqual(withChanges('Day 1\nDay 3', two), { text: 'Day 1\nDay 3', made: 0, missed: 2 }, 'its line gone: not put somewhere else');
   const air = withChanges(notes[1].text, changes.filter((c) => c.file === 'trip/air.md'));
   assert.equal(air.text, 'A or B?\nAir: undecided\n- Fly into LA #decision');
   assert.equal(withChanges(air.text, changes.filter((c) => c.file === 'trip/air.md')).made, 0, 'not again');
@@ -409,6 +416,6 @@ test('changes read three ways at once, a decision recorded once (not when a note
   assert.deepEqual(r.filter((c) => c.add), [
     { n: 1, after: 3, add: '- [ ] Rework the days', for: 'D1', todo: true },
     { n: 3, after: 1, add: '- Fly into LA #decision', for: 'D1' },
-    { n: 1, after: 3, add: '- The cafe #decision', for: 'D3' },
+    { n: 1, after: 3, anchor: 'c', add: '- The cafe #decision', for: 'D3' },
   ], 'where it was put in the note most changed for it; one in a note already: not again; one not put anywhere: at the end of the first');
 });

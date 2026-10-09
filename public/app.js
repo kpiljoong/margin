@@ -4379,6 +4379,14 @@ async function saveDrawing(tab, { force = false, flush = false } = {}) {
   if (tab.saveAgain) { tab.saveAgain = false; if (tab.text !== tab.saved && !tab.conflict) await saveDrawing(tab); }
 }
 
+// A desk as it is now, on disk (what the server reads of it): saved, and
+// saved again while it changed meanwhile; not over a newer one.
+async function deskSaved(tab) {
+  for (let i = 0; i < 5 && (tab.saving || tab.text !== tab.saved) && !tab.conflict; i++) await (tab.saving || saveDrawing(tab));
+  if (tab.conflict) throw new Error('The desk changed on disk: settle that first (the banner above it).');
+  if (tab.text !== tab.saved) throw new Error('The desk could not be saved.');
+}
+
 // The same file in a text tab instead: the drawing tab is saved and closed so
 // the two never edit the file at the same time.
 async function openDrawingAsText(tab) {
@@ -4643,9 +4651,9 @@ function deskView(tab, c) {
         ledger: async () => (await api('GET', `/api/lab/review/ledger?path=${encodeURIComponent(tab.path)}`)).events,
         todoFile: S.files.some((f) => f.path === '99-assistant/todo.md') ? '99-assistant/todo.md' : null,
         // What they jot on it, sorted by Claude (decided, later, still open, to do).
-        jot: async (text) => { await saveDrawing(tab); return api('POST', '/api/lab/review/jot', { ...reviewOpts(), path: tab.path, text }); },
+        jot: async (text) => { await deskSaved(tab); return api('POST', '/api/lab/review/jot', { ...reviewOpts(), path: tab.path, text }); },
         // What they decided, carried into its notes: the lines to change, to show (then propose).
-        changes: async () => { await saveDrawing(tab); return api('POST', '/api/lab/review/changes', { ...reviewOpts(), path: tab.path }); },
+        changes: async () => { await deskSaved(tab); return api('POST', '/api/lab/review/changes', { ...reviewOpts(), path: tab.path }); },
         privateOf: async (paths) => (await api('POST', '/api/private', { paths })).private || {},
         // Over time: the notes and the meetings before and after them, read on the server (nothing sent).
         trail: (paths) => api('POST', '/api/desk/trail', { paths }),
