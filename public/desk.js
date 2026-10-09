@@ -1415,8 +1415,10 @@ export class Desk {
   }
   // The desk's own button: proposed, and what was not said.
   async proposeFrom(file) {
+    // Not proposed: all it was asked, but what it made and what the note has so already (found and failed too).
+    const asked = this.d.nodes.filter((n) => n.from?.file === file && n.from.to).length;
     const r = await this.sendToNote(file);
-    const not = r.made.length && r.id ? r.gone.length : r.gone.length + r.made.length;
+    const not = asked - (r.id ? r.made.length : 0) - r.there.length;
     if (r.there.length) this.say(`${r.there.length} already so in ${file}: not proposed.`);
     if (not) this.say(`${not} not proposed: not found in ${file} as ${not === 1 ? 'it was' : 'they were'} (deleted or changed), or not proposed \u2014 still marked here.`, 'error');
   }
