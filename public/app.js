@@ -4674,17 +4674,29 @@ function deskView(tab, c) {
           } };
         },
         // What the cards ask of a note, proposed: its red pen review, as the wall's are.
-        proposeNote: async (p, make) => {
+        // open: false — several notes at once: none opened, their reviews waiting (→ the review's id).
+        proposeNote: async (p, make, { open = true } = {}) => {
+          if (!open && !S.tabs.some((x) => x.kind === 'file' && x.path === p)) {
+            const f = await api('GET', `/api/file?path=${encodeURIComponent(p)}`);
+            const disk = fromDisk(f.content);
+            const next = make(disk.content);
+            if (next === disk.content) return false;
+            const r = await api('POST', '/api/proofs', { path: p });
+            await api('PUT', `/api/proofs/${r.id}`, { text: toDisk(next, disk.eol) });
+            await loadRuns();
+            return r.id;
+          }
           if (!S.tabs.some((x) => x.kind === 'file' && x.path === p)) await openFile(p, { side: true, focus: false });
           const t = S.tabs.find((x) => x.kind === 'file' && x.path === p);
           if (!t) throw new Error('not open');
           if (t.editor?.tracking) { toast('Stop suggesting in the note first: the desk proposes its own changes.', 'error'); throw new Error('suggesting'); }
           await flushAutosave(t);
           const next = make(t.content);
-          if (next === t.content) { toast('Nothing to change: the note says so already.'); return false; }
-          await proposeText(t, next, 'The desk\u2019s changes, proposed: y / A to accept, a to apply.');
-          return true;
+          if (next === t.content) { if (open) toast('Nothing to change: the note says so already.'); return false; }
+          const id = await proposeText(t, next, 'The desk\u2019s changes, proposed: y / A to accept, a to apply.', { open });
+          return open ? true : id;
         },
+        openReview: (id) => openReview(id),
         dockMin: store.getItem('an.deskDock') === 'min',
         onDock: (min) => store.setItem('an.deskDock', min ? 'min' : ''),
         pickNote: () => new Promise((resolve) => {
@@ -6946,15 +6958,15 @@ async function wallView(tab = fileTab(), orbiting = false) {
 }
 // The note as the wall left it: a proposal of yours, to settle in the red
 // pen review (y n A a), as suggestions are.
-async function proposeText(tab, text, said = 'The wall\u2019s changes, proposed: y / A to accept, a to apply.') {
+async function proposeText(tab, text, said = 'The wall\u2019s changes, proposed: y / A to accept, a to apply.', { open = true } = {}) {
   await flushAutosave(tab);
   if (tab.conflict || tab.content !== tab.saved) { toast('Save the note first: the proposal starts from the note on disk.', 'error'); throw new Error('unsaved'); }
   let r;
   try { r = await api('POST', '/api/proofs', { path: tab.path }); } catch (e) { toast(e.message, 'error', e.data?.id ? { label: 'Review', run: () => openReview(e.data.id) } : null); throw e; }
   await api('PUT', `/api/proofs/${r.id}`, { text: toDisk(text, tab.eol) });
   await loadRuns();
-  openReview(r.id);
-  toast(said);
+  if (open) { openReview(r.id); toast(said); }
+  return r.id;
 }
 
 // "Since last time": the previous meeting's to-dos and decisions, on the

@@ -2234,7 +2234,10 @@ export class Desk {
   async changesPlan() {
     if (this.planning) return;
     this.planning = true;
+    if (this.dock.classList.contains('min')) this.foldDock(false);
     const wait = this.say('Reading the notes for what your decisions change\u2026');
+    const t0 = Date.now();
+    const tick = setInterval(() => { wait.textContent = `Reading the notes for what your decisions change\u2026 ${Math.round((Date.now() - t0) / 1000)}s (about half a minute)`; }, 1000);
     try {
       const r = await this.opts.changes();
       wait.remove();
@@ -2242,24 +2245,28 @@ export class Desk {
       const card = this.addAi({ kind: 'review', title: 'Changes to the notes', x: 0, y: 0, width: 520, height: 300, text: changesText(r), state: 'done', at: Date.now(), changes: r.changes }, false);
       this.streamNow();
       this.show(card, true);
-    } catch (e) { wait.textContent = `Not read: ${e.message}`; wait.classList.add('error'); } finally { this.planning = false; }
+    } catch (e) { wait.textContent = `Not read: ${e.message}`; wait.classList.add('error'); } finally { clearInterval(tick); this.planning = false; }
   }
   // Each note's changes in its red pen review (the note as it is now: a line
   // no longer as it was is left, and said).
   async proposeChanges(a) {
     const by = new Map();
     for (const c of a.changes || []) by.set(c.file, [...(by.get(c.file) || []), c]);
-    let notes = 0;
+    const done = [];
     let missed = 0;
+    const failed = [];
     for (const [file, cs] of by) {
       let r = { made: 0, missed: 0 };
       try {
-        const ok = await this.opts.proposeNote(file, (text) => { r = withChanges(text, cs); return r.text; });
+        const id = await this.opts.proposeNote(file, (text) => { r = withChanges(text, cs); return r.text; }, { open: false });
         missed += r.missed;
-        if (ok !== false && r.made) { notes++; this.event('changes proposed', { file, text: cs.map((c) => c.add || `${c.was} \u2192 ${c.now}`).join('\n').slice(0, 4000) }); }
-      } catch { /* said already */ }
+        if (id && r.made) { done.push({ file, id }); this.event('changes proposed', { file, text: cs.map((c) => c.add || `${c.was} \u2192 ${c.now}`).join('\n').slice(0, 4000) }); }
+      } catch (e) { failed.push(`${file.split('/').pop().replace(/\.md$/i, '')}: ${e.message}`); }
     }
-    this.say(`Proposed in ${notes} note${notes === 1 ? '' : 's'}, each in its red pen review${missed ? `; ${missed} line${missed === 1 ? ' was' : 's were'} no longer as read, left` : ''}.`);
+    // Their reviews, waiting: one by one from here (none opened by itself).
+    const row = this.say(`Proposed in ${done.length} note${done.length === 1 ? '' : 's'}, each waiting in its red pen review${missed ? `; ${missed} line${missed === 1 ? ' was' : 's were'} no longer as read, left` : ''}${failed.length ? `; not proposed \u2014 ${failed.join('; ')}` : ''}.`);
+    if (this.opts.openReview) for (const d of done) row.append(button(d.file.split('/').pop().replace(/\.md$/i, ''), `Its red pen review: ${d.file}`, () => this.opts.openReview(d.id), 'desk-review-link'));
+    if (done.length) { this.foldDock(false); this.dockShow(); }
   }
   // What they jotted (Enter, at the bottom): on the desk as written, and
   // sorted by the margin — each thing a card beside it: decided, later,
