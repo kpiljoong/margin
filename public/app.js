@@ -9430,7 +9430,8 @@ function themeNotes(tab) {
       h('button', { class: 'mnote-btn', title: st.small ? 'Show' : 'Fold', onclick: () => { st.small = !st.small; drawNotes(tab); } }, st.small ? '▾' : '▴')),
     st.small ? null : h('div', { class: 'theme-sum' },
       `${t.made ? `Made ${t.made} · ` : ''}came up ${t.scenes.length} time${t.scenes.length === 1 ? '' : 's'}${t.unfit.length ? ` · ${t.unfit.length} that ${t.unfit.length === 1 ? 'doesn’t' : 'don’t'} fit` : ''}`,
-      st.at && !stale && !st.items.length && !st.maybe ? ' · nothing new since' : ''),
+      // What the check read: only paragraphs near it, written since — not everything since.
+      st.at && !stale ? (st.read ? ` · checked ${st.read} recent paragraph${st.read === 1 ? '' : 's'} near it · ${((n) => (n ? `${n} suggestion${n === 1 ? '' : 's'} left` : 'none left'))(st.items.length + (st.maybe ? 1 : 0))}` : ' · nothing written near it since it was made') : ''),
     stale && (st.items.length || st.maybe) ? h('div', { class: 'brief-held' }, 'The title or the reading changed since this check: its cards are of the one before. ', h('button', { class: 'recall-ans quiet', onclick: () => themeCheck(tab) }, 'Check again')) : null);
   tab.editor.setHeadline(head);
   const put = (change, x) => {
@@ -9486,15 +9487,16 @@ async function themeCheck(tab) {
     // Near the title, its reading and its cases; not those paragraphs themselves.
     const near = await devNear(tab, [t.title, t.reading, ...t.scenes.map((s) => s.text), ...t.unfit.map((s) => s.text)].filter(Boolean).slice(0, 16), 40);
     const textOf = (y) => recallSt.index?.paras?.byNote?.get(y.path)?.paras.find((z) => z.line === y.line)?.text || '';
-    const refs = near.filter((y) => !themeMod.inTheme(t, textOf(y))).slice(0, 12);
+    // Up to 40, nearest first: the server keeps the first twelve it may send
+    // (written since, not private, not its own) — an older one doesn't take a newer one's place.
+    const refs = near.filter((y) => !themeMod.inTheme(t, textOf(y))).slice(0, 40);
     const cases = (list) => list.slice(0, 40).map((s) => ({ text: s.text, name: s.name }));
     const r = await api('POST', '/api/lab/themes/check', { path: tab.path, theme: { title: t.title, reading: t.reading, made: t.made, scenes: cases(t.scenes), unfit: cases(t.unfit) }, refs, ...liveOpts(), thinkModel: S.settings.thinkModel === 'haiku' ? 'haiku' : 'sonnet' });
     // The reading changed while it was read: what came back is of the one before.
     const now = tab.editor ? themeMod.themeOf(tab.editor.value, tab.path) : null;
     if (!now || themeMod.themeSig(now) !== sig) toast('The title or the reading changed while it was checked: check again.');
     else {
-      Object.assign(st, { items: r.items, maybe: r.maybe, at: Date.now(), sig, reading: t.reading });
-      if (!r.items.length) toast(r.read ? `Nothing in ${r.read} newer paragraph${r.read === 1 ? '' : 's'} near it is about its reading.` : 'Nothing written near it since it was made.');
+      Object.assign(st, { items: r.items, maybe: r.maybe, at: Date.now(), sig, reading: t.reading, read: r.read || 0 });
     }
   } catch (e) { toast(e.message, 'error'); }
   st.busy = false;

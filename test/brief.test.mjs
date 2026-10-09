@@ -194,7 +194,10 @@ test('the server: the note, its last meeting and the notes near it (never a priv
   const check = async (body) => { const r = await fetch(`http://127.0.0.1:${m[1]}/api/lab/themes/check`, { method: 'POST', headers: { 'x-agent-notes-token': m[2], 'content-type': 'application/json' }, body: JSON.stringify(body) }); return { status: r.status, ...(await r.json()) }; };
   const theme = { title: 'New users stall', reading: 'Too many choices.', made: '2026-10-09', scenes: [{ text: 'Someone stalled at the first screen back then.', name: 'Old 2026-09-01' }] };
   fs.writeFileSync(path.join(ws, 'Themes.md'), '# t\n');
-  const c = await check({ path: 'Themes.md', theme, refs: [{ path: 'Old 2026-09-01.md', line: 2 }, { path: 'secret.md', line: 3 }, { path: 'Demo 2026-10-12.md', line: 2 }, { path: 'Call 2026-10-13.md', line: 2 }] });
+  // Twelve older ones nearer than the new ones: they don't take their places.
+  const older = [...Array(12)].map((_, i) => { const f = `Before ${i} 2026-09-${String(i + 10).padStart(2, '0')}.md`; fs.writeFileSync(path.join(ws, f), `# B\n\nAn older paragraph near it, number ${i}.\n`); return { path: f, line: 2 }; });
+  const c = await check({ path: 'Themes.md', theme, refs: [{ path: 'Old 2026-09-01.md', line: 2 }, { path: 'secret.md', line: 3 }, ...older, { path: 'Demo 2026-10-12.md', line: 2 }, { path: 'Call 2026-10-13.md', line: 2 }] });
+  assert.equal(c.read, 2);
   assert.equal(c.status, 200, c.error);
   assert.deepEqual(c.items.map((x) => [x.verdict, x.why, x.ref.name, x.ref.date]), [['supports', 'Again.', 'Demo 2026-10-12', '2026-10-12'], ['counters', 'Otherwise.', 'Call 2026-10-13', '2026-10-13']]);
   assert.deepEqual(c.maybe, { reading: 'Narrower.', check: 'Ask.' });

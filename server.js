@@ -877,22 +877,25 @@ async function labThemes(b) {
 
 // A theme note checked against what was written since (Themes, Labs):
 // the theme (public/theme.js themeOf, sent by the page), and the paragraphs
-// of other notes the page found near it ({ path, line }: read here, never a
+// of other notes the page found near it, nearest first (up to 40, { path,
+// line }: read here, never a
 // private or ignored note), those dated or changed on or after the day it
-// was made, not one of its own. → { items: [{ verdict: 'supports' |
+// was made, not one of its own; of those, the first twelve go. → { items: [{ verdict: 'supports' |
 // 'counters' | 'outside', why, ref: { path, line, name, raw, date, text } }],
 // maybe: { reading, check } (a hypothesis, when some go against it) }.
 async function labThemeCheck(b) {
   const { theme, refs = [] } = b;
   const str = (x, n) => typeof x === 'string' && x.length <= n;
   if (!theme || typeof theme !== 'object' || !str(theme.title, 300) || !theme.title.trim() || !str(theme.reading ?? '', 2000) || !str(theme.made ?? '', 10)
-    || ![theme.scenes, theme.unfit ?? []].every((l) => Array.isArray(l) && l.length <= 40 && l.every((x) => x && str(x.text, 2000) && str(x.name, 300))) || !validRefs(refs, 12)) throw httpError(400, 'path, theme: { title, reading, made, scenes: [{ text, name }], unfit }, refs');
+    || ![theme.scenes, theme.unfit ?? []].every((l) => Array.isArray(l) && l.length <= 40 && l.every((x) => x && str(x.text, 2000) && str(x.name, 300))) || !validRefs(refs, 40)) throw httpError(400, 'path, theme: { title, reading, made, scenes: [{ text, name }], unfit }, refs');
   const { agent, env, read } = await recallSending(b, 'Checking a theme');
   const k = (x) => String(x).toLowerCase().replace(/[\s\p{P}\p{S}]+/gu, '').slice(0, 120);
   const own = new Set([...theme.scenes, ...(theme.unfit || [])].map((x) => k(x.text)));
   const dated = (f) => (/\d{4}-\d{2}-\d{2}/.exec(f.name) || [])[0] || (() => { try { return new Date(fs.statSync(path.join(ROOT, f.path)).mtimeMs).toISOString().slice(0, 10); } catch { return ''; } })();
   const found = sameOnce(refs.map(read).filter(Boolean)).map((f) => ({ ...f, date: dated(f) }))
-    .filter((f) => !own.has(k(f.text)) && (!theme.made || !f.date || f.date >= theme.made));
+    .filter((f) => !own.has(k(f.text)) && (!theme.made || !f.date || f.date >= theme.made))
+    // Of those that may be judged (sent, since, not its own), the first twelve.
+    .slice(0, 12);
   if (!found.length) return { items: [], maybe: null, read: 0 };
   const lang = b.lang === 'ko' || b.lang === 'en' ? b.lang : textLang([theme.title, theme.reading || '']) || 'en';
   const model = developModel(b);
