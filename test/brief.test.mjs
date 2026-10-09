@@ -304,6 +304,10 @@ test('a theme note read back, and grown: another case, one that does not fit, th
   assert.equal(t3.scenes.length, 3);
   assert.deepEqual([t3.scenes[2].name, t3.scenes[2].text, t3.scenes[2].also], ['NY food', 'Find taco places in NY.', ['todo', 'log 2026-10-05']]);
   assert.doesNotMatch(addScene(note, { text: 'X.', name: 'N', also: ['N'] }), /also/);
+  // Same name, two folders: two places; the same path once.
+  const two = addScene(note, { text: 'Find tacos.', name: 'travel/NY food', also: ['99-assistant/todo', 'work/todo', '99-assistant/todo'] });
+  assert.match(two, /- Find tacos\. — \[\[travel\/NY food\]\] · also \[\[99-assistant\/todo\]\], \[\[work\/todo\]\]\n/);
+  assert.deepEqual(themeOf(two).scenes.at(-1).also, ['99-assistant/todo', 'work/todo']);
 });
 
 test('a theme checked against what came since: the message and the verdicts', () => {
@@ -318,6 +322,10 @@ test('a theme checked against what came since: the message and the verdicts', ()
   const w = themes.parseCheck('[1] supports: Tacos to find.\n[2] same as [1]\n[3] same as [2]\n[4] none: lunch\n[5] same as [4]\n[6] same as [7]\n[7] counters: Booked.\n[8] same as a case\n[9] counters: Done.\n[9] same as [7]', 9);
   assert.deepEqual(w.verdicts.map((v) => [v.n, v.verdict, v.also || []]), [[1, 'supports', [2, 3]], [4, 'none', []], [7, 'counters', []], [9, 'counters', []]]);
   assert.match(themes.CHECK_SYSTEM, /Separate visits, interviews/);
+  // Said both ways of one paragraph: its own verdict stays, apart. A wrong
+  // "same as" (a later one, one not there) neither groups nor hides a verdict.
+  const both = themes.parseCheck('[1] supports: First.\n[2] same as [1]\n[2] counters: Went otherwise.\n[3] same as [99]\n[3] outside: Others.\n[4] same as [5]\n[5] same as [1]\n[6] same as a case\n[6] supports: New.', 6);
+  assert.deepEqual(both.verdicts.map((v) => [v.n, v.verdict, v.also || []]), [[1, 'supports', [5]], [2, 'counters', []], [3, 'outside', []], [6, 'supports', []]]);
 });
 
 test('what would show a reading wrong: search words, at most two', () => {

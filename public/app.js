@@ -9447,8 +9447,10 @@ function themeNotes(tab) {
     else st.items = st.items.filter((y) => y !== x);
     drawNotes(tab);
   };
-  // A thing written again goes in as one case, with where else it was written.
-  const scene = (x) => ({ text: x.ref.text, name: x.ref.name, date: x.ref.date, also: (x.also || []).map((y) => y.name) });
+  // A thing written again goes in as one case, with where else it was
+  // written: each by its path in the folder (two todo.md in two folders are two).
+  const linkOf = (r) => r.path.replace(/\.md$/i, '');
+  const scene = (x) => ({ text: x.ref.text, name: linkOf(x.ref), date: x.ref.date, also: (x.also || []).map(linkOf) });
   const at = (line) => ({ from: starts[Math.max(0, line)], to: starts[Math.max(0, line)], end: starts[Math.max(0, line)] });
   const add = (x) => (stale || x.verdict === 'outside' ? null : h('div', { class: 'dev-answer-row' }, h('button', { class: 'recall-ans', onclick: () => put((v) => (x.verdict === 'supports' ? themeMod.addScene(v, scene(x)) : themeMod.addUnfit(v, scene(x))), x) },
     x.verdict === 'supports' ? 'Add where it came up' : 'Add to “Doesn’t fit (yet)”')));
