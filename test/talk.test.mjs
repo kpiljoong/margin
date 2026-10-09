@@ -23,7 +23,7 @@ test('what was jotted, said back a line each; where it stands, said at the start
   ], 'en');
   assert.deepEqual(lines, ['Decided: Fly into SF (01_plan) — the to-do “Book the flights” done', 'Later: Napa: next week', 'Called off: Dinner at the pier', 'Changed: Lunch at the pier → Lunch at the market', 'To do: Book the cafe 📅 2026-10-20']);
   const mine = { goal: '', focus: ['Napa'], decided: ['A'], later: [], withdrawn: [] };
-  assert.equal(openingText({ title: 'Trip', goal: 'Book it all', goalState: 'guessed', mine, n: 3 }, 'en'), 'Let’s go through Trip.\n\nI guessed the goal is “Book it all” — tell me if not.\n\nSo far 1 decided. You chose to settle: Napa.\n\n3 things to ask, one at a time. Write whatever comes to mind, any time.');
+  assert.equal(openingText({ title: 'Trip', goal: 'Book it all', goalState: 'guessed', mine, n: 3 }, 'en'), 'Let’s go through Trip.\n\nI guessed the goal is “Book it all” — tell me if not.\n\nSo far 1 decided. You chose to settle: “Napa”.\n\n3 things to ask, one at a time. Write whatever comes to mind, any time.');
   assert.match(openingText({ title: 'T', goal: '', goalState: 'unknown', mine: { ...mine, goal: 'Mine' }, n: 0 }, 'ko'), /^T \uC815\uB9AC\uB97C \uC2DC\uC791\uD560\uAC8C\uC694\.\n\n\uBAA9\uD45C: Mine\n/);
   assert.equal(closingText({ decisions: [{ inNote: true }, { inNote: false }], later: 1, todos: ['- [ ] x'], waiting: [{}], withdrawals: [{ note: 'a' }, { note: 'a' }] }, 'en'),
     'That’s all I had to ask.\n\n2 decided so far, 1 not in the notes yet. 1 put off. 1 to-do next.\n\n1 proposal waiting in the notes mix in changes from a decision not decided now: look before accepting.\n\nA decision called off is still written as decided in 1 note.');
