@@ -680,7 +680,7 @@ export class Desk {
     this.render();
     requestAnimationFrame(() => this.fit(false));
     // A review's desk is talked through first (its cards behind, as the record).
-    if (this.opts.review && this.opts.jot) { this.talker = new Talk(this); this.el.append(this.talker.el); this.showTalk(true); }
+    if (this.opts.review && this.opts.jot) { this.talker = new Talk(this); this.el.append(this.talker.el, this.talker.back); this.showTalk(true); }
     this.loadMargin().finally(() => this.talker?.start());
   }
   // The talk, or the desk behind it (the record).
@@ -925,7 +925,9 @@ export class Desk {
   show(n, read = false) {
     const r = this.el.getBoundingClientRect();
     const { x, y } = this.cam;
-    const z = read ? Math.max(this.cam.z, Math.min(0.9, (r.width - this.side() - 60) / n.width)) : this.cam.z;
+    // To read: near enough, and all of its width in view (a narrow pane: smaller).
+    const fit = (r.width - this.side() - 60) / n.width;
+    const z = read ? Math.min(Math.max(this.cam.z, Math.min(0.9, fit)), Math.max(0.45, fit)) : this.cam.z;
     const h = r.height - this.below();
     if (z !== this.cam.z) { this.goTo({ z, x: (r.width - this.side()) / 2 - (n.x + n.width / 2) * z, y: Math.min(h / 3, 80) - n.y * z }); return; }
     const sx = n.x * z + x;

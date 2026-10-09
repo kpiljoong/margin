@@ -1945,6 +1945,8 @@ li.callout-hot { background: color-mix(in srgb, var(--accent) 16%, transparent);
 /* ---- a review talked through (talk.js): the talk over the desk, the desk behind it as the record */
 .desk.talking .desk-dock, .desk.talking .desk-jot, .desk.talking .desk-hint { display: none; }
 .talk { display: none; }
+.desk-to-talk { display: none; }
+.desk.review:not(.talking) .desk-to-talk { display: block; position: absolute; top: 12px; left: 12px; z-index: 4; box-shadow: 0 6px 20px rgba(0, 0, 0, .25); }
 .desk.talking .talk { position: absolute; inset: 0; z-index: 5; display: flex; flex-direction: column; background: var(--bg); user-select: text; touch-action: auto; }
 .talk-head { display: flex; align-items: center; gap: 8px; padding: 10px 16px; border-bottom: 1px solid var(--border); }
 .talk-head b { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600; }

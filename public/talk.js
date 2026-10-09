@@ -68,6 +68,7 @@ export const WORDS = {
     proposed: (n) => `\uB178\uD2B8 ${n}\uACF3\uC5D0 \uC81C\uC548\uD588\uC5B4\uC694. \uB178\uD2B8\uB9C8\uB2E4 \uBC1B\uC744\uC9C0 \uACE0\uB974\uC2DC\uBA74 \uB3FC\uC694.`,
     notProposed: '\uC81C\uC548\uD558\uC9C0 \uBABB\uD588\uC5B4\uC694. \uAE30\uB85D \uBCF4\uAE30\uC758 \uC548\uB0B4\uB97C \uD655\uC778\uD574 \uC8FC\uC138\uC694.',
     finished: '\uC815\uB9AC\uD588\uC5B4\uC694. \uB2E4\uC74C\uC5D0 \uC5F4\uBA74 \uC5EC\uAE30\uC11C \uC774\uC5B4\uAC08\uAC8C\uC694.',
+    back: '← \uB300\uD654\uB85C \uB3CC\uC544\uAC00\uAE30',
     desk: '\uAE30\uB85D \uBCF4\uAE30', talk: '\uB300\uD654\uB85C',
     placeholder: '\uB9D0\uD558\uB4EF \uC368 \uC8FC\uC138\uC694 — \uC815\uD55C \uAC83, \uBBF8\uB8EC \uAC83, \uACE0\uBBFC \uC911\uC778 \uAC83, \uD560 \uC77C… (Enter, ⇧Enter \uC904\uBC14\uAFC8)',
   },
@@ -124,6 +125,7 @@ export const WORDS = {
     proposed: (n) => `Proposed in ${n} note${n === 1 ? '' : 's'}: accept each in its red pen review.`,
     notProposed: 'Not proposed: see the record for why.',
     finished: 'Wrapped up. Next time we go on from here.',
+    back: '← Back to the talk',
     desk: 'Show the record', talk: 'Talk it through',
     placeholder: 'Write as you’d say it — decided, later, still weighing, to do… (Enter; ⇧Enter: a new line)',
   },
@@ -227,6 +229,8 @@ export class Talk {
     });
     const head = el('div', 'talk-head', el('b', null, this.title()), btn(this.W.desk, () => this.desk.showTalk(false), 'ghost'));
     this.el = el('div', 'talk', head, el('div', 'talk-body', this.log), el('div', 'talk-foot', this.input));
+    // On the desk (the record): the way back, always in sight.
+    this.back = btn(this.W.back, () => this.desk.showTalk(true), 'desk-to-talk');
     this.el.tabIndex = -1; // (a click in it stays in it: text to select, not the desk's focus)
     // Its keys are its own (the desk's are not pressed through it).
     for (const t of ['keydown', 'pointerdown', 'wheel', 'dblclick', 'paste']) this.el.addEventListener(t, (e) => e.stopPropagation(), t === 'wheel' ? { passive: true } : undefined);
