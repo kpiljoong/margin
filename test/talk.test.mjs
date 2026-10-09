@@ -28,3 +28,25 @@ test('what was jotted, said back a line each; where it stands, said at the start
   assert.equal(closingText({ decisions: [{ inNote: true }, { inNote: false }], later: 1, todos: ['- [ ] x'], waiting: [{}], withdrawals: [{ note: 'a' }, { note: 'a' }] }, 'en'),
     'That’s all I had to ask.\n\n2 decided so far, 1 not in the notes yet. 1 put off. 1 to-do next.\n\n1 proposal waiting in the notes mix in changes from a decision not decided now: look before accepting.\n\nA decision called off is still written as decided in 1 note.');
 });
+
+test('to-dos proposed done from the talk: said as the note has each now — made, done there already, or not found', async () => {
+  const { Desk } = await import('../public/desk.js');
+  const { meetingItems } = await import('../public/meeting.js');
+  const note = '# Trip\n\n- [ ] Book the flights\n- [x] Apply for the ESTA\n';
+  const key = (t) => meetingItems(note).find((i) => i.body.includes(t)).key;
+  const card = (id, k) => ({ id, type: 'text', text: id, from: { file: 'trip.md', kind: 'todo', key: k, to: { done: true } } });
+  let proposed = null;
+  const fake = {
+    d: { nodes: [card('a', key('flights')), card('b', key('ESTA')), card('c', 'todo:gone')], edges: [] },
+    opts: { proposeNote: async (f, make) => { proposed = make(note); return 'r1'; } },
+    event() {},
+    change(next) { this.d = next; },
+  };
+  const r = await Desk.prototype.sendToNote.call(fake, 'trip.md', { open: false }, ['a', 'b', 'c']);
+  assert.deepEqual(r, { id: 'r1', made: ['a'], there: ['b'], gone: ['c'] });
+  assert.match(proposed, /- \[x\] Book the flights/);
+  assert.deepEqual(fake.d.nodes.map((n) => !!n.from.sent), [true, false, false], 'only what it made is sent');
+  // Nothing to change (only one gone): not proposed, none sent.
+  fake.opts.proposeNote = async (f, make) => (make(note) === note ? false : 'r2');
+  assert.deepEqual(await Desk.prototype.sendToNote.call(fake, 'trip.md', { open: false }, ['c']), { id: null, made: [], there: [], gone: ['c'] });
+});

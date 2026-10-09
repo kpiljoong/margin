@@ -1383,18 +1383,35 @@ export class Desk {
     return box;
   }
   // The asks of the cards from one note, proposed to it in one red pen review.
-  // (ids: only these cards.) → its review's id (or true), false when the
-  // note says so already, null when not proposed.
+  // (ids: only these cards.) → { id: its review's (or true; none when not
+  // proposed), made: the cards it made in the note as it is now, there:
+  // ones the note has so already (a to-do done, a question decided), gone:
+  // ones no longer found in it (deleted or changed: not proposed) }.
   async sendToNote(file, o = {}, ids = null) {
     const cards = this.d.nodes.filter((n) => n.from?.file === file && n.from.to && (!ids || ids.includes(n.id)));
-    if (!cards.length) return null;
+    const out = { id: null, made: [], there: [], gone: [] };
+    if (!cards.length) return out;
     let ok;
-    try { ok = await this.opts.proposeNote(file, (text) => toNote(text, cards), o); } catch { return null; } // (said already)
-    if (ok === false) return false;
-    this.event('proposed', { file, text: `${cards.length} card${cards.length === 1 ? '' : 's'}` });
-    const sent = new Set(cards.map((c) => c.id));
+    const make = (text) => {
+      // Each card as the note has it now (when it reads it: once, or again).
+      const items = meetingItems(text);
+      for (const k of ['made', 'there', 'gone']) out[k] = [];
+      for (const c of cards) {
+        const it = items.find((i) => i.key === c.from.key);
+        if (!it) out.gone.push(c.id);
+        else if (c.from.to.done ? it.kind !== 'todo' || it.done : c.from.to.decided != null && it.kind !== 'question') out.there.push(c.id);
+        else out.made.push(c.id);
+      }
+      return toNote(text, cards);
+    };
+    try { ok = await this.opts.proposeNote(file, make, o); } catch { return { ...out, made: [] }; } // (said already)
+    if (ok === false) return { ...out, made: [] };
+    out.id = ok;
+    this.event('proposed', { file, text: `${out.made.length} card${out.made.length === 1 ? '' : 's'}` });
+    // Sent: what it made (from the desk's own button, as before: all it was asked).
+    const sent = new Set(ids ? out.made : cards.map((c) => c.id));
     this.change({ ...this.d, nodes: this.d.nodes.map((n) => (sent.has(n.id) ? { ...n, from: { ...n.from, to: undefined, sent: true } } : n)) });
-    return ok;
+    return out;
   }
   goFrom(n) {
     const f = n?.from;

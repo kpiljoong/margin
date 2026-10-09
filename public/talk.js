@@ -34,7 +34,7 @@ export const WORDS = {
     answering: (q) => `“${q}”\uC5D0 \uB300\uD55C \uB2F5\uC73C\uB85C \uC774\uB807\uAC8C \uC801\uC5B4\uB458\uAC8C\uC694.`,
     settled: (q) => `“${q}” — \uC774\uAC78\uB85C \uC815\uB9AC\uB410\uB098\uC694?`,
     yesNext: '\uB124, \uB2E4\uC74C\uC73C\uB85C',
-    tickedFail: (ts) => `\uD560 \uC77C ${ts.map((t) => `“${t}”`).join(', ')}\uC758 \uC644\uB8CC \uC81C\uC548\uC740 \uD558\uC9C0 \uBABB\uD588\uC5B4\uC694. \uAE30\uB85D \uBCF4\uAE30\uC5D0\uC11C \uD655\uC778\uD574 \uC8FC\uC138\uC694.`,
+    tickedFail: (ts) => `\uD560 \uC77C ${ts.map((t) => `“${t}”`).join(', ')}\uC758 \uC644\uB8CC\uB294 \uC81C\uC548\uD558\uC9C0 \uBABB\uD588\uC5B4\uC694. \uB178\uD2B8\uC5D0\uC11C \uADF8 \uC904\uC744 \uADF8\uB300\uB85C \uCC3E\uC9C0 \uBABB\uD588\uAC70\uB098(\uC9C0\uC6CC\uC84C\uAC70\uB098 \uBC14\uB01C) \uC81C\uC548\uC774 \uB418\uC9C0 \uC54A\uC558\uC5B4\uC694. \uAE30\uB85D \uBCF4\uAE30\uC5D0\uC11C \uD655\uC778\uD574 \uC8FC\uC138\uC694.`,
     tickedThere: (ts) => `\uD560 \uC77C ${ts.map((t) => `“${t}”`).join(', ')}\uC740(\uB294) \uB178\uD2B8\uC5D0 \uC774\uBBF8 \uC644\uB8CC\uB85C \uB418\uC5B4 \uC788\uC5B4\uC694.`,
     todosAdded: (k, there) => `\uD560 \uC77C ${k}\uAC1C\uB97C \uBAA9\uB85D\uC5D0 \uC81C\uC548\uD588\uC5B4\uC694${there ? ` (${there}\uAC1C\uB294 \uC774\uBBF8 \uC788\uC5B4\uC694)` : ''}. \uBE68\uAC04 \uD39C\uC5D0\uC11C \uBC1B\uC73C\uC2DC\uBA74 \uB3FC\uC694.`,
     todosNone: '\uC0C8\uB85C \uB123\uC744 \uD560 \uC77C\uC774 \uC5C6\uC5B4\uC694. \uBAA8\uB450 \uBAA9\uB85D\uC5D0 \uC788\uC5B4\uC694.',
@@ -90,7 +90,7 @@ export const WORDS = {
     answering: (q) => `As your answer to “${q}”, I’ll note it so:`,
     settled: (q) => `“${q}” — settled by that?`,
     yesNext: 'Yes, next',
-    tickedFail: (ts) => `Not proposed done: ${ts.map((t) => `“${t}”`).join(', ')} — look at it in the record.`,
+    tickedFail: (ts) => `Not proposed done: ${ts.map((t) => `“${t}”`).join(', ')} — not found in its note as it was (deleted or changed), or not proposed. Look at it in the record.`,
     tickedThere: (ts) => `${ts.map((t) => `“${t}”`).join(', ')}: done in the note already.`,
     todosAdded: (k, there) => `${k} to-do${k === 1 ? '' : 's'} proposed in your list${there ? ` (${there} there already)` : ''}: accept in the red pen review.`,
     todosNone: 'No new to-dos: all are in your list already.',
@@ -320,8 +320,8 @@ export class Talk {
     for (const f of new Set(cards.map((n) => n.from.file))) {
       const these = cards.filter((n) => n.from.file === f);
       const r = await this.desk.sendToNote(f, { open: false }, these.map((n) => n.id));
-      const names = these.map((n) => todoText(String(n.text || '').split('\n')[0]));
-      said[r ? 'ok' : r === false ? 'there' : 'not'].push(...names);
+      // As the note has each now: proposed, done there already, or not (not found as it was, or not proposed).
+      for (const n of these) said[r.id && r.made.includes(n.id) ? 'ok' : r.there.includes(n.id) ? 'there' : 'not'].push(todoText(String(n.text || '').split('\n')[0]));
     }
     if (said.ok.length) this.say(W.ticked(said.ok));
     if (said.there.length) this.say(W.tickedThere(said.there));
