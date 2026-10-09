@@ -1,7 +1,7 @@
 // -*- coding: utf-8 -*-
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { talkLang, questionOf, sortedLines, openingText, closingText, todoWhy } from '../public/talk.js';
+import { talkLang, questionOf, sortedLines, openingText, closingText, todoWhy, noteGist } from '../public/talk.js';
 
 test('a review talked through: in the notes\' language, one thing asked as the margin wrote it', () => {
   assert.equal(talkLang('\uD56D\uACF5\uC740 SF'), 'ko');
@@ -63,4 +63,12 @@ test('where a note says what a question is about: its line with the most words o
   assert.deepEqual(evidence(note, '\uB274\uC695 \uBBF8\uC220\uAD00 \uD6C4\uBCF4'), [], 'nothing much in common: none');
   assert.deepEqual(evidence('- \uD504\uB85C\uC81D\uD2B8 \uB9C8\uAC10\uC740 \uAE08\uC694\uC77C\n', '\uC774 \uD504\uB85C\uC81D\uD2B8 \uC5B8\uC81C \uB05D\uB098\uB098'), [], 'one word in common (its letter pairs counted once): none');
   assert.deepEqual(questionOf({ title: 'Doesn’t agree', text: 'A or B\n\nFrom: [[trip/air]], [[trip/plan.md]]' }).from, ['trip/air.md', 'trip/plan.md']);
+});
+
+test('noteGist: a note in a few words, from what it says itself', () => {
+  const g = noteGist('---\ntags: [trip]\n---\n# Flights\n\n- [ ] Book SFO #project/trip\n- [x] Pick dates\n\nWe fly on the 3rd, see [[plan]] and [[trip/hotel|the hotel]].\n\n- Dinner at the pier #decision\n', 'trip/flights.md');
+  assert.deepEqual(g, { file: 'trip/flights.md', title: 'Flights', gist: 'We fly on the 3rd, see plan and the hotel.', todos: 1, decisions: 1, links: ['plan', 'trip/hotel'] });
+  assert.equal(noteGist('---\nsummary: "All of it"\n---\nText', 'a.md').gist, 'All of it');
+  assert.equal(noteGist('- [ ] One 📅 2026-10-12\n- Two #decision', 'x/list.md').gist, 'One · Two', 'only lists: its first items, without their marks');
+  assert.equal(noteGist('', 'x/empty.md').title, 'empty');
 });

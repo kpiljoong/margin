@@ -80,6 +80,7 @@ export const WORDS = {
     finished: '\uC815\uB9AC\uD588\uC5B4\uC694. \uB2E4\uC74C\uC5D0 \uC5F4\uBA74 \uC5EC\uAE30\uC11C \uC774\uC5B4\uAC08\uAC8C\uC694.',
     back: '← \uB300\uD654\uB85C \uB3CC\uC544\uAC00\uAE30',
     desk: '\uAE30\uB85D \uBCF4\uAE30', talk: '\uB300\uD654\uB85C',
+    notes: (n) => `\uC774 \uC8FC\uC81C\uC758 \uB178\uD2B8 ${n}\uAC1C`, links: '\uC5F0\uACB0', todosOpen: (n) => `\uD560 \uC77C ${n}`, decisionsIn: (n) => `\uACB0\uC815 ${n}`, nowAbout: '\uC9C0\uAE08 \uC9C8\uBB38\uACFC \uAD00\uB828',
     placeholder: '\uB9D0\uD558\uB4EF \uC368 \uC8FC\uC138\uC694 — \uC815\uD55C \uAC83, \uBBF8\uB8EC \uAC83, \uACE0\uBBFC \uC911\uC778 \uAC83, \uD560 \uC77C… (Enter, ⇧Enter \uC904\uBC14\uAFC8)',
   },
   en: {
@@ -147,6 +148,7 @@ export const WORDS = {
     finished: 'Wrapped up. Next time we go on from here.',
     back: '← Back to the talk',
     desk: 'Show the record', talk: 'Talk it through',
+    notes: (n) => `${n} notes of this topic`, links: 'Links', todosOpen: (n) => `${n} to do`, decisionsIn: (n) => `${n} decided`, nowAbout: 'About this question',
     placeholder: 'Write as you’d say it — decided, later, still weighing, to do… (Enter; ⇧Enter: a new line)',
   },
 };
@@ -244,6 +246,30 @@ export function closingText({ decisions = [], later = 0, todos = [], waiting = [
   ].filter(Boolean).join('\n\n');
 }
 
+// A note in a few words, from what it says itself: its title (front matter,
+// its "# " heading, else its name), its summary (front matter's summary or
+// description, else its first paragraph of prose, else its first list
+// items), its open to-dos and #decision lines, and the notes it links to.
+export function noteGist(text, file) {
+  let t = String(text || '').replace(/\r\n/g, '\n');
+  const fm = /^---\n([\s\S]*?)\n---\n?/.exec(t);
+  const field = (k) => (fm ? (new RegExp(`^${k}:\\s*(.+)$`, 'mi').exec(fm[1]) || [])[1]?.replace(/^["']|["']$/g, '').trim() : '') || '';
+  if (fm) t = t.slice(fm[0].length);
+  const lines = t.split('\n');
+  const title = field('title') || (lines.find((l) => /^# \S/.test(l)) || '').slice(2).trim() || name(file);
+  const clean = (l) => unlink(l).replace(/!?\[([^\]]*)\]\([^)]*\)/g, '$1').replace(/https?:\/\/\S+/g, '').replace(/^\s*(?:→|->|=>)\s*/, '').replace(/^(?:[-*+]\s+(?:\[.\]\s+)?|>\s*(?:\[![^\]]*\]\s*)?|\d+[.)]\s+)/, '').replace(/[*_`]/g, '').replace(/\s*(?:#[\w/\uAC00-\uD7A3-]+|[📅⏳🛫✅➕🔺⏫🔼🔽⏬]\s*\d{4}-\d{2}-\d{2}|[📅⏳🛫✅➕🔺⏫🔼🔽⏬])/gu, '').trim();
+  let gist = field('summary') || field('description');
+  if (!gist) {
+    const prose = t.split(/\n{2,}/).map((b) => b.trim()).find((b) => b && !/^(?:#|[-*+]\s|\d+[.)]\s|>|\||```|!\[)/.test(b));
+    gist = prose ? clean(prose.split('\n').join(' ')) : lines.filter((l) => /^\s*(?:[-*+]|\d+[.)])\s/.test(l)).slice(0, 3).map(clean).filter(Boolean).join(' · ');
+  }
+  gist = gist.length > 160 ? `${gist.slice(0, 160)}…` : gist;
+  const todos = lines.filter((l) => /^\s*[-*+]\s+\[ \]\s/.test(l)).length;
+  const decisions = lines.filter((l) => /(?:^|\s)#decision\b/.test(l)).length;
+  const links = [...new Set([...t.matchAll(/\[\[([^\]|#]+)/g)].map((m) => m[1].trim()))];
+  return { file, title, gist, todos, decisions, links };
+}
+
 function el(tag, cls, ...kids) {
   const e = document.createElement(tag);
   if (cls) e.className = cls;
@@ -274,7 +300,9 @@ export class Talk {
       if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) { e.preventDefault(); const t = this.input.value.trim(); if (t && !this.busy) { this.input.value = ''; this.input.style.height = 'auto'; this.said(t); } }
     });
     const head = el('div', 'talk-head', el('b', null, this.title()), btn(this.W.desk, () => this.desk.showTalk(false), 'ghost'));
-    this.el = el('div', 'talk', head, el('div', 'talk-body', this.log), el('div', 'talk-foot', this.input));
+    // Beside the talk: the topic's notes, each in a few words, how they link, and which ones the question is about.
+    this.side = el('aside', 'talk-side');
+    this.el = el('div', 'talk', head, el('div', 'talk-mid', el('div', 'talk-main', el('div', 'talk-body', this.log), el('div', 'talk-foot', this.input)), this.side));
     // On the desk (the record): the way back, always in sight.
     this.back = btn(this.W.back, () => this.desk.showTalk(true), 'desk-to-talk');
     this.el.tabIndex = -1; // (a click in it stays in it: text to select, not the desk's focus)
@@ -300,6 +328,7 @@ export class Talk {
     const state = { 'a guess': 'guessed', 'not known': 'unknown' }[m?.[1]] || 'stated';
     const goal = m && m[2] !== '—' ? m[2].replace(/\s*— \[\[[^\]]+\]\]$/, '') : '';
     this.total = this.queue().length;
+    this.notesSide();
     this.say(openingText({ title: this.title(), goal, goalState: state, mine: thisTimeOf(this.desk.d), n: this.total }, this.lang));
     this.next();
   }
@@ -348,6 +377,7 @@ export class Talk {
         btn(W.drop, () => { this.done(acts); this.desk.drop(q.a); this.say(W.dropped); this.next(); }, 'ghost'),
         this.enough(() => acts));
       this.asking = acts;
+      this.about(x.from);
       this.showFrom(row, x.from, [x.say, x.why].join(' '));
     } else {
       const n = q.n;
@@ -367,9 +397,66 @@ export class Talk {
       this.asking = acts;
       // Its own note, and the one the desk says differs.
       const files = [n.from.file, ...[...String(text[1] || '').matchAll(/\[\[([^\]|#]+)/g)].map((m) => `${m[1]}.md`)];
+      this.about(files);
       this.showFrom(row, [...new Set(files)], text[0]);
     }
     this.focus();
+  }
+  // The topic's notes (the desk's), each read once: a card with its title, its
+  // gist, its to-dos and decisions, and the other notes of the topic it links
+  // to or is linked from (a click shows that one).
+  async notesSide() {
+    const files = [...new Set(this.desk.d.nodes.filter((n) => n.type === 'file' && /\.md$/i.test(n.file || '')).map((n) => n.file))];
+    const W = this.W;
+    if (!files.length) return;
+    const gists = [];
+    for (const f of files) { try { gists.push(noteGist(await this.desk.opts.readNote(f), f)); } catch { /* gone: not shown */ } }
+    if (!gists.length) return;
+    const key = (x) => String(x).replace(/\.md$/i, '').toLowerCase();
+    const of = (l) => gists.find((g) => key(g.file) === key(l) || key(name(g.file)) === key(name(l)));
+    const out = new Map(gists.map((g) => [g.file, new Set(g.links.map(of).filter((o) => o && o !== g).map((o) => o.file))]));
+    for (const [f, to] of out) for (const o of to) out.get(o).add(f);
+    this.cards = new Map();
+    const list = gists.map((g) => {
+      const meta = [g.todos ? W.todosOpen(g.todos) : '', g.decisions ? W.decisionsIn(g.decisions) : ''].filter(Boolean).join(' · ');
+      const linked = [...out.get(g.file)].map((f) => {
+        const c = el('button', 'talk-link', name(f));
+        c.addEventListener('click', (e) => { e.stopPropagation(); this.about([f], true); });
+        return c;
+      });
+      const card = el('div', 'talk-note',
+        el('button', 'talk-note-title', g.title),
+        g.gist ? el('p', 'talk-note-gist', g.gist) : null,
+        meta ? el('p', 'talk-note-meta', meta) : null,
+        linked.length ? el('div', 'talk-note-links', el('span', 'talk-note-meta', `${W.links}: `), linked) : null);
+      card.querySelector('.talk-note-title').addEventListener('click', (e) => { e.stopPropagation(); this.desk.opts.openNote(g.file); });
+      card.title = g.file;
+      this.cards.set(key(g.file), card);
+      this.cards.set(key(name(g.file)), card);
+      return card;
+    });
+    this.order = list;
+    this.nowHead = el('p', 'talk-side-head', W.nowAbout);
+    this.allHead = el('p', 'talk-side-head', W.notes(gists.length));
+    this.side.replaceChildren(this.allHead, ...list);
+    this.el.classList.add('with-side');
+    if (this.aboutNow) this.about(this.aboutNow);
+  }
+  // The notes a question (or a link pressed) is about: lit, the first in sight.
+  about(files, pressed = false) {
+    if (!pressed) this.aboutNow = files;
+    if (!this.cards) return;
+    const lit = new Set((files || []).map((f) => this.cards.get(String(f).replace(/\.md$/i, '').toLowerCase()) || this.cards.get(name(f).toLowerCase())).filter(Boolean));
+    // A link pressed: that note shown where it is, for a moment.
+    if (pressed) {
+      for (const c of lit) { c.scrollIntoView({ block: 'nearest', behavior: 'smooth' }); c.classList.remove('shown'); void c.offsetWidth; c.classList.add('shown'); }
+      return;
+    }
+    for (const c of this.order) c.classList.toggle('now', lit.has(c));
+    // (Those first, under their own heading; the rest in their order.)
+    const now = this.order.filter((c) => lit.has(c));
+    this.side.replaceChildren(...(now.length ? [this.nowHead, ...now] : []), this.allHead, ...this.order.filter((c) => !lit.has(c)));
+    this.side.scrollTo({ top: 0, behavior: pressed ? 'smooth' : 'auto' });
   }
   // Under a question: the line of each of its notes most about it, each to open there.
   async showFrom(row, files, about) {
@@ -381,7 +468,7 @@ export class Talk {
       if (e) got.push({ f, ...e });
     }
     if (!got.length || !row.isConnected) return;
-    const quote = (t) => { const x = unlink(t).replace(/^(?:[-*+]\s+(?:\[.\]\s+)?|>\s*|\d+[.)]\s+)/, ''); return x.length > 140 ? `${x.slice(0, 140)}…` : x; };
+    const quote = (t) => { const x = unlink(t).replace(/\*\*|__/g, '').replace(/^\|\s*|\s*\|$/g, '').replace(/\s*\|\s*/g, ' · ').replace(/^(?:[-*+]\s+(?:\[.\]\s+)?|>\s*|\d+[.)]\s+)/, ''); return x.length > 140 ? `${x.slice(0, 140)}…` : x; };
     const box = el('div', 'talk-from', el('p', 'talk-dim', this.W.where), ...got.map((g) => {
       const b = el('button', 'talk-quote', el('b', null, name(g.f)), ` “${quote(g.text)}”`);
       b.addEventListener('click', (e) => { e.stopPropagation(); this.desk.opts.openNote(g.f, g.line + 1); });
