@@ -450,9 +450,10 @@ test('a decision called off: only one there still as it was; kept under Withdraw
     'kind: withdrawn', 'say: Something else off', '---',
     'kind: later', 'say: Napa: next week', 'replaces: D1', '---',
     'kind: todo', 'say: Book it', 'replaces: 1', '---',
+    'kind: decided', 'say: SF first instead', 'replaces: 1', 'ticks: T1', '---',
     'kind: withdrawn', 'say: x', 'replaces: 9',
-  ].join('\n'), { nDecided: 2 });
-  assert.deepEqual(items.map((x) => [x.kind, x.replaces || 0]), [['withdrawn', 2], ['later', 1], ['todo', 0]], 'one called off only of a decision there is (in range); a to-do changes none');
+  ].join('\n'), { nDecided: 2, nTodos: 3 });
+  assert.deepEqual(items.map((x) => [x.kind, x.replaces || 0, x.ticks || 0]), [['withdrawn', 2, 0], ['later', 1, 0], ['todo', 0, 0], ['decided', 1, 0]], 'one called off only of a decision there is (in range); a to-do changes none; a decision changed does no to-do');
   const t = thisTimeText({ goal: 'G', decided: ['Napa: a whole day', 'Dinner at the pier \u2192 [[trip/plan]]'] });
   assert.deepEqual(withoutDecided(t, 'Dinner at the pier \u2192 [[trip/plan]]').ok, true);
   assert.match(withoutDecided(thisTimeText({ decided: ['Only one'] }), 'Only one').text, /\*\*Decided\*\*\n- \n/, 'none left: its empty line');
