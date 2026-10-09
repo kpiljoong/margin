@@ -84,6 +84,12 @@ test('dates as written: what "tomorrow" meant on the day the note was written, a
   const p = review.parseSession(`${blocks}\n---\nkind: missing\nsay: 7.\n---\nkind: missing\nsay: 8.\n---\nkind: missing\nsay: 9.`, {});
   assert.deepEqual(p.items.map((x) => x.say), ['1.', '3.', '5.', '7.', '8.', '2.', '4.'], 'five, then at most two dates');
   assert.match(review.sessionText({ topic: { title: 'T', goal: 'G' }, notes: [{ path: 'a.md', date: '2026-10-08', text: 'x' }], dates: [{ n: 1, written: '2026-10-08', source: 'front', line: '\uB0B4\uC77C\uAE4C\uC9C0', means: '"tomorrow" then = 2026-10-09' }] }), /Dates as written \(when the note was written, what they meant then\):\n- N1 \(written 2026-10-08, by its front matter\): "\uB0B4\uC77C\uAE4C\uC9C0" — "tomorrow" then = 2026-10-09$/);
+  // A day of a week, a weekend: what it meant from the day it was written (a Friday).
+  const wd = (t) => review.datesIn(t, '2026-10-09', { today: '2026-10-09' }).map((d) => [d.day, d.end || '']);
+  assert.deepEqual(wd('\uB2E4\uC74C\uC8FC \uD654\uC694\uC77C\uAE4C\uC9C0'), [['2026-10-13', '']]);
+  assert.deepEqual(wd('\uC774\uBC88 \uC8FC\uB9D0\uAE4C\uC9C0'), [['2026-10-10', '2026-10-11']]);
+  assert.deepEqual(wd('next Tuesday'), [['2026-10-13', '']]);
+  assert.deepEqual(wd('\uB2E4\uC74C\uC8FC\uC5D0'), [['2026-10-12', '2026-10-18']], 'a week, still');
 });
 
 test('a review wrapped up: from what was done on the desk and the notes as they are now, never from what was only suggested or proposed', () => {
