@@ -704,6 +704,7 @@ export class Desk {
     this.ctx = el('div', 'desk-ctx');
     this.actions = el('div', 'desk-actions', ...ACTIONS.map(([task, label, k, title]) => { const b = button(label, `${title} (${k}, or drop cards on it)`, () => this.act(task)); b.dataset.task = task; return b; }));
     // A review's desk: what came of it, from what was done here and the notes now (by rules; nothing sent).
+    if (this.opts.review && this.opts.changes) this.actions.append(button('Into the notes', 'What you decided, carried into every line of its notes that no longer agrees, shown first; nothing changes until you propose it (c)', () => this.changesPlan()));
     if (this.opts.review) this.actions.append(button('Wrap up', 'What came of this review: decided, changed in the notes, taken from the margin, next \u2014 from what was done here and the notes as they are now; nothing sent (w)', () => this.wrapUp()));
     this.asksEl = el('div', 'desk-asks'); // shown folded too
     this.log = el('div', 'desk-log');
@@ -1574,6 +1575,7 @@ export class Desk {
     if (k === '/') { handled(); if (this.dock.classList.contains('min')) this.foldDock(false); this.input.focus(); return; }
     if (k === 'w' && this.opts.review) { handled(); this.wrapUp(); return; }
     if (k === 'i' && this.jotInput) { handled(); this.jotInput.focus(); return; }
+    if (k === 'c' && this.opts.review && this.opts.changes) { handled(); this.changesPlan(); return; }
     const act = ACTIONS.find((a) => a[2] === k);
     if (act) { handled(); this.act(act[0]); }
   }
@@ -2244,6 +2246,7 @@ export class Desk {
     try {
       const r = await this.opts.changes();
       wait.remove();
+      if (!r.decided?.length) { this.say('Nothing decided yet: jot what you decided (i), or write it under Decided in \u201CThis time\u201D.'); return; }
       this.ai = this.ai.filter((x) => !(x.kind === 'review' && x.changes));
       const card = this.addAi({ kind: 'review', title: 'Changes to the notes', x: 0, y: 0, width: 520, height: 300, text: changesText(r), state: 'done', at: Date.now(), changes: r.changes }, false);
       this.streamNow();
@@ -2293,7 +2296,7 @@ export class Desk {
     const TITLE = { decided: 'Decided', later: 'Later', open: 'Still open', todo: 'To do', done: 'Done' };
     const batch = newId();
     for (const it of items) {
-      const body = [it.say, it.about ? `\nAbout: [[${it.about.replace(/\.md$/i, '')}]]` : '', it.settles ? `\nSettles: ${it.settles}` : '', it.todo ? `\nTo-do: \`${it.todo}\`` : '', it.ticks ? `\nTicks off: ${it.ticks.text}${it.ticks.file ? ` \u2014 [[${it.ticks.file.replace(/\.md$/i, '')}]]` : ' (on this desk)'}` : ''].filter(Boolean).join('\n');
+      const body = [it.say, it.about ? `\nAbout: [[${it.about.replace(/\.md$/i, '')}]]` : '', it.settles ? `\nSettles: ${it.settles}` : '', it.todo ? `\nTo-do: \`${it.todo}\`` : '', it.ticks ? `\n${it.kind === 'later' ? 'Puts off' : 'Ticks off'}: ${it.ticks.text}${it.ticks.file ? ` \u2014 [[${it.ticks.file.replace(/\.md$/i, '')}]]` : ' (on this desk)'}` : ''].filter(Boolean).join('\n');
       this.addAi({ kind: 'review', batch, title: `Jotted \u00B7 ${TITLE[it.kind] || 'Margin'}`, text: body, jot: { kind: it.kind, say: it.say, about: it.about || '', settles: it.settles || '', of: card.id, ...(it.ticks ? { ticks: it.ticks } : {}) }, x: 0, y: 0, width: STREAM_W - STREAM_IN, height: 74 + 21 * body.split('\n').length, state: 'done' }, false);
     }
     this.streamNow();

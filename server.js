@@ -1158,7 +1158,10 @@ async function labReviewDesk(b) {
   const late = (x) => { const d = /\u{1F4C5}\s*(\d{4}-\d{2}-\d{2})/u.exec(x.text)?.[1]; return d && d < day ? d : ''; };
   const check = sent.map((x, i) => ({ ...x, n: i + 1 })).filter((x) => said.has(x.n) || ((r.mine.includes(x.n) || x.file !== REVIEW_TODO) && late(x)))
     .map((x) => ({ ...x, why: said.get(x.n) || `Its day (${late(x)}) has passed: is it done?` }));
-  const items = r.items.map((x) => ({ ...x, from: [...x.notes.map((n) => notes[n - 1].path), ...x.older.map((n) => older[n - 1].path)] }));
+  // "N3" and "[2]" are the request's: their names, as they read them.
+  const nameOf = (p) => path.basename(p).replace(/\.md$/i, '');
+  const named = (t) => t.replace(/\bN(\d+)\b/g, (m, n) => (notes[n - 1] ? nameOf(notes[n - 1].path) : m)).replace(/\[(\d+)\](?!\()/g, (m, n) => (older[n - 1] ? nameOf(older[n - 1].path) : m));
+  const items = r.items.map((x) => ({ ...x, say: named(x.say), why: named(x.why), from: [...x.notes.map((n) => notes[n - 1].path), ...x.older.map((n) => older[n - 1].path)] }));
   const { desk, margin } = deskEsm.reviewDesk({ title: topic.title, goal: topic.goal, goalState: topic.goalState, goalFrom: topic.goalState === 'stated' ? relOf(workspacePath(t.goalFrom || mine[0])) : '', ask: topic.goalState === 'theirs' ? '' : t.ask || '', thisTime, todos: check, notes: mine, items, at: day });
   fs.mkdirSync(path.dirname(abs), { recursive: true });
   writeFileAtomic(abs, deskEsm.stringifyDesk(desk));
