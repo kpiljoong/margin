@@ -3463,6 +3463,7 @@ const COMMANDS = [
   ['Brief: this note \u2014 a secretary in the margin: what to cover, what it still needs, what doesn\u2019t add up (experimental)', lab('Brief', () => setTimeout(() => briefNote(), 0)), { labs: true }],
   ['Themes: what keeps coming back in your recent notes (experimental)', lab('Themes', () => setTimeout(themesView, 0)), { labs: true }],
   ['Review: a topic of your recent notes, on a desk \u2014 its goal, what may be done already, what to settle (experimental)', lab('Review', () => setTimeout(() => reviewTopics(), 0)), { labs: true }],
+  ['Review: talk through the notes of a folder\u2026 (experimental)', lab('Review', () => setTimeout(() => reviewFolder(), 0)), { labs: true }],
   ['Review: go on with a topic reviewed before \u2014 what was put off, its notes changed since (experimental)', lab('Review', () => setTimeout(() => reviewResume(), 0)), { labs: true }],
   ['Gather: pieces of notes into one (experimental)', lab('Gather', () => setTimeout(gatherView, 0)), { labs: true }],
   ['Lock this paragraph (experimental)', () => setTimeout(toggleLock, 0)],
@@ -4175,6 +4176,7 @@ function folderMenu(e, dir) {
     { label: 'New folder here…', run: () => newFolder(dir) },
     { label: 'New drawing here…', run: () => newDrawing(dir) },
     { label: 'New desk here…', run: () => newDesk(dir) },
+    labsOn() ? { label: 'Talk through its notes (review)…', run: () => reviewFolder(dir) } : null,
     { label: 'New Mermaid diagram here…', run: () => newMermaidFile(dir) },
     revealItem(dir),
     { label: 'Dired: edit as text…', run: () => openDired(dir) },
@@ -9464,6 +9466,24 @@ async function reviewTopics(again = false) {
   if (!reviewSt.topics.length) { toast(`No topic stands out in ${reviewSt.read} recent notes.`); return; }
   const items = [...reviewSt.topics.map((t) => ({ icon: '\u25CE', label: t.title, hint: `${t.goal ? `${t.goal.slice(0, 60)} \u00B7 ` : ''}goal: ${REVIEW_GOAL[t.goalState] || 'a guess'} \u00B7 ${t.notes.length} note${t.notes.length === 1 ? '' : 's'}`, t })), { icon: '\u21BB', label: 'Read the notes again', again: true }];
   picker({ placeholder: 'Review a topic\u2026', source: (q) => items.map((it) => ({ it, m: fuzzy(q, it.label) })).filter((x) => x.m).map(({ it, m }) => ({ icon: it.icon, label: marked(it.label, m.idx), hint: it.hint, run: () => (it.again ? reviewTopics(true) : reviewDesk(it.t)) })) });
+}
+// A folder picked: its notes on a desk of their own, to talk through.
+async function reviewFolder(dir, again = false) {
+  if (!dir) {
+    const dirs = [...new Set(S.files.filter((f) => isNote(f.path)).flatMap((f) => f.path.split('/').slice(0, -1).map((_, i, a) => a.slice(0, i + 1).join('/'))))].sort();
+    const here = dirname(fileTab()?.path || '');
+    const list = here ? [here, ...dirs.filter((d) => d !== here)] : dirs;
+    picker({ placeholder: 'Talk through the notes of a folder\u2026', source: (q) => list.map((d) => ({ d, m: fuzzy(q, d) })).filter((x) => x.m).map(({ d, m }) => ({ icon: '\u25CE', label: marked(d, m.idx), hint: `${S.files.filter((f) => isNote(f.path) && f.path.startsWith(`${d}/`)).length} notes`, run: () => reviewFolder(d) })) });
+    return;
+  }
+  if (!(await reviewConsent())) return;
+  toast(`Laying out \u201C${dir.split('/').pop()}\u201D\u2026`);
+  try {
+    const r = await api('POST', '/api/lab/review/desk', { ...reviewOpts(), folder: dir, again });
+    await loadTree();
+    await openFile(r.path);
+    if (r.existed) toast('Today\u2019s review of it, as you left it.', '', { label: 'Prepare again', run: () => reviewFolder(dir, true) });
+  } catch (e) { toast(e.message, 'error'); }
 }
 async function reviewDesk(t, again = false) {
   if (!(await reviewConsent())) return;

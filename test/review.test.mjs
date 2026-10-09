@@ -358,6 +358,17 @@ test('the server: topics of the recent notes (not the assistant\'s records, neve
   assert.match(said[0], /\n\nSaid just before:\nThey: hi\nYou: hello\n\nThey were just asked:\nNapa\?\n\nFound in their other notes:\n[\s\S]*\n\nThey say:\nsearch me: where is dinner\?$/);
   assert.match(said[1], /^Found for it:\n/);
   assert.ok(said.every((m) => !/secret/i.test(m.replace(/search me|secret pier/g, ''))), 'never a private note');
+  // A folder picked: its notes (not a private one) on a desk named for it, its goal not known yet.
+  fs.writeFileSync(path.join(ws, 'trip', 'hidden.md'), '---\nprivate: true\n---\nNot for review.\n');
+  const fd = await api('POST', '/api/lab/review/desk', { folder: 'trip/' });
+  assert.equal(fd.status, 200, fd.error);
+  assert.match(fd.path, /^Reviews\/trip \d{4}-\d{2}-\d{2}\.canvas$/);
+  const fdesk = JSON.parse(fs.readFileSync(path.join(ws, fd.path), 'utf8'));
+  const ffiles = fdesk.nodes.filter((n) => n.type === 'file').map((n) => n.file);
+  assert.ok(ffiles.includes('trip/flights.md') && ffiles.includes('trip/plan.md') && !ffiles.includes('trip/hidden.md') && ffiles.every((f) => f.startsWith('trip/')), ffiles.join());
+  assert.match(fdesk.nodes.find((n) => /^\*\*trip\*\*/.test(n.text || '')).text, /\nGoal \(not known\)/);
+  assert.equal((await api('POST', '/api/lab/review/desk', { folder: '../' })).status, 400);
+  assert.equal((await api('POST', '/api/lab/review/desk', { folder: 'nope' })).status, 400);
   const plain = await api('POST', '/api/lab/review/talk', { path: d2.path, text: 'Is Napa decided?' });
   assert.deepEqual([plain.reply, plain.items], ['Nothing in the notes says so.', []]);
   // A review's margin kept beside it as it was: what was jotted (and the to-do it does), a pick, a wrap-up's decisions, the changes.

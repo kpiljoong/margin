@@ -342,7 +342,8 @@ export class Talk {
     this.input.addEventListener('keydown', (e) => {
       if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) { e.preventDefault(); const t = this.input.value.trim(); if (t && !this.busy) { this.input.value = ''; this.input.style.height = 'auto'; this.said(t); } }
     });
-    const head = el('div', 'talk-head', el('b', null, this.title()), btn(this.W.desk, () => this.desk.showTalk(false), 'ghost'));
+    this.deskBtn = btn(this.W.desk, () => this.desk.showTalk(false), 'ghost');
+    const head = el('div', 'talk-head', el('b', null, this.title()), this.deskBtn);
     // Beside the talk: the topic's notes, each in a few words, how they link, and which ones the question is about.
     this.side = el('aside', 'talk-side');
     this.el = el('div', 'talk', head, el('div', 'talk-mid', el('div', 'talk-main', el('div', 'talk-body', this.log), el('div', 'talk-foot', this.input)), this.side));
@@ -368,6 +369,15 @@ export class Talk {
   start() {
     if (this.started) return;
     this.started = true;
+    // Its language again, with what the margin wrote (a folder named in English, notes in Korean: Korean).
+    const lang = talkLang([...this.desk.d.nodes.filter((n) => n.type === 'text').map((n) => n.text), ...this.desk.ai.map((a) => `${a.title || ''} ${a.text || ''}`)].join('\n'));
+    if (lang !== this.lang) {
+      this.lang = lang;
+      this.W = WORDS[lang];
+      this.input.placeholder = this.W.placeholder;
+      this.deskBtn.textContent = this.W.desk;
+      this.back.textContent = this.W.back;
+    }
     const g = this.desk.d.nodes.find((x) => x.type === 'text' && /^\*\*[^*]+\*\*\n\nGoal \(/.test(String(x.text || '')));
     const m = /\nGoal \(([^)]*)\): ([^\n]*)/.exec(g?.text || '');
     const state = { 'a guess': 'guessed', 'not known': 'unknown' }[m?.[1]] || 'stated';

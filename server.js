@@ -1118,6 +1118,19 @@ async function labReviewState(b) {
   return { text: r.text, file, exists: fs.existsSync(workspacePath(file)), read: notes.length };
 }
 
+// A folder as a topic (one picked, not one Claude names): its notes (in
+// its folders too; not a private or ignored one), the newest first, at most
+// 24; its name the title, its goal not known yet.
+function reviewFolderTopic(folder) {
+  const dir = relOf(workspacePath(folder.replace(/\/+$/, '')));
+  if (!dir || !fs.existsSync(workspacePath(dir)) || !fs.statSync(workspacePath(dir)).isDirectory()) throw httpError(400, 'Not a folder of this workspace');
+  const ignored = loadIgnore(ROOT);
+  const notes = workspaceFiles().filter((f) => f.startsWith(`${dir}/`) && reviewable(f, ignored))
+    .map((f) => [f, cachedText(f)?.mtimeMs || 0]).sort((x, y) => y[1] - x[1]).slice(0, 24).map(([f]) => f);
+  if (!notes.length) throw httpError(400, 'No note in it can be read (none, or private or ignored).');
+  return { title: dir.split('/').pop(), notes, goal: '', goalState: 'unknown', goalFrom: '', ask: '', folder: dir };
+}
+
 // The topics reviewed before, each as its newest desk left it: what was put
 // off and is due by today, how many of its notes changed since, the notes
 // new in their folders since — to go on with it (nothing sent; read here).
@@ -1164,7 +1177,7 @@ async function labReviewResume() {
 }
 
 async function labReviewDesk(b) {
-  const t = b.topic;
+  const t = typeof b.folder === 'string' ? reviewFolderTopic(b.folder) : b.topic;
   const str = (v, max) => typeof v === 'string' && v.length <= max;
   if (!t || typeof t !== 'object' || !str(t.title, 200) || !t.title.trim() || !Array.isArray(t.notes) || !t.notes.length || t.notes.length > 40 || !t.notes.every((p) => str(p, 1000))
     || ![t.goal ?? '', t.ask ?? '', t.folder ?? '', t.goalFrom ?? ''].every((v) => str(v, 1000))) throw httpError(400, 'topic: { title, notes: [path], goal, goalState, goalFrom, ask, folder }');
