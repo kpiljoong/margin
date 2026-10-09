@@ -7,7 +7,7 @@ test('a review talked through: in the notes\' language, one thing asked as the m
   assert.equal(talkLang('\uD56D\uACF5\uC740 SF'), 'ko');
   assert.equal(talkLang('Flights: SF'), 'en');
   const q = questionOf({ title: 'Your pick · To decide', text: 'Napa: half a day or a whole one?\n\n_First: it moves the days_\n\nFrom: [[trip/napa]]\n\nTo-do: `- [ ] Book the Napa tour`' }, 'ko');
-  assert.deepEqual(q, { label: '\uC774\uBC88\uC5D0 \uC815\uD558\uAE30\uB85C \uD55C \uAC83', say: 'Napa: half a day or a whole one?', why: 'it moves the days', todo: '- [ ] Book the Napa tour' });
+  assert.deepEqual(q, { label: '\uC774\uBC88\uC5D0 \uC815\uD558\uAE30\uB85C \uD55C \uAC83', say: 'Napa: half a day or a whole one?', why: 'it moves the days', todo: '- [ ] Book the Napa tour', from: ['trip/napa.md'] });
   assert.equal(questionOf({ title: 'Doesn’t agree', text: 'A or B' }, 'en').label, 'Doesn’t agree');
   assert.equal(todoWhy('_Another note gives it another state: [[trip/plan]]_', 'ko'), 'plan\uC5D0\uB294 \uC0C1\uD0DC\uAC00 \uB2E4\uB974\uAC8C \uC801\uD600 \uC788\uC5B4\uC694.');
   assert.equal(todoWhy('Its day (2026-10-01) has passed: is it done?', 'en'), 'Its day (2026-10-01) has passed: is it done?');
@@ -54,4 +54,12 @@ test('to-dos proposed done from the talk: said as the note has each now — made
   fake.opts.proposeNote = async (f, make) => { make(note); return 'r3'; };
   assert.deepEqual(await Desk.prototype.sendToNote.call(fake, 'trip.md'), { id: 'r3', made: ['a'], there: [], gone: ['c'] });
   assert.deepEqual(fake.d.nodes.map((n) => !!n.from.sent), [true, false]);
+});
+
+test('where a note says what a question is about: its line with the most words of it, none from its front matter or headings', async () => {
+  const { evidence, questionOf } = await import('../public/talk.js');
+  const note = '---\ntitle: \uD56D\uACF5\uAD8C \uC785\uAD6D \uBE44\uAD50\n---\n# \uD56D\uACF5\uAD8C \uC785\uAD6D \uBE44\uAD50\n\n- \uAE30\uC900 \uC5EC\uC815: \uC778\uCC9C→\uC0CC\uD504\uB780\uC2DC\uC2A4\uCF54 \uC785\uAD6D, LA \uCD9C\uAD6D \uCD94\uCC9C\n- \uB80C\uD130\uCE74\uB294 \uB098\uC911\uC5D0\n';
+  assert.deepEqual(evidence(note, '\uD56D\uACF5\uAD8C \uC785\uAD6D \uB3C4\uC2DC: \uC0CC\uD504\uB780\uC2DC\uC2A4\uCF54 \uC785\uAD6D \uCD94\uCC9C vs LA \uC785\uAD6D'), [{ line: 5, text: '- \uAE30\uC900 \uC5EC\uC815: \uC778\uCC9C→\uC0CC\uD504\uB780\uC2DC\uC2A4\uCF54 \uC785\uAD6D, LA \uCD9C\uAD6D \uCD94\uCC9C' }]);
+  assert.deepEqual(evidence(note, '\uB274\uC695 \uBBF8\uC220\uAD00 \uD6C4\uBCF4'), [], 'nothing much in common: none');
+  assert.deepEqual(questionOf({ title: 'Doesn’t agree', text: 'A or B\n\nFrom: [[trip/air]], [[trip/plan.md]]' }).from, ['trip/air.md', 'trip/plan.md']);
 });

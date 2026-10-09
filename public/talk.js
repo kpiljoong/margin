@@ -25,6 +25,7 @@ export const WORDS = {
     of: (i, n) => `${i}/${n}`,
     todoQ: '\uC774 \uD560 \uC77C, \uB05D\uB0AC\uB098\uC694?',
     todoIs: (t) => `\uD560 \uC77C\uB85C \uBC1B\uC73C\uBA74: ${t}`,
+    where: '\uB178\uD2B8\uC5D0\uC11C \uAD00\uB828 \uC788\uC5B4 \uBCF4\uC774\uB294 \uC904 (\uB204\uB974\uBA74 \uADF8 \uC904\uC774 \uC5F4\uB824\uC694):',
     skip: '\uAC74\uB108\uB6F0\uAE30', drop: '\uD544\uC694 \uC5C6\uC5B4\uC694', takeTodo: '\uD560 \uC77C\uB85C \uBC1B\uAE30', done: '\uB05D\uB0AC\uC5B4\uC694', notYet: '\uC544\uC9C1\uC774\uC5D0\uC694',
     sorting: '\uC815\uB9AC\uD558\uB294 \uC911…',
     notSorted: (e) => `\uC815\uB9AC\uD558\uC9C0 \uBABB\uD588\uC5B4\uC694: ${e}. \uC4F0\uC2E0 \uAE00\uC740 \uAE30\uB85D\uC5D0 \uADF8\uB300\uB85C \uB0A8\uACA8 \uB480\uC5B4\uC694.`,
@@ -82,6 +83,7 @@ export const WORDS = {
     of: (i, n) => `${i}/${n}`,
     todoQ: 'Is this to-do done?',
     todoIs: (t) => `As a to-do: ${t}`,
+    where: 'Lines in the notes that look related (opens it there):',
     skip: 'Skip', drop: 'Not needed', takeTodo: 'Take the to-do', done: 'Done', notYet: 'Not yet',
     sorting: 'Sorting it…',
     notSorted: (e) => `Not sorted: ${e}. What you wrote is kept in the record as written.`,
@@ -153,7 +155,36 @@ export function questionOf(a, lang = 'en') {
   const pick = /^Your pick/.test(t);
   const kind = t.replace(/^Your pick · /, '');
   const L = LABEL[lang] || {};
-  return { label: pick ? (L['Your pick'] || 'Your pick') : (L[kind] || kind), say, why, todo };
+  const from = [...((lines.find((l) => /^From: /.test(l)) || '').matchAll(/\[\[([^\]|#]+)/g))].map((m) => (/\.md$/i.test(m[1]) ? m[1] : `${m[1]}.md`));
+  return { label: pick ? (L['Your pick'] || 'Your pick') : (L[kind] || kind), say, why, todo, from };
+}
+
+// Where a note says what a question is about: its line sharing the most
+// words with it (a Korean word by its pairs of letters too, so endings
+// don't hide it), at least three; none in its front matter, a heading or
+// a short line. → [{ line (from 0), text }] (at most k).
+export function evidence(text, about, k = 1) {
+  const words = (t) => {
+    const out = new Set();
+    for (const w of String(t).toLowerCase().match(/[\p{L}\p{N}]+/gu) || []) {
+      if (w.length >= 2) out.add(w);
+      if (/[\uac00-\ud7a3]/.test(w) && w.length > 2) for (let i = 0; i < w.length - 1; i++) out.add(w.slice(i, i + 2));
+    }
+    return out;
+  };
+  const q = words(about);
+  const lines = String(text).split('\n');
+  const front = lines[0]?.trim() === '---' ? lines.findIndex((l, i) => i > 0 && l.trim() === '---') : -1;
+  const cands = lines.map((l, i) => ({ line: i, text: l.trim() })).filter((c) => c.line > front && c.text.length >= 8 && !/^(#|```|---)/.test(c.text)).map((c) => ({ ...c, w: words(c.text) }));
+  // A word in fewer lines tells more (a name, a place) than one in many.
+  const df = new Map();
+  for (const c of cands) for (const w of c.w) if (q.has(w)) df.set(w, (df.get(w) || 0) + 1);
+  const hits = [];
+  for (const c of cands) {
+    const shared = [...c.w].filter((w) => q.has(w));
+    if (shared.length >= 3) hits.push({ line: c.line, text: c.text, n: shared.reduce((sum, w) => sum + Math.log(1 + cands.length / df.get(w)), 0) });
+  }
+  return hits.sort((a, b) => b.n - a.n || a.line - b.line).slice(0, k).map(({ line, text: t }) => ({ line, text: t }));
 }
 
 // What a jot was sorted into, a line each, as said back.
@@ -300,6 +331,7 @@ export class Talk {
         btn(W.skip, () => { this.done(acts); this.passed.add(q.id); this.say(W.skipped); this.next(); }, 'ghost'),
         btn(W.drop, () => { this.done(acts); this.desk.drop(q.a); this.say(W.dropped); this.next(); }, 'ghost'));
       this.asking = acts;
+      this.showFrom(row, x.from, [x.say, x.why].join(' '));
     } else {
       const n = q.n;
       const text = String(n.text || '').split('\n\n');
@@ -313,8 +345,30 @@ export class Talk {
         }),
         btn(W.notYet, () => { this.done(acts); this.passed.add(q.id); this.next(); }, 'ghost'));
       this.asking = acts;
+      // Its own note, and the one the desk says differs.
+      const files = [n.from.file, ...[...String(text[1] || '').matchAll(/\[\[([^\]|#]+)/g)].map((m) => `${m[1]}.md`)];
+      this.showFrom(row, [...new Set(files)], text[0]);
     }
     this.focus();
+  }
+  // Under a question: the line of each of its notes most about it, each to open there.
+  async showFrom(row, files, about) {
+    const got = [];
+    for (const f of files.slice(0, 3)) {
+      let t;
+      try { t = await this.desk.opts.readNote(f); } catch { continue; }
+      const [e] = evidence(t, about);
+      if (e) got.push({ f, ...e });
+    }
+    if (!got.length || !row.isConnected) return;
+    const quote = (t) => { const x = unlink(t).replace(/^(?:[-*+]\s+(?:\[.\]\s+)?|>\s*|\d+[.)]\s+)/, ''); return x.length > 140 ? `${x.slice(0, 140)}…` : x; };
+    const box = el('div', 'talk-from', el('p', 'talk-dim', this.W.where), ...got.map((g) => {
+      const b = el('button', 'talk-quote', el('b', null, name(g.f)), ` “${quote(g.text)}”`);
+      b.addEventListener('click', (e) => { e.stopPropagation(); this.desk.opts.openNote(g.f, g.line + 1); });
+      return b;
+    }));
+    row.insertBefore(box, row.querySelector('.talk-acts'));
+    this.scroll();
   }
   // To-dos marked done here (these cards only), proposed in their notes, and said as it went.
   async propose(ids) {
