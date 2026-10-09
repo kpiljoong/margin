@@ -733,7 +733,10 @@ function buildMenu() {
         { role: 'reload' },
         { role: 'toggleDevTools' },
         { type: 'separator' },
-        { role: 'resetZoom' }, { role: 'zoomIn' }, { role: 'zoomOut' },
+        // The interface's size, kept in the page's settings (the editor's text keeps its own).
+        { label: 'Actual Size', accelerator: 'CmdOrCtrl+0', click: sendCommand('ui-reset') },
+        { label: 'Bigger Interface', accelerator: 'CmdOrCtrl+=', click: sendCommand('ui-bigger') },
+        { label: 'Smaller Interface', accelerator: 'CmdOrCtrl+-', click: sendCommand('ui-smaller') },
         { type: 'separator' },
         { role: 'togglefullscreen' },
       ],

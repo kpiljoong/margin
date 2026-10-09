@@ -2,7 +2,7 @@
 // Exposes a deliberately tiny bridge to the web UI. The agent command itself
 // can only be changed in the native settings window, and the page can only ask
 // to open files the user actually dropped (it never passes paths itself).
-const { contextBridge, ipcRenderer, webUtils } = require('electron');
+const { contextBridge, ipcRenderer, webUtils, webFrame } = require('electron');
 
 contextBridge.exposeInMainWorld('agentNotesDesktop', {
   platform: process.platform,
@@ -19,6 +19,8 @@ contextBridge.exposeInMainWorld('agentNotesDesktop', {
   onCommand: (cb) => ipcRenderer.on('desktop:command', (_e, name) => cb(String(name))),
   // Lets the window background match the theme (no flash on next launch).
   setBackground: (color) => ipcRenderer.send('desktop:background', String(color)),
+  // The interface's size (the whole page, 0.5–2).
+  setZoom: (f) => { const n = Number(f); if (n >= 0.5 && n <= 2) webFrame.setZoomFactor(n); },
   closeWindow: () => ipcRenderer.send('desktop:close-window'),
   // Changed keyboard shortcuts ({ id: keys }), kept in the app's config so the
   // menu and the system-wide shortcut use them too.

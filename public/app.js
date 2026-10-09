@@ -259,6 +259,8 @@ const groupMode = (tab) => (tab?.kind === 'file' && isMermaidFile(tab.path) ? ta
 
 const DEFAULT_SETTINGS = {
   theme: 'system', font: 'mono', fontSize: 15, width: 'normal', lineHeight: 1.7,
+  // The interface's size in % (the desktop app; a browser has its own zoom). Windows' type looks smaller.
+  uiScale: window.agentNotesDesktop?.platform === 'win32' ? 110 : 100,
   accent: '', systemLight: 'paper', systemDark: 'midnight',
   autosave: true, highlight: true, spellcheck: false, sidebarWidth: 260,
   // Emacs keys in the editor (emacs.js), and where M-q wraps.
@@ -327,13 +329,24 @@ function loadSettings() {
   } catch { return { ...DEFAULT_SETTINGS }; }
 }
 
+// The interface's sizes, a step at a time.
+const UI_SCALES = [80, 90, 100, 110, 120, 135, 150, 175];
+const uiScaleOf = (v) => (UI_SCALES.includes(Number(v)) ? Number(v) : 100);
+function uiScaleBy(d) {
+  const i = UI_SCALES.indexOf(uiScaleOf(S.settings.uiScale));
+  setSetting('uiScale', UI_SCALES[Math.max(0, Math.min(UI_SCALES.length - 1, i + d))]);
+}
+
 function applySettings() {
   const st = S.settings;
   const theme = applyTheme(st.theme, { pair: themePair(), accent: st.accent });
   desktop?.setBackground?.(theme.vars.bg);
   const r = document.documentElement.style;
   r.setProperty('--ed-font', (FONTS[st.font] || FONTS.mono).stack);
-  r.setProperty('--ed-size', `${st.fontSize}px`);
+  // (The editor's text as its own setting says, whatever the interface's size.)
+  const zoom = desktop?.setZoom ? uiScaleOf(st.uiScale) / 100 : 1;
+  desktop?.setZoom?.(zoom);
+  r.setProperty('--ed-size', `${+(st.fontSize / zoom).toFixed(2)}px`);
   r.setProperty('--line-width', (WIDTHS[st.width] || WIDTHS.normal)[1]);
   r.setProperty('--sidebar-width', `${st.sidebarWidth}px`);
   r.setProperty('--ed-line-height', String(st.lineHeight || 1.7));
@@ -3523,6 +3536,7 @@ const COMMANDS = [
   ['Editor: toggle syntax highlighting', () => setSetting('highlight', !S.settings.highlight)],
   ['Editor: toggle autosave', () => { setSetting('autosave', !S.settings.autosave); toast(`Autosave ${S.settings.autosave ? 'on' : 'off'}`); }],
   ['Editor: toggle spellcheck', () => setSetting('spellcheck', !S.settings.spellcheck)],
+  ...(desktop?.setZoom ? [['Interface: bigger', () => uiScaleBy(1)], ['Interface: smaller', () => uiScaleBy(-1)], ['Interface: actual size', () => setSetting('uiScale', 100)]] : []),
   ['Editor: bigger text', () => setSetting('fontSize', Math.min(24, S.settings.fontSize + 1))],
   ['Editor: smaller text', () => setSetting('fontSize', Math.max(11, S.settings.fontSize - 1))],
   ['Go back', () => navGo(-1), { key: 'nav-back' }],
@@ -4023,6 +4037,10 @@ function openSettings({ keys = false, live = false } = {}) {
             st[key] ? h('button', { class: 'accent-dot none', title: 'Theme default', onclick: (e) => { e.preventDefault(); setSetting(key, ''); openSettings(); } }, '∅') : null))),
         h('div', { class: 'set-label' }, 'Margin font'), segRow('marginFont', Object.fromEntries(Object.entries(MARGIN_FONTS).map(([k, v]) => [k, v.label]))),
         h('div', { class: 'set-label' }, 'Editor font'), segRow('font', Object.fromEntries(Object.entries(FONTS).map(([k, v]) => [k, v.label]))),
+        desktop?.setZoom ? [h('div', { class: 'set-label' }, 'Interface size'), h('div', { class: 'seg' },
+          h('button', { title: 'Smaller (Ctrl/⌘ −)', onclick: () => { uiScaleBy(-1); openSettings(); } }, '−'),
+          h('button', { class: 'on', disabled: true }, `${uiScaleOf(st.uiScale)}%`),
+          h('button', { title: 'Bigger (Ctrl/⌘ =)', onclick: () => { uiScaleBy(1); openSettings(); } }, '+'))] : null,
         h('div', { class: 'set-label' }, 'Text size'), h('div', { class: 'seg' },
           h('button', { onclick: () => { setSetting('fontSize', Math.max(11, st.fontSize - 1)); openSettings(); } }, '−'),
           h('button', { class: 'on', disabled: true }, `${st.fontSize}px`),
@@ -10007,6 +10025,9 @@ function widenHere(tab = fileTab()) {
 }
 
 const ACTIONS = {
+  'ui-bigger': () => uiScaleBy(1),
+  'ui-smaller': () => uiScaleBy(-1),
+  'ui-reset': () => setSetting('uiScale', 100),
   'new-note': () => newNote(),
   'quick-open': () => openPalette(),
   palette: () => openPalette('>'),
