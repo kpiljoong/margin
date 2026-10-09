@@ -2065,7 +2065,7 @@ export class Desk {
     const e = el('div', 'desk-card t-ai', head, body, foot);
     e.dataset.id = a.id;
     e.show = (x) => {
-      e.className = `desk-card t-ai k-${x.kind} s-${x.state}`;
+      e.className = `desk-card t-ai k-${x.kind} s-${x.state}${x.jot ? ` j-${x.jot.kind}` : ''}`;
       Object.assign(e.style, { left: `${x.x}px`, top: `${x.y}px`, width: `${x.width}px`, minHeight: `${x.height}px` });
       head.textContent = x.kind === 'question' ? 'Question' : x.title || 'Margin';
       if (x.state === 'error') body.textContent = x.text;

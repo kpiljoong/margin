@@ -1818,6 +1818,11 @@ li.callout-hot { background: color-mix(in srgb, var(--accent) 16%, transparent);
 .desk-card.t-ai.s-wait .desk-body::after, .desk-card.t-ai.s-stream .desk-body::after { content: '▍'; color: var(--accent-2); animation: desk-blink 1s steps(2) infinite; }
 .desk-card.t-ai.s-error { --card: var(--bad); }
 .desk-card.t-ai.k-question .desk-body { font-size: 14px; }
+/* What was jotted, sorted: its kind at a glance. */
+.desk-card.t-ai.j-decided { --card: var(--ok); } .desk-card.t-ai.j-decided .desk-head { color: var(--ok); }
+.desk-card.t-ai.j-done { --card: var(--teal); } .desk-card.t-ai.j-done .desk-head { color: var(--teal); }
+.desk-card.t-ai.j-open { --card: var(--warn); } .desk-card.t-ai.j-open .desk-head { color: var(--warn); }
+.desk-card.t-ai.j-later { --card: var(--fg-faint); } .desk-card.t-ai.j-later .desk-head { color: var(--fg-dim); }
 .desk-ai-foot { display: flex; gap: 6px; padding: 0 10px 10px; }
 .desk-ai-foot .ghost { margin-left: auto; }
 @keyframes desk-in { from { opacity: 0; transform: translateY(8px) scale(.98); } }
