@@ -32,6 +32,8 @@ const NEXT_HEAD = /^#{1,6}\s+(next steps?|action items?|actions|to-?dos?|follow-
 // A decision or a next step written in words, not marked.
 const DECIDED = /\uACB0\uC815|\uD558\uAE30\uB85C|\uD655\uC815|\uD569\uC758|decided|agreed|we will|we'll|going with/i;
 const NEXT_WORDS = /\uB2E4\uC74C ?(\uC8FC|\uD68C\uC758|\uB2E8\uACC4|\uAE4C\uC9C0)|next (step|week|time)|follow-?up|action item|\uD6C4\uC18D|\uB2F4\uB2F9/i;
+// Someone's next step, in words: "Ann will look into it", "\uBBFC\uC218\uAC00 \uD655\uC778\uD558\uAE30\uB85C".
+const ACTION = /\b(?:will|to|'ll)\s+(?:look|check|follow|send|draft|share|ask|review|write|set|talk|call|update|prepare|test|find|schedule|reach|book|fix|investigate|dig|try|run|compare|confirm)\b|\bowns?\b|\uD558\uAE30\uB85C|\uD560 \uC608\uC815|\uD558\uACA0|\uD655\uC778 ?\uC608\uC815|\uAE4C\uC9C0 (?:\uACF5\uC720|\uC815\uB9AC|\uC804\uB2EC|\uD655\uC778)|\uB9E1\uAE30\uB85C|\uB9E1\uB294\uB2E4|\uB9E1\uC74C|\uB2F4\uB2F9/i;
 const MANY = 4;
 const PLACEHOLDER = /\b(TODO|TBD|TK|FIXME|XXX)\b|\?\?\?|\[citation needed\]|\(link\)|\(\uB9C1\uD06C\)|\uCD94\uAC00 \uC608\uC815/;
 
@@ -70,13 +72,21 @@ const weekday = (ymd) => new Date(`${ymd}T00:00:00Z`).getUTCDay();
 const contentLines = (text) => text.replace(FRONT, '').split('\n').filter((l) => l.trim() && !/^\s*#/.test(l)).length;
 
 // What the meeting covers: its agenda (headings with minutes; else its
-// topic headings), each covered when something is written under it.
+// topic headings), each 'empty', 'discussed' (something written under it),
+// 'next' (a to-do or someone's next step there, nothing decided) or
+// 'decided': what was talked about isn't yet what was settled.
 function topicsOf(text) {
   const lines = text.split('\n');
+  const state = (from, to) => {
+    const body = lines.slice(from, to).filter((l) => l.trim() && !/^\s*#/.test(l));
+    if (!body.length) return 'empty';
+    const items = meetingItems(body.join('\n'));
+    if (items.some((it) => it.kind === 'decision') || body.some((l) => DECIDED.test(l))) return 'decided';
+    return items.some((it) => it.kind === 'todo') || body.some((l) => ACTION.test(l)) ? 'next' : 'discussed';
+  };
+  const topic = (t, line, from, st) => ({ text: t, line, from, state: st, done: st !== 'empty', decided: st === 'decided' });
   const agenda = agendaOf(text);
-  if (agenda.length) {
-    return agenda.map((a) => ({ text: a.title, line: a.line, from: 'agenda', done: lines.slice(a.line + 1, a.lastLine + 1).some((l) => l.trim() && !/^\s*#/.test(l)) }));
-  }
+  if (agenda.length) return agenda.map((a) => topic(a.title, a.line, 'agenda', state(a.line + 1, a.lastLine + 1)));
   const out = [];
   let fence = false;
   lines.forEach((l, i) => {
@@ -84,9 +94,8 @@ function topicsOf(text) {
     const m = !fence && /^(#{2,3})\s+(.*?)\s*#*\s*$/.exec(l);
     if (!m || FRAME.test(m[2])) return;
     let j = i + 1;
-    let done = false;
-    for (; j < lines.length && !new RegExp(`^#{1,${m[1].length}}\\s`).test(lines[j]); j++) if (lines[j].trim() && !/^\s*#/.test(lines[j])) done = true;
-    out.push({ text: m[2], line: i, from: 'topic', done });
+    while (j < lines.length && !new RegExp(`^#{1,${m[1].length}}\\s`).test(lines[j])) j++;
+    out.push(topic(m[2], i, 'topic', state(i + 1, j)));
   });
   return out;
 }
@@ -173,7 +182,7 @@ export function meetingBrief(text, { path = '', today = '', prev = '', prevPath 
   if (!each(nobody)) needs.push({ key: 'owners', say: `${nobody.length} to-dos with no one on them` });
   if (!each(undated)) needs.push({ key: 'dates', say: `${undated.length} to-dos with no date` });
   if (n >= 5 && !items.some((it) => it.kind === 'decision') && !DECIDED.test(text)) needs.push({ key: 'decision', say: 'No decision written down' });
-  if (n >= 5 && !todos.length && !NEXT_HEAD.test(text) && !NEXT_WORDS.test(text)) needs.push({ key: 'next', say: 'No next step or to-do' });
+  if (n >= 5 && !todos.length && !NEXT_HEAD.test(text) && !NEXT_WORDS.test(text) && !ACTION.test(text)) needs.push({ key: 'next', say: 'No next step or to-do' });
   if (n >= 12 && !SUMMARY.test(text)) needs.push({ key: 'summary', say: 'No summary' });
   const open = items.filter((it) => it.kind === 'question' && !items.some((d) => d.kind === 'decision' && d.line > it.line && d.section === it.section));
   if (open.length) needs.push({ key: 'open', say: `${open.length} open question${open.length > 1 ? 's' : ''}: decide, or carry to next time (#next)` });

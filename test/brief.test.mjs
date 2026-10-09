@@ -47,7 +47,10 @@ test('a meeting: its agenda covered as it is written, what the last one left, wh
   const prev = '# Weekly 2026-10-01\n- Do we need a beta first? #question\n- [ ] Draft the store text @bo\n- [x] Old thing\n- The offer range #next\n';
   const others = [{ path: 'Roadmap.md', name: 'Roadmap', line: 3, raw: '- [ ] Submit app to the store \u{1F4C5} 2026-10-20', text: 'Submit app to the store', done: false }];
   const b = meetingBrief(text, { path: 'Weekly 2026-10-08.md', today: '2026-10-08', prev, others });
-  assert.deepEqual(b.cover.filter((c) => c.from === 'agenda').map((c) => [c.text, c.done]), [['Launch', true], ['Pricing', false]]);
+  assert.deepEqual(b.cover.filter((c) => c.from === 'agenda').map((c) => [c.text, c.state]), [['Launch', 'decided'], ['Pricing', 'empty']]);
+  // Talked about is not settled.
+  const talk = meetingBrief('# Sync 2026-10-08\n\n## Onboarding (10m)\n- Some think the form, some the empty state.\n\n## Referrals (5m)\n- Ann will compare the two offers.\n\n## Pricing (5m)\n- \uAC00\uACA9\uC740 9,900\uC6D0\uC73C\uB85C \uD558\uAE30\uB85C \uD568\n');
+  assert.deepEqual(talk.cover.map((c) => [c.text, c.state, c.done]), [['Onboarding', 'discussed', true], ['Referrals', 'next', true], ['Pricing', 'decided', true]]);
   assert.deepEqual(b.cover.filter((c) => c.from === 'last').map((c) => [c.kind, c.text, c.done]), [['question', 'Do we need a beta first?', false], ['todo', 'Draft the store text', false], ['next', 'The offer range', false]]);
   const said = b.flags.map((f) => `${f.kind} ${f.line} ${f.say}`);
   assert.ok(said.includes('gap 7 Who does it? No one is on this to-do.'), said.join('\n'));
@@ -65,7 +68,8 @@ test('a meeting: its agenda covered as it is written, what the last one left, wh
   assert.deepEqual(later.map((c) => c.done), [true, true, false]);
   // A meeting with talk and nothing settled.
   const loose = '# Sync\n\nAttendees: A, B\n\n- We talked about onboarding.\n- Some think the form, some the empty state.\n- Ann will look at the numbers.\n- Is it the form? #question\n- That was all.\n';
-  assert.deepEqual(meetingBrief(loose).needs.map((n) => n.key), ['decision', 'next', 'open']);
+  assert.deepEqual(meetingBrief(loose).needs.map((n) => n.key), ['decision', 'open'], '"Ann will look at the numbers" is a next step');
+  assert.deepEqual(meetingBrief(loose.replace('Ann will look at the numbers.', 'Numbers were shown.')).needs.map((n) => n.key), ['decision', 'next', 'open']);
   assert.deepEqual(meetingBrief(loose.replace('That was all.', 'We agreed: the form goes. Ann follows up next week.')).needs.map((n) => n.key), ['open'], 'decided and next, in words');
   // A checklist: many to-dos with no date, said once.
   const list = `# Launch meeting\n\n${[1, 2, 3, 4, 5, 6].map((i) => `- [ ] Step ${i}`).join('\n')}\n`;
@@ -180,6 +184,9 @@ test('the server: the note, its last meeting and the notes near it (never a priv
   const asked = sent().at(-1);
   assert.match(asked, /from "Roadmap 2026-09-28" \(2026-09-28\): We ship on the 24th/);
   assert.doesNotMatch(asked, /secret/);
+  fs.writeFileSync(path.join(ws, 'Roadmap copy.md'), '# Roadmap (copy)\n\nWe ship on the 24th,  after the beta!\n');
+  await fetch(`http://127.0.0.1:${m[1]}/api/lab/themes`, { method: 'POST', headers: { 'x-agent-notes-token': m[2], 'content-type': 'application/json' }, body: '{}' });
+  assert.equal(sent().at(-1).match(/We ship on the 24th/g).length, 1, 'a copy is one paragraph');
 });
 
 const themes = require('../lib/themes.js');

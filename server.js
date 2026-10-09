@@ -835,6 +835,10 @@ async function labThemes(b) {
       paras.push({ path: rel, line: p.line, name: path.basename(rel).replace(/\.[^.]+$/, ''), date: dated(rel, c), raw: p.raw, text: p.text.replace(/\s+/g, ' ').trim().slice(0, 400), like: 0 });
     }
   }
+  // A paragraph copied into another note (a backup, a draft's copy) is one
+  // paragraph, not a thing that came back: the newest only.
+  const once = new Set();
+  paras = paras.filter((p) => { const k = p.text.toLowerCase().replace(/[\s\p{P}\p{S}]+/gu, '').slice(0, 160); if (once.has(k)) return false; once.add(k); return true; });
   // Those with others like them in other notes first (the local model).
   if (embed.status().state === 'ready') {
     const byNote = new Map();

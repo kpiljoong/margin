@@ -8563,13 +8563,15 @@ function drawNotes(tab) {
   const text = ed.value;
   const live = liveActive(tab);
   ed.el.classList.toggle('live', live);
+  // Brief first: a paragraph it speaks of has no Related or question card besides.
+  const briefed = briefNotes(tab);
   const recalled = recallNotes(tab);
   // Once it has remembered something, the note keeps its margin: the text doesn't move as cards come and go.
   ed.el.classList.toggle('keep-notes', !!S.settings.recall && (recalled.length > 0 || ed.el.classList.contains('keep-notes')));
   ed.setNotes([...tab.comments.filter((c) => !c.resolved || tab.showResolved).map((c) => {
     const at = anchorOf(text, c);
     return { from: at ? at[0] : 0, to: at ? at[1] : 0, el: noteCard(tab, c, !at), cur: tab.noteCur === c.id };
-  }), ...recalled, ...devNotes(tab), ...briefNotes(tab), ...(live ? liveNotes(tab) : [])]);
+  }), ...recalled, ...devNotes(tab), ...briefed, ...(live ? liveNotes(tab) : [])]);
   if (live) liveHudShow(tab);
   else tab.live?.hud?.remove();
 }
@@ -8623,12 +8625,12 @@ function recallNotes(tab) {
   if (ask && thought.within(ask.line)) ask = null;
   const cards = recallMod.recall(recallSt.index, tab.path, text, { cache: recallSt.cache, known: recallSt.known, semantic, judge }).flatMap((r) => {
     const key = `${tab.path}\n${r.kind}\n${lines[r.line].trim()}`;
-    if (off.has(key) || (r.kind === 'related' && (thought.within(r.line) || briefCites(tab, r)))) return [];
+    if (off.has(key) || (r.kind === 'related' && (thought.within(r.line) || briefCites(tab, r) || briefHas(tab, r.line)))) return [];
     const mine = ask?.line === r.line ? ask : null;
     if (mine) ask = null;
     return [{ from: starts[r.line], to: starts[r.line], end: starts[r.last ?? r.line], el: recallCard(tab, r, key, mine) }];
   });
-  if (ask) cards.push({ from: starts[ask.line], to: starts[ask.line], end: starts[ask.last ?? ask.line], el: h('div', { class: 'mnote recall k-ask' }, h('div', { class: 'mnote-head' }, h('span', { class: 'recall-chip' }, 'Question')), askBox(tab, ask)) });
+  if (ask && !briefHas(tab, ask.line)) cards.push({ from: starts[ask.line], to: starts[ask.line], end: starts[ask.last ?? ask.line], el: h('div', { class: 'mnote recall k-ask' }, h('div', { class: 'mnote-head' }, h('span', { class: 'recall-chip' }, 'Question')), askBox(tab, ask)) });
   cards.push(...thought.cards.map((c) => ({ from: starts[c.line], to: starts[c.line], end: starts[c.last], el: c.el })));
   return cards.sort((a, b) => a.from - b.from);
 }
@@ -9131,7 +9133,8 @@ function briefRules(tab, st, mode) {
 async function briefLoad() {
   if (briefMod) return;
   [briefMod] = await Promise.all([import('./brief.js'), recallMod ? null : import('./recall.js').then((m) => { recallMod ||= m; })]);
-  for (const t of S.tabs) if (t.editor && t.comments && isAttached(t)) drawNotes(t);
+  // Every open note, shown or not (one shown later isn't drawn again by itself).
+  for (const t of S.tabs) if (t.editor && t.comments) drawNotes(t);
 }
 // Check with Claude: the note, its last meeting, the paragraphs of other
 // notes near it, and what the rules said (not to be said again).
@@ -9164,6 +9167,9 @@ async function briefCheck(tab = activeTab(), { auto = false } = {}) {
       path: tab.path, text, mode, refs, noted, prev: st.prev?.path ? { path: st.prev.path } : null, ...liveOpts(),
       thinkModel: S.settings.thinkModel === 'haiku' ? 'haiku' : 'sonnet', today: `${ymdOf(now)} (${now.toLocaleDateString('en-US', { weekday: 'short' })})`,
     });
+    if (!auto) st.asked = true;
+    st.auto = auto && !st.asked;
+    st.more = null;
     st.items = r.items.map((x) => {
       const i = paras.findIndex((p) => p.line === x.line);
       return { ...x, key: `${x.kind}|${x.say}`, spot: i >= 0 ? recallMod.spotOf(paras, i) : null };
@@ -9175,6 +9181,8 @@ async function briefCheck(tab = activeTab(), { auto = false } = {}) {
   st.busy = false;
   if (tab.editor && isAttached(tab)) drawNotes(tab);
 }
+// A paragraph a Brief card is beside (then nothing else of the margin's).
+const briefHas = (tab, line) => !!(briefOn() && tab.briefParas?.has(line));
 // A Related card whose notes a Brief card already cites says nothing more.
 function briefCites(tab, r) {
   const st = briefOn() && briefSt.get(tab.path);
@@ -9205,6 +9213,7 @@ function briefTyped(tab) {
 }
 // The headline (pinned at the top of the margin) and the cards beside lines.
 function briefNotes(tab) {
+  tab.briefParas = null;
   if (!briefOn() || !isNote(tab.path) || isTemplate(tab.path)) { tab.editor?.setHeadline(null); return []; }
   if (!briefMod) { briefLoad(); return []; }
   const st = briefState(tab);
@@ -9216,19 +9225,45 @@ function briefNotes(tab) {
   for (let i = text.indexOf('\n'); i >= 0; i = text.indexOf('\n', i + 1)) starts.push(i + 1);
   const paras = recallMod.parasOf(text);
   const llm = st.items.filter((x) => !st.off.has(x.key)).map((x) => ({ ...x, p: recallMod.paraAt(paras, x.spot) }));
-  tab.editor.setHeadline(briefHead(tab, st, mode, rules, llm.filter((x) => x.kind === 'cover' || x.kind === 'point')));
+  // Checked by itself: only what goes against something, until asked for the rest.
+  const shown = st.auto ? llm.filter((x) => x.kind === 'conflict') : llm;
+  tab.editor.setHeadline(briefHead(tab, st, mode, rules, shown.filter((x) => x.kind === 'cover' || x.kind === 'point'), llm.length - shown.length));
   const gone = (key) => () => { st.off.add(key); drawNotes(tab); };
-  const card = (kind, say, key, refs, extra) => h('div', { class: `mnote recall k-brief k-brief-${kind}` },
-    h('div', { class: 'mnote-head' }, h('span', { class: 'recall-chip' }, BRIEF_CHIP[kind] || 'Brief'), h('span', { class: 'grow' }),
-      h('button', { class: 'mnote-btn', title: 'Let this one go', onclick: gone(key) }, '×')),
-    h('div', { class: 'recall-says whole' }, say),
-    refs?.length ? h('div', { class: 'recall-refs' }, refs.map((y) => recallRef(recallSt.index?.paras?.byNote?.get(y.path)?.paras.find((z) => z.line === y.line) || y))) : null,
-    extra || null);
-  const out = rules.flags.filter((f) => !st.off.has(f.key)).map((f) => ({ from: starts[f.line], to: starts[f.line], end: starts[f.line], el: card(f.kind, f.say, f.key, f.refs) }));
-  for (const x of llm) {
-    if (x.kind === 'cover' || x.kind === 'point') continue;
-    const at = x.p || paras[0] || { line: 0, last: 0 };
-    out.push({ from: starts[at.line], to: starts[at.line], end: starts[at.last], noAnchor: !x.p, el: card(x.kind, x.say, x.key, x.refs, x.kind === 'ask' && x.p ? briefAnswer(tab, st, x) : null) });
+  const card = (c, more) => h('div', { class: `mnote recall k-brief k-brief-${c.kind}` },
+    h('div', { class: 'mnote-head' }, h('span', { class: 'recall-chip' }, BRIEF_CHIP[c.kind] || 'Brief'), h('span', { class: 'grow' }),
+      h('button', { class: 'mnote-btn', title: 'Let this one go', onclick: gone(c.key) }, '×')),
+    h('div', { class: 'recall-says whole' }, c.say),
+    c.refs?.length ? h('div', { class: 'recall-refs' }, c.refs.map((y) => recallRef(recallSt.index?.paras?.byNote?.get(y.path)?.paras.find((z) => z.line === y.line) || y))) : null,
+    c.ask ? briefAnswer(tab, st, c.ask) : null,
+    more || null);
+  // One card beside a paragraph — what goes against something first, then
+  // what doesn't follow, Why?, what it needs — and the others behind "+ more".
+  const RANK = { conflict: 0, logic: 1, ask: 2, gap: 3 };
+  const top = paras[0] || { line: 0, last: 0 };
+  const paraOf = (line) => paras.find((p) => line >= p.line && line <= p.last) || { line, last: line };
+  const all = [
+    ...rules.flags.filter((f) => !st.off.has(f.key)).map((f) => ({ rank: RANK[f.kind] + 0.5, at: paraOf(f.line), here: true, kind: f.kind, say: f.say, key: f.key, refs: f.refs })),
+    ...shown.filter((x) => x.kind !== 'cover' && x.kind !== 'point').map((x) => ({ rank: RANK[x.kind] ?? 3, at: x.p || top, here: !!x.p, kind: x.kind, say: x.say, key: x.key, refs: x.refs, ask: x.kind === 'ask' && x.p ? x : null })),
+  ];
+  const groups = new Map();
+  for (const c of all) {
+    const g = `${c.here ? '' : '!'}${c.at.line}`;
+    (groups.get(g) || groups.set(g, []).get(g)).push(c);
+  }
+  tab.briefParas = new Set();
+  // Its frame (who came, the last meeting) is the headline's: no card beside it.
+  text.split('\n').slice(0, 15).forEach((l, i) => { if (/^\s*(?:[-*]\s*)?(?:\*\*)?(?:attendees|participants|present|previous meeting|\uCC38\uC11D\uC790?|\uCC38\uC5EC\uC790)\b|^\s*(?:\uCC38\uC11D|\uCC38\uC5EC\uC790)/i.test(l)) tab.briefParas.add(i); });
+  const out = [];
+  for (const [g, list] of groups) {
+    list.sort((x, y) => x.rank - y.rank);
+    const { at, here } = list[0];
+    if (here) for (let i = at.line; i <= at.last; i++) tab.briefParas.add(i);
+    const open = st.more?.has(g);
+    const toggle = (on) => () => { (st.more ||= new Set())[on ? 'add' : 'delete'](g); drawNotes(tab); };
+    const more = list.length > 1 ? h('div', { class: 'brief-more-row' }, h('button', { class: 'recall-ans quiet', onclick: toggle(!open) }, open ? 'Fewer' : `+ ${list.length - 1} more here`)) : null;
+    const place = (el) => out.push({ from: starts[at.line], to: starts[at.line], end: starts[at.last], noAnchor: !here, el });
+    if (open) list.forEach((c, k) => place(card(c, k === list.length - 1 ? more : null)));
+    else place(card(list[0], more));
   }
   return out;
 }
@@ -9261,7 +9296,7 @@ function briefAnswer(tab, st, x) {
   return h('div', { class: 'dev-thread' }, box, h('div', { class: 'dev-answer-row' }, h('span', { class: 'dev-note' }, 'Goes into the note, under it.'), h('span', { class: 'grow' }),
     h('button', { class: 'recall-ans quiet', onclick: () => { a.open = false; devRedraw(tab); } }, 'Cancel'), h('button', { class: 'recall-ans', onclick: put }, 'Put it in')));
 }
-function briefHead(tab, st, mode, rules, heads) {
+function briefHead(tab, st, mode, rules, heads, held = 0) {
   const cover = rules.cover;
   const go = (line) => () => { if (line != null) { tab.editor.gotoLine(line + 1); tab.editor.focus(); } };
   const nextMode = () => { const order = ['meeting', 'writing', 'plan', 'off']; st.mode = order[(order.indexOf(mode) + 1) % order.length]; st.items = []; drawNotes(tab); if (st.mode === 'off') toast('Brief is off for this note (Brief: this note, to bring it back).'); };
@@ -9281,16 +9316,19 @@ function briefHead(tab, st, mode, rules, heads) {
     tab.editor.replace(tail.length, v.length, `\n${line}\n`);
     drawNotes(tab);
   };
-  const row = (c) => h('div', { class: `brief-item${c.done ? ' done' : ''} b-${c.from}`, title: c.from === 'last' ? `From ${st.prev?.name || 'the last meeting'}` : '',
+  const row = (c) => h('div', { class: `brief-item${c.done ? ' done' : ''}${c.state ? ` s-${c.state}` : ''} b-${c.from}`, title: c.from === 'last' ? `From ${st.prev?.name || 'the last meeting'}` : '',
     onclick: c.from === 'last' ? () => st.prev?.path && openAt(st.prev.path, c.text) : go(c.line) },
-  h('span', { class: 'brief-box' }, c.done ? '✓' : ''), h('span', { class: 'brief-text' }, c.text), c.where ? h('span', { class: 'brief-who', title: 'Settled there' }, `\u2192 ${c.where}`) : null, c.owner ? h('span', { class: 'brief-who' }, `@${c.owner}`) : null, c.due ? h('span', { class: 'm-due' }, c.due.slice(5)) : null,
+  h('span', { class: 'brief-box', title: { discussed: 'Talked about: nothing decided, no next step yet', next: 'A next step, nothing decided yet', decided: 'A decision is written' }[c.state] || '' }, { discussed: '\u2013', next: '\u2192' }[c.state] || (c.done ? '✓' : '')), h('span', { class: 'brief-text' }, c.text), c.where ? h('span', { class: 'brief-who', title: 'Settled there' }, `\u2192 ${c.where}`) : null, c.owner ? h('span', { class: 'brief-who' }, `@${c.owner}`) : null, c.due ? h('span', { class: 'm-due' }, c.due.slice(5)) : null,
   c.from === 'last' && !c.done ? h('button', { class: 'brief-carry', title: 'Put it at the end of this note', onclick: carry(c) }, '+ here') : null);
   const mine = cover.filter((c) => c.from !== 'last');
   const last = cover.filter((c) => c.from === 'last');
   const of = (list) => (list.length ? ` · ${list.filter((c) => c.done).length} of ${list.length}` : '');
+  const count = (list, st, what) => { const k = list.filter((c) => c.state === st).length; return k ? [`${k} ${what}`] : []; };
+  const settled = (list) => (mode === 'meeting' && list.length ? ` · ${[...count(list, 'decided', 'decided'), ...count(list, 'next', 'with a next step'), ...count(list, 'discussed', 'only talked about'), ...count(list, 'empty', 'not yet')].join(', ')}` : of(list));
   return h('div', { class: 'brief' }, head,
+    held ? h('div', { class: 'brief-held' }, `Checked by itself: only what goes against something is shown. `, h('button', { class: 'recall-ans quiet', onclick: () => { st.auto = false; drawNotes(tab); } }, `Show ${held} more`)) : null,
     heads.length ? h('div', { class: 'brief-heads' }, heads.map((x) => h('button', { class: `brief-head k-brief-${x.kind}`, onclick: go(x.p?.line) }, h('span', { class: 'recall-chip' }, BRIEF_CHIP[x.kind]), h('span', {}, x.say)))) : null,
-    mine.length ? h('div', { class: 'brief-sec' }, h('div', { class: 'brief-label' }, `${mode === 'meeting' ? 'To cover' : 'Outline'}${of(mine)}`), mine.map(row)) : null,
+    mine.length ? h('div', { class: 'brief-sec' }, h('div', { class: 'brief-label' }, `${mode === 'meeting' ? 'To cover' : 'Outline'}${settled(mine)}`), mine.map(row)) : null,
     last.length ? h('div', { class: 'brief-sec' }, h('div', { class: 'brief-label', title: st.prev?.name || '' }, `From last time${of(last)}`), last.map(row)) : null,
     rules.since?.length ? h('div', { class: 'brief-sec' }, h('div', { class: 'brief-label', title: 'What other notes, written after the last meeting, decided, asked or did about what it left' }, 'Since then, elsewhere'),
       rules.since.map((c) => h('div', { class: 'brief-item b-since', title: `About: ${c.about}`, onclick: () => openAt(c.ref.path, c.ref.raw) },
