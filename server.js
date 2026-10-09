@@ -1160,7 +1160,7 @@ async function labReviewDesk(b) {
     .map((x) => ({ ...x, why: said.get(x.n) || `Its day (${late(x)}) has passed: is it done?` }));
   // "N3" and "[2]" are the request's: their names, as they read them.
   const nameOf = (p) => path.basename(p).replace(/\.md$/i, '');
-  const named = (t) => t.replace(/\bN(\d+)\b/g, (m, n) => (notes[n - 1] ? nameOf(notes[n - 1].path) : m)).replace(/\[(\d+)\](?!\()/g, (m, n) => (older[n - 1] ? nameOf(older[n - 1].path) : m));
+  const named = (t) => t.replace(/\bT(\d+)\b/g, (m, n) => (sent[n - 1] ? `\u201C${sent[n - 1].text.replace(/\s*[\u{1F4C5}\u23EB\u{1F53C}\u{1F53D}\u{1F53A}\u23EC].*$/u, '').slice(0, 60)}\u201D` : m)).replace(/\bN(\d+)\b/g, (m, n) => (notes[n - 1] ? nameOf(notes[n - 1].path) : m)).replace(/\[(\d+)\](?!\()/g, (m, n) => (older[n - 1] ? nameOf(older[n - 1].path) : m));
   const items = r.items.map((x) => ({ ...x, say: named(x.say), why: named(x.why), from: [...x.notes.map((n) => notes[n - 1].path), ...x.older.map((n) => older[n - 1].path)] }));
   const { desk, margin } = deskEsm.reviewDesk({ title: topic.title, goal: topic.goal, goalState: topic.goalState, goalFrom: topic.goalState === 'stated' ? relOf(workspacePath(t.goalFrom || mine[0])) : '', ask: topic.goalState === 'theirs' ? '' : t.ask || '', thisTime, todos: check, notes: mine, items, at: day });
   fs.mkdirSync(path.dirname(abs), { recursive: true });
@@ -1224,7 +1224,7 @@ async function labReviewChanges(b) {
 // What was done on a review's desk (taken, let go, marked done, proposed,
 // wrapped up), in order, beside it in .agent-notes/review-ledger/ — what
 // happened there, not what was suggested; its wrap-up reads it.
-const LEDGER_TYPES = new Set(['taken', 'let go', 'marked done', 'unmarked', 'proposed', 'to-dos proposed', 'wrap-up', 'jotted', 'noted', 'decisions proposed', 'changes proposed', 'withdrawn', 'deferred', 'reopened', 'replaced', 'withdrawals proposed']);
+const LEDGER_TYPES = new Set(['taken', 'let go', 'marked done', 'unmarked', 'proposed', 'to-dos proposed', 'wrap-up', 'jotted', 'noted', 'decisions proposed', 'changes proposed', 'withdrawn', 'deferred', 'reopened', 'replaced', 'withdrawals proposed', 'answered']);
 // A card taken: which card of the desk it became (card).
 const ledgerOf = (rel) => `${resolveInside(path.join(DATA_DIR, 'review-ledger'), rel)}.json`;
 const reviewLedger = (rel) => { const d = readJson(ledgerOf(rel), null); return Array.isArray(d?.events) ? d.events : []; };

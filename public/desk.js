@@ -9,6 +9,7 @@
 import { meetingItems, moveItem, bodyOf } from './meeting.js';
 import { IMAGE_FILE, rectFrom, regionsOf, threadOf, regionNote, cropParts } from './regions.js';
 import { trailOf, trailText } from './trail.js';
+import { Talk } from './talk.js';
 
 // ---------------------------------------------------------------- the file
 
@@ -678,7 +679,15 @@ export class Desk {
     this.build();
     this.render();
     requestAnimationFrame(() => this.fit(false));
-    this.loadMargin();
+    // A review's desk is talked through first (its cards behind, as the record).
+    if (this.opts.review && this.opts.jot) { this.talker = new Talk(this); this.el.append(this.talker.el); this.showTalk(true); }
+    this.loadMargin().finally(() => this.talker?.start());
+  }
+  // The talk, or the desk behind it (the record).
+  showTalk(on) {
+    if (!this.talker) return;
+    this.el.classList.toggle('talking', on);
+    if (on) { if (this.marginRead || !this.opts.loadMargin) this.talker.start(); requestAnimationFrame(() => this.talker.focus()); } else { this.render(); this.el.focus({ preventScroll: true }); }
   }
 
   // What the margin wrote and was not kept yet stays beside the desk (not in
@@ -748,6 +757,8 @@ export class Desk {
     this.el.addEventListener('wheel', (e) => this.wheel(e), { passive: false });
     this.el.addEventListener('dblclick', (e) => this.dbl(e));
     this.el.addEventListener('keydown', (e) => this.key(e));
+    // Talking: the keys go to what is said.
+    this.el.addEventListener('focus', () => { if (this.el.classList.contains('talking')) this.talker?.focus(); });
     this.el.addEventListener('keyup', (e) => {
       if (e.key !== ' ') return;
       this.space = false;
@@ -804,6 +815,7 @@ export class Desk {
     this.actions = el('div', 'desk-actions', ...ACTIONS.map(([task, label, k, title]) => { const b = button(label, `${title} (${k}, or drop cards on it)`, () => this.act(task)); b.dataset.task = task; return b; }));
     // A review's desk: what came of it, from what was done here and the notes now (by rules; nothing sent).
     if (this.opts.review && this.opts.changes) this.actions.append(button('Into the notes', 'What you decided, carried into every line of its notes that no longer agrees, shown first; nothing changes until you propose it (c)', () => this.changesPlan()));
+    if (this.opts.review && this.opts.jot) this.actions.append(button('Talk it through', 'The review as a talk: where it stands, one thing asked at a time, what you say noted when you say so', () => this.showTalk(true)));
     if (this.opts.review) this.actions.append(button('Wrap up', 'What came of this review: decided, changed in the notes, taken from the margin, next \u2014 from what was done here and the notes as they are now; nothing sent (w)', () => this.wrapUp()));
     this.asksEl = el('div', 'desk-asks'); // shown folded too
     this.log = el('div', 'desk-log');
@@ -1371,11 +1383,11 @@ export class Desk {
     return box;
   }
   // The asks of the cards from one note, proposed to it in one red pen review.
-  async sendToNote(file) {
+  async sendToNote(file, o = {}) {
     const cards = this.d.nodes.filter((n) => n.from?.file === file && n.from.to);
     if (!cards.length) return;
     let ok;
-    try { ok = await this.opts.proposeNote(file, (text) => toNote(text, cards)); } catch { return; } // (said already)
+    try { ok = await this.opts.proposeNote(file, (text) => toNote(text, cards), o); } catch { return; } // (said already)
     if (ok === false) return;
     this.event('proposed', { file, text: `${cards.length} card${cards.length === 1 ? '' : 's'}` });
     const ids = new Set(cards.map((c) => c.id));
@@ -2379,6 +2391,16 @@ export class Desk {
   // What was done on a review's desk, for its wrap-up (opts.onEvent: kept beside it).
   event(type, info) { if (this.opts.review) this.opts.onEvent?.(type, info); }
   async wrapUp() {
+    const { text, decisions, withdrawals, waiting } = await this.wrapData();
+    // One wrap-up: the one not kept before, replaced.
+    this.ai = this.ai.filter((a) => !(a.kind === 'review' && a.title === 'Wrap-up'));
+    const card = this.addAi({ kind: 'review', title: 'Wrap-up', x: 0, y: 0, width: 460, height: 420, text, state: 'done', at: Date.now(), decisions: decisions.filter((x) => !x.inNote).map(({ words }) => ({ words })), withdrawals, waiting }, false);
+    this.streamNow();
+    this.show(card, true);
+    this.event('wrap-up', { text: '' });
+  }
+  // What came of it, from what was done here and the notes now (wrapUp).
+  async wrapData() {
     const files = [...new Set([...this.d.nodes.filter((n) => n.from?.file && (n.from.kind === 'todo' || n.from.kind === 'question')).map((n) => n.from.file), ...thisTimeOf(this.d).decided.map((l) => decisionOf(l).note).filter(Boolean), ...this.d.nodes.filter((n) => n.type === 'file' && /\.md$/i.test(n.file)).map((n) => n.file)])];
     const notes = new Map();
     for (const f of files) { try { notes.set(f, await this.opts.readNote(f)); } catch { notes.set(f, ''); } }
@@ -2389,13 +2411,7 @@ export class Desk {
     const ids = [...new Set(ledger.filter((e) => e.type === 'changes proposed' && e.review).map((e) => e.review))];
     try { const rs = ids.length ? await this.opts.runs?.(ids) : []; if (rs) runs = new Map(rs.map((r) => [r.id, r.status])); } catch { /* not known */ }
     const d = new Date();
-    const { text, decisions, withdrawals, waiting } = wrapUp({ desk: this.d, ledger, notes, runs, now: `${today()} ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}` });
-    // One wrap-up: the one not kept before, replaced.
-    this.ai = this.ai.filter((a) => !(a.kind === 'review' && a.title === 'Wrap-up'));
-    const card = this.addAi({ kind: 'review', title: 'Wrap-up', x: 0, y: 0, width: 460, height: 420, text, state: 'done', at: Date.now(), decisions: decisions.filter((x) => !x.inNote).map(({ words }) => ({ words })), withdrawals, waiting }, false);
-    this.streamNow();
-    this.show(card, true);
-    this.event('wrap-up', { text: '' });
+    return wrapUp({ desk: this.d, ledger, notes, runs, now: `${today()} ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}` });
   }
   // A wrap-up's next to-dos, at the end of the assistant's list (as it adds
   // its own): proposed in the red pen review; one there already is left out.
@@ -2416,7 +2432,7 @@ export class Desk {
   // What they decided, carried into the notes: a card showing each line to
   // change, note by note, and each decision recorded (nothing changed yet).
   async changesPlan() {
-    if (this.planning) return;
+    if (this.planning) return { error: 'already reading' };
     this.planning = true;
     if (this.dock.classList.contains('min')) this.foldDock(false);
     const wait = this.say('Reading the notes for what your decisions change\u2026');
@@ -2425,14 +2441,15 @@ export class Desk {
     try {
       const r = await this.opts.changes();
       wait.remove();
-      if (!r.decided?.length) { this.say('Nothing decided yet: jot what you decided (i), or write it under Decided in \u201CThis time\u201D.'); return; }
+      if (!r.decided?.length) { this.say('Nothing decided yet: jot what you decided (i), or write it under Decided in \u201CThis time\u201D.'); return {}; }
       this.ai = this.ai.filter((x) => !(x.kind === 'review' && x.changes));
       // Each change with the decision it comes of, in their words (what a withdrawal looks back at).
       const changes = r.changes.map((c) => ({ ...c, about: r.decided[Number(String(c.for).slice(1)) - 1] || '' }));
       const card = this.addAi({ kind: 'review', title: 'Changes to the notes', x: 0, y: 0, width: 520, height: 300, text: changesText(r), state: 'done', at: Date.now(), changes }, false);
       this.streamNow();
       this.show(card, true);
-    } catch (e) { wait.textContent = `Not read: ${e.message}`; wait.classList.add('error'); } finally { clearInterval(tick); this.planning = false; }
+      return { card };
+    } catch (e) { wait.textContent = `Not read: ${e.message}`; wait.classList.add('error'); return { error: e.message }; } finally { clearInterval(tick); this.planning = false; }
   }
   // A changes card's changes that come of a decision decided now.
   liveChanges(a) {
@@ -2447,7 +2464,7 @@ export class Desk {
     const live = this.liveChanges(a);
     const stale = [...new Set((a.changes || []).filter((c) => !live.includes(c)).map((c) => c.about || '(a decision not known)'))];
     if (stale.length) this.say(`Not proposed \u2014 from a decision no longer decided as it was: ${stale.join('; ')} \u2014 prepare the changes again (Into the notes) for what is decided now.`, 'error');
-    if (!live.length) return;
+    if (!live.length) return { done: [], stale };
     const by = new Map();
     for (const c of live) by.set(c.file, [...(by.get(c.file) || []), c]);
     const done = [];
@@ -2465,7 +2482,8 @@ export class Desk {
     // Their reviews, waiting: one by one from here (none opened by itself).
     const row = this.say(`Proposed in ${done.length} note${done.length === 1 ? '' : 's'}, each waiting in its red pen review${missed ? `; ${missed} line${missed === 1 ? ' was' : 's were'} no longer as read, left` : ''}${failed.length ? `; not proposed \u2014 ${failed.join('; ')}` : ''}.`);
     if (this.opts.openReview) for (const d of done) row.append(button(d.file.split('/').pop().replace(/\.md$/i, ''), `Its red pen review: ${d.file}`, () => this.opts.openReview(d.id), 'desk-review-link'));
-    if (done.length) { a.proposed = true; this.render(); this.foldDock(false); this.dockShow(); }
+    if (done.length) { a.proposed = true; this.render(); if (!this.el.classList.contains('talking')) { this.foldDock(false); this.dockShow(); } }
+    return { done, missed, failed, stale };
   }
   // The reviews a wrap-up found waiting with changes of a decision not decided now: one by one from here.
   waitingReviews(a) {
@@ -2506,9 +2524,9 @@ export class Desk {
     this.event('jotted', { text, card: card.id });
     this.jotStatus.textContent = 'Sorting what you jotted\u2026';
     let r;
-    try { r = await this.opts.jot(text); } catch (e) { this.jotStatus.textContent = `Not sorted: ${e.message} \u2014 it is on the desk as you wrote it.`; return; }
+    try { r = await this.opts.jot(text); } catch (e) { this.jotStatus.textContent = `Not sorted: ${e.message} \u2014 it is on the desk as you wrote it.`; return { card, error: e.message }; }
     const items = r?.items || [];
-    if (!items.length) { this.jotStatus.textContent = 'Nothing to sort in it \u2014 it is on the desk as you wrote it.'; return; }
+    if (!items.length) { this.jotStatus.textContent = 'Nothing to sort in it \u2014 it is on the desk as you wrote it.'; return { card, cards: [] }; }
     const TITLE = { decided: 'Decided', later: 'Later', open: 'Still open', todo: 'To do', done: 'Done', withdrawn: 'Withdrawn' };
     const batch = newId();
     for (const it of items) {
@@ -2517,6 +2535,20 @@ export class Desk {
     }
     this.streamNow();
     this.jotStatus.textContent = `${items.length} sorted, under it: Tab takes the first (marked; here too, with nothing written), Esc lets it go, \u21E7Tab takes all ${items.length}.`;
+    return { card, cards: this.ai.filter((a) => a.batch === batch) };
+  }
+  // A jot taken back before it was noted (to write it again): it and what it was sorted into, gone.
+  unjot(r) {
+    if (!r?.card) return;
+    this.ai = this.ai.filter((a) => !r.cards?.includes(a));
+    if (this.d.nodes.some((n) => n.id === r.card.id)) this.change({ ...this.d, nodes: this.streamed(this.d.nodes.filter((n) => n.id !== r.card.id)) });
+    else this.streamNow();
+  }
+  // A card of the margin answered in the talk: gone, and so kept in the record.
+  answered(a) {
+    this.ai = this.ai.filter((x) => x !== a);
+    this.event('answered', { title: a.title, text: a.text });
+    this.streamNow();
   }
   async makeNote(a) {
     const path = await this.opts.makeNote(a.text);

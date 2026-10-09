@@ -1942,6 +1942,29 @@ li.callout-hot { background: color-mix(in srgb, var(--accent) 16%, transparent);
 }
 .desk.far .desk-card.t-group { border-width: calc(1.5px * var(--iz, 1)); }
 
+/* ---- a review talked through (talk.js): the talk over the desk, the desk behind it as the record */
+.desk.talking .desk-dock, .desk.talking .desk-jot, .desk.talking .desk-hint { display: none; }
+.talk { display: none; }
+.desk.talking .talk { position: absolute; inset: 0; z-index: 5; display: flex; flex-direction: column; background: var(--bg); user-select: text; touch-action: auto; }
+.talk-head { display: flex; align-items: center; gap: 8px; padding: 10px 16px; border-bottom: 1px solid var(--border); }
+.talk-head b { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600; }
+.talk-body { flex: 1; overflow-y: auto; }
+.talk-log { display: flex; flex-direction: column; gap: 12px; max-width: 680px; margin: 0 auto; padding: 20px 16px 28px; }
+.talk-say { max-width: 92%; padding: 10px 14px; border-radius: 14px; font-size: 14px; line-height: 1.6; }
+.talk-say > :first-child { margin-top: 0; } .talk-say > :last-child { margin-bottom: 0; }
+.talk-say.ai { align-self: flex-start; background: var(--bg-2); }
+.talk-say.ask { border: 1px solid color-mix(in srgb, var(--accent) 45%, var(--border)); }
+.talk-say p { margin: 0 0 8px; white-space: pre-wrap; } .talk-say ul { margin: 0 0 8px; padding-left: 18px; }
+.talk-say .talk-dim { color: var(--fg-dim); font-size: 12.5px; }
+.talk-say.ask .talk-dim:first-child { font-size: 12px; }
+.talk-say.me { align-self: flex-end; background: color-mix(in srgb, var(--accent) 18%, var(--bg-3)); white-space: pre-wrap; }
+.talk-say.wait { color: var(--fg-dim); }
+.talk-acts { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
+.talk-acts .btn:disabled { opacity: .45; }
+.talk-foot { border-top: 1px solid var(--border); padding: 10px 16px 14px; }
+.talk-input { display: block; width: 100%; max-width: 680px; margin: 0 auto; box-sizing: border-box; resize: none; padding: 10px 12px; border: 1px solid var(--border); border-radius: 12px; background: var(--bg-2); color: var(--fg); font: 14px/1.5 var(--sans); outline: none; }
+.talk-input:focus { border-color: var(--accent); }
+
 /* ---- motion (motion.js): the selected thing's highlight slides there; a note, a view, a dialog comes in */
 .glide { position: absolute; left: 0; top: 0; z-index: 0; pointer-events: none; transition: transform var(--t-3) cubic-bezier(.2, .9, .3, 1.12), width var(--t-3) cubic-bezier(.2, .9, .3, 1.12), height var(--t-3) cubic-bezier(.2, .9, .3, 1.12), opacity var(--t-1); }
 .glide.still { transition: none; }
