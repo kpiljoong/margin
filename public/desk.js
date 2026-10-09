@@ -834,6 +834,8 @@ export class Desk {
     this.jotInput.addEventListener('keydown', (e) => {
       e.stopPropagation();
       if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) { e.preventDefault(); const t = this.jotInput.value.trim(); if (t) { this.jotInput.value = ''; this.jotInput.style.height = 'auto'; this.jot(t); } }
+      // Nothing written: Tab takes what was sorted, as on the desk (⇧Tab all of it).
+      if (e.key === 'Tab' && !this.jotInput.value.trim() && this.upNext()) { e.preventDefault(); if (e.shiftKey) this.keepAll(this.upNext()); else this.keep(this.upNext()); }
       if (e.key === 'Escape') { e.preventDefault(); this.el.focus(); }
     });
     this.jotStatus = el('div', 'desk-jot-status');
@@ -2275,9 +2277,15 @@ export class Desk {
     this.taken.push({ at: this.undo.length, cards: [...list.filter((a) => !kept.includes(a)), ...settled] });
     if (kept.length) notTaken();
     this.fitStream();
-    if (this.jotStatus && list.some((a) => a.jot)) this.jotStatus.textContent = '';
+    if (list.some((a) => a.jot)) this.jotLeft();
     if (mineText != null && mineText !== was) this.say('Put in \u201CThis time\u201D (\u2318Z gives it back to the margin).');
     else if (!nodes.length && list.some((a) => a.jot && a.jot.kind !== 'todo')) this.say('In \u201CThis time\u201D already, as it is (\u2318Z gives the card back).');
+  }
+  // What is left of what was sorted, said under the jot line.
+  jotLeft() {
+    if (!this.jotStatus) return;
+    const n = this.ai.filter((a) => a.jot).length;
+    this.jotStatus.textContent = n ? `${n} more sorted: Tab takes the next (marked), Esc lets it go.` : '';
   }
   drop(a) {
     if (!a) return;
@@ -2285,6 +2293,7 @@ export class Desk {
     this.ai = this.ai.filter((x) => x !== a);
     // Let go: not given back by an undo or redo after.
     for (const t of [...this.taken, ...this.retaken]) t.cards = t.cards.filter((x) => x.id !== a.id);
+    if (a.jot) this.jotLeft();
     if (this.opts.review) this.streamNow(); else this.render();
   }
   // ---- a review's desk, kept in order: under its goal, one column — what
@@ -2505,7 +2514,7 @@ export class Desk {
       this.addAi({ kind: 'review', batch, title: `Jotted \u00B7 ${TITLE[it.kind] || 'Margin'}`, text: body, jot: { kind: it.kind, say: it.say, about: it.about || '', settles: it.settles || '', of: card.id, ...(it.ticks && !it.replaces ? { ticks: it.ticks } : {}), ...(it.replaces ? { replaces: it.replaces } : {}) }, x: 0, y: 0, width: STREAM_W - STREAM_IN, height: 74 + 21 * body.split('\n').length, state: 'done' }, false);
     }
     this.streamNow();
-    this.jotStatus.textContent = `${items.length} sorted, under it: Tab takes the first (marked), Esc lets it go, \u21E7Tab takes all ${items.length}.`;
+    this.jotStatus.textContent = `${items.length} sorted, under it: Tab takes the first (marked; here too, with nothing written), Esc lets it go, \u21E7Tab takes all ${items.length}.`;
   }
   async makeNote(a) {
     const path = await this.opts.makeNote(a.text);
