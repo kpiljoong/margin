@@ -1194,7 +1194,7 @@ async function labReviewJot(b) {
   const todos = [...cards, ...(await reviewTodos(mine, ignored)).sort((x, y) => onDesk.has(`${y.file}\u0000${y.key}`) - onDesk.has(`${x.file}\u0000${x.key}`))].slice(0, 60);
   const r = await r0.jot({ topic: { title, goal: goal.trim() }, thisTime, notes, todos: todos.map((x) => `${x.text} (${x.file || 'on this desk'})`), jot: b.text.trim(), today: reviewToday(), projects });
   if (!r.ok) throw httpError(502, r.error || 'Claude did not answer.');
-  return { items: r.items.map((x) => ({ kind: x.kind, say: x.say, about: x.about ? notes[x.about - 1].path : '', settles: x.settles ? thisTime.focus[x.settles - 1] : '', todo: x.todo, ...(x.ticks ? { ticks: todos[x.ticks - 1] } : {}) })) };
+  return { items: r.items.map((x) => ({ kind: x.kind, say: x.say, about: x.about ? notes[x.about - 1].path : '', settles: x.settles ? thisTime.focus[x.settles - 1] : '', todo: x.todo, ...(x.ticks ? { ticks: todos[x.ticks - 1] } : {}), ...(x.replaces ? { replaces: thisTime.decided[x.replaces - 1] } : {}) })) };
 }
 
 // What they decided on a review's desk (and put off), carried into its
@@ -1224,7 +1224,7 @@ async function labReviewChanges(b) {
 // What was done on a review's desk (taken, let go, marked done, proposed,
 // wrapped up), in order, beside it in .agent-notes/review-ledger/ — what
 // happened there, not what was suggested; its wrap-up reads it.
-const LEDGER_TYPES = new Set(['taken', 'let go', 'marked done', 'unmarked', 'proposed', 'to-dos proposed', 'wrap-up', 'jotted', 'noted', 'decisions proposed', 'changes proposed']);
+const LEDGER_TYPES = new Set(['taken', 'let go', 'marked done', 'unmarked', 'proposed', 'to-dos proposed', 'wrap-up', 'jotted', 'noted', 'decisions proposed', 'changes proposed', 'withdrawn', 'deferred', 'reopened', 'replaced', 'withdrawals proposed']);
 // A card taken: which card of the desk it became (card).
 const ledgerOf = (rel) => `${resolveInside(path.join(DATA_DIR, 'review-ledger'), rel)}.json`;
 const reviewLedger = (rel) => { const d = readJson(ledgerOf(rel), null); return Array.isArray(d?.events) ? d.events : []; };
@@ -1232,7 +1232,7 @@ function addReviewLedger({ path: relPath, event }) {
   const rel = relOf(workspacePath(relPath));
   if (!/\.canvas$/i.test(rel)) throw httpError(400, 'Not a desk');
   if (!event || !LEDGER_TYPES.has(event.type)) throw httpError(400, 'event: { type, title, text, file }');
-  const e = { type: event.type, at: new Date().toISOString(), ...(cleanStr(event.title, 200) ? { title: cleanStr(event.title, 200) } : {}), ...(cleanStr(event.text, 4000) ? { text: cleanStr(event.text, 4000) } : {}), ...(cleanStr(event.file, 1000) ? { file: cleanStr(event.file, 1000) } : {}), ...(cleanStr(event.card, 64) ? { card: cleanStr(event.card, 64) } : {}) };
+  const e = { type: event.type, at: new Date().toISOString(), ...(cleanStr(event.title, 200) ? { title: cleanStr(event.title, 200) } : {}), ...(cleanStr(event.text, 4000) ? { text: cleanStr(event.text, 4000) } : {}), ...(cleanStr(event.file, 1000) ? { file: cleanStr(event.file, 1000) } : {}), ...(cleanStr(event.card, 64) ? { card: cleanStr(event.card, 64) } : {}), ...(Array.isArray(event.about) ? { about: event.about.slice(0, 20).map((a) => cleanStr(a, 400)).filter(Boolean) } : {}) };
   const events = [...reviewLedger(rel), e].slice(-500);
   const file = ledgerOf(rel);
   fs.mkdirSync(path.dirname(file), { recursive: true });
@@ -1612,21 +1612,22 @@ function deskMarginCards(rel) {
   const d = readJson(deskMarginOf(rel), null);
   return Array.isArray(d?.cards) ? d.cards : [];
 }
-const JOT_KINDS = new Set(['decided', 'later', 'open', 'todo', 'done']);
+const JOT_KINDS = new Set(['decided', 'later', 'open', 'todo', 'done', 'withdrawn']);
 function reviewCardParts(c) {
   const out = {};
   const int = (v) => (Number.isInteger(v) && v >= 0 && v <= 1e6 ? v : undefined);
   const j = c?.jot;
   if (j && typeof j === 'object' && JOT_KINDS.has(j.kind)) {
     const t = j.ticks && typeof j.ticks === 'object' ? { file: cleanStr(j.ticks.file, 1000) || undefined, line: int(j.ticks.line), key: cleanStr(j.ticks.key, 2000) || undefined, text: cleanStr(j.ticks.text, 2000), tasks: j.ticks.tasks === true || undefined, card: cleanStr(j.ticks.card, 64) || undefined } : null;
-    out.jot = { kind: j.kind, say: cleanStr(j.say, 400), about: cleanStr(j.about, 1000), settles: cleanStr(j.settles, 400), of: cleanStr(j.of, 64), ...(t?.text ? { ticks: t } : {}) };
+    out.jot = { kind: j.kind, say: cleanStr(j.say, 400), about: cleanStr(j.about, 1000), settles: cleanStr(j.settles, 400), of: cleanStr(j.of, 64), ...(t?.text ? { ticks: t } : {}), ...(cleanStr(j.replaces, 400) ? { replaces: cleanStr(j.replaces, 400) } : {}) };
   }
   if (cleanStr(c?.pick, 400)) out.pick = cleanStr(c.pick, 400);
   if (c?.proposed === true) out.proposed = true;
+  if (Array.isArray(c?.withdrawals)) out.withdrawals = c.withdrawals.slice(0, 20).map((w) => ({ note: cleanStr(w?.note, 1000), rec: cleanStr(w?.rec, 400), words: cleanStr(w?.words, 400), on: cleanStr(w?.on, 10) })).filter((w) => w.note && w.rec);
   if (Number.isFinite(c?.at) && c.at > 0) out.at = Math.round(c.at);
   if (Array.isArray(c?.decisions)) out.decisions = c.decisions.slice(0, 20).map((d) => ({ words: cleanStr(d?.words, 400) })).filter((d) => d.words);
   if (Array.isArray(c?.changes)) {
-    out.changes = c.changes.slice(0, 80).map((x) => ({ file: cleanStr(x?.file, 1000), for: cleanStr(x?.for, 8), line: int(x?.line), was: cleanStr(x?.was, 4000) || undefined, now: cleanStr(x?.now, 4000) || undefined, after: int(x?.after), anchor: typeof x?.anchor === 'string' ? x.anchor.slice(0, 4000) : undefined, add: cleanStr(x?.add, 400) || undefined, todo: x?.todo === true || undefined }))
+    out.changes = c.changes.slice(0, 80).map((x) => ({ file: cleanStr(x?.file, 1000), for: cleanStr(x?.for, 8), about: cleanStr(x?.about, 400) || undefined, line: int(x?.line), was: cleanStr(x?.was, 4000) || undefined, now: cleanStr(x?.now, 4000) || undefined, after: int(x?.after), anchor: typeof x?.anchor === 'string' ? x.anchor.slice(0, 4000) : undefined, add: cleanStr(x?.add, 400) || undefined, todo: x?.todo === true || undefined }))
       .filter((x) => x.file && (x.add ? x.after != null : x.line && x.was != null && x.now));
   }
   return out;
