@@ -159,6 +159,7 @@ test('a topic laid out: its goal and question, the to-dos that may be done (know
   const written = { nodes: [{ id: 'a', type: 'text', text: thisTimeText().replace('Goal: ', 'Goal: Book it all by the 20th').replace('- ', '- The Napa tour\n- Return flight A or B\n2. Phones\n- x\n') }] };
   assert.deepEqual(thisTimeOf(written), { goal: 'Book it all by the 20th', focus: ['The Napa tour', 'Return flight A or B', 'Phones'], decided: [], later: [] });
   assert.match(reviewDesk({ title: 'T', items: [{ kind: 'decide', say: 'N.', focus: 1 }] }).margin[0].title, /^Your pick/);
+  assert.equal(reviewDesk({ title: 'T', thisTime: { focus: ['Napa', 'Lunch'] }, items: [{ kind: 'decide', say: 'L.', focus: 2 }] }).margin[0].pick, 'Lunch', 'which of what they chose it is about (a jot settling that takes it away)');
   assert.deepEqual(reviewDesk({ title: 'T', goalState: 'stated', goal: 'G', goalFrom: 'a/b.md', notes: ['a/b.md'] }).desk.nodes.filter((n) => n.type === 'group').map((n) => n.label), ['The goal', 'Its notes'], 'nothing may be done: no such group');
 });
 

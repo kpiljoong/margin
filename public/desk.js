@@ -493,7 +493,7 @@ export function reviewDesk({ title, goal = '', goalState = 'guessed', goalFrom =
   let y = HEAD;
   const margin = items.map((x, i) => {
     const text = [x.say, x.why ? `\n_${i < 3 ? 'First' : 'Then'}: ${x.why}_` : '', x.from?.length ? `\nFrom: ${x.from.map((p) => `[[${p.replace(/\.md$/i, '')}]]`).join(', ')}` : '', x.todo ? `\nTo-do: \`${x.todo}\`` : ''].filter(Boolean).join('\n');
-    const card = { id: newId(), kind: 'review', title: `${x.focus ? 'Your pick \u00B7 ' : ''}${KIND[x.kind] || 'Margin'}`, text, x: right + PAD, y, width: 380, height: size(text) + 30 };
+    const card = { id: newId(), kind: 'review', title: `${x.focus ? 'Your pick \u00B7 ' : ''}${KIND[x.kind] || 'Margin'}`, text, x: right + PAD, y, width: 380, height: size(text) + 30, ...(x.focus && thisTime.focus?.[x.focus - 1] ? { pick: thisTime.focus[x.focus - 1] } : {}) };
     y += card.height + PAD / 2;
     return card;
   });
@@ -560,7 +560,7 @@ function button(label, title, run, cls = '') {
 }
 // The margin's cards as kept beside the desk: done ones, what shows them.
 export const marginCards = (ai) => ai.filter((a) => a.state === 'done' && String(a.text || '').trim()).slice(-200)
-  .map(({ id, kind, batch, of, title, text, x, y, width, height, paths, jot, decisions, changes, at }) => ({ id, kind, ...(batch ? { batch } : {}), ...(of ? { of } : {}), ...(title ? { title } : {}), text, x, y, width, height, ...(paths?.length ? { paths } : {}), ...(jot ? { jot } : {}), ...(decisions?.length ? { decisions } : {}), ...(changes?.length ? { changes } : {}), ...(at ? { at } : {}) }));
+  .map(({ id, kind, batch, of, title, text, x, y, width, height, paths, jot, decisions, changes, at, pick }) => ({ id, kind, ...(batch ? { batch } : {}), ...(of ? { of } : {}), ...(title ? { title } : {}), text, x, y, width, height, ...(paths?.length ? { paths } : {}), ...(jot ? { jot } : {}), ...(decisions?.length ? { decisions } : {}), ...(changes?.length ? { changes } : {}), ...(at ? { at } : {}), ...(pick ? { pick } : {}) }));
 const SVG = 'http://www.w3.org/2000/svg';
 const svg = (tag, cls) => { const e = document.createElementNS(SVG, tag); if (cls) e.setAttribute('class', cls); return e; };
 
@@ -2102,6 +2102,7 @@ export class Desk {
     const was = mine?.text;
     let mineText = was;
     let all = this.d.nodes;
+    const settled = []; // the margin's cards it settles
     for (const a of list) {
       // Done, and the to-do it does known: that to-do marked done (its card, or one made for it), proposed with the others.
       const t = a.jot?.kind === 'done' || a.jot?.kind === 'decided' ? a.jot.ticks : null;
@@ -2123,6 +2124,11 @@ export class Desk {
         else nodes.push({ id: newId(), type: 'text', text: t.text, x: a.x, y: a.y, width: a.width, height: 120, jotOf: a.jot.of, from: { file: t.file, line: t.line, kind: 'todo', key: t.key, at: today(), ...(t.tasks ? { tasks: true } : {}), to } });
         this.event('marked done', { file: t.file, text: t.text });
         continue;
+      }
+      // What it settles of what they chose: the margin's card about that, gone with it.
+      if (a.jot?.settles) {
+        const these = this.ai.filter((x) => x.pick && norm(x.pick) === norm(a.jot.settles));
+        if (these.length) { this.ai = this.ai.filter((x) => !these.includes(x)); settled.push(...these); }
       }
       if (a.jot && a.jot.kind !== 'todo') {
         mineText = addToThisTime(mineText, { kind: a.jot.kind === 'done' ? 'decided' : a.jot.kind, words: a.jot.say, note: a.jot.kind === 'decided' ? a.jot.about : '', settles: a.jot.settles });
@@ -2147,7 +2153,7 @@ export class Desk {
     this.sel = new Set(nodes.map((n) => n.id));
     this.change({ ...this.d, nodes: this.streamed([...all, ...nodes.filter((n) => !all.includes(n))]), edges: [...this.d.edges, ...edges] });
     // ⌘Z gives them back to the margin (⇧⌘Z takes them again).
-    this.taken.push({ at: this.undo.length, cards: list });
+    this.taken.push({ at: this.undo.length, cards: [...list, ...settled] });
     this.fitStream();
     if (this.jotStatus && list.some((a) => a.jot)) this.jotStatus.textContent = '';
     if (mineText != null && mineText !== was) this.say('Put in \u201CThis time\u201D (\u2318Z gives it back to the margin).');
