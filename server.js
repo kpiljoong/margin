@@ -1052,21 +1052,41 @@ async function labReviewTopics(b) {
 }
 
 // One topic on a desk: Reviews/<title> <day>.canvas (once a day: the same
-// opens again), what the margin says of it beside it.
+// opens again; prepared again, another beside it — "(2)" — never over what
+// was done on the first), what the margin says of it beside it.
 async function labReviewDesk(b) {
   const t = b.topic;
   const str = (v, max) => typeof v === 'string' && v.length <= max;
   if (!t || typeof t !== 'object' || !str(t.title, 200) || !t.title.trim() || !Array.isArray(t.notes) || !t.notes.length || t.notes.length > 40 || !t.notes.every((p) => str(p, 1000))
     || ![t.goal ?? '', t.ask ?? '', t.folder ?? '', t.goalFrom ?? ''].every((v) => str(v, 1000))) throw httpError(400, 'topic: { title, notes: [path], goal, goalState, goalFrom, ask, folder }');
   const day = reviewToday();
-  const name = `Reviews/${t.title.replace(/[\\/:*?"<>|#^[\]]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 80)} ${day}.canvas`;
+  const base = t.title.replace(/[\\/:*?"<>|#^[\]]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 80);
+  let name = `Reviews/${base} ${day}.canvas`;
+  if (fs.existsSync(workspacePath(name)) && !b.again) return { path: name, existed: true };
+  for (let k = 2; fs.existsSync(workspacePath(name)); k++) name = `Reviews/${base} ${day} (${k}).canvas`;
   const abs = workspacePath(name);
-  if (fs.existsSync(abs) && !b.again) return { path: name, existed: true };
   const r0 = reviewUp(b);
   const ignored = loadIgnore(ROOT);
   const mine = [...new Set(t.notes.map((p) => relOf(workspacePath(p))))].filter((p) => reviewable(p, ignored));
   if (!mine.length) throw httpError(400, 'None of its notes can be read (gone, private or ignored).');
   const notes = mine.map((p) => { const c = cachedText(p); return { path: p, date: c ? new Date(c.mtimeMs).toISOString().slice(0, 10) : '', text: c ? reviewText(c) : '' }; });
+  const deskEsm = await import(require('url').pathToFileURL(path.join(__dirname, 'public', 'desk.js')).href);
+  // "This time", as they wrote it on the last desk of this topic (today's, or the newest before).
+  const last = (() => { try { const dir = path.dirname(abs); return fs.readdirSync(dir).filter((f) => f.startsWith(`${base} `) && /^ \d{4}-\d{2}-\d{2}(?: \(\d+\))?\.canvas$/.test(f.slice(base.length))).sort((x, y) => fs.statSync(path.join(dir, y)).mtimeMs - fs.statSync(path.join(dir, x)).mtimeMs)[0]; } catch { return null; } })();
+  const thisTime = (() => { try { return last ? deskEsm.thisTimeOf(deskEsm.parseDesk(fs.readFileSync(path.join(path.dirname(abs), last), 'utf8'))) : { goal: '', focus: [] }; } catch { return { goal: '', focus: [] }; } })();
+  // What they chose may be past a note's first 3000 characters: its paragraphs about it go too.
+  const words = [...new Set(thisTime.focus.join(' ').toLowerCase().split(/[\s\p{P}\p{S}]+/u).filter((w) => w.length >= 2))];
+  if (words.length) {
+    recallEsm ||= await import(require('url').pathToFileURL(path.join(__dirname, 'public', 'recall.js')).href);
+    for (const n of notes) {
+      if (n.text.length <= 3000) continue;
+      let more = '';
+      for (const q of recallEsm.parasOf(n.text.slice(3000))) if (words.some((w) => q.text.toLowerCase().includes(w)) && more.length + q.text.length < 1500) more += `${q.text.replace(/\s+/g, ' ')}\n`;
+      if (more) n.more = more.trim();
+    }
+  }
+  const sentText = notes.map((n) => `${n.text.slice(0, 3000)}\n${n.more || ''}`).join('\n').toLowerCase();
+  const focusFound = thisTime.focus.map((f) => f.toLowerCase().split(/[\s\p{P}\p{S}]+/u).filter((w) => w.length >= 2).some((w) => sentText.includes(w)));
   // Older paragraphs near it (the local model): never its own, the assistant's records, a private note.
   const older = [];
   if (embed.status().state === 'ready') {
@@ -1099,21 +1119,23 @@ async function labReviewDesk(b) {
   }
   const sent = todos.slice(0, 60);
   const projects = new Set(reviewFolders().filter((f) => f.startsWith('01-projects/')).map((f) => f.slice(12)));
-  const topic = { title: t.title.trim(), goal: (t.goal || '').trim(), goalState: ['stated', 'guessed', 'unknown'].includes(t.goalState) ? t.goalState : 'guessed' };
-  const r = await r0.session({ topic, notes, older, todos: sent.map((x) => `${x.text} (${x.file})`), today: day, projects });
+  const topic = thisTime.goal ? { title: t.title.trim(), goal: thisTime.goal, goalState: 'theirs' } : { title: t.title.trim(), goal: (t.goal || '').trim(), goalState: ['stated', 'guessed', 'unknown'].includes(t.goalState) ? t.goalState : 'guessed' };
+  const r = await r0.session({ topic, focus: thisTime.focus, notes, older, todos: sent.map((x) => `${x.text} (${x.file})`), today: day, projects });
   if (!r.ok) throw httpError(502, r.error || 'Claude did not answer.');
-  // Done already? Those it says may be, and those of this topic whose day has passed.
-  const why = new Map(r.maybe.map((m) => [m.t, m.why]));
-  const late = (x) => { const d = /\u{1F4C5}\s*(\d{4}-\d{2}-\d{2})/u.exec(x.text)?.[1]; return d && d < day; };
-  const check = sent.map((x, i) => ({ ...x, n: i + 1 })).filter((x) => why.has(x.n) || ((r.mine.includes(x.n) || x.file !== REVIEW_TODO) && late(x)))
-    .map((x) => ({ ...x, why: why.get(x.n) || 'Its day has passed: nothing since in the notes found.' }));
-  const deskEsm = await import(require('url').pathToFileURL(path.join(__dirname, 'public', 'desk.js')).href);
+  // Their state to check: a note of the topic says it was done or says
+  // otherwise (which note, linked), or its day has passed (seen here) — never
+  // because nothing was found about it.
+  const link = (p) => `[[${p.replace(/\.md$/i, '')}]]`;
+  const said = new Map(r.maybe.map((m) => [m.t, m.signal === 'done' ? `A note says it was done or booked: ${link(notes[m.n - 1].path)}` : `Another note gives it another state: ${link(notes[m.n - 1].path)}`]));
+  const late = (x) => { const d = /\u{1F4C5}\s*(\d{4}-\d{2}-\d{2})/u.exec(x.text)?.[1]; return d && d < day ? d : ''; };
+  const check = sent.map((x, i) => ({ ...x, n: i + 1 })).filter((x) => said.has(x.n) || ((r.mine.includes(x.n) || x.file !== REVIEW_TODO) && late(x)))
+    .map((x) => ({ ...x, why: said.get(x.n) || `Its day (${late(x)}) has passed: is it done?` }));
   const items = r.items.map((x) => ({ ...x, from: [...x.notes.map((n) => notes[n - 1].path), ...x.older.map((n) => older[n - 1].path)] }));
-  const { desk, margin } = deskEsm.reviewDesk({ title: topic.title, goal: topic.goal, goalState: topic.goalState, goalFrom: topic.goalState === 'stated' ? relOf(workspacePath(t.goalFrom || mine[0])) : '', ask: t.ask || '', todos: check, notes: mine, items, at: day });
+  const { desk, margin } = deskEsm.reviewDesk({ title: topic.title, goal: topic.goal, goalState: topic.goalState, goalFrom: topic.goalState === 'stated' ? relOf(workspacePath(t.goalFrom || mine[0])) : '', ask: topic.goalState === 'theirs' ? '' : t.ask || '', thisTime, todos: check, notes: mine, items, at: day });
   fs.mkdirSync(path.dirname(abs), { recursive: true });
   writeFileAtomic(abs, deskEsm.stringifyDesk(desk));
   saveDeskMargin({ path: name, cards: margin });
-  return { path: name, read: notes.length, older: older.length, todos: sent.length, check: check.length, items: items.length };
+  return { path: name, read: notes.length, older: older.length, todos: sent.length, check: check.length, items: items.length, focus: thisTime.focus.length, focusFound };
 }
 
 // An answer to one of the margin's questions: a line at the end of KNOWN.md

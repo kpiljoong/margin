@@ -225,22 +225,39 @@ export function noteDesk(file, text, links = [], at = '') {
 }
 
 // A topic laid out for a review (Labs; server.js /api/lab/review/desk): its
-// goal (and the question that would settle it), the to-dos that may be done
-// already — each a card that knows its line, so x marks it done there (with
-// the day, as the assistant's list writes them), proposed in the red pen
-// review — and its notes. What the margin says of it goes beside them, in
-// the margin (not kept until kept: Tab), most important first.
-// → { desk, margin: [card] }.
-const GOAL_STATE = { stated: 'in a note', guessed: 'a guess', unknown: 'not known' };
-export function reviewDesk({ title, goal = '', goalState = 'guessed', goalFrom = '', ask = '', todos = [], notes = [], items = [], at = '' }) {
+// goal (and the question that would settle it) and "This time" — theirs to
+// write: the goal in their words, what to settle now; the next review of it
+// reads them (thisTimeOf) and puts what they chose first — the to-dos whose
+// state a note puts in doubt, or whose day has passed — each a card that
+// knows its line, so x marks it done there (with the day, as the
+// assistant's list writes them), proposed in the red pen review — and its
+// notes. What the margin says of it goes beside them, in the margin (not
+// kept until kept: Tab), most important first. → { desk, margin: [card] }.
+const GOAL_STATE = { stated: 'in a note', theirs: 'yours', guessed: 'a guess', unknown: 'not known' };
+const THIS_TIME = '**This time**';
+export function thisTimeText({ goal = '', focus = [] } = {}) {
+  return [`${THIS_TIME} \u2014 yours to write; the next review of it reads it`, '', `Goal: ${goal}`, 'To settle now:', ...(focus.length ? focus.map((f) => `- ${f}`) : ['- '])].join('\n');
+}
+// "This time" as they wrote it on a desk: { goal, focus: [at most three] }.
+export function thisTimeOf(desk) {
+  const n = (desk?.nodes || []).find((x) => x.type === 'text' && String(x.text || '').startsWith(THIS_TIME));
+  if (!n) return { goal: '', focus: [] };
+  const lines = n.text.split('\n');
+  const goal = (/^\s*Goal:\s*(.*)$/i.exec(lines.find((l) => /^\s*Goal:/i.test(l)) || '') || [])[1]?.trim() || '';
+  const at = lines.findIndex((l) => /^\s*To settle now:/i.test(l));
+  const focus = at < 0 ? [] : lines.slice(at + 1).map((l) => l.replace(/^\s*(?:[-*]|\d+[.)])\s*/, '').trim()).filter((l) => l.length > 1).slice(0, 3);
+  return { goal: goal.slice(0, 300), focus: focus.map((f) => f.slice(0, 300)) };
+}
+export function reviewDesk({ title, goal = '', goalState = 'guessed', goalFrom = '', ask = '', thisTime = {}, todos = [], notes = [], items = [], at = '' }) {
   const size = (s) => {
     const w = [...s].reduce((sum, c) => sum + (c.codePointAt(0) > 0x2e80 ? 2 : 1), 0);
     return 74 + 21 * Math.max(1, Math.ceil(w / 40));
   };
   const goalText = [`**${title}**`, '', `Goal (${GOAL_STATE[goalState] || GOAL_STATE.guessed}): ${goal || '\u2014'}${goalFrom ? ` \u2014 [[${goalFrom.replace(/\.md$/i, '')}]]` : ''}`, ...(ask ? ['', `? ${ask}`] : [])].join('\n');
+  const mine = thisTimeText(thisTime);
   const groups = [
-    { name: 'The goal', cards: [{ id: newId(), type: 'text', text: goalText, x: 0, y: 0, width: 360, height: size(goalText) + 40 }] },
-    { name: 'Done already? (x: done)', cards: todos.map((t) => {
+    { name: 'The goal', cards: [{ id: newId(), type: 'text', text: goalText, x: 0, y: 0, width: 360, height: size(goalText) + 40 }, { id: newId(), type: 'text', text: mine, x: 0, y: 0, width: 360, height: size(mine) + 60 }] },
+    { name: 'Check the state (x: done)', cards: todos.map((t) => {
       const text = t.why ? `${t.text}\n\n_${t.why}_` : t.text;
       return { id: newId(), type: 'text', text, x: 0, y: 0, width: 340, height: size(text), from: { file: t.file, line: t.line, kind: 'todo', key: t.key, at, ...(t.tasks ? { tasks: true } : {}) } };
     }) },
@@ -259,7 +276,7 @@ export function reviewDesk({ title, goal = '', goalState = 'guessed', goalFrom =
   let y = HEAD;
   const margin = items.map((x, i) => {
     const text = [x.say, x.why ? `\n_${i < 3 ? 'First' : 'Then'}: ${x.why}_` : '', x.from?.length ? `\nFrom: ${x.from.map((p) => `[[${p.replace(/\.md$/i, '')}]]`).join(', ')}` : '', x.todo ? `\nTo-do: \`${x.todo}\`` : ''].filter(Boolean).join('\n');
-    const card = { id: newId(), kind: 'review', title: KIND[x.kind] || 'Margin', text, x: right + PAD, y, width: 380, height: size(text) + 30 };
+    const card = { id: newId(), kind: 'review', title: `${x.focus ? 'Your pick \u00B7 ' : ''}${KIND[x.kind] || 'Margin'}`, text, x: right + PAD, y, width: 380, height: size(text) + 30 };
     y += card.height + PAD / 2;
     return card;
   });
