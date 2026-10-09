@@ -741,6 +741,8 @@ export class Desk {
     this.el = el('div', 'desk', this.grid, this.world, this.marquee, this.dock, this.hint, this.opts.review && this.opts.jot ? this.buildJot() : null);
     this.el.tabIndex = 0;
     this.el.classList.toggle('review', !!this.opts.review);
+    // The jot line just over the panel, however tall it is (a narrow pane: below).
+    if (this.opts.review && typeof ResizeObserver === 'function') new ResizeObserver(() => this.el.style.setProperty('--dock-h', `${this.dock.offsetHeight}px`)).observe(this.dock);
     this.el.desk = this; // for tests
     this.el.addEventListener('pointerdown', (e) => this.down(e));
     this.el.addEventListener('wheel', (e) => this.wheel(e), { passive: false });
