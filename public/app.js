@@ -4038,7 +4038,7 @@ function openSettings({ keys = false, live = false } = {}) {
         toggle('recall', 'The margin remembers', 'Beside a to-do, a question, a decision or a line about one: what your other notes already say about it (the same to-do open or ticked there, a question asked or decided before, a decision made before); beside a paragraph, the paragraphs of other notes about the same. Read on this device; nothing is sent.'),
         toggle('recallModel', 'The margin understands (a local model)', 'Paragraphs meet the ones about the same thing in other words or another language, not only in the same words. A small multilingual model reads them on this device: your notes are never sent. Turning it on downloads it once (149 MB) and reads your notes in the background (about 400 MB of memory while on; the first time, with many notes, two more copies of the model read along for a while, about 900 MB more).', () => { embedTurn(); openSettings(); }),
         S.settings.recallModel ? modelBox() : null,
-        toggle('recallJudge', 'The margin reads them with Claude', 'When a paragraph meets others, Claude says how in a line \u2014 the same thing, answers it, goes against it, adds to it \u2014 and leaves out the ones not really about it. That paragraph and the three it met are sent to Claude, through the Claude Code agent you signed in to (the live margin\u2019s model, Haiku unless chosen), a few seconds after you stop typing; never the paragraph you are writing, a private note, or one .agentnotesignore names. What it said is kept: a paragraph is read again only when it changes.', () => { judgeSt.got = new Map(); judgeSt.error = null; redrawRecall(); }),
+        toggle('recallJudge', 'The margin reads them with Claude', 'When a paragraph meets others, Claude says how in a line \u2014 the same thing, answers it, goes against it, adds to it \u2014 and leaves out the ones not really about it. That paragraph and the three it met are sent to Claude, through the Claude Code agent you signed in to (the live margin\u2019s model, Haiku unless chosen), a moment after you leave it, even while you type on; never the paragraph you are writing, a private note, or one .agentnotesignore names. What it said is kept: a paragraph is read again only when it changes.', () => { judgeSt.got = new Map(); judgeSt.error = null; redrawRecall(); }),
         S.settings.recallJudge && judgeSt.error ? h('p', { class: 'set-detail' }, h('span', { class: 'set-warn' }, judgeSt.error)) : null,
         toggle('recallThink', 'The margin thinks along (Claude)', 'A paragraph you have just written \u2014 once you leave it, or pause on a finished sentence \u2014 gets one or two words beside it when that helps, mostly from what your notes already know: a to-do (and by when, a day to put in the line), what you are trying to remember, found in your notes (with the local model on, it looks for it), what they said before on what you are weighing, one that goes against it, a question they leave open, a next step, a risk. Most paragraphs get nothing. That paragraph, the text before it in the note and up to five paragraphs of other notes near it are sent to Claude through the Claude Code agent you signed in to; never a private note, nor one .agentnotesignore names. At most 80 paragraphs a day; what it said is kept.', () => { thinkSt.got = new Map(); thinkSt.error = null; for (const t of S.tabs) t.thinkSeen = null; redrawRecall(); }),
         S.settings.recallThink ? h('div', { class: 'set-grid' }, h('div', { class: 'set-label' }, 'Thinks with'), segRow('thinkModel', { sonnet: 'Sonnet', haiku: 'Haiku' })) : null,
@@ -8729,11 +8729,13 @@ async function embedAsk() {
 }
 // ---- the margin reads them with Claude (Settings; lib/judge.js): the
 // paragraphs of the note in view that met others — not the one being
-// written — are sent with those a moment after the typing stops; what it
+// written — are sent with those a moment after (typing on doesn't put it
+// off: a paragraph left is read while the next is written); what it
 // says is kept by the paragraph and the other (and on the server, by what
 // was sent). A ref it can't say (withheld, or it failed) stays as found.
 const judgeSt = { got: new Map(), want: new Map(), asking: new Set(), timer: null, busy: false, error: null };
-const JUDGE_IDLE = 2500;
+const JUDGE_IDLE = 1500;
+const judgeSoon = () => { if (!judgeSt.timer) judgeSt.timer = setTimeout(() => { judgeSt.timer = null; judgeAsk(); }, JUDGE_IDLE); };
 function judgeFor(tab, writing) {
   if (!S.settings.recallJudge) return null;
   return (t, refs) => refs.map((r) => {
@@ -8745,15 +8747,14 @@ function judgeFor(tab, writing) {
       const byText = judgeSt.want.get(tab.path);
       if (!byText.has(t)) byText.set(t, new Map());
       byText.get(t).set(k, r);
-      clearTimeout(judgeSt.timer);
-      judgeSt.timer = setTimeout(judgeAsk, JUDGE_IDLE);
+      judgeSoon();
       return { reading: true };
     }
     return undefined;
   });
 }
 async function judgeAsk() {
-  if (judgeSt.busy) { judgeSt.timer = setTimeout(judgeAsk, JUDGE_IDLE); return; }
+  if (judgeSt.busy) { judgeSoon(); return; }
   const want = judgeSt.want;
   judgeSt.want = new Map();
   judgeSt.busy = true;
@@ -8784,8 +8785,11 @@ async function judgeAsk() {
 // says something only when that helps; what it said is kept by the
 // paragraph (and on the server, by what was sent).
 const thinkSt = { got: new Map(), asked: new Set(), queue: [], busy: false, error: null };
-const THINK_IDLE = 3000;
-const THINK_PAUSE = 8000;
+// A look every THINK_IDLE while typing goes on (typing doesn't put it off:
+// a paragraph left is asked about while the next is written); the one the
+// cursor is in, once its sentence has ended and THINK_PAUSE has passed.
+const THINK_IDLE = 1500;
+const THINK_PAUSE = 3000;
 const THINK_DAY_MAX = 80;
 // A sentence that has ended: . ? ! … or a Korean sentence ending (\uB2E4 \uC694 \uAE4C \uC8E0 \uC74C \uD568 \uC784).
 const THINK_DONE = /(?:[.?!…。]|[\uB2E4\uC694\uAE4C\uC8E0\uC74C\uD568\uC784])["')\]]*$/;
@@ -8797,8 +8801,8 @@ function thinkDay() {
 }
 function thinkPoke(tab) {
   if (!S.settings.recallThink || !S.settings.recall || !tab?.editor) return;
-  clearTimeout(tab.thinkTimer);
-  tab.thinkTimer = setTimeout(() => thinkTick(tab), THINK_IDLE);
+  if (tab.thinkTimer) return;
+  tab.thinkTimer = setTimeout(() => { tab.thinkTimer = null; thinkTick(tab); }, THINK_IDLE);
 }
 function thinkTick(tab) {
   if (!S.settings.recallThink || !S.settings.recall || !recallMod || !recallSt.index || !tab.editor || !tab.thinkSeen || !isAttached(tab) || !isNote(tab.path)) return;
@@ -8816,7 +8820,7 @@ function thinkTick(tab) {
     }
     ready.push(p);
   }
-  if (later) { clearTimeout(tab.thinkTimer); tab.thinkTimer = setTimeout(() => thinkTick(tab), later + 50); }
+  if (later) { clearTimeout(tab.thinkTimer); tab.thinkTimer = setTimeout(() => { tab.thinkTimer = null; thinkTick(tab); }, later + 50); }
   // Asked: the margin shows it is thinking about them.
   if (ready.slice(-3).filter((p) => thinkAsk(tab, text, p)).length && tab.comments && isAttached(tab)) drawNotes(tab);
 }
