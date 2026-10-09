@@ -490,23 +490,25 @@ export function changesText({ decided = [], changes = [] }) {
 // again when the note has it. → { text, made: n, missed: n }.
 export function withChanges(text, changes) {
   const lines = String(text).split('\n');
-  let made = 0;
+  const done = [];
   let missed = 0;
   const at = (c) => {
     if (norm(lines[c.line - 1] ?? '') === norm(c.was)) return c.line - 1;
     const all = lines.map((l, i) => (norm(l) === norm(c.was) ? i : -1)).filter((i) => i >= 0);
     return all.length === 1 ? all[0] : -1;
   };
-  for (const c of changes.filter((x) => !x.add)) { const i = at(c); if (i < 0) missed++; else { lines[i] = c.now; made++; } }
-  // Added after the line they were put after, found again by its words (bottom first; two after one line, in their order).
+  // Where each add goes, found before any line is changed (its line may be
+  // one of them; a change keeps the numbers).
   const adds = changes.map((c, i) => ({ c, i })).filter((x) => x.c.add).map((x) => ({ ...x, at: x.c.anchor == null ? Math.min(x.c.after, lines.length) : at({ line: x.c.after, was: x.c.anchor }) + 1 }));
+  for (const c of changes.filter((x) => !x.add)) { const i = at(c); if (i < 0) missed++; else { lines[i] = c.now; done.push(c); } }
+  // Added after the line they were put after (bottom first; two after one line, in their order).
   for (const { c, at: i } of adds.sort((p, q) => q.at - p.at || q.i - p.i)) {
     if (lines.some((l) => norm(l) === norm(c.add))) continue;
     if (i <= 0) { missed++; continue; }
     lines.splice(i, 0, c.add);
-    made++;
+    done.push(c);
   }
-  return { text: lines.join('\n'), made, missed };
+  return { text: lines.join('\n'), made: done.length, missed, done };
 }
 export function reviewDesk({ title, goal = '', goalState = 'guessed', goalFrom = '', ask = '', thisTime = {}, todos = [], notes = [], items = [], at = '' }) {
   const size = (s) => {
@@ -2229,11 +2231,14 @@ export class Desk {
       else { const at = this.spot(this.d.nodes.filter((n) => n.type !== 'group'), 360, h); mine = { id: newId(), type: 'text', text: mineText, x: at.x, y: at.y, width: 360, height: h }; all = [...all, mine]; }
       if (!nodes.length) nodes.push(all.find((n) => n.id === mine.id));
     }
+    const notTaken = () => { this.ai.push(...kept); this.render(); this.say(`${kept.length === 1 ? 'One was' : `${kept.length} were`} not taken: the decision ${kept.length === 1 ? 'it changes is' : 'they change are'} no longer in \u201CThis time\u201D as it was (changed or gone since). Look at it there.`, 'error'); };
+    // None taken: nothing changed (and nothing to undo).
+    if (kept.length === list.length) { notTaken(); return; }
     this.sel = new Set(nodes.map((n) => n.id));
     this.change({ ...this.d, nodes: this.streamed([...all, ...nodes.filter((n) => !all.includes(n))]), edges: [...this.d.edges, ...edges] });
     // ⌘Z gives them back to the margin (⇧⌘Z takes them again).
     this.taken.push({ at: this.undo.length, cards: [...list.filter((a) => !kept.includes(a)), ...settled] });
-    if (kept.length) { this.ai.push(...kept); this.render(); this.say(`${kept.length === 1 ? 'One was' : `${kept.length} were`} not taken: the decision ${kept.length === 1 ? 'it changes is' : 'they change are'} no longer in \u201CThis time\u201D as it was (changed or gone since). Look at it there.`, 'error'); }
+    if (kept.length) notTaken();
     this.fitStream();
     if (this.jotStatus && list.some((a) => a.jot)) this.jotStatus.textContent = '';
     if (mineText != null && mineText !== was) this.say('Put in \u201CThis time\u201D (\u2318Z gives it back to the margin).');
@@ -2242,6 +2247,8 @@ export class Desk {
     if (!a) return;
     if (a.kind === 'review' && a.title !== 'Wrap-up') this.event('let go', { title: a.title, text: a.text });
     this.ai = this.ai.filter((x) => x !== a);
+    // Let go: not given back by an undo or redo after.
+    for (const t of [...this.taken, ...this.retaken]) t.cards = t.cards.filter((x) => x.id !== a.id);
     if (this.opts.review) this.streamNow(); else this.render();
   }
   // ---- a review's desk, kept in order: under its goal, one column — what
@@ -2396,12 +2403,12 @@ export class Desk {
     let missed = 0;
     const failed = [];
     for (const [file, cs] of by) {
-      let r = { made: 0, missed: 0 };
+      let r = { made: 0, missed: 0, done: [] };
       try {
         const id = await this.opts.proposeNote(file, (text) => { r = withChanges(text, cs); return r.text; }, { open: false });
         missed += r.missed;
         // What it proposed, as the lines would read (the wrap-up looks for them in the note).
-        if (id && r.made) { done.push({ file, id }); this.event('changes proposed', { file, text: cs.map((c) => c.add || c.now).join('\n').slice(0, 4000), about: [...new Set(cs.map((c) => c.about).filter(Boolean))] }); }
+        if (id && r.made) { done.push({ file, id }); this.event('changes proposed', { file, text: r.done.map((c) => c.add || c.now).join('\n').slice(0, 4000), about: [...new Set(r.done.map((c) => c.about).filter(Boolean))] }); }
       } catch (e) { failed.push(`${file.split('/').pop().replace(/\.md$/i, '')}: ${e.message}`); }
     }
     // Their reviews, waiting: one by one from here (none opened by itself).

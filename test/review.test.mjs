@@ -407,12 +407,15 @@ test('decisions carried into the notes: every line no longer agreeing, as it was
   assert.match(changesText({ decided: ['X'], changes: [] }), /Nothing in the notes goes against it\./);
   // Made on the note as it is now: moved down a line since, one line changed by them since.
   const plan = withChanges('# Plan\nNew line\n\nDay 1: fly into SF\nDay 2: SF\n\n## Flights\nOption A: SF in, or not\nOption B: LA in', changes.filter((c) => c.file === 'trip/plan.md' && !c.add));
-  assert.deepEqual(plan, { text: '# Plan\nNew line\n\nDay 1: fly into LA\nDay 2: SF\n\n## Flights\nOption A: SF in, or not\nOption B: LA in (\u2705 chosen)', made: 2, missed: 1 });
+  assert.deepEqual({ ...plan, done: plan.done.length }, { text: '# Plan\nNew line\n\nDay 1: fly into LA\nDay 2: SF\n\n## Flights\nOption A: SF in, or not\nOption B: LA in (\u2705 chosen)', made: 2, missed: 1, done: 2 });
   // Added after the line it was put after, found by its words when the note moved on; two after one, in their order.
   const two = [{ add: '- one #decision', after: 2, anchor: 'Day 2: SF' }, { add: '- two #decision', after: 2, anchor: 'Day 2: SF' }];
   assert.equal(withChanges('Day 1\nDay 2: SF\nDay 3', two).text, 'Day 1\nDay 2: SF\n- one #decision\n- two #decision\nDay 3');
   assert.equal(withChanges('New\nDay 1\nDay 2: SF\nDay 3', two).text, 'New\nDay 1\nDay 2: SF\n- one #decision\n- two #decision\nDay 3');
-  assert.deepEqual(withChanges('Day 1\nDay 3', two), { text: 'Day 1\nDay 3', made: 0, missed: 2 }, 'its line gone: not put somewhere else');
+  assert.deepEqual(withChanges('Day 1\nDay 3', two), { text: 'Day 1\nDay 3', made: 0, missed: 2, done: [] }, 'its line gone: not put somewhere else');
+  // After a line it changes too: found as the line was, before the change.
+  const both = withChanges('# Trip\n- Day 1: SF\n- Day 2: Napa\nend', [{ line: 2, was: '- Day 1: SF', now: '- Day 1: LA' }, { add: '- Fly into LA #decision', after: 2, anchor: '- Day 1: SF' }]);
+  assert.deepEqual([both.text, both.made, both.missed], ['# Trip\n- Day 1: LA\n- Fly into LA #decision\n- Day 2: Napa\nend', 2, 0]);
   const air = withChanges(notes[1].text, changes.filter((c) => c.file === 'trip/air.md'));
   assert.equal(air.text, 'A or B?\nAir: undecided\n- Fly into LA #decision');
   assert.equal(withChanges(air.text, changes.filter((c) => c.file === 'trip/air.md')).made, 0, 'not again');
