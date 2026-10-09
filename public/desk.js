@@ -560,7 +560,7 @@ function button(label, title, run, cls = '') {
 }
 // The margin's cards as kept beside the desk: done ones, what shows them.
 export const marginCards = (ai) => ai.filter((a) => a.state === 'done' && String(a.text || '').trim()).slice(-200)
-  .map(({ id, kind, batch, of, title, text, x, y, width, height, paths, jot, decisions, changes, at, pick }) => ({ id, kind, ...(batch ? { batch } : {}), ...(of ? { of } : {}), ...(title ? { title } : {}), text, x, y, width, height, ...(paths?.length ? { paths } : {}), ...(jot ? { jot } : {}), ...(decisions?.length ? { decisions } : {}), ...(changes?.length ? { changes } : {}), ...(at ? { at } : {}), ...(pick ? { pick } : {}) }));
+  .map(({ id, kind, batch, of, title, text, x, y, width, height, paths, jot, decisions, changes, at, pick, proposed }) => ({ id, kind, ...(batch ? { batch } : {}), ...(of ? { of } : {}), ...(title ? { title } : {}), text, x, y, width, height, ...(paths?.length ? { paths } : {}), ...(jot ? { jot } : {}), ...(decisions?.length ? { decisions } : {}), ...(changes?.length ? { changes } : {}), ...(at ? { at } : {}), ...(pick ? { pick } : {}), ...(proposed ? { proposed } : {}) }));
 const SVG = 'http://www.w3.org/2000/svg';
 const svg = (tag, cls) => { const e = document.createElementNS(SVG, tag); if (cls) e.setAttribute('class', cls); return e; };
 
@@ -929,7 +929,9 @@ export class Desk {
     });
     e.priv = el('span', 'desk-private');
     e.priv.hidden = true;
-    e.append(e.head, e.body, e.from, e.grip, e.num, e.priv);
+    e.changes = el('span', 'desk-changes');
+    e.changes.hidden = true;
+    e.append(e.head, e.body, e.from, e.grip, e.num, e.priv, e.changes);
     return e;
   }
   fill(e, n) {
@@ -945,6 +947,11 @@ export class Desk {
     e.num.textContent = this.nums?.has(n.id) ? `#${this.nums.get(n.id)}` : '';
     const title = cardTitle(n);
     if (n.type === 'group') { e.head.textContent = title; e.body.replaceChildren(); return; }
+    // What the changes to the notes ask of this one (not proposed yet: on the card that shows them).
+    const asked = n.type === 'file' ? this.ai.filter((a) => a.changes && !a.proposed).flatMap((a) => a.changes).filter((c) => c.file === n.file).length : 0;
+    e.changes.hidden = !asked;
+    e.changes.textContent = asked ? `${asked} to change` : '';
+    e.changes.title = asked ? 'Lines of it that no longer agree with what you decided: on the card \u201CChanges to the notes\u201D' : '';
     e.priv.hidden = !(n.type === 'file' && this.priv.get(n.file));
     e.priv.textContent = e.priv.hidden ? '' : 'private · not sent';
     e.priv.title = e.priv.hidden ? '' : `Shown here; never sent to the margin (${this.priv.get(n.file)})`;
@@ -2076,10 +2083,12 @@ export class Desk {
       todos.hidden = !(x.kind === 'review' && x.title === 'Wrap-up' && this.opts.todoFile && /^- \[ \] /m.test(x.text || ''));
       decided.hidden = !(x.kind === 'review' && x.title === 'Wrap-up' && x.decisions?.length && this.opts.changes);
       propose.hidden = !(x.kind === 'review' && x.changes?.length);
+      propose.textContent = x.proposed ? 'Proposed \u2713 (again)' : 'Propose in the notes';
       keep.disabled = x.state !== 'done';
       // What was jotted, sorted: taken into "This time" (a to-do, kept as a card).
-      keep.textContent = x.jot?.ticks && x.jot.kind === 'done' ? 'Mark it done' : x.jot && x.jot.kind !== 'todo' ? 'Into This time' : 'Keep';
-      keep.title = x.jot && x.jot.kind !== 'todo' ? 'Put it in \u201CThis time\u201D, under its part (Tab)' : 'Keep it as a card of the desk (Tab)';
+      const ticks = x.jot?.ticks && (x.jot.kind === 'done' || x.jot.kind === 'decided');
+      keep.textContent = ticks ? (x.jot.kind === 'done' ? 'Mark it done' : 'Decided, and its to-do done') : x.jot && x.jot.kind !== 'todo' ? 'Into This time' : 'Keep';
+      keep.title = ticks ? `${x.jot.kind === 'decided' ? 'Put it under Decided in \u201CThis time\u201D, and mark' : 'Mark'} the to-do it ticks off done (\u201C${x.jot.ticks.text}\u201D${x.jot.ticks.file ? `: proposed to ${x.jot.ticks.file} with the others, in its red pen review` : ': on its card here'}) (Tab)` : x.jot && x.jot.kind !== 'todo' ? 'Put it in \u201CThis time\u201D, under its part (Tab)' : 'Keep it as a card of the desk (Tab)';
       const n = this.batchOf(x).length;
       all.hidden = n < 2;
       all.textContent = x.jot ? `Take all ${n}` : `Keep all ${n}`;
@@ -2111,10 +2120,15 @@ export class Desk {
     let all = this.d.nodes;
     const settled = []; // the margin's cards it settles
     for (const a of list) {
+      // What it settles of what they chose: the margin's card about that, gone with it.
+      if (a.jot?.settles) {
+        const these = this.ai.filter((x) => x.pick && norm(x.pick) === norm(a.jot.settles));
+        if (these.length) { this.ai = this.ai.filter((x) => !these.includes(x)); settled.push(...these); }
+      }
       // Done, and the to-do it does known: that to-do marked done (its card, or one made for it), proposed with the others.
       const t = a.jot?.kind === 'done' || a.jot?.kind === 'decided' ? a.jot.ticks : null;
       // A decision that settles a to-do: in "This time" too.
-      if (t && a.jot.kind === 'decided') mineText = addToThisTime(mineText, { kind: 'decided', words: a.jot.say, note: a.jot.about, settles: a.jot.settles });
+      if (t && a.jot.kind === 'decided') { mineText = addToThisTime(mineText, { kind: 'decided', words: a.jot.say, note: a.jot.about, settles: a.jot.settles }); this.event('noted', { title: a.title, text: a.jot.say, ...(a.jot.about ? { file: a.jot.about } : {}) }); }
       // One taken on this desk: ticked on its card (and so not next any more).
       if (t?.card) {
         all = all.map((n) => (n.id === t.card ? { ...n, text: String(n.text).split(`To-do: \`- [ ] ${t.text}\``).join(`To-do: \`- [x] ${t.text}\``) } : n));
@@ -2131,11 +2145,6 @@ export class Desk {
         else nodes.push({ id: newId(), type: 'text', text: t.text, x: a.x, y: a.y, width: a.width, height: 120, jotOf: a.jot.of, from: { file: t.file, line: t.line, kind: 'todo', key: t.key, at: today(), ...(t.tasks ? { tasks: true } : {}), to } });
         this.event('marked done', { file: t.file, text: t.text });
         continue;
-      }
-      // What it settles of what they chose: the margin's card about that, gone with it.
-      if (a.jot?.settles) {
-        const these = this.ai.filter((x) => x.pick && norm(x.pick) === norm(a.jot.settles));
-        if (these.length) { this.ai = this.ai.filter((x) => !these.includes(x)); settled.push(...these); }
       }
       if (a.jot && a.jot.kind !== 'todo') {
         mineText = addToThisTime(mineText, { kind: a.jot.kind === 'done' ? 'decided' : a.jot.kind, words: a.jot.say, note: a.jot.kind === 'decided' ? a.jot.about : '', settles: a.jot.settles });
@@ -2320,7 +2329,7 @@ export class Desk {
     // Their reviews, waiting: one by one from here (none opened by itself).
     const row = this.say(`Proposed in ${done.length} note${done.length === 1 ? '' : 's'}, each waiting in its red pen review${missed ? `; ${missed} line${missed === 1 ? ' was' : 's were'} no longer as read, left` : ''}${failed.length ? `; not proposed \u2014 ${failed.join('; ')}` : ''}.`);
     if (this.opts.openReview) for (const d of done) row.append(button(d.file.split('/').pop().replace(/\.md$/i, ''), `Its red pen review: ${d.file}`, () => this.opts.openReview(d.id), 'desk-review-link'));
-    if (done.length) { this.foldDock(false); this.dockShow(); }
+    if (done.length) { a.proposed = true; this.render(); this.foldDock(false); this.dockShow(); }
   }
   // What they jotted (Enter, at the bottom): on the desk as written, and
   // sorted by the margin — each thing a card beside it: decided, later,

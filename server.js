@@ -1622,6 +1622,7 @@ function reviewCardParts(c) {
     out.jot = { kind: j.kind, say: cleanStr(j.say, 400), about: cleanStr(j.about, 1000), settles: cleanStr(j.settles, 400), of: cleanStr(j.of, 64), ...(t?.text ? { ticks: t } : {}) };
   }
   if (cleanStr(c?.pick, 400)) out.pick = cleanStr(c.pick, 400);
+  if (c?.proposed === true) out.proposed = true;
   if (Number.isFinite(c?.at) && c.at > 0) out.at = Math.round(c.at);
   if (Array.isArray(c?.decisions)) out.decisions = c.decisions.slice(0, 20).map((d) => ({ words: cleanStr(d?.words, 400) })).filter((d) => d.words);
   if (Array.isArray(c?.changes)) {

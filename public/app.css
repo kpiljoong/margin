@@ -1861,6 +1861,8 @@ li.callout-hot { background: color-mix(in srgb, var(--accent) 16%, transparent);
 .desk.far .desk-from { visibility: hidden; }
 .desk-private { position: absolute; bottom: 8px; right: 10px; padding: 0 7px; border-radius: 8px; border: 1px solid var(--border); background: var(--bg); color: var(--fg-faint); font-size: 10px; line-height: 16px; }
 .desk.far .desk-private { display: none; }
+.desk-changes { position: absolute; top: -9px; left: 10px; padding: 0 8px; border-radius: 9px; background: var(--ok); color: var(--bg); font: 600 11px/18px var(--sans); }
+.desk.far .desk-changes { font-size: calc(11px * var(--iz, 1)); line-height: 1.6; top: calc(-9px * var(--iz, 1)); padding: 0 calc(8px * var(--iz, 1)); border-radius: calc(9px * var(--iz, 1)); }
 /* Reading one card (Space). */
 .desk-focus { position: absolute; inset: 0; z-index: 6; display: flex; align-items: center; justify-content: center; background: color-mix(in srgb, var(--bg) 72%, transparent); backdrop-filter: blur(3px); }
 .desk-focus-card { display: flex; flex-direction: column; width: min(720px, 92%); max-height: 88%; border: 1px solid var(--border); border-radius: 14px; background: var(--bg-2); box-shadow: 0 24px 80px rgba(0, 0, 0, .4); }
