@@ -25,6 +25,8 @@ export const WORDS = {
     of: (i, n) => `${i}/${n}`,
     todoQ: '\uC774 \uD560 \uC77C, \uB05D\uB0AC\uB098\uC694?',
     todoIs: (t) => `\uD560 \uC77C\uB85C \uBC1B\uC73C\uBA74: ${t}`,
+    enough: '\uC624\uB298\uC740 \uC5EC\uAE30\uAE4C\uC9C0',
+    rest: (n) => (n ? `\uB098\uBA38\uC9C0 ${n}\uAC00\uC9C0\uB294 \uB2E4\uC74C\uC5D0 \uC5EC\uCB64\uBCFC\uAC8C\uC694.` : '\uB2E4 \uC5EC\uCB64\uBD24\uC5B4\uC694.'),
     where: '\uB178\uD2B8\uC5D0\uC11C \uAD00\uB828 \uC788\uC5B4 \uBCF4\uC774\uB294 \uC904 (\uB204\uB974\uBA74 \uADF8 \uC904\uC774 \uC5F4\uB824\uC694):',
     skip: '\uAC74\uB108\uB6F0\uAE30', drop: '\uD544\uC694 \uC5C6\uC5B4\uC694', takeTodo: '\uD560 \uC77C\uB85C \uBC1B\uAE30', done: '\uB05D\uB0AC\uC5B4\uC694', notYet: '\uC544\uC9C1\uC774\uC5D0\uC694',
     sorting: '\uC815\uB9AC\uD558\uB294 \uC911…',
@@ -83,6 +85,8 @@ export const WORDS = {
     of: (i, n) => `${i}/${n}`,
     todoQ: 'Is this to-do done?',
     todoIs: (t) => `As a to-do: ${t}`,
+    enough: 'Enough for today',
+    rest: (n) => (n ? `The other ${n} next time.` : 'All asked.'),
     where: 'Lines in the notes that look related (opens it there):',
     skip: 'Skip', drop: 'Not needed', takeTodo: 'Take the to-do', done: 'Done', notYet: 'Not yet',
     sorting: 'Sorting it…',
@@ -216,10 +220,10 @@ export function openingText({ title, goal, goalState, mine, n }, lang = 'en') {
 }
 
 // Where it stands at the end, said.
-export function closingText({ decisions = [], later = 0, todos = [], waiting = [], withdrawals = [] }, lang = 'en') {
+export function closingText({ decisions = [], later = 0, todos = [], waiting = [], withdrawals = [], early = false }, lang = 'en') {
   const W = WORDS[lang] || WORDS.en;
   return [
-    W.allAsked,
+    early ? '' : W.allAsked,
     [W.decidedN(decisions.length, decisions.filter((d) => !d.inNote).length), W.laterN(later), W.todosN(todos.length)].filter(Boolean).join(' '),
     waiting.length ? W.stale(waiting.length) : '',
     withdrawals.length ? W.marked(new Set(withdrawals.map((w) => w.note)).size) : '',
@@ -326,7 +330,8 @@ export class Talk {
       const acts = this.acts(row,
         x.todo ? btn(W.takeTodo, () => { this.done(acts); this.desk.keep(q.a); this.say(W.taken); this.next(); }) : null,
         btn(W.skip, () => { this.done(acts); this.passed.add(q.id); this.say(W.skipped); this.next(); }, 'ghost'),
-        btn(W.drop, () => { this.done(acts); this.desk.drop(q.a); this.say(W.dropped); this.next(); }, 'ghost'));
+        btn(W.drop, () => { this.done(acts); this.desk.drop(q.a); this.say(W.dropped); this.next(); }, 'ghost'),
+        this.enough(() => acts));
       this.asking = acts;
       this.showFrom(row, x.from, [x.say, x.why].join(' '));
     } else {
@@ -340,7 +345,8 @@ export class Talk {
           await this.propose([n.id]);
           this.next();
         }),
-        btn(W.notYet, () => { this.done(acts); this.passed.add(q.id); this.next(); }, 'ghost'));
+        btn(W.notYet, () => { this.done(acts); this.passed.add(q.id); this.next(); }, 'ghost'),
+        this.enough(() => acts));
       this.asking = acts;
       // Its own note, and the one the desk says differs.
       const files = [n.from.file, ...[...String(text[1] || '').matchAll(/\[\[([^\]|#]+)/g)].map((m) => `${m[1]}.md`)];
@@ -366,6 +372,15 @@ export class Talk {
     }));
     row.insertBefore(box, row.querySelector('.talk-acts'));
     this.scroll();
+  }
+  // Enough for today: the rest asked next time; where it stands said now.
+  enough(acts) {
+    return btn(this.W.enough, () => { this.done(acts()); this.say(this.W.rest(this.queue().length)); this.closing(true); }, 'ghost talk-enough');
+  }
+  // Back from the record (where a card may have been taken or let go): what it asked, if it is still there.
+  resume() {
+    if (!this.started || this.busy || this.closed) return;
+    if (this.current && !this.queue().some((x) => x.id === this.current.id)) { this.done(this.asking); this.next(); }
   }
   // To-dos marked done here (these cards only), proposed in their notes, and said as it went.
   async propose(ids) {
@@ -439,13 +454,13 @@ export class Talk {
     this.next();
   }
   // ---- the end: where it stands, and what to do with it
-  async closing() {
+  async closing(early = false) {
     const W = this.W;
     this.closed = true;
     this.done(this.ending); // (the one said before: as it was then)
     const r = await this.desk.wrapData();
     const mine = thisTimeOf(this.desk.d);
-    const row = this.say(closingText({ ...r, later: mine.later.length }, this.lang));
+    const row = this.say(closingText({ ...r, later: mine.later.length, early }, this.lang));
     const out = r.decisions.filter((d) => !d.inNote).length;
     const acts = this.acts(row,
       out && this.desk.opts.changes ? btn(W.findChanges, async (b) => { b.disabled = true; if (!(await this.changes())) b.disabled = false; }) : null,

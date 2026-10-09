@@ -687,7 +687,7 @@ export class Desk {
   showTalk(on) {
     if (!this.talker) return;
     this.el.classList.toggle('talking', on);
-    if (on) { if (this.marginRead || !this.opts.loadMargin) this.talker.start(); requestAnimationFrame(() => this.talker.focus()); } else { this.render(); this.el.focus({ preventScroll: true }); }
+    if (on) { if (this.marginRead || !this.opts.loadMargin) { this.talker.start(); this.talker.resume(); } requestAnimationFrame(() => this.talker.focus()); } else { this.render(); this.el.focus({ preventScroll: true }); }
   }
 
   // What the margin wrote and was not kept yet stays beside the desk (not in
