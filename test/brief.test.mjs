@@ -126,7 +126,7 @@ process.stdin.on('data', (d) => {
     const j = JSON.parse(buf.slice(0, i)); buf = buf.slice(i + 1);
     if (j.type !== 'user') continue;
     fs.appendFileSync(process.env.FAKE_LOG, JSON.stringify(j.message.content) + '\\n');
-    const text = /^The theme:/.test(j.message.content) ? '[1] supports: Again.\\n[2] counters: Otherwise.\\nscope: Narrower.' : 'kind: conflict\\nat: P2\\nsay: Decided otherwise before.\\nfrom: 1\\n---\\nkind: ask\\nat: P2\\nsay: Why Friday?';
+    const text = /^The title:/.test(j.message.content) ? '[1] supports: Again.\\n[2] counters: Otherwise.\\nmaybe: Narrower.\\ncheck: Ask.' : 'kind: conflict\\nat: P2\\nsay: Decided otherwise before.\\nfrom: 1\\n---\\nkind: ask\\nat: P2\\nsay: Why Friday?';
     const out = (o) => process.stdout.write(JSON.stringify(o) + '\\n');
     out({ type: 'stream_event', event: { type: 'content_block_delta', delta: { text } } });
     out({ type: 'result', subtype: 'success', total_cost_usd: 0.001, usage: { input_tokens: 10, output_tokens: 3 } });
@@ -197,7 +197,7 @@ test('the server: the note, its last meeting and the notes near it (never a priv
   const c = await check({ path: 'Themes.md', theme, refs: [{ path: 'Old 2026-09-01.md', line: 2 }, { path: 'secret.md', line: 3 }, { path: 'Demo 2026-10-12.md', line: 2 }, { path: 'Call 2026-10-13.md', line: 2 }] });
   assert.equal(c.status, 200, c.error);
   assert.deepEqual(c.items.map((x) => [x.verdict, x.why, x.ref.name, x.ref.date]), [['supports', 'Again.', 'Demo 2026-10-12', '2026-10-12'], ['counters', 'Otherwise.', 'Call 2026-10-13', '2026-10-13']]);
-  assert.equal(c.scope, 'Narrower.');
+  assert.deepEqual(c.maybe, { reading: 'Narrower.', check: 'Ask.' });
   assert.doesNotMatch(sent().at(-1), /secret|back then\.\n\[|^\[\d\] from "Old/m);
   assert.match(sent().at(-1), /New paragraphs:\n\[1\] from "Demo 2026-10-12" \(2026-10-12\): People stopped/);
   assert.equal((await check({ path: 'Themes.md', theme: { ...theme, title: '' }, refs: [] })).status, 400);
@@ -245,7 +245,7 @@ test('what the last meeting left, settled since in another note: covered, and wh
   assert.deepEqual(b.cover.map((c) => [c.text, c.done, c.where]), [['Do we need a beta first?', false, undefined], ['Draft the store text', true, 'Store']]);
 });
 
-import { themeOf, addScene, addUnfit, withReading, inTheme } from '../public/theme.js';
+import { themeOf, addScene, addUnfit, withReading, inTheme, themeSig } from '../public/theme.js';
 
 test('a theme note read back, and grown: another case, one that does not fit, the reading in other words', () => {
   const note = themes.themeNote({ title: 'New users stall at the first step', reading: 'Too many choices, nothing picked.', open: 'Whether examples help.' },
@@ -266,15 +266,27 @@ test('a theme note read back, and grown: another case, one that does not fit, th
   const again = addUnfit(unfit, { text: 'Knew at once.', name: 'Call', date: '' });
   assert.match(again, /had used Notion\. — \[\[Interview 2026-10-10\]\]\n- Knew at once\. — \[\[Call\]\]\n/);
   assert.deepEqual(themeOf(again).unfit.map((s) => s.name), ['Interview 2026-10-10', 'Call']);
-  const re = withReading(again, 'New users with no notes app before stall.');
-  assert.match(re, /> \[!note\] Margin's reading — a suggestion; change it or delete it\n> New users with no notes app before stall\.\n\n## Where/);
-  assert.equal(themeOf(re).reading, 'New users with no notes app before stall.');
+  // Another reading: tried only if the reading is still the one checked; the
+  // one before stays, what would tell goes under Not checked yet; no case moves.
+  assert.equal(withReading(again, 'X.', { expected: 'Something else.' }), null, 'changed since the check');
+  const re = withReading(again, 'New users with no notes app before stall.', { expected: 'Too many  choices, nothing picked.', check: 'Ask the next three interviewees which app they used before.', day: '2026-10-15' });
+  assert.match(re, /> \[!note\] Margin's reading — a suggestion; change it or delete it\n> New users with no notes app before stall\.\n> Before \(2026-10-15\): Too many choices, nothing picked\.\n\n## Where/);
+  assert.match(re, /## Not checked yet\n\n- Whether examples help\.\n- Ask the next three interviewees which app they used before\.\n/);
+  const t2 = themeOf(re);
+  assert.equal(t2.reading, 'New users with no notes app before stall.');
+  assert.deepEqual([t2.scenes.length, t2.unfit.length], [3, 2], 'no case moved or taken out');
+  const re2 = withReading(re, 'Third.', { expected: t2.reading, day: '2026-10-20' });
+  assert.match(re2, /> Third\.\n> Before \(2026-10-20\): New users with no notes app before stall\.\n> Before \(2026-10-15\): Too many choices/);
+  assert.equal(themeOf(re2).reading, 'Third.');
+  assert.notEqual(themeSig(t), themeSig(t2));
+  assert.equal(themeSig(themeOf(addScene(re, { text: 'One more.', name: 'N' }))), themeSig(t2), 'a case added: the check still holds');
 });
 
 test('a theme checked against what came since: the message and the verdicts', () => {
-  const msg = themes.checkText({ theme: { title: 'Stall', reading: 'Too many choices.', scenes: [{ text: 'Did not know.', name: 'Interview' }] }, found: [{ name: 'Demo', date: '2026-10-12', text: 'Stuck.' }], lang: 'ko' });
-  assert.match(msg, /^The theme: Stall\n\nThe reading: Too many choices\.\n\nWhere it came up:\n- Did not know\. \(from "Interview"\)\n\nNew paragraphs:\n\[1\] from "Demo" \(2026-10-12\): Stuck\./);
-  assert.deepEqual(themes.parseCheck('[1] supports: Stuck again [2].\n[2] counters: Picked at once.\n[3] none: lunch\n[9] supports: x\nscope: Those new to notes apps stall.', 3),
-    { verdicts: [{ n: 1, verdict: 'supports', why: 'Stuck again.' }, { n: 2, verdict: 'counters', why: 'Picked at once.' }, { n: 3, verdict: 'none', why: 'lunch' }], scope: 'Those new to notes apps stall.' });
-  assert.equal(themes.parseCheck('1. supports: yes\nscope: narrower', 1).scope, '', 'no scope when nothing counters');
+  const msg = themes.checkText({ theme: { title: 'Stall', reading: 'Too many choices.', scenes: [{ text: 'Did not know.', name: 'Interview' }], unfit: [{ text: 'Picked at once.', name: 'Call' }] }, found: [{ name: 'Demo', date: '2026-10-12', text: 'Stuck.' }], lang: 'ko' });
+  assert.match(msg, /^The title: Stall\n\nThe reading now: Too many choices\.\n\nCases it came up in:\n- Did not know\. \(from "Interview"\)\n\nCases that did not fit so far:\n- Picked at once\. \(from "Call"\)\n\nNew paragraphs:\n\[1\] from "Demo" \(2026-10-12\): Stuck\./);
+  assert.match(themes.CHECK_SYSTEM, /against the reading as it is now/);
+  assert.deepEqual(themes.parseCheck('[1] supports: Stuck again [2].\n[2] counters: Picked at once.\n[3] outside: an expert\n[4] none: lunch\n[9] supports: x\nmaybe: Those new to notes apps stall.\ncheck: Ask which app they used before.', 4),
+    { verdicts: [{ n: 1, verdict: 'supports', why: 'Stuck again.' }, { n: 2, verdict: 'counters', why: 'Picked at once.' }, { n: 3, verdict: 'outside', why: 'an expert' }, { n: 4, verdict: 'none', why: 'lunch' }], maybe: { reading: 'Those new to notes apps stall.', check: 'Ask which app they used before.' } });
+  assert.equal(themes.parseCheck('1. supports: yes\nmaybe: narrower', 1).maybe, null, 'no hypothesis when nothing goes against it');
 });
