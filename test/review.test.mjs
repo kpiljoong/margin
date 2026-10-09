@@ -70,45 +70,52 @@ test('a session: to-dos in the vault\'s format or none, the most important first
 test('dates as written: what "tomorrow" meant on the day the note was written, a day due; a date to look at besides the five', () => {
   const text = '# Ideas\n\n\uB0B4\uC77C\uAE4C\uC9C0 \uACF5\uBAA8 \uB05D\uB0B4\uC57C \uD568 📅 2026-10-09\n\uB2E4\uC74C \uC8FC\uC5D0 \uC815\uB9AC\uD558\uAE30\n```\ntomorrow in code\n```\n## Tomorrow heading\nNothing dated.\n- [ ] Book it 📅 2026-10-12 📅 2026-10-14';
   assert.deepEqual(review.datesIn(text, '2026-10-08'), [
-    { line: '\uB0B4\uC77C\uAE4C\uC9C0 \uACF5\uBAA8 \uB05D\uB0B4\uC57C \uD568 📅 2026-10-09', means: '"tomorrow" then = 2026-10-09; due 2026-10-09', day: '2026-10-09' },
-    { line: '\uB2E4\uC74C \uC8FC\uC5D0 \uC815\uB9AC\uD558\uAE30', means: '"next week" then = the week of 2026-10-15', day: '2026-10-15' },
-    { line: '- [ ] Book it 📅 2026-10-12 📅 2026-10-14', means: 'due 2026-10-12 and 2026-10-14', day: '2026-10-12' },
+    { line: '\uB0B4\uC77C\uAE4C\uC9C0 \uACF5\uBAA8 \uB05D\uB0B4\uC57C \uD568 \u{1F4C5} 2026-10-09', means: '"tomorrow" then = 2026-10-09; due 2026-10-09', day: '2026-10-09', estimated: false },
+    { line: '\uB2E4\uC74C \uC8FC\uC5D0 \uC815\uB9AC\uD558\uAE30', means: '"next week" then = 2026-10-12 to 2026-10-18', day: '2026-10-12', end: '2026-10-18', estimated: false },
+    { line: '- [ ] Book it \u{1F4C5} 2026-10-12 \u{1F4C5} 2026-10-14', means: 'due 2026-10-12 and 2026-10-14', day: '2026-10-12', estimated: false },
   ]);
+  // A week is a week: over, or going on — never one day passed.
+  assert.match(review.datesIn('\uB2E4\uC74C \uC8FC\uC5D0', '2026-10-08', { today: '2026-10-14' })[0].means, /2026-10-12 to 2026-10-18, going on now$/);
+  assert.match(review.datesIn('next week', '2026-10-08', { today: '2026-10-20' })[0].means, /, over$/);
+  // Known only by when it was last changed: a reading, said so.
+  assert.deepEqual(review.datesIn('Tomorrow, then.', '2026-10-09', { source: 'changed' }), [{ line: 'Tomorrow, then.', means: '"tomorrow" read from when it was last changed (2026-10-09; when it was written isn\'t known) = 2026-10-10', day: '2026-10-10', estimated: true }]);
   assert.deepEqual(review.datesIn('Tomorrow, then.', ''), [], 'not knowing when it was written: nothing it meant');
   const blocks = ['mine:', ...[1, 2, 3, 4, 5, 6].flatMap((i) => ['---', `kind: ${i % 2 ? 'missing' : 'date'}`, `say: ${i}.`])].join('\n');
   const p = review.parseSession(`${blocks}\n---\nkind: missing\nsay: 7.\n---\nkind: missing\nsay: 8.\n---\nkind: missing\nsay: 9.`, {});
   assert.deepEqual(p.items.map((x) => x.say), ['1.', '3.', '5.', '7.', '8.', '2.', '4.'], 'five, then at most two dates');
-  assert.match(review.sessionText({ topic: { title: 'T', goal: 'G' }, notes: [{ path: 'a.md', date: '2026-10-08', text: 'x' }], dates: [{ n: 1, written: '2026-10-08', line: '\uB0B4\uC77C\uAE4C\uC9C0', means: '"tomorrow" then = 2026-10-09' }] }), /Dates as written \(when the note was written, what they meant then\):\n- N1 \(written 2026-10-08\): "\uB0B4\uC77C\uAE4C\uC9C0" — "tomorrow" then = 2026-10-09$/);
+  assert.match(review.sessionText({ topic: { title: 'T', goal: 'G' }, notes: [{ path: 'a.md', date: '2026-10-08', text: 'x' }], dates: [{ n: 1, written: '2026-10-08', source: 'front', line: '\uB0B4\uC77C\uAE4C\uC9C0', means: '"tomorrow" then = 2026-10-09' }] }), /Dates as written \(when the note was written, what they meant then\):\n- N1 \(written 2026-10-08, by its front matter\): "\uB0B4\uC77C\uAE4C\uC9C0" — "tomorrow" then = 2026-10-09$/);
 });
 
-test('a review wrapped up: from what was done on the desk and the notes as they are now, never from what was only suggested', () => {
-  const todo = '- [x] Apply for the ESTA ✅ 2026-10-09\n- [ ] Book the hotel\n- [ ] Pack\n';
-  const items = meetingItems(todo);
-  const card = (it, from) => ({ id: it.key, type: 'text', text: it.text, x: 0, y: 0, width: 300, height: 80, from: { file: '99-assistant/todo.md', line: it.line, kind: 'todo', key: it.key, ...from } });
+test('a review wrapped up: from what was done on the desk and the notes as they are now, never from what was only suggested or proposed', () => {
+  const was = '- [ ] Apply for the ESTA\n- [ ] Book the hotel\n- [ ] Pack\n- [ ] Rent a car\n- Phones? #question\n';
+  const now = '- [x] Apply for the ESTA ✅ 2026-10-09\n- [ ] Book the hotel\n- [ ] Pack\n- Cars: we take the train\n- Phones? #decision\n';
+  const items = meetingItems(was);
+  const card = (it, from) => ({ id: it.key, type: 'text', text: it.text, x: 0, y: 0, width: 300, height: 80, from: { file: '99-assistant/todo.md', line: it.line, kind: it.kind, key: it.key, ...from } });
   const desk = { nodes: [
     { id: 'g', type: 'text', text: '**Trip**\n\nGoal (a guess): Book it all', x: 0, y: 0, width: 300, height: 80 },
     { id: 't', type: 'text', text: thisTimeText({ goal: 'Book it all by the 20th', focus: ['The Napa tour', 'The return flight'], decided: ['The Napa tour: a whole day'] }), x: 0, y: 0, width: 300, height: 80 },
-    card(items[0], { sent: true }), card(items[1], { sent: true }), card(items[2], { to: { done: true } }),
+    card(items[0], { sent: true }), card(items[1], { sent: true }), card(items[2], { to: { done: true } }), card(items[3], { sent: true }), card(items[4], { sent: true }),
+    { id: 'k1', type: 'text', text: 'Napa: half or whole? (edited)\n\nTo-do: `- [ ] Book the Napa tour, a whole day #project/trip`', x: 0, y: 0, width: 300, height: 80 },
   ], edges: [] };
   assert.deepEqual(thisTimeOf(desk), { goal: 'Book it all by the 20th', focus: ['The Napa tour', 'The return flight'], decided: ['The Napa tour: a whole day'] });
   const ledger = [
-    { type: 'taken', title: 'To decide', text: 'Napa: half or whole?\n\nTo-do: `- [ ] Book the Napa tour #project/trip`' },
-    { type: 'taken', title: 'Missing', text: 'The pickup.\n\nTo-do: `- [ ] Book the Napa tour #project/trip`' },
+    { type: 'taken', title: 'To decide', text: 'Napa: half or whole?\n\nTo-do: `- [ ] Book the Napa tour #project/trip`', card: 'k1' },
+    { type: 'taken', title: 'Missing', text: 'The pickup.\n\nTo-do: `- [ ] Ask about the pickup`', card: 'k2' },
     { type: 'let go', title: 'A question', text: 'Phones?' },
-    { type: 'marked done', text: 'x' },
   ];
-  const w = wrapUp({ desk, ledger, notes: new Map([['99-assistant/todo.md', todo]]), now: '2026-10-09 15:00' });
-  assert.deepEqual(w.todos, ['- [ ] Book the Napa tour #project/trip']);
+  const w = wrapUp({ desk, ledger, notes: new Map([['99-assistant/todo.md', now]]), now: '2026-10-09 15:00' });
+  assert.deepEqual(w.todos, ['- [ ] Book the Napa tour, a whole day #project/trip'], 'the card as it reads now; one taken back is not');
   assert.equal(w.text, [
     '**Wrap-up** · 2026-10-09 15:00', '',
     'Goal: Book it all by the 20th (yours)', '',
     '**Decided**', '- The Napa tour: a whole day', '',
-    '**Changed in the notes**', '- Apply for the ESTA ✅ 2026-10-09 — [[99-assistant/todo]]', '',
+    '**Changed in the notes**', '- Apply for the ESTA — [[99-assistant/todo]]', '- Phones? — [[99-assistant/todo]]', '',
     '**Not in the notes yet**', '- Book the hotel — [[99-assistant/todo]] (proposed, in the red pen review)', '- Pack — [[99-assistant/todo]] (marked here, not proposed yet)', '',
-    '**From the margin**: 2 taken, 1 let go', '- To decide: Napa: half or whole?', '- Missing: The pickup.', '',
-    '**Next**', '- [ ] Book the Napa tour #project/trip', '- Still to settle: The return flight',
+    '**Changed in its note since — not confirmed**', '- Rent a car — [[99-assistant/todo]] (not found in its note as it was: look at it)', '',
+    '**From the margin**: 1 taken and on the desk (1 taken back or deleted), 1 let go', '- To decide: Napa: half or whole? (edited)', '',
+    '**Next**', '- [ ] Book the Napa tour, a whole day #project/trip', '- Still to settle: The return flight',
   ].join('\n'));
-  assert.match(wrapUp({ desk: { nodes: [desk.nodes[0]] } }).text, /Goal: Book it all \(a guess\)[\s\S]*- \(nothing written under Decided\)[\s\S]*- \(nothing yet\)[\s\S]*0 taken, 0 let go[\s\S]*- \(none written\)$/);
+  assert.match(wrapUp({ desk: { nodes: [desk.nodes[0]] } }).text, /Goal: Book it all \(a guess\)[\s\S]*- \(nothing written under Decided\)[\s\S]*- \(nothing yet\)[\s\S]*0 taken and on the desk, 0 let go[\s\S]*- \(none written\)$/);
 });
 
 test('a to-do of the assistant\'s list done: [x] and the day at its end, its link and marks kept', () => {
@@ -116,6 +123,10 @@ test('a to-do of the assistant\'s list done: [x] and the day at its end, its lin
   const it = meetingItems(list).find((i) => /ESTA/.test(i.text));
   const card = { from: { file: '99-assistant/todo.md', line: it.line, kind: 'todo', key: it.key, tasks: true, to: { done: true, on: '2026-10-09' } } };
   assert.equal(toNote(list, [card]), '# Todo\n\n- [x] ESTA \uC2E0\uCCAD\uD558\uAE30 ⏫ [[99-assistant/inbox-archive/2026-09#2026-09-27 0538 df|\uC6D0\uBB38]] ✅ 2026-10-09\n- [ ] Old one ↪ \uC62E\uAE40 [[x]]\n');
+  // Ticked with its day, it is the same item (the desk's card sees it done there).
+  const after = toNote(list, [card]);
+  assert.equal(meetingItems(after).find((i) => /ESTA/.test(i.text)).key, it.key);
+  assert.equal(meetingItems(after).find((i) => /ESTA/.test(i.text)).done, true);
   // A note's own to-do (not a Tasks list): ticked, as before.
   const note = '- [ ] Draft it\n';
   const n = meetingItems(note)[0];
@@ -249,6 +260,6 @@ test('the server: topics of the recent notes (not the assistant\'s records, neve
   assert.equal((await api('POST', '/api/lab/review/ledger', { path: 'trip/plan.md', event: { type: 'taken' } })).status, 400);
   assert.deepEqual((await api('GET', `/api/lab/review/ledger?path=${encodeURIComponent(d2.path)}`)).events.map((e) => [e.type, e.title]), [['taken', 'To decide'], ['let go', 'A question']]);
   // Its dates as written went with it: the Napa to-do's day, past.
-  assert.match(sent()[1], /Dates as written \(when the note was written, what they meant then\):\n- N1 \(written [\d-]+\): "- \[ \] Book the Napa tour 📅 2026-01-02" — due 2026-01-02/);
+  assert.match(sent()[1], /Dates as written \(when the note was written, what they meant then\):\n- N1 \(written: not known; last changed [\d-]+\): "- \[ \] Book the Napa tour 📅 2026-01-02" — due 2026-01-02/);
   assert.equal((await api('POST', '/api/lab/review/desk', { topic: { ...topic, notes: ['secret.md'] }, again: true })).status, 400, 'a private note alone: nothing to read');
 });

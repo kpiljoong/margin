@@ -262,8 +262,12 @@ export function thisTimeOf(desk) {
 
 // The end of a review (w): what came of it, from the desk as it is now, the
 // notes as they are now and what was done on it (ledger: [{ type, title,
-// text, file, at }]) — never from what was only suggested. → { text, todos:
-// [line] } (todos: the next to-dos, as the assistant's list writes them).
+// text, file, card, at }]) — never from what was only suggested or proposed:
+// a to-do is changed in its note when it is done there now, a question when
+// it is a decision there now; one no longer found as it was is said so, to be
+// looked at — not taken as done. The next to-dos: those of the cards taken
+// that are on the desk now, as they read now (one taken back, or deleted,
+// is not). → { text, todos: [line] } (as the assistant's list writes them).
 export function wrapUp({ desk, ledger = [], notes = new Map(), now = '' }) {
   const mine = thisTimeOf(desk);
   const goalCard = (desk?.nodes || []).find((x) => x.type === 'text' && /^\*\*[^*]+\*\*\n\nGoal \(/.test(String(x.text || '')));
@@ -272,17 +276,24 @@ export function wrapUp({ desk, ledger = [], notes = new Map(), now = '' }) {
   const name = (f) => `[[${String(f).replace(/\.md$/i, '')}]]`;
   const changed = [];
   const waiting = [];
+  const unsure = [];
   for (const n of (desk?.nodes || []).filter((x) => x.from?.kind === 'todo' || x.from?.kind === 'question')) {
     const text = notes.get(n.from.file);
-    const st = typeof text === 'string' && text ? fromState(n.from, text).state : 'open';
-    const what = String(n.text || '').split('\n')[0];
-    if (st === 'done' || (st === 'gone' && n.from.sent)) changed.push(`- ${what} \u2014 ${name(n.from.file)}`);
-    else if (n.from.sent) waiting.push(`- ${what} \u2014 ${name(n.from.file)} (proposed, in the red pen review)`);
-    else if (n.from.to) waiting.push(`- ${what} \u2014 ${name(n.from.file)} (marked here, not proposed yet)`);
+    const what = `- ${String(n.text || '').split('\n')[0]} \u2014 ${name(n.from.file)}`;
+    const acted = n.from.sent || n.from.to;
+    if (typeof text !== 'string' || !text) { if (acted) unsure.push(`${what} (its note could not be read)`); continue; }
+    const items = meetingItems(text);
+    const it = items.find((i) => i.key === n.from.key);
+    const done = n.from.kind === 'todo' ? !!it?.done : items.some((i) => i.key === n.from.key.replace(/^question:/, 'decision:'));
+    if (done) changed.push(what);
+    else if (!it) { if (acted) unsure.push(`${what} (not found in its note as it was: look at it)`); } else if (n.from.sent) waiting.push(`${what} (proposed, in the red pen review)`);
+    else if (n.from.to) waiting.push(`${what} (marked here, not proposed yet)`);
   }
+  const onDesk = new Map((desk?.nodes || []).map((n) => [n.id, n]));
   const taken = ledger.filter((e) => e.type === 'taken');
+  const kept = taken.filter((e) => e.card && onDesk.has(e.card)).map((e) => ({ ...e, text: String(onDesk.get(e.card).text || '') }));
   const let_ = ledger.filter((e) => e.type === 'let go');
-  const todos = [...new Set(taken.flatMap((e) => [...String(e.text || '').matchAll(/To-do: `(- \[ \] [^`]+)`/g)].map((m) => m[1])))];
+  const todos = [...new Set(kept.flatMap((e) => [...e.text.matchAll(/To-do: `(- \[ \] [^`]+)`/g)].map((m) => m[1])))];
   const open = mine.focus.filter((f) => !mine.decided.some((d) => d.toLowerCase().includes(f.toLowerCase().slice(0, 12))));
   const section = (title, lines, none) => [`**${title}**`, ...(lines.length ? lines : [none])];
   const text = [
@@ -290,9 +301,10 @@ export function wrapUp({ desk, ledger = [], notes = new Map(), now = '' }) {
     `Goal: ${goal || '\u2014'}`, '',
     ...section('Decided', mine.decided.map((d) => `- ${d}`), '- (nothing written under Decided)'), '',
     ...section('Changed in the notes', changed, '- (nothing yet)'),
-    ...(waiting.length ? ['', ...section('Not in the notes yet', waiting, '')] : []), '',
-    `**From the margin**: ${taken.length} taken, ${let_.length} let go`,
-    ...taken.map((e) => `- ${e.title || 'A card'}: ${String(e.text || '').split('\n')[0].slice(0, 120)}`), '',
+    ...(waiting.length ? ['', ...section('Not in the notes yet', waiting, '')] : []),
+    ...(unsure.length ? ['', ...section('Changed in its note since \u2014 not confirmed', unsure, '')] : []), '',
+    `**From the margin**: ${kept.length} taken and on the desk${taken.length > kept.length ? ` (${taken.length - kept.length} taken back or deleted)` : ''}, ${let_.length} let go`,
+    ...kept.map((e) => `- ${e.title || 'A card'}: ${e.text.split('\n')[0].slice(0, 120)}`), '',
     ...section('Next', [...todos, ...open.map((f) => `- Still to settle: ${f}`)], '- (none written)'),
   ].join('\n');
   return { text, todos };
@@ -1873,7 +1885,6 @@ export class Desk {
   // Cards of the desk made of them, in one step (one ⌘Z).
   keepCards(list) {
     if (!list.length) return;
-    for (const a of list) if (a.kind === 'review' && a.title !== 'Wrap-up') this.event('taken', { title: a.title, text: a.text });
     const gone = new Set(list);
     this.ai = this.ai.filter((x) => !gone.has(x));
     const nodes = [];
@@ -1884,6 +1895,8 @@ export class Desk {
       // An answer about a marked part: it stays its answer (and an arrow from the mark says so).
       const m = a.of && this.d.nodes.find((x) => x.id === a.of && x.from?.kind === 'region');
       if (m) { n.from = { file: m.from.file, kind: 'answer', rect: m.from.rect, of: m.id, at: today() }; edges.push({ id: newId(), fromNode: m.id, toNode: n.id }); }
+      // Taken: which card it became (the wrap-up reads that card as it is then).
+      if (a.kind === 'review' && a.title !== 'Wrap-up') this.event('taken', { title: a.title, text: a.text, card: n.id });
       nodes.push(n);
     }
     this.sel = new Set(nodes.map((n) => n.id));

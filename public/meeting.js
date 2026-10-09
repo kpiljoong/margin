@@ -43,7 +43,9 @@ const BUDGET = /\s*\((\d+)\s*(?:m|min|mins|minutes|\uBD84)\)\s*$/i;
 
 const norm = (s) => s.replace(/\s+/g, ' ').trim().toLowerCase();
 // The words of an item, without its owner and date.
-export const bodyOf = (text) => text.replace(OWNERS, '$1').replace(DUE, '').replace(/\s+/g, ' ').trim();
+// (When it was done, as Obsidian Tasks writes it — ✅ and the day — is not
+// what it is: ticked, it is the same item.)
+export const bodyOf = (text) => text.replace(OWNERS, '$1').replace(DUE, '').replace(/\s*\u2705\s*\d{4}-\d{2}-\d{2}/gu, '').replace(/\s+/g, ' ').trim();
 
 function linesOf(text) {
   const out = [];

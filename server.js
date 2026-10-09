@@ -1120,13 +1120,18 @@ async function labReviewDesk(b) {
   const sent = todos.slice(0, 60);
   const projects = new Set(reviewFolders().filter((f) => f.startsWith('01-projects/')).map((f) => f.slice(12)));
   const topic = thisTime.goal ? { title: t.title.trim(), goal: thisTime.goal, goalState: 'theirs' } : { title: t.title.trim(), goal: (t.goal || '').trim(), goalState: ['stated', 'guessed', 'unknown'].includes(t.goalState) ? t.goalState : 'guessed' };
-  // Its dates as written, and what they meant when written (the day a note
-  // was written: its front matter's date, the date in its name, or when it
-  // was last changed): those past or due, newest notes first, twenty.
+  // Its dates as written, and what they meant when written — the day a note
+  // was written: its front matter's date (only within it), the date in its
+  // name, or else only when it was last changed (not known: said so) — those
+  // come or begun by today, twenty.
   const dates = notes.flatMap((n, i) => {
     const c = cachedText(n.path);
-    const written = (/^---\r?\n[\s\S]*?^date:\s*(\d{4}-\d{2}-\d{2})/m.exec(c?.text || '') || [])[1] || (/\d{4}-\d{2}-\d{2}/.exec(path.basename(n.path)) || [])[0] || n.date;
-    return datesIn(n.text, written).filter((d) => d.day && d.day <= day).map((d) => ({ n: i + 1, written, ...d }));
+    const front = (/^\uFEFF?---\r?\n([\s\S]*?)\r?\n---(?:\r?\n|$)/.exec(c?.text || '') || [])[1] || '';
+    const fd = (/^date:\s*['"]?(\d{4}-\d{2}-\d{2})/m.exec(front) || [])[1];
+    const nd = (/\d{4}-\d{2}-\d{2}/.exec(path.basename(n.path)) || [])[0];
+    const source = fd ? 'front' : nd ? 'name' : 'changed';
+    const written = fd || nd || n.date;
+    return datesIn(n.text, written, { source, today: day }).filter((d) => d.day && d.day <= day).map((d) => ({ n: i + 1, written, source, ...d }));
   }).slice(0, 20);
   const r = await r0.session({ topic, focus: thisTime.focus, notes, older, todos: sent.map((x) => `${x.text} (${x.file})`), dates, today: day, projects });
   if (!r.ok) throw httpError(502, r.error || 'Claude did not answer.');
@@ -1150,13 +1155,14 @@ async function labReviewDesk(b) {
 // wrapped up), in order, beside it in .agent-notes/review-ledger/ — what
 // happened there, not what was suggested; its wrap-up reads it.
 const LEDGER_TYPES = new Set(['taken', 'let go', 'marked done', 'unmarked', 'proposed', 'to-dos proposed', 'wrap-up']);
+// A card taken: which card of the desk it became (card).
 const ledgerOf = (rel) => `${resolveInside(path.join(DATA_DIR, 'review-ledger'), rel)}.json`;
 const reviewLedger = (rel) => { const d = readJson(ledgerOf(rel), null); return Array.isArray(d?.events) ? d.events : []; };
 function addReviewLedger({ path: relPath, event }) {
   const rel = relOf(workspacePath(relPath));
   if (!/\.canvas$/i.test(rel)) throw httpError(400, 'Not a desk');
   if (!event || !LEDGER_TYPES.has(event.type)) throw httpError(400, 'event: { type, title, text, file }');
-  const e = { type: event.type, at: new Date().toISOString(), ...(cleanStr(event.title, 200) ? { title: cleanStr(event.title, 200) } : {}), ...(cleanStr(event.text, 4000) ? { text: cleanStr(event.text, 4000) } : {}), ...(cleanStr(event.file, 1000) ? { file: cleanStr(event.file, 1000) } : {}) };
+  const e = { type: event.type, at: new Date().toISOString(), ...(cleanStr(event.title, 200) ? { title: cleanStr(event.title, 200) } : {}), ...(cleanStr(event.text, 4000) ? { text: cleanStr(event.text, 4000) } : {}), ...(cleanStr(event.file, 1000) ? { file: cleanStr(event.file, 1000) } : {}), ...(cleanStr(event.card, 64) ? { card: cleanStr(event.card, 64) } : {}) };
   const events = [...reviewLedger(rel), e].slice(-500);
   const file = ledgerOf(rel);
   fs.mkdirSync(path.dirname(file), { recursive: true });
