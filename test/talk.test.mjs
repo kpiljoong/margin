@@ -71,6 +71,7 @@ test('noteGist: a note in a few words, from what it says itself', () => {
   assert.equal(noteGist('---\nsummary: "All of it"\n---\nText', 'a.md').gist, 'All of it');
   assert.equal(noteGist('- [ ] One 📅 2026-10-12\n- Two #decision', 'x/list.md').gist, 'One · Two', 'only lists: its first items, without their marks');
   assert.equal(noteGist('', 'x/empty.md').title, 'empty');
+  assert.equal(noteGist('# ~~Yosemite~~ **late Oct**', 'y.md').title, 'Yosemite late Oct');
 });
 
 test('spaceLayout: linked notes on one side, the sides about as full, a note asked about forward, each showing where it is meant to', () => {

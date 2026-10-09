@@ -1161,6 +1161,7 @@ export class Desk {
     this.render();
   }
   refreshNote(path) {
+    this.talker?.noteChanged(path);
     if (!this.html.has(path) && !this.notes.has(path)) return;
     this.html.delete(path);
     this.notes.delete(path);

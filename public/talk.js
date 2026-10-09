@@ -260,7 +260,7 @@ export function noteGist(text, file) {
   const field = (k) => (fm ? (new RegExp(`^${k}:\\s*(.+)$`, 'mi').exec(fm[1]) || [])[1]?.replace(/^["']|["']$/g, '').trim() : '') || '';
   if (fm) t = t.slice(fm[0].length);
   const lines = t.split('\n');
-  const title = field('title') || (lines.find((l) => /^# \S/.test(l)) || '').slice(2).trim() || name(file);
+  const title = (field('title') || (lines.find((l) => /^# \S/.test(l)) || '').slice(2).trim()).replace(/~~|\*\*|__|`/g, '').trim() || name(file);
   const clean = (l) => unlink(l).replace(/!?\[([^\]]*)\]\([^)]*\)/g, '$1').replace(/https?:\/\/\S+/g, '').replace(/^\s*(?:→|->|=>)\s*/, '').replace(/^(?:[-*+]\s+(?:\[.\]\s+)?|>\s*(?:\[![^\]]*\]\s*)?|\d+[.)]\s+)/, '').replace(/[*_`]/g, '').replace(/\s*(?:#[\w/\uAC00-\uD7A3-]+|[📅⏳🛫✅➕🔺⏫🔼🔽⏬]\s*\d{4}-\d{2}-\d{2}|[📅⏳🛫✅➕🔺⏫🔼🔽⏬])/gu, '').trim();
   let gist = field('summary') || field('description');
   if (!gist) {
@@ -470,17 +470,18 @@ export class Talk {
   // The topic's notes (the desk's), each read once: a card with its title, its
   // gist, its to-dos and decisions, and the other notes of the topic it links
   // to or is linked from (a click shows that one).
+  // (Again when one of them changes or goes: each card kept, as it says now; one gone, gone.)
   async notesSide() {
     const files = [...new Set(this.desk.d.nodes.filter((n) => n.type === 'file' && /\.md$/i.test(n.file || '')).map((n) => n.file))];
     const W = this.W;
-    if (!files.length) return;
     const gists = [];
     for (const f of files) { try { gists.push(noteGist(await this.desk.opts.readNote(f), f)); } catch { /* gone: not shown */ } }
-    if (!gists.length) return;
     const key = (x) => String(x).replace(/\.md$/i, '').toLowerCase();
     const of = (l) => gists.find((g) => key(g.file) === key(l) || key(name(g.file)) === key(name(l)));
     const out = new Map(gists.map((g) => [g.file, new Set(g.links.map(of).filter((o) => o && o !== g).map((o) => o.file))]));
     for (const [f, to] of out) for (const o of to) out.get(o).add(f);
+    this.byFile ||= new Map();
+    for (const [f, c] of this.byFile) if (!out.has(f)) { c.remove(); this.byFile.delete(f); }
     this.cards = new Map();
     const list = gists.map((g) => {
       const meta = [g.todos ? W.todosOpen(g.todos) : '', g.decisions ? W.decisionsIn(g.decisions) : ''].filter(Boolean).join(' · ');
@@ -489,25 +490,29 @@ export class Talk {
         c.addEventListener('click', (e) => { e.stopPropagation(); this.about([f], true); });
         return c;
       });
-      const card = el('div', 'talk-note',
-        el('button', 'talk-note-title', g.title),
-        g.gist ? el('p', 'talk-note-gist', g.gist) : null,
-        meta ? el('p', 'talk-note-meta', meta) : null,
-        linked.length ? el('div', 'talk-note-links', el('span', 'talk-note-meta', `${W.links}: `), linked) : null);
-      card.querySelector('.talk-note-title').addEventListener('click', (e) => { e.stopPropagation(); this.desk.opts.openNote(g.file); });
-      card.title = g.file;
+      const title = el('button', 'talk-note-title', g.title);
+      title.addEventListener('click', (e) => { e.stopPropagation(); this.desk.opts.openNote(g.file); });
+      let card = this.byFile.get(g.file);
+      if (!card) { card = el('div', 'talk-note'); card.dataset.file = g.file; card.title = g.file; this.byFile.set(g.file, card); }
+      card.replaceChildren(title,
+        g.gist ? el('p', 'talk-note-gist', g.gist) : '',
+        meta ? el('p', 'talk-note-meta', meta) : '',
+        linked.length ? el('div', 'talk-note-links', el('span', 'talk-note-meta', `${W.links}: `), linked) : '');
       this.cards.set(key(g.file), card);
       this.cards.set(key(name(g.file)), card);
       return card;
     });
     this.order = list;
-    list.forEach((c, i) => { c.dataset.file = gists[i].file; });
     this.links = [...out].flatMap(([f, to]) => [...to].filter((t) => f < t).map((t) => [f, t]));
-    this.nowHead = el('p', 'talk-side-head', W.nowAbout);
-    this.allHead = el('p', 'talk-side-head', W.notes(gists.length));
-    this.el.classList.add('with-side');
-    this.lit = new Set();
+    this.nowHead ||= el('p', 'talk-side-head', W.nowAbout);
+    this.allHead ||= el('p', 'talk-side-head');
+    this.allHead.textContent = W.notes(gists.length);
+    this.el.classList.toggle('with-side', gists.length > 0);
+    if (!gists.length) { this.side.replaceChildren(); this.lines?.replaceChildren(); return; }
+    this.lit = new Set([...(this.lit || [])].filter((c) => list.includes(c)));
     if (this.aboutNow) this.about(this.aboutNow); else this.layout();
+    if (this.sideOnce) return;
+    this.sideOnce = true;
     new ResizeObserver(() => this.layout()).observe(this.el);
     // In space: the room leans a little with the pointer.
     this.el.addEventListener('pointermove', (e) => {
@@ -516,6 +521,12 @@ export class Talk {
       this.stage.style.perspectiveOrigin = `${50 - ((e.clientX - r.left) / r.width - 0.5) * 16}% ${40 - ((e.clientY - r.top) / r.height - 0.5) * 12}%`;
       this.drawLinks(500);
     });
+  }
+  // A note changed or gone (the app says so): the cards beside the talk again, in a moment.
+  noteChanged(path) {
+    if (!this.order || !this.desk.d.nodes.some((n) => n.type === 'file' && n.file === path)) return;
+    clearTimeout(this.sideSoon);
+    this.sideSoon = setTimeout(() => this.notesSide(), 300);
   }
   // Beside the talk (flat, in a column) or around it in depth (Labs, a wide
   // window, motion not reduced), as the question has it.
