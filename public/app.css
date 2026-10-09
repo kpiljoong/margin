@@ -2056,3 +2056,8 @@ img.part { border-radius: 6px; box-shadow: 0 0 0 1px var(--border); }
 .brief-more-row { margin-top: 4px; }
 .brief-item.s-next .brief-box { border-color: var(--accent-2); color: var(--accent-2); }
 .brief-item.s-next .brief-text { text-decoration: none; color: var(--fg-dim); }
+.theme-sum { margin-top: 5px; font-size: 11.5px; color: var(--fg-dim); }
+.mnote.recall.k-theme-supports { --r: var(--ok); }
+.mnote.recall.k-theme-counters { --r: var(--warn); }
+.mnote.recall.k-theme-scope { --r: var(--accent); }
+.mnote .theme-quote { font: 12.5px/1.45 var(--sans); color: var(--fg); padding: 3px 7px; margin: 3px 0; border-left: 2px solid color-mix(in srgb, var(--r) 50%, transparent); background: color-mix(in srgb, var(--fg) 4%, transparent); }

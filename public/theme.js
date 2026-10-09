@@ -1,0 +1,91 @@
+// A theme note (Themes, Labs: lib/themes.js themeNote), read back: its
+// claim, the reading of it, the paragraphs it came up in, the ones that
+// don't fit it (yet) and what isn't checked — and the edits that grow it:
+// a paragraph added where it came up or where it doesn't fit, the reading
+// put in other words. Plain Markdown, the person's to change: what isn't
+// found is left alone.
+//
+// Plain logic (test/brief.test.mjs).
+
+const READING = /^>\s*\[!note\][+-]?\s*Margin's reading/i;
+const FRONT = /^---\n([\s\S]*?)\n---\n?/;
+const WHERE = /^##\s+Where it came up\s*$/i;
+const UNFIT = /^##\s+Doesn't fit(?: \(yet\))?\s*$/i;
+const OPEN = /^##\s+Not checked yet\s*$/i;
+// "- the words — [[Note]] (2026-10-01)"
+const SCENE = /^\s*[-*]\s+(.*?)\s+—\s+\[\[([^\]|#]+)[^\]]*\]\](?:\s*\((\d{4}-\d{2}-\d{2})\))?\s*$/;
+
+// Its section: the lines under a heading, to the next heading.
+function section(lines, head) {
+  const at = lines.findIndex((l) => head.test(l));
+  if (at < 0) return null;
+  let end = at + 1;
+  while (end < lines.length && !/^#{1,6}\s/.test(lines[end])) end++;
+  return { at, end };
+}
+const scenesIn = (lines, s) => (s ? lines.slice(s.at + 1, s.end).map((l, i) => { const m = SCENE.exec(l); return m && { text: m[1], name: m[2].trim(), date: m[3] || '', line: s.at + 1 + i }; }).filter(Boolean) : []);
+
+// → { title, made, reading, readingLine, readingEnd, scenes, unfit, open,
+// whereLine, unfitLine } or null (not a theme note).
+export function themeOf(text, path = '') {
+  const lines = String(text).split('\n');
+  const r = lines.findIndex((l) => READING.test(l));
+  const front = (FRONT.exec(text) || [])[1] || '';
+  const madeLine = /^theme:\s*(\d{4}-\d{2}-\d{2})/m.exec(front);
+  if (r < 0 && !madeLine) return null;
+  if (r < 0 && !/^themes\//i.test(path)) return null;
+  let e = r + 1;
+  while (r >= 0 && e < lines.length && /^>/.test(lines[e])) e++;
+  const where = section(lines, WHERE);
+  const unfit = section(lines, UNFIT);
+  const open = section(lines, OPEN);
+  return {
+    title: (/^#\s+(.+)$/m.exec(text) || [])[1]?.trim() || '',
+    made: madeLine?.[1] || '',
+    reading: r < 0 ? '' : lines.slice(r + 1, e).map((l) => l.replace(/^>\s?/, '')).join(' ').replace(/\s+/g, ' ').trim(),
+    readingLine: r,
+    readingEnd: r < 0 ? -1 : e - 1,
+    scenes: scenesIn(lines, where),
+    unfit: scenesIn(lines, unfit),
+    open: open ? lines.slice(open.at + 1, open.end).map((l) => l.replace(/^\s*[-*]\s+/, '').trim()).filter(Boolean) : [],
+    whereLine: where ? where.at : -1,
+    unfitLine: unfit ? unfit.at : -1,
+  };
+}
+
+const sceneLine = (s) => `- ${String(s.text).replace(/\s+/g, ' ').trim()} — [[${s.name}]]${s.date && !s.name.includes(s.date) ? ` (${s.date})` : ''}`;
+
+// The note with a paragraph added at the end of a section (made, before
+// "Not checked yet" or at the end, when it isn't there yet).
+function addTo(text, head, title, s) {
+  const lines = text.split('\n');
+  const sec = section(lines, head);
+  if (sec) {
+    let j = sec.end;
+    while (j > sec.at + 1 && !lines[j - 1].trim()) j--;
+    lines.splice(j, 0, sceneLine(s));
+    return lines.join('\n');
+  }
+  const open = section(lines, OPEN);
+  const block = [title, '', sceneLine(s), ''];
+  if (open) { lines.splice(open.at, 0, ...block); return lines.join('\n'); }
+  return `${text.replace(/\s*$/, '')}\n\n${block.join('\n')}`;
+}
+export const addScene = (text, s) => addTo(text, WHERE, '## Where it came up', s);
+export const addUnfit = (text, s) => addTo(text, UNFIT, '## Doesn\'t fit (yet)', s);
+
+// The reading in other words (the callout's lines after its first).
+export function withReading(text, reading) {
+  const t = themeOf(text);
+  if (!t || t.readingLine < 0) return null;
+  const lines = text.split('\n');
+  lines.splice(t.readingLine + 1, t.readingEnd - t.readingLine, `> ${reading.replace(/\s+/g, ' ').trim()}`);
+  return lines.join('\n');
+}
+
+// Is this paragraph one of the note's already (where it came up, or not)?
+export function inTheme(t, text) {
+  const k = (x) => String(x).toLowerCase().replace(/[\s\p{P}\p{S}]+/gu, '').slice(0, 120);
+  const mine = k(text);
+  return [...t.scenes, ...t.unfit].some((s) => k(s.text) === mine);
+}

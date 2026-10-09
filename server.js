@@ -870,8 +870,42 @@ async function labThemes(b) {
     read: found.length,
     themes: r.themes.map((t) => {
       const scenes = t.from.map((n) => found[n - 1]).map(({ path: p, line, name, date, raw, text }) => ({ path: p, line, name, date, raw, text }));
-      return { title: t.title, reading: t.reading, open: t.open, scenes, note: themeNote(t, scenes) };
+      return { title: t.title, reading: t.reading, open: t.open, scenes, note: themeNote(t, scenes, new Date().toISOString().slice(0, 10)) };
     }),
+  };
+}
+
+// A theme note checked against what was written since (Themes, Labs):
+// the theme (public/theme.js themeOf, sent by the page), and the paragraphs
+// of other notes the page found near it ({ path, line }: read here, never a
+// private or ignored note), those dated or changed on or after the day it
+// was made, not one of its own. → { items: [{ verdict: 'supports' |
+// 'counters', why, ref: { path, line, name, raw, date, text } }], scope:
+// the reading put to hold for all (only when some don't fit) }.
+async function labThemeCheck(b) {
+  const { theme, refs = [] } = b;
+  const str = (x, n) => typeof x === 'string' && x.length <= n;
+  if (!theme || typeof theme !== 'object' || !str(theme.title, 300) || !theme.title.trim() || !str(theme.reading ?? '', 2000) || !str(theme.made ?? '', 10)
+    || !Array.isArray(theme.scenes) || theme.scenes.length > 40 || !theme.scenes.every((x) => x && str(x.text, 2000) && str(x.name, 300)) || !validRefs(refs, 12)) throw httpError(400, 'path, theme: { title, reading, made, scenes: [{ text, name }] }, refs');
+  const { agent, env, read } = await recallSending(b, 'Checking a theme');
+  const k = (x) => String(x).toLowerCase().replace(/[\s\p{P}\p{S}]+/gu, '').slice(0, 120);
+  const own = new Set(theme.scenes.map((x) => k(x.text)));
+  const dated = (f) => (/\d{4}-\d{2}-\d{2}/.exec(f.name) || [])[0] || (() => { try { return new Date(fs.statSync(path.join(ROOT, f.path)).mtimeMs).toISOString().slice(0, 10); } catch { return ''; } })();
+  const found = sameOnce(refs.map(read).filter(Boolean)).map((f) => ({ ...f, date: dated(f) }))
+    .filter((f) => !own.has(k(f.text)) && (!theme.made || !f.date || f.date >= theme.made));
+  if (!found.length) return { items: [], scope: '', read: 0 };
+  const lang = b.lang === 'ko' || b.lang === 'en' ? b.lang : textLang([theme.title, theme.reading || '']) || 'en';
+  const model = developModel(b);
+  if (themerModel !== model) { themer?.stop(); themer = null; }
+  themerModel = model;
+  themer ||= themesMargin({ bin: liveBin(agent), env, opts: { ...liveOpts, model, effort: '' } });
+  const req = { theme: { title: theme.title.trim(), reading: (theme.reading || '').trim(), scenes: theme.scenes.slice(0, 12).map((x) => ({ text: x.text.slice(0, 400), name: x.name })) }, found, lang };
+  const r = await themer.check(req);
+  if (!r.ok) throw httpError(502, r.error || 'Claude did not answer.');
+  return {
+    read: found.length,
+    scope: r.scope,
+    items: r.verdicts.filter((v) => v.verdict !== 'none').map((v) => { const f = found[v.n - 1]; return { verdict: v.verdict, why: v.why, ref: { path: f.path, line: f.line, name: f.name, raw: f.raw, date: f.date, text: f.text } }; }),
   };
 }
 
@@ -2686,6 +2720,7 @@ async function routeApi(method, url, body) {
   if (method === 'POST' && p === '/api/recall/develop') return recallDevelop(body || {});
   if (method === 'POST' && p === '/api/lab/brief') return labBrief(body || {});
   if (method === 'POST' && p === '/api/lab/themes') return labThemes(body || {});
+  if (method === 'POST' && p === '/api/lab/themes/check') return labThemeCheck(body || {});
   if (method === 'GET' && p === '/api/embed') return embedStatus();
   if (method === 'POST' && p === '/api/embed') return embedOn(body || {});
   if (method === 'POST' && p === '/api/embed/download') { embed.download(); return embedStatus(); }

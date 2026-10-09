@@ -8564,14 +8564,15 @@ function drawNotes(tab) {
   const live = liveActive(tab);
   ed.el.classList.toggle('live', live);
   // Brief first: a paragraph it speaks of has no Related or question card besides.
-  const briefed = briefNotes(tab);
+  const themed = themeNotes(tab);
+  const briefed = themed.length || tab.isTheme ? [] : briefNotes(tab);
   const recalled = recallNotes(tab);
   // Once it has remembered something, the note keeps its margin: the text doesn't move as cards come and go.
   ed.el.classList.toggle('keep-notes', !!S.settings.recall && (recalled.length > 0 || ed.el.classList.contains('keep-notes')));
   ed.setNotes([...tab.comments.filter((c) => !c.resolved || tab.showResolved).map((c) => {
     const at = anchorOf(text, c);
     return { from: at ? at[0] : 0, to: at ? at[1] : 0, el: noteCard(tab, c, !at), cur: tab.noteCur === c.id };
-  }), ...recalled, ...devNotes(tab), ...briefed, ...(live ? liveNotes(tab) : [])]);
+  }), ...recalled, ...devNotes(tab), ...themed, ...briefed, ...(live ? liveNotes(tab) : [])]);
   if (live) liveHudShow(tab);
   else tab.live?.hud?.remove();
 }
@@ -8967,14 +8968,14 @@ async function developNote(tab = activeTab()) {
 }
 // The paragraphs of other notes near the note's: by the local model when it
 // has read the notes, else by their words; those near more of them first.
-async function devNear(tab, texts) {
+async function devNear(tab, texts, max = 12) {
   const score = new Map();
   const add = (x, s) => { const k = `${x.path}\u0000${x.line}`; const o = score.get(k) || { path: x.path, line: x.line, s: 0 }; o.s += s; score.set(k, o); };
   let r = null;
   if (embedReady() && texts.length) { try { r = await api('POST', '/api/embed/near', { path: tab.path, texts }); } catch { /* by the words */ } }
   if (r?.results) r.results.forEach((list) => list.filter((x) => x.z >= 1.5).forEach((x) => add(x, x.z)));
   else for (const t of texts) for (const x of recallMod.nearFor(recallSt.index, tab.path, t, { cache: recallSt.cache, max: 4 }) || []) add(x, 1);
-  return [...score.values()].filter((x) => x.path !== tab.path).sort((a, b) => b.s - a.s).slice(0, 12).map(({ path, line }) => ({ path, line }));
+  return [...score.values()].filter((x) => x.path !== tab.path).sort((a, b) => b.s - a.s).slice(0, max).map(({ path, line }) => ({ path, line }));
 }
 // The paragraph a card is about now, or null (gone, changed, or not told apart).
 const devPara = (paras, x) => recallMod.paraAt(paras, x.spot);
@@ -9182,7 +9183,7 @@ async function briefCheck(tab = activeTab(), { auto = false } = {}) {
   if (tab.editor && isAttached(tab)) drawNotes(tab);
 }
 // A paragraph a Brief card is beside (then nothing else of the margin's).
-const briefHas = (tab, line) => !!(briefOn() && tab.briefParas?.has(line));
+const briefHas = (tab, line) => !!((briefOn() || tab.isTheme) && tab.briefParas?.has(line));
 // A Related card whose notes a Brief card already cites says nothing more.
 function briefCites(tab, r) {
   const st = briefOn() && briefSt.get(tab.path);
@@ -9384,6 +9385,103 @@ async function themesView() {
         t.reading ? h('div', { class: 'theme-reading' }, h('span', { class: 'recall-chip' }, 'A reading'), t.reading) : null,
         t.open ? h('div', { class: 'theme-open' }, h('span', { class: 'recall-chip' }, 'Not checked yet'), t.open) : null);
     }));
+}
+
+// ---- A theme note grows (Themes, Labs; public/theme.js): opened, it has a
+// headline at the top of the margin — the claim, since when, where it came
+// up — and Check what's new sends the theme and the paragraphs of other
+// notes near it written since it was made to Claude, which says of each
+// whether it is another case of it or one the reading doesn't explain; and,
+// when some don't fit, the reading put to hold for all. Each is a card:
+// another case beside "Where it came up" (Add there), one that doesn't fit
+// beside the reading (Add to "Doesn't fit (yet)"), the reading in other
+// words (Use this reading). Nothing goes in the note but by those buttons.
+let themeMod = null;
+const themeSt = new Map(); // path → { busy, items, scope, at, small }
+function themeNotes(tab) {
+  tab.isTheme = false;
+  if (!labsOn() || !isNote(tab.path)) return [];
+  if (!themeMod) { import('./theme.js').then((m) => { themeMod = m; for (const t of S.tabs) if (t.editor && t.comments) drawNotes(t); }).catch(() => {}); return []; }
+  const text = tab.editor.value;
+  const t = themeMod.themeOf(text, tab.path);
+  if (!t) return [];
+  tab.isTheme = true;
+  // Its quotes are from those notes, and what is near its reading is for
+  // Check what's new: no Related card beside them.
+  tab.briefParas = new Set([...t.scenes, ...t.unfit].map((x) => x.line));
+  for (let i = Math.max(0, t.readingLine); i <= t.readingEnd; i++) tab.briefParas.add(i);
+  const st = themeSt.get(tab.path) || themeSt.set(tab.path, { busy: false, items: [], scope: '', at: 0, small: false }).get(tab.path);
+  const starts = [0];
+  for (let i = text.indexOf('\n'); i >= 0; i = text.indexOf('\n', i + 1)) starts.push(i + 1);
+  const head = h('div', { class: 'brief theme-brief' },
+    h('div', { class: 'brief-top' },
+      h('span', { class: 'brief-mode' }, 'Theme'),
+      h('span', { class: 'grow' }),
+      st.busy ? h('span', { class: 'margin-dots', title: 'Claude is reading what was written since' }, h('i'), h('i'), h('i'))
+        : h('button', { class: 'recall-ans', title: 'The paragraphs of your other notes near this theme, written since it was made: another case of it, or one it doesn’t explain? (Claude)', onclick: () => themeCheck(tab) }, st.at ? 'Check again' : 'Check what’s new'),
+      h('button', { class: 'mnote-btn', title: st.small ? 'Show' : 'Fold', onclick: () => { st.small = !st.small; drawNotes(tab); } }, st.small ? '▾' : '▴')),
+    st.small ? null : h('div', { class: 'theme-sum' },
+      `${t.made ? `Made ${t.made} · ` : ''}came up ${t.scenes.length} time${t.scenes.length === 1 ? '' : 's'}${t.unfit.length ? ` · ${t.unfit.length} that ${t.unfit.length === 1 ? 'doesn’t' : 'don’t'} fit` : ''}`,
+      st.at && !st.items.length && !st.scope ? ' · nothing new since' : ''));
+  tab.editor.setHeadline(head);
+  const put = (change, x) => {
+    const v = tab.editor.value;
+    const nv = change(v);
+    if (nv == null || nv === v) { toast('The note changed: add it by hand.'); return; }
+    let i = 0;
+    while (i < v.length && v[i] === nv[i]) i++;
+    let j = 0;
+    while (j < v.length - i && v[v.length - 1 - j] === nv[nv.length - 1 - j]) j++;
+    tab.editor.replace(i, v.length - j, nv.slice(i, nv.length - j));
+    st.items = st.items.filter((y) => y !== x);
+    if (x === 'scope') st.scope = '';
+    drawNotes(tab);
+  };
+  const scene = (x) => ({ text: x.ref.text, name: x.ref.name, date: x.ref.date });
+  const at = (line) => ({ from: starts[Math.max(0, line)], to: starts[Math.max(0, line)], end: starts[Math.max(0, line)] });
+  const out = st.items.map((x) => ({
+    ...at(x.verdict === 'supports' ? (t.whereLine >= 0 ? t.whereLine : t.readingLine) : t.readingLine),
+    el: h('div', { class: `mnote recall k-theme-${x.verdict}` },
+      h('div', { class: 'mnote-head' }, h('span', { class: 'recall-chip' }, x.verdict === 'supports' ? 'Another case' : 'Doesn’t fit'), h('span', { class: 'grow' }),
+        h('button', { class: 'mnote-btn', title: 'Let this one go', onclick: () => { st.items = st.items.filter((y) => y !== x); drawNotes(tab); } }, '×')),
+      h('div', { class: 'theme-quote' }, x.ref.text.length > 240 ? `${x.ref.text.slice(0, 240)}…` : x.ref.text),
+      x.why ? h('div', { class: 'recall-says whole' }, x.why) : null,
+      h('div', { class: 'recall-refs' }, recallRef(x.ref)),
+      h('div', { class: 'dev-answer-row' }, h('button', { class: 'recall-ans', onclick: () => put((v) => (x.verdict === 'supports' ? themeMod.addScene(v, scene(x)) : themeMod.addUnfit(v, scene(x))), x) },
+        x.verdict === 'supports' ? 'Add where it came up' : 'Add to “Doesn’t fit (yet)”'))),
+  }));
+  if (st.scope && t.readingLine >= 0) {
+    out.push({ ...at(t.readingLine), el: h('div', { class: 'mnote recall k-theme-scope' },
+      h('div', { class: 'mnote-head' }, h('span', { class: 'recall-chip' }, 'The reading, to hold for all'), h('span', { class: 'grow' }),
+        h('button', { class: 'mnote-btn', title: 'Let it go', onclick: () => { st.scope = ''; drawNotes(tab); } }, '×')),
+      h('div', { class: 'recall-says whole' }, st.scope),
+      h('div', { class: 'dev-answer-row' }, h('button', { class: 'recall-ans', title: 'Put it in the note in place of the reading (⌘Z undoes it)', onclick: () => put((v) => themeMod.withReading(v, st.scope), 'scope') }, 'Use this reading'))) });
+  }
+  return out;
+}
+async function themeCheck(tab) {
+  const st = themeSt.get(tab.path);
+  if (!st || st.busy || !themeMod) return;
+  if (!store.getItem('an.themeOk') && !(await askConfirm('Check what’s new sends this theme (its claim, reading and where it came up) and up to twelve paragraphs of other notes near it, written since it was made, to Claude, through the Claude Code agent you signed in to. A private note, or one .agentnotesignore names, is never sent.', { okLabel: 'Check' }))) return;
+  store.setItem('an.themeOk', '1');
+  const t = themeMod.themeOf(tab.editor.value, tab.path);
+  st.busy = true;
+  drawNotes(tab);
+  try {
+    recallMod ||= await import('./recall.js');
+    if (!recallSt.index) { recallSt.at = 0; recallFresh(); await recallSt.loading; }
+    // Near the claim, its reading and where it came up; not those paragraphs themselves.
+    const near = await devNear(tab, [t.title, t.reading, ...t.scenes.map((s) => s.text), ...t.unfit.map((s) => s.text)].filter(Boolean).slice(0, 16), 40);
+    const textOf = (y) => recallSt.index?.paras?.byNote?.get(y.path)?.paras.find((z) => z.line === y.line)?.text || '';
+    const refs = near.filter((y) => !themeMod.inTheme(t, textOf(y))).slice(0, 12);
+    const r = await api('POST', '/api/lab/themes/check', { path: tab.path, theme: { title: t.title, reading: t.reading, made: t.made, scenes: [...t.scenes, ...t.unfit].slice(0, 40).map((s) => ({ text: s.text, name: s.name })) }, refs, ...liveOpts(), thinkModel: S.settings.thinkModel === 'haiku' ? 'haiku' : 'sonnet' });
+    st.items = r.items;
+    st.scope = r.scope;
+    st.at = Date.now();
+    if (!r.items.length) toast(r.read ? `Nothing in ${r.read} newer paragraph${r.read === 1 ? '' : 's'} near it is another case or one that doesn’t fit.` : 'Nothing written near it since it was made.');
+  } catch (e) { toast(e.message, 'error'); }
+  st.busy = false;
+  if (tab.editor && isAttached(tab)) drawNotes(tab);
 }
 
 // Settings: where the model is (download, reading the notes, ready), and its buttons.
