@@ -1823,6 +1823,7 @@ li.callout-hot { background: color-mix(in srgb, var(--accent) 16%, transparent);
 .desk-card.t-ai.j-done { --card: var(--teal); } .desk-card.t-ai.j-done .desk-head { color: var(--teal); }
 .desk-card.t-ai.j-open { --card: var(--warn); } .desk-card.t-ai.j-open .desk-head { color: var(--warn); }
 .desk-card.t-ai.j-later { --card: var(--fg-faint); } .desk-card.t-ai.j-later .desk-head { color: var(--fg-dim); }
+.desk-card.t-ai.up-next { border-style: solid; box-shadow: 0 0 0 2px color-mix(in srgb, var(--card) 45%, transparent), 0 10px 30px rgba(0, 0, 0, .22); }
 .desk-ai-foot { display: flex; gap: 6px; padding: 0 10px 10px; }
 .desk-ai-foot .ghost { margin-left: auto; }
 @keyframes desk-in { from { opacity: 0; transform: translateY(8px) scale(.98); } }

@@ -1559,12 +1559,12 @@ export class Desk {
     if (mod && k.toLowerCase() === 'z') { handled(); this.back(e.shiftKey); return; }
     if (mod && k.toLowerCase() === 'a') { handled(); this.sel = new Set(this.d.nodes.filter((n) => n.type !== 'group').map((n) => n.id)); this.paintSel(); this.dockShow(); return; }
     if (mod || e.altKey) return;
-    if (k === 'Tab') { handled(); if (this.proposal) this.take(); else if (e.shiftKey) this.keepAll(this.ai.at(-1)); else this.keep(this.ai.at(-1)); return; }
+    if (k === 'Tab') { handled(); if (this.proposal) this.take(); else if (e.shiftKey) this.keepAll(this.upNext()); else this.keep(this.upNext()); return; }
     if (k === 'Escape') {
       handled();
       if (this.marking) { this.markMode(null); return; }
       if (this.spotId) { this.unspot(); return; }
-      if (this.proposal) { this.proposal = null; this.render(); } else if (this.ai.length) this.drop(this.ai.at(-1)); else { this.sel.clear(); this.paintSel(); this.dockShow(); }
+      if (this.proposal) { this.proposal = null; this.render(); } else if (this.ai.length) this.drop(this.upNext()); else { this.sel.clear(); this.paintSel(); this.dockShow(); }
       return;
     }
     if (k === 'Backspace' || k === 'Delete') { if (this.sel.size) { handled(); const ids = [...this.sel]; this.sel.clear(); this.change(removeCards(this.d, ids)); } return; }
@@ -2066,7 +2066,7 @@ export class Desk {
     const e = el('div', 'desk-card t-ai', head, body, foot);
     e.dataset.id = a.id;
     e.show = (x) => {
-      e.className = `desk-card t-ai k-${x.kind} s-${x.state}${x.jot ? ` j-${x.jot.kind}` : ''}`;
+      e.className = `desk-card t-ai k-${x.kind} s-${x.state}${x.jot ? ` j-${x.jot.kind}` : ''}${x.jot && x === this.upNext() ? ' up-next' : ''}`;
       Object.assign(e.style, { left: `${x.x}px`, top: `${x.y}px`, width: `${x.width}px`, minHeight: `${x.height}px` });
       head.textContent = x.kind === 'question' ? 'Question' : x.title || 'Margin';
       if (x.state === 'error') body.textContent = x.text;
@@ -2085,6 +2085,12 @@ export class Desk {
       all.textContent = x.jot ? `Take all ${n}` : `Keep all ${n}`;
     };
     return e;
+  }
+  // The card Tab takes and Esc lets go: what was jotted, in reading order
+  // (the first of it, top down); else the newest the margin wrote.
+  upNext() {
+    const jots = this.ai.filter((a) => a.jot && a.state === 'done').sort((p, q) => p.y - q.y);
+    return jots[0] || this.ai.at(-1);
   }
   // What came of one request, together (the questions): done and not kept.
   batchOf(a) { return a?.batch ? this.ai.filter((x) => x.batch === a.batch && x.state === 'done') : a?.state === 'done' ? [a] : []; }
@@ -2342,7 +2348,7 @@ export class Desk {
       this.addAi({ kind: 'review', batch, title: `Jotted \u00B7 ${TITLE[it.kind] || 'Margin'}`, text: body, jot: { kind: it.kind, say: it.say, about: it.about || '', settles: it.settles || '', of: card.id, ...(it.ticks ? { ticks: it.ticks } : {}) }, x: 0, y: 0, width: STREAM_W - STREAM_IN, height: 74 + 21 * body.split('\n').length, state: 'done' }, false);
     }
     this.streamNow();
-    this.jotStatus.textContent = `${items.length} sorted, under it: Tab takes the newest, \u21E7Tab all ${items.length}, Esc lets one go.`;
+    this.jotStatus.textContent = `${items.length} sorted, under it: Tab takes the first (marked), Esc lets it go, \u21E7Tab takes all ${items.length}.`;
   }
   async makeNote(a) {
     const path = await this.opts.makeNote(a.text);
