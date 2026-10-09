@@ -972,7 +972,11 @@ async function labThemeCheck(b) {
     counter,
     ms,
     maybe: r.maybe,
-    items: r.verdicts.filter((v) => v.verdict !== 'none').map((v) => { const f = found[v.n - 1]; return { verdict: v.verdict, why: v.why, ref: { path: f.path, line: f.line, name: f.name, raw: f.raw, date: f.date, text: f.text } }; }),
+    // One card for a thing written again: where else it is written, also.
+    items: r.verdicts.filter((v) => v.verdict !== 'none').map((v) => {
+      const ref = (f) => ({ path: f.path, line: f.line, name: f.name, raw: f.raw, date: f.date, text: f.text });
+      return { verdict: v.verdict, why: v.why, ref: ref(found[v.n - 1]), ...(v.also ? { also: v.also.map((k) => ref(found[k - 1])) } : {}) };
+    }),
   };
 }
 

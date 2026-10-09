@@ -2065,3 +2065,5 @@ img.part { border-radius: 6px; box-shadow: 0 0 0 1px var(--border); }
 .mnote.theme-stale { opacity: .6; }
 .theme-check { font: 12px/1.4 var(--sans); color: var(--fg); margin-top: 3px; }
 .theme-check-k { font-weight: 600; color: var(--fg-dim); }
+.theme-also { margin-top: 3px; }
+.theme-also summary { font: 11.5px/1.4 var(--sans); color: var(--fg-dim); cursor: pointer; }

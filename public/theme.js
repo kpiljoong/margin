@@ -13,8 +13,9 @@ const FRONT = /^---\n([\s\S]*?)\n---\n?/;
 const WHERE = /^##\s+Where it came up\s*$/i;
 const UNFIT = /^##\s+Doesn't fit(?: \(yet\))?\s*$/i;
 const OPEN = /^##\s+Not checked yet\s*$/i;
-// "- the words — [[Note]] (2026-10-01)"
-const SCENE = /^\s*[-*]\s+(.*?)\s+—\s+\[\[([^\]|#]+)[^\]]*\]\](?:\s*\((\d{4}-\d{2}-\d{2})\))?\s*$/;
+// "- the words — [[Note]] (2026-10-01)", and where else the same was
+// written (one case): " · also [[Todo]], [[Log]]".
+const SCENE = /^\s*[-*]\s+(.*?)\s+—\s+\[\[([^\]|#]+)[^\]]*\]\](?:\s*\((\d{4}-\d{2}-\d{2})\))?(?:\s+·\s+also\s+((?:\[\[[^\]]+\]\](?:,\s*)?)+))?\s*$/;
 
 // Its section: the lines under a heading, to the next heading.
 function section(lines, head) {
@@ -24,7 +25,7 @@ function section(lines, head) {
   while (end < lines.length && !/^#{1,6}\s/.test(lines[end])) end++;
   return { at, end };
 }
-const scenesIn = (lines, s) => (s ? lines.slice(s.at + 1, s.end).map((l, i) => { const m = SCENE.exec(l); return m && { text: m[1], name: m[2].trim(), date: m[3] || '', line: s.at + 1 + i }; }).filter(Boolean) : []);
+const scenesIn = (lines, s) => (s ? lines.slice(s.at + 1, s.end).map((l, i) => { const m = SCENE.exec(l); return m && { text: m[1], name: m[2].trim(), date: m[3] || '', also: [...(m[4] || '').matchAll(/\[\[([^\]|#]+)[^\]]*\]\]/g)].map((x) => x[1].trim()), line: s.at + 1 + i }; }).filter(Boolean) : []);
 
 // → { title, made, reading, readingLine, readingEnd, scenes, unfit, open,
 // whereLine, unfitLine } or null (not a theme note).
@@ -55,7 +56,7 @@ export function themeOf(text, path = '') {
   };
 }
 
-const sceneLine = (s) => `- ${String(s.text).replace(/\s+/g, ' ').trim()} — [[${s.name}]]${s.date && !s.name.includes(s.date) ? ` (${s.date})` : ''}`;
+const sceneLine = (s) => `- ${String(s.text).replace(/\s+/g, ' ').trim()} — [[${s.name}]]${s.date && !s.name.includes(s.date) ? ` (${s.date})` : ''}${s.also?.length ? ` · also ${[...new Set(s.also)].filter((x) => x !== s.name).map((x) => `[[${x}]]`).join(', ')}` : ''}`.replace(/ · also $/, '');
 
 // The note with a paragraph added at the end of a section (made, before
 // "Not checked yet" or at the end, when it isn't there yet).

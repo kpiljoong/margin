@@ -9447,7 +9447,8 @@ function themeNotes(tab) {
     else st.items = st.items.filter((y) => y !== x);
     drawNotes(tab);
   };
-  const scene = (x) => ({ text: x.ref.text, name: x.ref.name, date: x.ref.date });
+  // A thing written again goes in as one case, with where else it was written.
+  const scene = (x) => ({ text: x.ref.text, name: x.ref.name, date: x.ref.date, also: (x.also || []).map((y) => y.name) });
   const at = (line) => ({ from: starts[Math.max(0, line)], to: starts[Math.max(0, line)], end: starts[Math.max(0, line)] });
   const add = (x) => (stale || x.verdict === 'outside' ? null : h('div', { class: 'dev-answer-row' }, h('button', { class: 'recall-ans', onclick: () => put((v) => (x.verdict === 'supports' ? themeMod.addScene(v, scene(x)) : themeMod.addUnfit(v, scene(x))), x) },
     x.verdict === 'supports' ? 'Add where it came up' : 'Add to “Doesn’t fit (yet)”')));
@@ -9459,6 +9460,7 @@ function themeNotes(tab) {
       h('div', { class: 'theme-quote' }, x.ref.text.length > 240 ? `${x.ref.text.slice(0, 240)}…` : x.ref.text),
       x.why ? h('div', { class: 'recall-says whole' }, x.why) : null,
       h('div', { class: 'recall-refs' }, recallRef(x.ref)),
+      x.also?.length ? h('details', { class: 'theme-also' }, h('summary', {}, `Also written in ${x.also.length} more place${x.also.length === 1 ? '' : 's'} — one case`), h('div', { class: 'recall-refs' }, ...x.also.map((y) => recallRef(y)))) : null,
       add(x)),
   }));
   if (st.maybe && t.readingLine >= 0) {

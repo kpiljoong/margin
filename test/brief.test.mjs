@@ -126,7 +126,7 @@ process.stdin.on('data', (d) => {
     const j = JSON.parse(buf.slice(0, i)); buf = buf.slice(i + 1);
     if (j.type !== 'user') continue;
     fs.appendFileSync(process.env.FAKE_LOG, JSON.stringify(j.message.content) + '\\n');
-    const text = /^The title:/.test(j.message.content) ? '[1] supports: Again.\\n[2] counters: Otherwise.\\nmaybe: Narrower.\\ncheck: Ask.' : 'kind: conflict\\nat: P2\\nsay: Decided otherwise before.\\nfrom: 1\\n---\\nkind: ask\\nat: P2\\nsay: Why Friday?';
+    const text = /^The title:/.test(j.message.content) && /taco/.test(j.message.content) ? '[1] supports: Tacos to find.\\n[2] same as [1]' : /^The title:/.test(j.message.content) ? '[1] supports: Again.\\n[2] counters: Otherwise.\\nmaybe: Narrower.\\ncheck: Ask.' : 'kind: conflict\\nat: P2\\nsay: Decided otherwise before.\\nfrom: 1\\n---\\nkind: ask\\nat: P2\\nsay: Why Friday?';
     const out = (o) => process.stdout.write(JSON.stringify(o) + '\\n');
     out({ type: 'stream_event', event: { type: 'content_block_delta', delta: { text } } });
     out({ type: 'result', subtype: 'success', total_cost_usd: 0.001, usage: { input_tokens: 10, output_tokens: 3 } });
@@ -212,6 +212,12 @@ test('the server: the note, its last meeting and the notes near it (never a priv
   assert.equal(c2.status, 200, c2.error);
   assert.equal(c2.read, 1);
   assert.doesNotMatch(sent().at(-1), /A reading of another theme|A reading kept outside/);
+  // One thing written again elsewhere: one card, where else it is written also.
+  fs.writeFileSync(path.join(ws, 'NY food 2026-10-12.md'), '# NY food\n\nFind taco places in New York before the trip.\n');
+  fs.writeFileSync(path.join(ws, 'Todo 2026-10-13.md'), '# Todo\n\n- Find taco places in New York (from NY food)\n');
+  const c3 = await check({ path: 'Themes.md', theme, refs: [{ path: 'NY food 2026-10-12.md', line: 2 }, { path: 'Todo 2026-10-13.md', line: 2 }] });
+  assert.equal(c3.status, 200, c3.error);
+  assert.deepEqual(c3.items.map((x) => [x.verdict, x.ref.name, (x.also || []).map((y) => y.name)]), [['supports', 'NY food 2026-10-12', ['Todo 2026-10-13']]]);
 });
 
 const themes = require('../lib/themes.js');
@@ -291,6 +297,13 @@ test('a theme note read back, and grown: another case, one that does not fit, th
   assert.equal(themeOf(re2).reading, 'Third.');
   assert.notEqual(themeSig(t), themeSig(t2));
   assert.equal(themeSig(themeOf(addScene(re, { text: 'One more.', name: 'N' }))), themeSig(t2), 'a case added: the check still holds');
+  // One thing written in three places: one case, where else kept.
+  const thrice = addScene(note, { text: 'Find taco places in NY.', name: 'NY food', date: '2026-10-05', also: ['todo', 'log 2026-10-05', 'NY food'] });
+  assert.match(thrice, /- Find taco places in NY\. — \[\[NY food\]\] \(2026-10-05\) · also \[\[todo\]\], \[\[log 2026-10-05\]\]\n/);
+  const t3 = themeOf(thrice);
+  assert.equal(t3.scenes.length, 3);
+  assert.deepEqual([t3.scenes[2].name, t3.scenes[2].text, t3.scenes[2].also], ['NY food', 'Find taco places in NY.', ['todo', 'log 2026-10-05']]);
+  assert.doesNotMatch(addScene(note, { text: 'X.', name: 'N', also: ['N'] }), /also/);
 });
 
 test('a theme checked against what came since: the message and the verdicts', () => {
@@ -300,6 +313,11 @@ test('a theme checked against what came since: the message and the verdicts', ()
   assert.deepEqual(themes.parseCheck('[1] supports: Stuck again [2].\n[2] counters: Picked at once.\n[3] outside: an expert\n[4] none: lunch\n[9] supports: x\nmaybe: Those new to notes apps stall.\ncheck: Ask which app they used before.', 4),
     { verdicts: [{ n: 1, verdict: 'supports', why: 'Stuck again.' }, { n: 2, verdict: 'counters', why: 'Picked at once.' }, { n: 3, verdict: 'outside', why: 'an expert' }, { n: 4, verdict: 'none', why: 'lunch' }], maybe: { reading: 'Those new to notes apps stall.', check: 'Ask which app they used before.' } });
   assert.equal(themes.parseCheck('1. supports: yes\nmaybe: narrower', 1).maybe, null, 'no hypothesis when nothing goes against it');
+  // Written again: one case, onto the one judged before it; never onto a
+  // later one, one judged none, or one it judges otherwise itself.
+  const w = themes.parseCheck('[1] supports: Tacos to find.\n[2] same as [1]\n[3] same as [2]\n[4] none: lunch\n[5] same as [4]\n[6] same as [7]\n[7] counters: Booked.\n[8] same as a case\n[9] counters: Done.\n[9] same as [7]', 9);
+  assert.deepEqual(w.verdicts.map((v) => [v.n, v.verdict, v.also || []]), [[1, 'supports', [2, 3]], [4, 'none', []], [7, 'counters', []], [9, 'counters', []]]);
+  assert.match(themes.CHECK_SYSTEM, /Separate visits, interviews/);
 });
 
 test('what would show a reading wrong: search words, at most two', () => {
