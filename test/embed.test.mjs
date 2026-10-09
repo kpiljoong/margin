@@ -105,3 +105,10 @@ test('with the model: in other words, in another language', { skip: !MODELS || p
   assert.equal(r.results[1][0].path, 'sync.md');
   assert.equal(r.results[1][0].line, 2);
 });
+
+test('the model’s files: from where they are, or the same file elsewhere when that is blocked', async () => {
+  const { sourcesOf } = (await import('../lib/embed.js')).default;
+  assert.deepEqual(sourcesOf('https://cdn.jsdelivr.net/npm/onnxruntime-web@1.30.0/dist/ort-wasm-simd-threaded.wasm'),
+    ['https://cdn.jsdelivr.net/npm/onnxruntime-web@1.30.0/dist/ort-wasm-simd-threaded.wasm', 'https://unpkg.com/onnxruntime-web@1.30.0/dist/ort-wasm-simd-threaded.wasm']);
+  assert.deepEqual(sourcesOf('https://huggingface.co/x/y'), ['https://huggingface.co/x/y']);
+});

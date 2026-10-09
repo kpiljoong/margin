@@ -159,8 +159,29 @@ function stopServer() {
   if (child && child.exitCode === null) child.kill('SIGTERM');
 }
 
-function startServer(workspace) {
+// The network as the system has it, for what the server fetches (the
+// margin's model): the certificates it trusts (a company's own, as the
+// browser does) and its proxy for the web (Settings, or a PAC file) — one
+// set in the environment kept as it is.
+async function systemNetwork() {
+  const argv = ['--use-system-ca'];
+  const env = {};
+  if (process.env.HTTPS_PROXY || process.env.https_proxy || process.env.HTTP_PROXY || process.env.http_proxy) return { argv: [...argv, '--use-env-proxy'], env };
+  try {
+    const p = await session.defaultSession.resolveProxy('https://huggingface.co/');
+    const m = /^(PROXY|HTTPS)\s+([^\s;]+)/.exec(String(p || '').trim());
+    if (m) {
+      env.HTTPS_PROXY = env.HTTP_PROXY = `${m[1] === 'HTTPS' ? 'https' : 'http'}://${m[2]}`;
+      env.NO_PROXY = '127.0.0.1,localhost,::1';
+      argv.push('--use-env-proxy');
+    }
+  } catch { /* direct */ }
+  return { argv, env };
+}
+
+async function startServer(workspace) {
   stopServer();
+  const net = await systemNetwork();
   // Only external CLI agents need the user's full PATH. Running the login
   // shell lazily avoids touching shell startup files (and any folder-access
   // prompts they trigger) for people who never enable an agent.
@@ -169,7 +190,8 @@ function startServer(workspace) {
     const args = [workspace, '--no-open', '--port', '4321'];
     if (config.agentDefault) args.push('--default-agent', config.agentDefault);
     const child = fork(path.join(APP_ROOT, 'server.js'), args, {
-      env: { ...process.env, ELECTRON_RUN_AS_NODE: '1', AGENT_NOTES_AGENTS: JSON.stringify(agentProfiles()) },
+      execArgv: [...process.execArgv, ...net.argv],
+      env: { ...process.env, ...net.env, ELECTRON_RUN_AS_NODE: '1', AGENT_NOTES_AGENTS: JSON.stringify(agentProfiles()) },
       stdio: ['ignore', 'pipe', 'pipe', 'ipc'],
     });
     let stderr = '';
