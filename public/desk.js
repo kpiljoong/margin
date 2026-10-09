@@ -2447,7 +2447,8 @@ export class Desk {
   }
   // A wrap-up's next to-dos, at the end of the assistant's list (as it adds
   // its own): proposed in the red pen review; one there already is left out.
-  async addTodos(a) {
+  // (open: false: proposed without opening it, its review's id returned to open.)
+  async addTodos(a, { open = true } = {}) {
     const file = this.opts.todoFile;
     const lines = [...String(a.text || '').matchAll(/^(- \[ \] .+)$/gm)].map((m) => m[1].trim());
     if (!file || !lines.length) return { ok: false, added: [] };
@@ -2457,9 +2458,9 @@ export class Desk {
         const have = new Set(text.split('\n').map(norm));
         added = lines.filter((l) => !have.has(norm(l)));
         return added.length ? `${text.replace(/\s*$/, '')}\n${added.join('\n')}\n` : text;
-      });
+      }, { open });
       if (ok !== false && added.length) this.event('to-dos proposed', { file, text: added.join('\n') });
-      return { ok: ok !== false, added, there: lines.length - added.length };
+      return { ok: ok !== false, added, there: lines.length - added.length, file, ...(typeof ok === 'string' ? { id: ok } : {}) };
     } catch { return { ok: null, added: [] }; } // (said already)
   }
   // What they decided, carried into the notes: a card showing each line to

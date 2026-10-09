@@ -46,7 +46,7 @@ export const WORDS = {
     yesNext: '\uB124, \uB2E4\uC74C\uC73C\uB85C',
     tickedFail: (ts) => `\uD560 \uC77C ${ts.map((t) => `“${t}”`).join(', ')}\uC758 \uC644\uB8CC\uB294 \uC81C\uC548\uD558\uC9C0 \uBABB\uD588\uC5B4\uC694. \uB178\uD2B8\uC5D0\uC11C \uADF8 \uC904\uC744 \uADF8\uB300\uB85C \uCC3E\uC9C0 \uBABB\uD588\uAC70\uB098(\uC9C0\uC6CC\uC84C\uAC70\uB098 \uBC14\uB01C) \uC81C\uC548\uC774 \uB418\uC9C0 \uC54A\uC558\uC5B4\uC694. \uAE30\uB85D \uBCF4\uAE30\uC5D0\uC11C \uD655\uC778\uD574 \uC8FC\uC138\uC694.`,
     tickedThere: (ts) => `\uD560 \uC77C ${ts.map((t) => `“${t}”`).join(', ')}\uC740(\uB294) \uB178\uD2B8\uC5D0 \uC774\uBBF8 \uC644\uB8CC\uB85C \uB418\uC5B4 \uC788\uC5B4\uC694.`,
-    todosAdded: (k, there) => `\uD560 \uC77C ${k}\uAC1C\uB97C \uBAA9\uB85D\uC5D0 \uC81C\uC548\uD588\uC5B4\uC694${there ? ` (${there}\uAC1C\uB294 \uC774\uBBF8 \uC788\uC5B4\uC694)` : ''}. \uBE68\uAC04 \uD39C\uC5D0\uC11C \uBC1B\uC73C\uC2DC\uBA74 \uB3FC\uC694.`,
+    todosAdded: (k, there) => `\uD560 \uC77C ${k}\uAC1C\uB97C \uBAA9\uB85D\uC5D0 \uC81C\uC548\uD588\uC5B4\uC694${there ? ` (${there}\uAC1C\uB294 \uC774\uBBF8 \uC788\uC5B4\uC694)` : ''}. \uC544\uB798 \uBAA9\uB85D\uC744 \uB204\uB974\uBA74 \uBE68\uAC04 \uD39C\uC774 \uC5F4\uB824\uC694 — \uAC70\uAE30\uC11C \uBC1B\uC73C\uC2DC\uBA74 \uB3FC\uC694(✦ \uD328\uB110\uC5D0\uB3C4 \uC788\uC5B4\uC694).`,
     todosNone: '\uC0C8\uB85C \uB123\uC744 \uD560 \uC77C\uC774 \uC5C6\uC5B4\uC694. \uBAA8\uB450 \uBAA9\uB85D\uC5D0 \uC788\uC5B4\uC694.',
     todosFail: '\uD560 \uC77C \uBAA9\uB85D\uC5D0 \uC81C\uC548\uD558\uC9C0 \uBABB\uD588\uC5B4\uC694.',
     markedN: (k, f) => (k ? `\uB178\uD2B8 ${k}\uACF3\uC5D0 \uCDE8\uC18C \uD45C\uC2DC\uB97C \uC81C\uC548\uD588\uC5B4\uC694${f ? `. ${f}\uACF3\uC740 \uD558\uC9C0 \uBABB\uD588\uC5B4\uC694` : ''}.` : '\uCDE8\uC18C \uD45C\uC2DC\uB97C \uC81C\uC548\uD558\uC9C0 \uBABB\uD588\uC5B4\uC694.'),
@@ -60,7 +60,7 @@ export const WORDS = {
     instead: '\uBC14\uAFC8', putOff: '\uBBF8\uB8F8', reopen: '\uB2E4\uC2DC \uACE0\uBBFC',
     ticks: (t) => ` — \uD560 \uC77C “${t}” \uC644\uB8CC\uB85C`,
     taken: '\uD560 \uC77C\uB85C \uBC1B\uC558\uC5B4\uC694.', dropped: '\uBE7C \uB458\uAC8C\uC694.', skipped: '\uB118\uC5B4\uAC08\uAC8C\uC694. \uB2E4\uC74C\uC5D0 \uC5F4\uBA74 \uB2E4\uC2DC \uC5EC\uCB64\uBCFC\uAC8C\uC694.',
-    ticked: (ts) => `\uD560 \uC77C ${ts.map((t) => `“${t}”`).join(', ')}\uC744(\uB97C) \uC644\uB8CC\uB85C \uB178\uD2B8\uC5D0 \uC81C\uC548\uD588\uC5B4\uC694. \uB178\uD2B8\uC758 \uBE68\uAC04 \uD39C\uC5D0\uC11C \uBC1B\uC73C\uC2DC\uBA74 \uB3FC\uC694.`,
+    ticked: (ts) => `\uD560 \uC77C ${ts.map((t) => `“${t}”`).join(', ')}\uC744(\uB97C) \uC644\uB8CC\uB85C \uB178\uD2B8\uC5D0 \uC81C\uC548\uD588\uC5B4\uC694. \uC544\uB798 \uB178\uD2B8\uB97C \uB204\uB974\uBA74 \uBE68\uAC04 \uD39C\uC774 \uC5F4\uB824\uC694 — \uAC70\uAE30\uC11C \uBC1B\uC73C\uC2DC\uBA74 \uB3FC\uC694(✦ \uD328\uB110\uC5D0\uB3C4 \uC788\uC5B4\uC694).`,
     allAsked: '\uC5EC\uCB64\uBCFC \uAC74 \uB2E4 \uD588\uC5B4\uC694.',
     decidedN: (n, out) => (n ? `\uC774\uBC88\uAE4C\uC9C0 \uC815\uD55C \uAC83 ${n}\uAC1C${out ? `, \uADF8\uC911 ${out}\uAC1C\uB294 \uC544\uC9C1 \uB178\uD2B8\uC5D0 \uC5C6\uC5B4\uC694` : ', \uBAA8\uB450 \uB178\uD2B8\uC5D0 \uC788\uC5B4\uC694'}.` : '\uC544\uC9C1 \uC815\uD55C \uAC74 \uC5C6\uC5B4\uC694.'),
     laterN: (n) => (n ? `\uBBF8\uB8EC \uAC83 ${n}\uAC1C.` : ''),
@@ -116,7 +116,7 @@ export const WORDS = {
     yesNext: 'Yes, next',
     tickedFail: (ts) => `Not proposed done: ${ts.map((t) => `“${t}”`).join(', ')} — not found in its note as it was (deleted or changed), or not proposed. Look at it in the record.`,
     tickedThere: (ts) => `${ts.map((t) => `“${t}”`).join(', ')}: done in the note already.`,
-    todosAdded: (k, there) => `${k} to-do${k === 1 ? '' : 's'} proposed in your list${there ? ` (${there} there already)` : ''}: accept in the red pen review.`,
+    todosAdded: (k, there) => `${k} to-do${k === 1 ? '' : 's'} proposed in your list${there ? ` (${there} there already)` : ''}: press the list below to open its red pen review and accept them (it is in the ✦ panel too).`,
     todosNone: 'No new to-dos: all are in your list already.',
     todosFail: 'The to-dos were not proposed.',
     markedN: (k, f) => (k ? `Proposed struck out in ${k} note${k === 1 ? '' : 's'}${f ? `; ${f} not` : ''}.` : 'Not proposed.'),
@@ -130,7 +130,7 @@ export const WORDS = {
     instead: 'Changed', putOff: 'Put off', reopen: 'Open again',
     ticks: (t) => ` — the to-do “${t}” done`,
     taken: 'Taken as a to-do.', dropped: 'Left out.', skipped: 'Moving on; I’ll ask again next time.',
-    ticked: (ts) => `${ts.map((t) => `“${t}”`).join(', ')} proposed done in ${ts.length === 1 ? 'its note' : 'their notes'}: accept in the red pen review.`,
+    ticked: (ts) => `${ts.map((t) => `“${t}”`).join(', ')} proposed done in ${ts.length === 1 ? 'its note' : 'their notes'}: press the note below to open its red pen review and accept it (it is in the ✦ panel too).`,
     allAsked: 'That’s all I had to ask.',
     decidedN: (n, out) => (n ? `${n} decided so far${out ? `, ${out} not in the notes yet` : ', all in the notes'}.` : 'Nothing decided yet.'),
     laterN: (n) => (n ? `${n} put off.` : ''),
@@ -671,13 +671,15 @@ export class Talk {
     const W = this.W;
     const cards = this.desk.d.nodes.filter((n) => ids.includes(n.id) && n.from?.to);
     const said = { ok: [], there: [], not: [] };
+    const sent = []; // their reviews, to open
     for (const f of new Set(cards.map((n) => n.from.file))) {
       const these = cards.filter((n) => n.from.file === f);
       const r = await this.desk.sendToNote(f, { open: false }, these.map((n) => n.id));
+      if (r.id && typeof r.id === 'string' && r.made.length) sent.push({ file: f, id: r.id });
       // As the note has each now: proposed, done there already, or not (not found as it was, or not proposed).
       for (const n of these) said[r.id && r.made.includes(n.id) ? 'ok' : r.there.includes(n.id) ? 'there' : 'not'].push(todoText(String(n.text || '').split('\n')[0]));
     }
-    if (said.ok.length) this.say(W.ticked(said.ok));
+    if (said.ok.length) { if (sent.length) this.reviews(sent, W.ticked(said.ok)); else this.say(W.ticked(said.ok)); }
     if (said.there.length) this.say(W.tickedThere(said.there));
     if (said.not.length) this.say(W.tickedFail(said.not));
   }
@@ -769,8 +771,10 @@ export class Talk {
       out && this.desk.opts.changes ? btn(W.findChanges, async (b) => { b.disabled = true; if (!(await this.changes())) b.disabled = false; }) : null,
       r.todos.length && this.desk.opts.todoFile ? btn(W.addTodos, async (b) => {
         b.disabled = true;
-        const t = await this.desk.addTodos({ text: r.todos.join('\n') });
-        this.say(t.ok === null ? W.todosFail : t.added.length ? W.todosAdded(t.added.length, t.there) : W.todosNone);
+        const t = await this.desk.addTodos({ text: r.todos.join('\n') }, { open: false });
+        // (Its review a button away.)
+        if (t.id && t.added.length) this.reviews([{ file: t.file, id: t.id }], W.todosAdded(t.added.length, t.there));
+        else this.say(t.ok === null ? W.todosFail : t.added.length ? W.todosAdded(t.added.length, t.there) : W.todosNone);
         if (t.ok === null) b.disabled = false;
       }) : null,
       r.withdrawals.length ? btn(W.markThem, async (b) => {
