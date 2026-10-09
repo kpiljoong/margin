@@ -1183,10 +1183,33 @@ async function labReviewJot(b) {
   return { items: r.items.map((x) => ({ kind: x.kind, say: x.say, about: x.about ? notes[x.about - 1].path : '', settles: x.settles ? thisTime.focus[x.settles - 1] : '', todo: x.todo })) };
 }
 
+// What they decided on a review's desk (and put off), carried into its
+// notes: every line no longer agreeing with it, as it was and as it should
+// read, and each decision recorded once — to be shown, then proposed. Sent:
+// the topic, its decisions and its notes (not a private or ignored one).
+async function labReviewChanges(b) {
+  const rel = relOf(workspacePath(String(b.path || '')));
+  if (!/^Reviews\/.+\.canvas$/i.test(rel) || !fs.existsSync(workspacePath(rel))) throw httpError(400, 'Not a review\u2019s desk');
+  const deskEsm = await import(require('url').pathToFileURL(path.join(__dirname, 'public', 'desk.js')).href);
+  const desk = deskEsm.parseDesk(fs.readFileSync(workspacePath(rel), 'utf8'));
+  const thisTime = deskEsm.thisTimeOf(desk);
+  const decided = thisTime.decided.map((l) => deskEsm.decisionOf(l).words).filter(Boolean);
+  if (!decided.length && !thisTime.later.length) return { decided, later: [], changes: [] };
+  const r0 = reviewUp(b);
+  const goalCard = desk.nodes.find((n) => n.type === 'text' && /^\*\*[^*]+\*\*\n\nGoal \(/.test(String(n.text || '')));
+  const title = (/^\*\*([^*]+)\*\*/.exec(goalCard?.text || '') || [])[1] || path.basename(rel, '.canvas');
+  const ignored = loadIgnore(ROOT);
+  const mine = [...new Set(desk.nodes.filter((n) => n.type === 'file' && /\.md$/i.test(n.file || '')).map((n) => { try { return relOf(workspacePath(n.file)); } catch { return ''; } }))].filter((p) => p && reviewable(p, ignored)).slice(0, 16);
+  const notes = mine.map((p) => ({ path: p, text: (cachedText(p)?.text || '').replace(/^\uFEFF/, '') })).filter((n) => n.text.trim());
+  const r = await r0.apply({ topic: { title, goal: thisTime.goal || (/\nGoal \([^)]*\): ([^\n]*)/.exec(goalCard?.text || '') || [])[1] || '' }, decided, later: thisTime.later, notes });
+  if (!r.ok) throw httpError(502, r.error || 'Claude did not answer.');
+  return { decided, later: thisTime.later, changes: r.changes.map(({ n, ...x }) => ({ file: notes[n - 1].path, ...x })) };
+}
+
 // What was done on a review's desk (taken, let go, marked done, proposed,
 // wrapped up), in order, beside it in .agent-notes/review-ledger/ — what
 // happened there, not what was suggested; its wrap-up reads it.
-const LEDGER_TYPES = new Set(['taken', 'let go', 'marked done', 'unmarked', 'proposed', 'to-dos proposed', 'wrap-up', 'jotted', 'noted', 'decisions proposed']);
+const LEDGER_TYPES = new Set(['taken', 'let go', 'marked done', 'unmarked', 'proposed', 'to-dos proposed', 'wrap-up', 'jotted', 'noted', 'decisions proposed', 'changes proposed']);
 // A card taken: which card of the desk it became (card).
 const ledgerOf = (rel) => `${resolveInside(path.join(DATA_DIR, 'review-ledger'), rel)}.json`;
 const reviewLedger = (rel) => { const d = readJson(ledgerOf(rel), null); return Array.isArray(d?.events) ? d.events : []; };
@@ -3017,6 +3040,7 @@ async function routeApi(method, url, body) {
   if (method === 'POST' && p === '/api/lab/review/topics') return labReviewTopics(body || {});
   if (method === 'POST' && p === '/api/lab/review/desk') return labReviewDesk(body || {});
   if (method === 'POST' && p === '/api/lab/review/jot') return labReviewJot(body || {});
+  if (method === 'POST' && p === '/api/lab/review/changes') return labReviewChanges(body || {});
   if (method === 'GET' && p === '/api/lab/review/ledger') return { events: reviewLedger(relOf(workspacePath(q('path')))) };
   if (method === 'POST' && p === '/api/lab/review/ledger') return addReviewLedger(body || {});
   if (method === 'GET' && p === '/api/embed') return embedStatus();
