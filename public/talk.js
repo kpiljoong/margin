@@ -31,6 +31,18 @@ export const WORDS = {
     nothing: '\uB530\uB85C \uC815\uB9AC\uD560 \uAC74 \uC5C6\uC5B4 \uBCF4\uC5EC\uC694. \uC4F0\uC2E0 \uAE00\uC740 \uAE30\uB85D\uC5D0 \uADF8\uB300\uB85C \uB0A8\uACA8 \uB480\uC5B4\uC694.',
     willNote: '\uC774\uB807\uAC8C \uC801\uC5B4\uB458\uAC8C\uC694.',
     note: '\uC801\uC5B4\uB450\uAE30', fix: '\uACE0\uCE60\uB798\uC694',
+    answering: (q) => `“${q}”\uC5D0 \uB300\uD55C \uB2F5\uC73C\uB85C \uC774\uB807\uAC8C \uC801\uC5B4\uB458\uAC8C\uC694.`,
+    settled: (q) => `“${q}” — \uC774\uAC78\uB85C \uC815\uB9AC\uB410\uB098\uC694?`,
+    yesNext: '\uB124, \uB2E4\uC74C\uC73C\uB85C',
+    tickedFail: (ts) => `\uD560 \uC77C ${ts.map((t) => `“${t}”`).join(', ')}\uC758 \uC644\uB8CC \uC81C\uC548\uC740 \uD558\uC9C0 \uBABB\uD588\uC5B4\uC694. \uAE30\uB85D \uBCF4\uAE30\uC5D0\uC11C \uD655\uC778\uD574 \uC8FC\uC138\uC694.`,
+    tickedThere: (ts) => `\uD560 \uC77C ${ts.map((t) => `“${t}”`).join(', ')}\uC740(\uB294) \uB178\uD2B8\uC5D0 \uC774\uBBF8 \uC644\uB8CC\uB85C \uB418\uC5B4 \uC788\uC5B4\uC694.`,
+    todosAdded: (k, there) => `\uD560 \uC77C ${k}\uAC1C\uB97C \uBAA9\uB85D\uC5D0 \uC81C\uC548\uD588\uC5B4\uC694${there ? ` (${there}\uAC1C\uB294 \uC774\uBBF8 \uC788\uC5B4\uC694)` : ''}. \uBE68\uAC04 \uD39C\uC5D0\uC11C \uBC1B\uC73C\uC2DC\uBA74 \uB3FC\uC694.`,
+    todosNone: '\uC0C8\uB85C \uB123\uC744 \uD560 \uC77C\uC774 \uC5C6\uC5B4\uC694. \uBAA8\uB450 \uBAA9\uB85D\uC5D0 \uC788\uC5B4\uC694.',
+    todosFail: '\uD560 \uC77C \uBAA9\uB85D\uC5D0 \uC81C\uC548\uD558\uC9C0 \uBABB\uD588\uC5B4\uC694.',
+    markedN: (k, f) => (k ? `\uB178\uD2B8 ${k}\uACF3\uC5D0 \uCDE8\uC18C \uD45C\uC2DC\uB97C \uC81C\uC548\uD588\uC5B4\uC694${f ? `. ${f}\uACF3\uC740 \uD558\uC9C0 \uBABB\uD588\uC5B4\uC694` : ''}.` : '\uCDE8\uC18C \uD45C\uC2DC\uB97C \uC81C\uC548\uD558\uC9C0 \uBABB\uD588\uC5B4\uC694.'),
+    missedN: (k) => `${k}\uC904\uC740 \uB178\uD2B8\uAC00 \uADF8\uC0C8 \uBC14\uB00C\uC5B4\uC11C \uBE7C \uB450\uC5C8\uC5B4\uC694.`,
+    failedN: (fs) => `\uC81C\uC548\uD558\uC9C0 \uBABB\uD55C \uB178\uD2B8: ${fs.join(', ')}.`,
+    staleN: '\uC9C0\uAE08 \uC720\uD6A8\uD558\uC9C0 \uC54A\uC740 \uACB0\uC815\uC5D0\uC11C \uB098\uC628 \uBCC0\uACBD\uC740 \uC81C\uC548\uD558\uC9C0 \uC54A\uC558\uC5B4\uC694. \uBC18\uC601\uD560 \uACF3\uC744 \uB2E4\uC2DC \uCC3E\uC544 \uC8FC\uC138\uC694.',
     noted: '\uC801\uC5C8\uC5B4\uC694.',
     held: (n) => `${n}\uAC1C\uB294 \uADF8 \uACB0\uC815\uC774 \uADF8\uC0C8 \uBC14\uB00C\uC5B4\uC11C \uBABB \uC801\uC5C8\uC5B4\uC694. \uAE30\uB85D \uBCF4\uAE30\uC5D0\uC11C \uD655\uC778\uD574 \uC8FC\uC138\uC694.`,
     fixIt: '\uACE0\uCCD0\uC11C \uB2E4\uC2DC \uC368 \uC8FC\uC138\uC694.',
@@ -38,7 +50,6 @@ export const WORDS = {
     instead: '\uBC14\uAFC8', putOff: '\uBBF8\uB8F8', reopen: '\uB2E4\uC2DC \uACE0\uBBFC',
     ticks: (t) => ` — \uD560 \uC77C “${t}” \uC644\uB8CC\uB85C`,
     taken: '\uD560 \uC77C\uB85C \uBC1B\uC558\uC5B4\uC694.', dropped: '\uBE7C \uB458\uAC8C\uC694.', skipped: '\uB118\uC5B4\uAC08\uAC8C\uC694. \uB2E4\uC74C\uC5D0 \uC5F4\uBA74 \uB2E4\uC2DC \uC5EC\uCB64\uBCFC\uAC8C\uC694.',
-    markedDone: (t) => `“${t}” \uC644\uB8CC\uB85C \uB178\uD2B8\uC5D0 \uC81C\uC548\uD588\uC5B4\uC694. \uB178\uD2B8\uC758 \uBE68\uAC04 \uD39C\uC5D0\uC11C \uBC1B\uC73C\uC2DC\uBA74 \uB3FC\uC694.`,
     ticked: (ts) => `\uD560 \uC77C ${ts.map((t) => `“${t}”`).join(', ')}\uC744(\uB97C) \uC644\uB8CC\uB85C \uB178\uD2B8\uC5D0 \uC81C\uC548\uD588\uC5B4\uC694. \uB178\uD2B8\uC758 \uBE68\uAC04 \uD39C\uC5D0\uC11C \uBC1B\uC73C\uC2DC\uBA74 \uB3FC\uC694.`,
     allAsked: '\uC5EC\uCB64\uBCFC \uAC74 \uB2E4 \uD588\uC5B4\uC694.',
     decidedN: (n, out) => (n ? `\uC774\uBC88\uAE4C\uC9C0 \uC815\uD55C \uAC83 ${n}\uAC1C${out ? `, \uADF8\uC911 ${out}\uAC1C\uB294 \uC544\uC9C1 \uB178\uD2B8\uC5D0 \uC5C6\uC5B4\uC694` : ', \uBAA8\uB450 \uB178\uD2B8\uC5D0 \uC788\uC5B4\uC694'}.` : '\uC544\uC9C1 \uC815\uD55C \uAC74 \uC5C6\uC5B4\uC694.'),
@@ -56,8 +67,6 @@ export const WORDS = {
     propose: '\uB178\uD2B8\uC5D0 \uC81C\uC548\uD558\uAE30', show: '\uBC14\uB00C\uB294 \uACF3 \uBCF4\uAE30',
     proposed: (n) => `\uB178\uD2B8 ${n}\uACF3\uC5D0 \uC81C\uC548\uD588\uC5B4\uC694. \uB178\uD2B8\uB9C8\uB2E4 \uBC1B\uC744\uC9C0 \uACE0\uB974\uC2DC\uBA74 \uB3FC\uC694.`,
     notProposed: '\uC81C\uC548\uD558\uC9C0 \uBABB\uD588\uC5B4\uC694. \uAE30\uB85D \uBCF4\uAE30\uC758 \uC548\uB0B4\uB97C \uD655\uC778\uD574 \uC8FC\uC138\uC694.',
-    todosProposed: '\uD560 \uC77C \uBAA9\uB85D\uC5D0 \uC81C\uC548\uD588\uC5B4\uC694.',
-    markedThem: '\uCDE8\uC18C \uD45C\uC2DC\uB97C \uC81C\uC548\uD588\uC5B4\uC694.',
     finished: '\uC815\uB9AC\uD588\uC5B4\uC694. \uB2E4\uC74C\uC5D0 \uC5F4\uBA74 \uC5EC\uAE30\uC11C \uC774\uC5B4\uAC08\uAC8C\uC694.',
     desk: '\uAE30\uB85D \uBCF4\uAE30', talk: '\uB300\uD654\uB85C',
     placeholder: '\uB9D0\uD558\uB4EF \uC368 \uC8FC\uC138\uC694 — \uC815\uD55C \uAC83, \uBBF8\uB8EC \uAC83, \uACE0\uBBFC \uC911\uC778 \uAC83, \uD560 \uC77C… (Enter, ⇧Enter \uC904\uBC14\uAFC8)',
@@ -78,6 +87,18 @@ export const WORDS = {
     nothing: 'Nothing to sort in it; it is kept in the record as written.',
     willNote: 'I’ll note it so:',
     note: 'Note it', fix: 'Let me fix it',
+    answering: (q) => `As your answer to “${q}”, I’ll note it so:`,
+    settled: (q) => `“${q}” — settled by that?`,
+    yesNext: 'Yes, next',
+    tickedFail: (ts) => `Not proposed done: ${ts.map((t) => `“${t}”`).join(', ')} — look at it in the record.`,
+    tickedThere: (ts) => `${ts.map((t) => `“${t}”`).join(', ')}: done in the note already.`,
+    todosAdded: (k, there) => `${k} to-do${k === 1 ? '' : 's'} proposed in your list${there ? ` (${there} there already)` : ''}: accept in the red pen review.`,
+    todosNone: 'No new to-dos: all are in your list already.',
+    todosFail: 'The to-dos were not proposed.',
+    markedN: (k, f) => (k ? `Proposed struck out in ${k} note${k === 1 ? '' : 's'}${f ? `; ${f} not` : ''}.` : 'Not proposed.'),
+    missedN: (k) => `${k} line${k === 1 ? '' : 's'} left out: the note changed since.`,
+    failedN: (fs) => `Not proposed: ${fs.join(', ')}.`,
+    staleN: 'Changes from a decision not decided now were not proposed: find them again.',
     noted: 'Noted.',
     held: (n) => `${n} not noted: the decision changed since. Look at it in the record.`,
     fixIt: 'Write it again as you mean it.',
@@ -85,7 +106,6 @@ export const WORDS = {
     instead: 'Changed', putOff: 'Put off', reopen: 'Open again',
     ticks: (t) => ` — the to-do “${t}” done`,
     taken: 'Taken as a to-do.', dropped: 'Left out.', skipped: 'Moving on; I’ll ask again next time.',
-    markedDone: (t) => `“${t}” proposed done in its note: accept it in its red pen review.`,
     ticked: (ts) => `${ts.map((t) => `“${t}”`).join(', ')} proposed done in ${ts.length === 1 ? 'its note' : 'their notes'}: accept in the red pen review.`,
     allAsked: 'That’s all I had to ask.',
     decidedN: (n, out) => (n ? `${n} decided so far${out ? `, ${out} not in the notes yet` : ', all in the notes'}.` : 'Nothing decided yet.'),
@@ -103,8 +123,6 @@ export const WORDS = {
     propose: 'Propose in the notes', show: 'Show the changes',
     proposed: (n) => `Proposed in ${n} note${n === 1 ? '' : 's'}: accept each in its red pen review.`,
     notProposed: 'Not proposed: see the record for why.',
-    todosProposed: 'The to-dos proposed in your list.',
-    markedThem: 'Proposed struck out.',
     finished: 'Wrapped up. Next time we go on from here.',
     desk: 'Show the record', talk: 'Talk it through',
     placeholder: 'Write as you’d say it — decided, later, still weighing, to do… (Enter; ⇧Enter: a new line)',
@@ -209,6 +227,7 @@ export class Talk {
     });
     const head = el('div', 'talk-head', el('b', null, this.title()), btn(this.W.desk, () => this.desk.showTalk(false), 'ghost'));
     this.el = el('div', 'talk', head, el('div', 'talk-body', this.log), el('div', 'talk-foot', this.input));
+    this.el.tabIndex = -1; // (a click in it stays in it: text to select, not the desk's focus)
     // Its keys are its own (the desk's are not pressed through it).
     for (const t of ['keydown', 'pointerdown', 'wheel', 'dblclick', 'paste']) this.el.addEventListener(t, (e) => e.stopPropagation(), t === 'wheel' ? { passive: true } : undefined);
   }
@@ -257,6 +276,12 @@ export class Talk {
   scroll() { requestAnimationFrame(() => { this.log.parentElement.scrollTop = this.log.parentElement.scrollHeight; }); }
   done(acts) { if (acts) for (const b of acts.querySelectorAll('button')) b.disabled = true; }
   // ---- one thing asked
+  // What a question asks, in a line (sent with what they write, said back).
+  askOf(q) {
+    if (!q) return '';
+    if (q.a) return questionOf(q.a, this.lang).say;
+    return `${todoText(String(q.n.text || '').split('\n\n')[0])} — ${this.W.todoQ}`;
+  }
   next() {
     const q = this.queue()[0];
     this.current = q || null;
@@ -279,8 +304,7 @@ export class Talk {
         btn(W.done, async () => {
           this.done(acts);
           this.desk.fromAct(n, 'done');
-          await this.desk.sendToNote(n.from.file, { open: false });
-          this.say(W.markedDone(todoText(text[0])));
+          await this.propose([n.id]);
           this.next();
         }),
         btn(W.notYet, () => { this.done(acts); this.passed.add(q.id); this.next(); }, 'ghost'));
@@ -288,33 +312,58 @@ export class Talk {
     }
     this.focus();
   }
+  // To-dos marked done here (these cards only), proposed in their notes, and said as it went.
+  async propose(ids) {
+    const W = this.W;
+    const cards = this.desk.d.nodes.filter((n) => ids.includes(n.id) && n.from?.to);
+    const said = { ok: [], there: [], not: [] };
+    for (const f of new Set(cards.map((n) => n.from.file))) {
+      const these = cards.filter((n) => n.from.file === f);
+      const r = await this.desk.sendToNote(f, { open: false }, these.map((n) => n.id));
+      const names = these.map((n) => todoText(String(n.text || '').split('\n')[0]));
+      said[r ? 'ok' : r === false ? 'there' : 'not'].push(...names);
+    }
+    if (said.ok.length) this.say(W.ticked(said.ok));
+    if (said.there.length) this.say(W.tickedThere(said.there));
+    if (said.not.length) this.say(W.tickedFail(said.not));
+  }
   // ---- what they say: sorted, said back, noted when they say so
   async said(text) {
     const W = this.W;
     this.say(text, 'me');
     const asked = this.current;
     this.done(this.asking);
+    // What was said back before and not noted: no longer to note (written again since).
+    this.done(this.pending);
     this.busy = true;
     const wait = this.say(W.sorting, 'ai wait');
     let r;
-    try { r = await this.desk.jot(text); } catch (e) { r = { error: e.message }; } finally { this.busy = false; wait.remove(); }
+    try { r = await this.desk.jot(text, { asked: this.askOf(asked) }); } catch (e) { r = { error: e.message }; } finally { this.busy = false; wait.remove(); }
     if (r?.error) { this.say(W.notSorted(r.error)); this.again(asked); return; }
     const cards = r?.cards || [];
     if (!cards.length) { this.say(W.nothing); this.again(asked); return; }
-    const row = this.say([W.willNote, '', ...sortedLines(cards, this.lang).map((l) => `- ${l}`)].join('\n'));
+    const short = (t) => (t.length > 50 ? `${t.slice(0, 50)}…` : t);
+    const row = this.say([asked ? W.answering(short(this.askOf(asked))) : W.willNote, '', ...sortedLines(cards, this.lang).map((l) => `- ${l}`)].join('\n'));
     const acts = this.acts(row,
       btn(W.note, async () => {
         this.done(acts);
         const left = cards.filter((c) => this.desk.ai.includes(c));
+        // The to-dos this marks done (not one marked before, on the desk).
+        const before = new Set(this.desk.d.nodes.filter((n) => n.from?.to).map((n) => n.id));
         this.desk.keepCards(left);
         const held = left.filter((c) => this.desk.ai.includes(c)).length;
         this.say(held ? `${W.noted} ${W.held(held)}` : W.noted);
-        // A to-do it does: proposed done in its note now (as the desk's "Propose" would).
-        const ticked = this.desk.d.nodes.filter((n) => n.from?.kind === 'todo' && n.from.to && !n.from.sent);
-        for (const f of new Set(ticked.map((n) => n.from.file))) await this.desk.sendToNote(f, { open: false });
-        if (ticked.length) this.say(W.ticked(ticked.map((n) => todoText(String(n.text || '').split('\n')[0]))));
-        // What was asked, answered by it (the margin's card gone with it, said so in the record).
-        if (asked?.a && this.desk.ai.includes(asked.a)) this.desk.answered(asked.a);
+        await this.propose(this.desk.d.nodes.filter((n) => n.from?.kind === 'todo' && n.from.to && !n.from.sent && !before.has(n.id)).map((n) => n.id));
+        if (this.current !== asked) return; // (asked on since)
+        // Still asked (what they wrote may be about something else): settled, they say.
+        if (asked && this.queue().some((x) => x.id === asked.id)) {
+          const ask = this.say(W.settled(short(this.askOf(asked))));
+          const yes = this.acts(ask,
+            btn(W.yesNext, () => { this.done(yes); if (asked.a) this.desk.answered(asked.a); else this.passed.add(asked.id); this.next(); }),
+            btn(W.notYet, () => { this.done(yes); this.again(asked); }, 'ghost'));
+          this.asking = yes;
+          return;
+        }
         this.next();
       }),
       btn(W.fix, () => {
@@ -324,11 +373,12 @@ export class Talk {
         this.say(W.fixIt);
         this.again(asked);
       }, 'ghost'));
+    this.pending = acts;
     this.focus();
   }
-  // The same thing still asked (its buttons again).
+  // The same thing still asked (its buttons again); nothing asked: the end said again, as it is now.
   again(asked) {
-    if (!asked) { this.focus(); return; }
+    if (!asked) { if (this.closed) this.closing(); else this.focus(); return; }
     this.passed.delete(asked.id);
     this.total = Math.max(this.total, this.queue().length);
     this.next();
@@ -336,17 +386,30 @@ export class Talk {
   // ---- the end: where it stands, and what to do with it
   async closing() {
     const W = this.W;
+    this.closed = true;
+    this.done(this.ending); // (the one said before: as it was then)
     const r = await this.desk.wrapData();
     const mine = thisTimeOf(this.desk.d);
     const row = this.say(closingText({ ...r, later: mine.later.length }, this.lang));
     const out = r.decisions.filter((d) => !d.inNote).length;
     const acts = this.acts(row,
-      out && this.desk.opts.changes ? btn(W.findChanges, (b) => { b.disabled = true; this.changes(); }) : null,
-      r.todos.length && this.desk.opts.todoFile ? btn(W.addTodos, async (b) => { b.disabled = true; await this.desk.addTodos({ text: r.todos.join('\n') }); this.say(W.todosProposed); }) : null,
-      r.withdrawals.length ? btn(W.markThem, async (b) => { b.disabled = true; await this.desk.markWithdrawn({ withdrawals: r.withdrawals }); this.say(W.markedThem); }) : null,
+      out && this.desk.opts.changes ? btn(W.findChanges, async (b) => { b.disabled = true; if (!(await this.changes())) b.disabled = false; }) : null,
+      r.todos.length && this.desk.opts.todoFile ? btn(W.addTodos, async (b) => {
+        b.disabled = true;
+        const t = await this.desk.addTodos({ text: r.todos.join('\n') });
+        this.say(t.ok === null ? W.todosFail : t.added.length ? W.todosAdded(t.added.length, t.there) : W.todosNone);
+        if (t.ok === null) b.disabled = false;
+      }) : null,
+      r.withdrawals.length ? btn(W.markThem, async (b) => {
+        b.disabled = true;
+        const m = await this.desk.markWithdrawn({ withdrawals: r.withdrawals });
+        if (m.done.length) this.reviews(m.done, W.markedN(m.done.length, m.failed.length)); else { this.say(W.markedN(0)); b.disabled = false; }
+      }) : null,
       r.waiting.length && this.desk.opts.openReview ? btn(W.look, () => this.reviews(r.waiting.map((w) => ({ file: w.file, id: w.id })))) : null,
       btn(W.finish, async () => { this.done(acts); await this.desk.wrapUp(); this.say(W.finished); }, 'ghost'));
+    this.ending = acts;
   }
+  // The changes their decisions make in the notes, said; proposed when they say so. → whether it was read.
   async changes() {
     const W = this.W;
     const wait = this.say(W.reading(0), 'ai wait');
@@ -354,23 +417,24 @@ export class Talk {
     const tick = setInterval(() => { wait.textContent = W.reading(Math.round((Date.now() - t0) / 1000)); }, 1000);
     let r;
     try { r = await this.desk.changesPlan(); } finally { clearInterval(tick); wait.remove(); }
-    if (r?.error) { this.say(W.notRead(r.error)); return; }
-    if (!r?.card) { this.say(W.noDecided); return; }
+    if (r?.error) { this.say(W.notRead(r.error)); return false; }
+    if (!r?.card) { this.say(W.noDecided); return true; }
     const cs = r.card.changes.filter((c) => !c.add || c.todo);
-    if (!r.card.changes.length) { this.say(W.noChanges); return; }
+    if (!r.card.changes.length) { this.say(W.noChanges); return true; }
     const by = new Map();
     for (const c of cs) by.set(c.file, (by.get(c.file) || 0) + 1);
     const files = new Set(r.card.changes.map((c) => c.file));
     const row = this.say(W.changes(files.size, cs.length, [...by].sort((p, q) => q[1] - p[1]).map(([f, k]) => W.lines(name(f), k)).join(', ')));
-    const acts = this.acts(row,
+    this.acts(row,
       btn(W.propose, async (b) => {
         b.disabled = true;
         const p = await this.desk.proposeChanges(r.card);
-        if (!p?.done?.length) { this.say(W.notProposed); b.disabled = false; return; }
-        this.reviews(p.done, W.proposed(p.done.length));
+        const rest = [p?.missed ? W.missedN(p.missed) : '', p?.failed?.length ? W.failedN(p.failed.map((f) => f.split(':')[0])) : '', p?.stale?.length ? W.staleN : ''].filter(Boolean).join(' ');
+        if (!p?.done?.length) { this.say(rest || W.notProposed); b.disabled = false; return; }
+        this.reviews(p.done, [W.proposed(p.done.length), rest].filter(Boolean).join(' '));
       }),
       btn(W.show, () => { this.desk.showTalk(false); this.desk.show(r.card, true); }, 'ghost'));
-    return acts;
+    return true;
   }
   // Red pen reviews, each to open.
   reviews(list, said = '') {

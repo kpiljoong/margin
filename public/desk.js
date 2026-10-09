@@ -758,7 +758,7 @@ export class Desk {
     this.el.addEventListener('dblclick', (e) => this.dbl(e));
     this.el.addEventListener('keydown', (e) => this.key(e));
     // Talking: the keys go to what is said.
-    this.el.addEventListener('focus', () => { if (this.el.classList.contains('talking')) this.talker?.focus(); });
+    this.el.addEventListener('focus', (e) => { if (e.target === this.el && this.el.classList.contains('talking')) this.talker?.focus(); });
     this.el.addEventListener('keyup', (e) => {
       if (e.key !== ' ') return;
       this.space = false;
@@ -1383,15 +1383,18 @@ export class Desk {
     return box;
   }
   // The asks of the cards from one note, proposed to it in one red pen review.
-  async sendToNote(file, o = {}) {
-    const cards = this.d.nodes.filter((n) => n.from?.file === file && n.from.to);
-    if (!cards.length) return;
+  // (ids: only these cards.) → its review's id (or true), false when the
+  // note says so already, null when not proposed.
+  async sendToNote(file, o = {}, ids = null) {
+    const cards = this.d.nodes.filter((n) => n.from?.file === file && n.from.to && (!ids || ids.includes(n.id)));
+    if (!cards.length) return null;
     let ok;
-    try { ok = await this.opts.proposeNote(file, (text) => toNote(text, cards), o); } catch { return; } // (said already)
-    if (ok === false) return;
+    try { ok = await this.opts.proposeNote(file, (text) => toNote(text, cards), o); } catch { return null; } // (said already)
+    if (ok === false) return false;
     this.event('proposed', { file, text: `${cards.length} card${cards.length === 1 ? '' : 's'}` });
-    const ids = new Set(cards.map((c) => c.id));
-    this.change({ ...this.d, nodes: this.d.nodes.map((n) => (ids.has(n.id) ? { ...n, from: { ...n.from, to: undefined, sent: true } } : n)) });
+    const sent = new Set(cards.map((c) => c.id));
+    this.change({ ...this.d, nodes: this.d.nodes.map((n) => (sent.has(n.id) ? { ...n, from: { ...n.from, to: undefined, sent: true } } : n)) });
+    return ok;
   }
   goFrom(n) {
     const f = n?.from;
@@ -2418,7 +2421,7 @@ export class Desk {
   async addTodos(a) {
     const file = this.opts.todoFile;
     const lines = [...String(a.text || '').matchAll(/^(- \[ \] .+)$/gm)].map((m) => m[1].trim());
-    if (!file || !lines.length) return;
+    if (!file || !lines.length) return { ok: false, added: [] };
     let added = [];
     try {
       const ok = await this.opts.proposeNote(file, (text) => {
@@ -2427,7 +2430,8 @@ export class Desk {
         return added.length ? `${text.replace(/\s*$/, '')}\n${added.join('\n')}\n` : text;
       });
       if (ok !== false && added.length) this.event('to-dos proposed', { file, text: added.join('\n') });
-    } catch { /* said already */ }
+      return { ok: ok !== false, added, there: lines.length - added.length };
+    } catch { return { ok: null, added: [] }; } // (said already)
   }
   // What they decided, carried into the notes: a card showing each line to
   // change, note by note, and each decision recorded (nothing changed yet).
@@ -2498,21 +2502,23 @@ export class Desk {
     const by = new Map();
     for (const w of a.withdrawals || []) by.set(w.note, [...(by.get(w.note) || []), w]);
     const done = [];
+    const failed = [];
     for (const [file, ws] of by) {
       try {
         const id = await this.opts.proposeNote(file, (text) => text.split('\n').map((l) => { const w = ws.find((x) => norm(l) === norm(x.rec)); return w ? `- ~~${w.words}~~ (withdrawn${w.on ? ` ${w.on}` : ''})` : l; }).join('\n'), { open: false });
-        if (id) { done.push({ file, id }); this.event('withdrawals proposed', { file, text: ws.map((w) => w.rec).join('\n'), about: ws.map((w) => w.words) }); }
-      } catch { /* said already */ }
+        if (id) { done.push({ file, id }); this.event('withdrawals proposed', { file, text: ws.map((w) => w.rec).join('\n'), about: ws.map((w) => w.words) }); } else failed.push(file);
+      } catch { failed.push(file); } // (said already)
     }
     const row = this.say(`Proposed in ${done.length} note${done.length === 1 ? '' : 's'}: each waiting in its red pen review.`);
     if (this.opts.openReview) for (const d of done) row.append(button(d.file.split('/').pop().replace(/\.md$/i, ''), `Its red pen review: ${d.file}`, () => this.opts.openReview(d.id), 'desk-review-link'));
-    if (done.length) this.foldDock(false);
+    if (done.length && !this.el.classList.contains('talking')) this.foldDock(false);
+    return { done, failed };
   }
   // What they jotted (Enter, at the bottom): on the desk as written, and
   // sorted by the margin — each thing a card beside it: decided, later,
   // still open (Tab puts it in "This time"), to do (Tab keeps it, its
   // to-do for the wrap-up) — or let go (Esc).
-  async jot(text) {
+  async jot(text, o = {}) {
     const d = new Date();
     // As written, a line a line (a list when more than one).
     const lines = text.split('\n').map((l) => l.trim()).filter(Boolean);
@@ -2524,7 +2530,7 @@ export class Desk {
     this.event('jotted', { text, card: card.id });
     this.jotStatus.textContent = 'Sorting what you jotted\u2026';
     let r;
-    try { r = await this.opts.jot(text); } catch (e) { this.jotStatus.textContent = `Not sorted: ${e.message} \u2014 it is on the desk as you wrote it.`; return { card, error: e.message }; }
+    try { r = await this.opts.jot(text, o); } catch (e) { this.jotStatus.textContent = `Not sorted: ${e.message} \u2014 it is on the desk as you wrote it.`; return { card, error: e.message }; }
     const items = r?.items || [];
     if (!items.length) { this.jotStatus.textContent = 'Nothing to sort in it \u2014 it is on the desk as you wrote it.'; return { card, cards: [] }; }
     const TITLE = { decided: 'Decided', later: 'Later', open: 'Still open', todo: 'To do', done: 'Done', withdrawn: 'Withdrawn' };
@@ -2538,11 +2544,18 @@ export class Desk {
     return { card, cards: this.ai.filter((a) => a.batch === batch) };
   }
   // A jot taken back before it was noted (to write it again): it and what it was sorted into, gone.
+  // (One of them taken already, on the desk: only the rest go; the jot stays with it.)
   unjot(r) {
     if (!r?.card) return;
+    const taken = (r.cards || []).some((a) => !this.ai.includes(a));
     this.ai = this.ai.filter((a) => !r.cards?.includes(a));
-    if (this.d.nodes.some((n) => n.id === r.card.id)) this.change({ ...this.d, nodes: this.streamed(this.d.nodes.filter((n) => n.id !== r.card.id)) });
-    else this.streamNow();
+    if (!taken && this.d.nodes.some((n) => n.id === r.card.id)) {
+      // Not a step to undo: as if it was never written.
+      const steps = this.undo.length;
+      this.change({ ...this.d, nodes: this.streamed(this.d.nodes.filter((n) => n.id !== r.card.id)) });
+      if (this.undo.length > steps) this.undo.pop();
+    } else this.streamNow();
+    return !taken;
   }
   // A card of the margin answered in the talk: gone, and so kept in the record.
   answered(a) {

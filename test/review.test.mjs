@@ -333,6 +333,12 @@ test('the server: topics of the recent notes (not the assistant\'s records, neve
   assert.equal(fs.readFileSync(path.join(ws, 'trip/plan.md'), 'utf8'), before, 'nothing written');
 });
 
+test('what is jotted as an answer: what was just asked goes with it', () => {
+  const t = review.jotText({ topic: { title: 'Trip', goal: '' }, jot: 'SF', asked: 'Entry city: LA or SF?', today: '2026-10-09' });
+  assert.match(t, /They were just asked:\nEntry city: LA or SF\?\n\nThey jotted:\nSF$/);
+  assert.doesNotMatch(review.jotText({ topic: { title: 'Trip', goal: '' }, jot: 'SF' }), /just asked/);
+});
+
 test('what is jotted, sorted: one block a thing, numbers in range, a to-do in the vault\'s format; "This time" with it put in', () => {
   const items = review.parseJot([
     'kind: decided', 'say: "\uC800\uB141\uC740 \uBD80\uB450\uC5D0\uC11C"', 'about: N2', 'settles: 2', '---',
