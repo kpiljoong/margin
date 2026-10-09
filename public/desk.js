@@ -1408,10 +1408,17 @@ export class Desk {
     if (ok === false) return { ...out, made: [] };
     out.id = ok;
     this.event('proposed', { file, text: `${out.made.length} card${out.made.length === 1 ? '' : 's'}` });
-    // Sent: what it made (from the desk's own button, as before: all it was asked).
-    const sent = new Set(ids ? out.made : cards.map((c) => c.id));
+    // Sent: what it made, only.
+    const sent = new Set(out.made);
     this.change({ ...this.d, nodes: this.d.nodes.map((n) => (sent.has(n.id) ? { ...n, from: { ...n.from, to: undefined, sent: true } } : n)) });
     return out;
+  }
+  // The desk's own button: proposed, and what was not said.
+  async proposeFrom(file) {
+    const r = await this.sendToNote(file);
+    const not = r.made.length && r.id ? r.gone.length : r.gone.length + r.made.length;
+    if (r.there.length) this.say(`${r.there.length} already so in ${file}: not proposed.`);
+    if (not) this.say(`${not} not proposed: not found in ${file} as ${not === 1 ? 'it was' : 'they were'} (deleted or changed), or not proposed \u2014 still marked here.`, 'error');
   }
   goFrom(n) {
     const f = n?.from;
@@ -1910,7 +1917,7 @@ export class Desk {
     this.asksEl.replaceChildren();
     for (const [file, count] of asks) {
       const name = file.split('/').pop().replace(/\.(md|markdown)$/i, '');
-      this.asksEl.append(el('div', null, button(`Propose to ${name} (${count})`, `The ${count === 1 ? 'change' : `${count} changes`} the cards ask of ${file}, in its red pen review: nothing changes until you accept it there`, () => this.sendToNote(file), 'primary')));
+      this.asksEl.append(el('div', null, button(`Propose to ${name} (${count})`, `The ${count === 1 ? 'change' : `${count} changes`} the cards ask of ${file}, in its red pen review: nothing changes until you accept it there`, () => this.proposeFrom(file), 'primary')));
     }
     for (const b of this.actions.children) b.disabled = !ns.length || !!this.busy;
   }

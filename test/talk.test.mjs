@@ -49,4 +49,9 @@ test('to-dos proposed done from the talk: said as the note has each now — made
   // Nothing to change (only one gone): not proposed, none sent.
   fake.opts.proposeNote = async (f, make) => (make(note) === note ? false : 'r2');
   assert.deepEqual(await Desk.prototype.sendToNote.call(fake, 'trip.md', { open: false }, ['c']), { id: null, made: [], there: [], gone: ['c'] });
+  // From the desk's own button (all its marked cards): the same — only what it made is sent.
+  fake.d.nodes = [card('a', key('flights')), card('c', 'todo:gone')];
+  fake.opts.proposeNote = async (f, make) => { make(note); return 'r3'; };
+  assert.deepEqual(await Desk.prototype.sendToNote.call(fake, 'trip.md'), { id: 'r3', made: ['a'], there: [], gone: ['c'] });
+  assert.deepEqual(fake.d.nodes.map((n) => !!n.from.sent), [true, false]);
 });
