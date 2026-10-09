@@ -270,6 +270,44 @@ export function noteGist(text, file) {
   return { file, title, gist, todos, decisions, links };
 }
 
+// The notes around the talk, in depth: linked notes kept together on one
+// side (the biggest group first, each side about as full), down the side in
+// a column that staggers, further back the further down the row; a note the
+// question is about comes forward. Each placed so that, seen through the
+// perspective (d, from o), it shows where it is meant to: its x, y and z.
+export function spaceLayout({ w, h, ids, links = [], now = new Set(), column = 680, cardW = 220, cardH = 64, nowH = 170, d = 1000, o = null }) {
+  const at = new Map(ids.map((id, i) => [id, i]));
+  const up = ids.map((_, i) => i);
+  const root = (i) => (up[i] === i ? i : (up[i] = root(up[i])));
+  for (const [a, b] of links) if (at.has(a) && at.has(b)) up[root(at.get(a))] = root(at.get(b));
+  const groups = new Map();
+  ids.forEach((id, i) => { const r = root(i); if (!groups.has(r)) groups.set(r, []); groups.get(r).push(id); });
+  const sides = [[], []];
+  for (const g of [...groups.values()].sort((x, y) => y.length - x.length)) (sides[0].length <= sides[1].length ? sides[0] : sides[1]).push(...g);
+  const origin = o || { x: w / 2, y: h * 0.4 };
+  const room = Math.max(0, (w - column) / 2 - 24);
+  const out = new Map();
+  sides.forEach((list, side) => {
+    const rest = list.filter((id) => !now.has(id));
+    const front = list.filter((id) => now.has(id));
+    const put = (id, z, sy, i) => {
+      const k = (d - z) / d;
+      // As wide as it shows (bigger in front, smaller back there).
+      const pw = cardW / k;
+      const lean = (i % 2) * Math.min(60, Math.max(0, room - pw));
+      // Where it shows (its middle), then where it goes for that.
+      const sx = side === 0 ? Math.max(12, 24 + lean) + pw / 2 : Math.min(w - 12, w - 24 - lean) - pw / 2;
+      out.set(id, { x: origin.x + (sx - origin.x) * k - cardW / 2, y: origin.y + (sy - origin.y) * k - cardH / 2, z, side });
+    };
+    // Back there, down the side; those asked about in front, in its middle, one under another.
+    const step = rest.length > 1 ? Math.max(0, h - 40 - cardH) / (rest.length - 1) : 0;
+    rest.forEach((id, i) => put(id, -120 - (i % 3) * 130, 20 + cardH / 2 + (rest.length > 1 ? i * step : (h - cardH) / 2 - 20), i));
+    const tall = Math.min(nowH, (h - 40) / Math.max(1, front.length));
+    front.forEach((id, i) => put(id, 60, (h - tall * front.length) / 2 + tall * (i + 0.5) - (nowH - cardH) / 2, 0));
+  });
+  return out;
+}
+
 function el(tag, cls, ...kids) {
   const e = document.createElement(tag);
   if (cls) e.className = cls;
@@ -308,6 +346,8 @@ export class Talk {
     this.el.tabIndex = -1; // (a click in it stays in it: text to select, not the desk's focus)
     // Its keys are its own (the desk's are not pressed through it).
     for (const t of ['keydown', 'pointerdown', 'wheel', 'dblclick', 'paste']) this.el.addEventListener(t, (e) => e.stopPropagation(), t === 'wheel' ? { passive: true } : undefined);
+    // (But the app's: ⌘P, ⌘, and the like — not the text's own ⌘Z, ⌘C, ⌘V, ⌘X, ⌘A.)
+    this.el.addEventListener('keydown', (e) => { if ((e.metaKey || e.ctrlKey) && !/^[zyxcva]$/i.test(e.key)) this.desk.opts.appKey?.(e); });
   }
   title() {
     const g = this.desk.d.nodes.find((x) => x.type === 'text' && /^\*\*[^*]+\*\*\n\nGoal \(/.test(String(x.text || '')));
@@ -436,11 +476,103 @@ export class Talk {
       return card;
     });
     this.order = list;
+    list.forEach((c, i) => { c.dataset.file = gists[i].file; });
+    this.links = [...out].flatMap(([f, to]) => [...to].filter((t) => f < t).map((t) => [f, t]));
     this.nowHead = el('p', 'talk-side-head', W.nowAbout);
     this.allHead = el('p', 'talk-side-head', W.notes(gists.length));
-    this.side.replaceChildren(this.allHead, ...list);
     this.el.classList.add('with-side');
-    if (this.aboutNow) this.about(this.aboutNow);
+    this.lit = new Set();
+    if (this.aboutNow) this.about(this.aboutNow); else this.layout();
+    new ResizeObserver(() => this.layout()).observe(this.el);
+    // In space: the room leans a little with the pointer.
+    this.el.addEventListener('pointermove', (e) => {
+      if (!this.inSpace) return;
+      const r = this.stage.getBoundingClientRect();
+      this.stage.style.perspectiveOrigin = `${50 - ((e.clientX - r.left) / r.width - 0.5) * 16}% ${40 - ((e.clientY - r.top) / r.height - 0.5) * 12}%`;
+      this.drawLinks(500);
+    });
+  }
+  // Beside the talk (flat, in a column) or around it in depth (Labs, a wide
+  // window, motion not reduced), as the question has it.
+  layout() {
+    if (!this.order) return;
+    const lit = this.lit;
+    const space = !!this.desk.opts.space?.() && !(typeof matchMedia === 'function' && matchMedia('(prefers-reduced-motion: reduce)').matches) && this.el.clientWidth >= 1180;
+    const was = this.inSpace;
+    this.inSpace = space;
+    this.el.classList.toggle('in-space', space);
+    for (const c of this.order) c.classList.toggle('now', lit.has(c));
+    if (!space) {
+      for (const c of this.order) { c.style.transform = ''; c.style.transitionDelay = ''; c.style.zIndex = ''; }
+      const now = this.order.filter((c) => lit.has(c));
+      this.side.replaceChildren(...(now.length ? [this.nowHead, ...now] : []), this.allHead, ...this.order.filter((c) => !lit.has(c)));
+      this.side.scrollTo({ top: 0 });
+      return;
+    }
+    if (!this.stage) {
+      this.lines = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+      this.lines.classList.add('talk-lines');
+      this.stage = el('div', 'talk-stage', this.lines);
+      this.el.querySelector('.talk-mid').prepend(this.stage);
+    }
+    const w = this.stage.clientWidth;
+    const h = this.stage.clientHeight;
+    if (!w || !h) return;
+    const pos = spaceLayout({ w, h, ids: this.order.map((c) => c.dataset.file), links: this.links, now: new Set(this.order.filter((c) => lit.has(c)).map((c) => c.dataset.file)), column: this.el.querySelector('.talk-main').clientWidth });
+    this.order.forEach((c, i) => {
+      const p = pos.get(c.dataset.file);
+      const place = `translate3d(${p.x.toFixed(1)}px, ${p.y.toFixed(1)}px, ${p.z}px)`;
+      c.style.zIndex = String(1000 + p.z); // (the nearer over the further)
+      if (!was || c.parentElement !== this.stage) {
+        // Coming in from far back, one after another.
+        c.style.transitionDelay = '0ms';
+        c.style.transform = `translate3d(${p.x.toFixed(1)}px, ${p.y.toFixed(1)}px, -1400px)`;
+        c.classList.add('far');
+        this.stage.append(c);
+        requestAnimationFrame(() => requestAnimationFrame(() => { c.style.transitionDelay = `${i * 45}ms`; c.classList.remove('far'); c.style.transform = place; }));
+      } else { c.style.transitionDelay = '0ms'; c.style.transform = place; }
+    });
+    this.drawLinks(1400);
+  }
+  // The links between notes, drawn where the notes show now (for a while, as they move).
+  drawLinks(ms) {
+    this.linksTill = Math.max(this.linksTill || 0, performance.now() + ms);
+    if (this.drawing) return;
+    this.drawing = true;
+    const step = () => {
+      if (!this.inSpace || !this.stage?.isConnected) { this.drawing = false; return; }
+      const r = this.stage.getBoundingClientRect();
+      const mid = new Map(this.order.map((c) => { const b = c.getBoundingClientRect(); return [c.dataset.file, { x: b.left - r.left + b.width / 2, y: b.top - r.top + b.height / 2, c }]; }));
+      const NS = 'http://www.w3.org/2000/svg';
+      this.lines.replaceChildren(...this.links.map(([a, b]) => {
+        const p = mid.get(a);
+        const q = mid.get(b);
+        const l = document.createElementNS(NS, 'line');
+        l.setAttribute('x1', p.x.toFixed(1)); l.setAttribute('y1', p.y.toFixed(1)); l.setAttribute('x2', q.x.toFixed(1)); l.setAttribute('y2', q.y.toFixed(1));
+        if (p.c.classList.contains('now') || q.c.classList.contains('now')) l.classList.add('now');
+        return l;
+      }));
+      if (performance.now() < this.linksTill) requestAnimationFrame(step); else this.drawing = false;
+    };
+    requestAnimationFrame(step);
+  }
+  // What was noted, flying to the note it is about (where it shows), which answers with a glow.
+  fly(from, files) {
+    if (!this.cards || !from?.isConnected) return;
+    const f = from.getBoundingClientRect();
+    files.forEach((file, i) => {
+      const card = this.cards.get(String(file).replace(/\.md$/i, '').toLowerCase()) || this.cards.get(name(file).toLowerCase());
+      if (!card?.isConnected || !card.offsetParent) return;
+      const t = card.getBoundingClientRect();
+      const dot = el('div', 'talk-fly');
+      document.body.append(dot);
+      const run = dot.animate([
+        { transform: `translate(${f.left + 40}px, ${f.top + f.height / 2}px) scale(1)`, opacity: 1 },
+        { transform: `translate(${(f.left + t.left) / 2}px, ${Math.min(f.top, t.top) - 60}px) scale(1.3)`, opacity: 1, offset: 0.5 },
+        { transform: `translate(${t.left + t.width / 2}px, ${t.top + t.height / 2}px) scale(.6)`, opacity: 0.2 },
+      ], { duration: 800, delay: i * 120, easing: 'cubic-bezier(.5,0,.3,1)', fill: 'both' });
+      run.onfinish = () => { dot.remove(); card.classList.remove('shown'); void card.offsetWidth; card.classList.add('shown'); };
+    });
   }
   // The notes a question (or a link pressed) is about: lit, the first in sight.
   about(files, pressed = false) {
@@ -449,14 +581,12 @@ export class Talk {
     const lit = new Set((files || []).map((f) => this.cards.get(String(f).replace(/\.md$/i, '').toLowerCase()) || this.cards.get(name(f).toLowerCase())).filter(Boolean));
     // A link pressed: that note shown where it is, for a moment.
     if (pressed) {
-      for (const c of lit) { c.scrollIntoView({ block: 'nearest', behavior: 'smooth' }); c.classList.remove('shown'); void c.offsetWidth; c.classList.add('shown'); }
+      for (const c of lit) { if (!this.inSpace) c.scrollIntoView({ block: 'nearest', behavior: 'smooth' }); c.classList.remove('shown'); void c.offsetWidth; c.classList.add('shown'); }
       return;
     }
-    for (const c of this.order) c.classList.toggle('now', lit.has(c));
-    // (Those first, under their own heading; the rest in their order.)
-    const now = this.order.filter((c) => lit.has(c));
-    this.side.replaceChildren(...(now.length ? [this.nowHead, ...now] : []), this.allHead, ...this.order.filter((c) => !lit.has(c)));
-    this.side.scrollTo({ top: 0, behavior: pressed ? 'smooth' : 'auto' });
+    // (Flat: those first, under their own heading; in space: those come forward.)
+    this.lit = lit;
+    this.layout();
   }
   // Under a question: the line of each of its notes most about it, each to open there.
   async showFrom(row, files, about) {
@@ -525,6 +655,7 @@ export class Talk {
         // The to-dos this marks done (not one marked before, on the desk).
         const before = new Set(this.desk.d.nodes.filter((n) => n.from?.to).map((n) => n.id));
         this.desk.keepCards(left);
+        this.fly(row, left.filter((c) => !this.desk.ai.includes(c) && c.jot?.about).map((c) => c.jot.about));
         const held = left.filter((c) => this.desk.ai.includes(c)).length;
         this.say(held ? `${W.noted} ${W.held(held)}` : W.noted);
         await this.propose(this.desk.d.nodes.filter((n) => n.from?.kind === 'todo' && n.from.to && !n.from.sent && !before.has(n.id)).map((n) => n.id));

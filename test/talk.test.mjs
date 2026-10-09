@@ -1,7 +1,7 @@
 // -*- coding: utf-8 -*-
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { talkLang, questionOf, sortedLines, openingText, closingText, todoWhy, noteGist } from '../public/talk.js';
+import { talkLang, questionOf, sortedLines, openingText, closingText, todoWhy, noteGist, spaceLayout } from '../public/talk.js';
 
 test('a review talked through: in the notes\' language, one thing asked as the margin wrote it', () => {
   assert.equal(talkLang('\uD56D\uACF5\uC740 SF'), 'ko');
@@ -71,4 +71,20 @@ test('noteGist: a note in a few words, from what it says itself', () => {
   assert.equal(noteGist('---\nsummary: "All of it"\n---\nText', 'a.md').gist, 'All of it');
   assert.equal(noteGist('- [ ] One 📅 2026-10-12\n- Two #decision', 'x/list.md').gist, 'One · Two', 'only lists: its first items, without their marks');
   assert.equal(noteGist('', 'x/empty.md').title, 'empty');
+});
+
+test('spaceLayout: linked notes on one side, the sides about as full, a note asked about forward, each showing where it is meant to', () => {
+  const ids = ['a', 'b', 'c', 'd', 'e'];
+  const p = spaceLayout({ w: 1400, h: 700, ids, links: [['a', 'c'], ['c', 'e']], now: new Set(['d']) });
+  assert.equal(new Set(['a', 'c', 'e'].map((i) => p.get(i).side)).size, 1, 'linked together');
+  assert.notEqual(p.get('b').side, p.get('a').side);
+  assert.ok(p.get('d').z > 0, 'forward');
+  assert.ok(['a', 'b', 'c', 'e'].every((i) => p.get(i).z < 0));
+  // Seen through the perspective (1000, from the middle and 40% down), each card's middle is on its side, outside the talk's column.
+  for (const [, q] of p) {
+    const k = 1000 / (1000 - q.z);
+    const sx = 700 + (q.x + 110 - 700) * k;
+    const half = 110 * k;
+    assert.ok(q.side === 0 ? sx + half <= 700 - 340 && sx - half >= 0 : sx - half >= 700 + 340 && sx + half <= 1400, `${sx} on side ${q.side}`);
+  }
 });

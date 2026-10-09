@@ -3900,6 +3900,16 @@ function removeCustomTheme(id) {
 // taken after asking; that one is left without.
 function shortcutsSection() {
   const box = h('div', { class: 'keys-list' });
+  // Each group folded (one with a changed key, or one being changed, open); a
+  // word typed in the search opens the groups with a shortcut it matches.
+  const opened = new Set();
+  let find = '';
+  const list = h('div', { class: 'keys-groups' });
+  const search = h('input', { type: 'search', class: 'keys-find', placeholder: 'Find a shortcut… (a word or a key)', oninput: (e) => { find = e.target.value.trim().toLowerCase(); render(); } });
+  const resetAll = h('button', { class: 'btn small', onclick: () => { const defs = keyDefs().filter((d) => d.scope !== 'global' || desktop); set(Object.fromEntries(defs.map((d) => [d.id, defaultOf(d.id)]))); } }, 'Reset all');
+  box.append(h('div', { class: 'keys-head' },
+    h('span', { class: 'set-detail grow' }, desktop ? 'Saved in the app’s settings file; the menus follow.' : 'Saved in this browser.'),
+    resetAll), search, list);
   let recording = null; // { id, why }
   let asking = null; // { id, keys, others }
   const label = (id) => SHORTCUTS.find((d) => d.id === id)?.label || id;
@@ -3964,12 +3974,20 @@ function shortcutsSection() {
   function render() {
     const defs = keyDefs().filter((d) => d.scope !== 'global' || desktop);
     const groups = [...new Set(defs.map((d) => d.group))];
-    const anyChanged = defs.some((d) => KEYS[d.id] !== defaultOf(d.id));
-    box.replaceChildren(
-      h('div', { class: 'keys-head' },
-        h('span', { class: 'set-detail grow' }, desktop ? 'Saved in the app’s settings file; the menus follow.' : 'Saved in this browser.'),
-        h('button', { class: 'btn small', disabled: !anyChanged, onclick: () => set(Object.fromEntries(defs.map((d) => [d.id, defaultOf(d.id)]))) }, 'Reset all')),
-      ...groups.map((g) => h('div', { class: 'keys-group' }, h('div', { class: 'keys-group-name' }, g), defs.filter((d) => d.group === g).map(row))));
+    resetAll.disabled = !defs.some((d) => KEYS[d.id] !== defaultOf(d.id));
+    const hits = (d) => !find || `${d.label} ${d.group} ${keyLabel(KEYS[d.id] || '', isMac) || ''} ${KEYS[d.id] || ''}`.toLowerCase().includes(find);
+    list.replaceChildren(...groups.map((g) => {
+      const mine = defs.filter((d) => d.group === g && hits(d));
+      if (!mine.length) return null;
+      const changed = mine.filter((d) => KEYS[d.id] !== defaultOf(d.id)).length;
+      const busy = mine.some((d) => d.id === recording?.id || d.id === asking?.id);
+      const fold = h('details', { class: 'keys-group' },
+        h('summary', { class: 'keys-group-name' }, g, h('span', { class: 'keys-count' }, ` ${mine.length}${changed ? ` · ${changed} changed` : ''}`)),
+        mine.map(row));
+      fold.open = !!find || busy || opened.has(g);
+      fold.addEventListener('toggle', () => { if (!find) { if (fold.open) opened.add(g); else opened.delete(g); } });
+      return fold;
+    }).filter(Boolean), ...(find && !defs.some(hits) ? [h('p', { class: 'set-detail' }, 'No shortcut matches.')] : []));
   }
   render();
   // Closing Settings while recording stops it.
@@ -4082,6 +4100,7 @@ function openSettings({ keys = false, live = false } = {}) {
       h('p', { class: 'set-detail' }, 'Experiments you can turn on and off. They may change or go away.'),
       h('div', { class: 'set-toggles' },
         toggle('labViews', 'Experimental views', `${LAB_VIEWS}. Off: out of the palette, the menus and the review (nothing is lost; a key of your own to one offers to turn them on).`, () => renderContent(S.focus)),
+        toggle('labTalkSpace', 'Review talk in space', 'The notes of a topic around the talk in depth, linked ones together and drawn joined; the ones a question is about come forward, what you note flies to its note, the room leans a little with the pointer. Needs a wide window; with reduced motion, beside it flat.', () => S.tabs.forEach((t) => t.deskView?.talker?.layout())),
         toggle('labSteadyDraw', 'Steady live drawing', 'While you type in a ```flow block, keep the picture until the line is whole and you pause, so boxes don’t jump at every key.'),
         toggle('labWheelPans', 'Canvas: the wheel moves', 'Scrolling or two fingers move the canvas; pinch or ⌘/Ctrl + wheel zooms. Off: the wheel zooms.'),
         toggle('labBrief', 'Brief: a secretary in the margin', 'In a meeting note (a draft, a plan, when its name or title says so), a headline at the top of the margin: what it has to cover and what the last meeting left, ticked as you write; beside the lines, a to-do with nobody or no date, a date past or twice. Rules only, nothing sent; Check with Claude (in the headline) adds what goes against what and what doesn’t follow. Needs Experimental views on.', () => redrawRecall()),
@@ -4664,6 +4683,10 @@ function deskView(tab, c) {
           return out;
         },
         openNote: (p, line) => openFile(p, { side: true, line, mode: 'edit', beside: tab.group }),
+        // The talk's notes around it in depth (Labs).
+        space: () => !!S.settings.labTalkSpace,
+        // The app's own keys (⌘P, ⌘,…) from inside the talk, whose keys are its own.
+        appKey: (e) => appKeydown(e),
         // What the margin wrote and was not kept yet: beside the desk, in .agent-notes/desk/.
         loadMargin: async () => (await api('GET', `/api/desk/margin?path=${encodeURIComponent(tab.path)}`)).cards,
         saveMargin: (cards) => api('PUT', '/api/desk/margin', { path: tab.path, cards }).catch((e) => toast(`The margin\u2019s cards were not kept: ${e.message}`, 'error')),
@@ -8376,7 +8399,7 @@ async function afterRunChange(tab) {
 
 // ------------------------------------------------------------------ keyboard & boot
 
-document.addEventListener('keydown', (e) => {
+function appKeydown(e) {
   const overlay = $('#overlay');
   if (e.key === 'Escape' && !overlay.hidden) { overlay.hidden = true; overlay.replaceChildren(); return; }
   if (e.key === 'Escape' && document.documentElement.classList.contains('focus-mode') && !fileTab()?.editor.find.open && !(e.defaultPrevented && e.target.closest?.('.ed'))) { toggleFocusMode(); return; }
@@ -8396,7 +8419,8 @@ document.addEventListener('keydown', (e) => {
   if (!ACTIONS[id]) return;
   e.preventDefault();
   runCommand(id);
-});
+}
+document.addEventListener('keydown', appKeydown);
 
 document.querySelectorAll('#activity [data-view]').forEach((b) => b.addEventListener('click', () => showView(b.dataset.view)));
 $('#btn-help').addEventListener('click', () => { S.focus = 0; S.groups[0].active = null; render(); });
