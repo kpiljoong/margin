@@ -143,8 +143,9 @@ export function todoWhy(text, lang = 'en') {
   if ((m = /^Its day \((.*)\) has passed: is it done\?$/.exec(t))) return `\uB0A0\uC9DC(${m[1]})\uAC00 \uC9C0\uB0AC\uC5B4\uC694.`;
   return t;
 }
-// A to-do as said: without its priority marks.
-const todoText = (t) => String(t || '').replace(/\s*[\u23EB\u23EC\u{1F53A}\u{1F53C}\u{1F53D}]/gu, '').trim();
+// A to-do as said: without its priority marks
+// (and the links at its end: where it was written down, not what it says).
+const todoText = (t) => String(t || '').replace(/\s*[\u23EB\u23EC\u{1F53A}\u{1F53C}\u{1F53D}]/gu, '').replace(/(?:\s*\[\[[^\]]*\]\])+\s*$/, '').trim();
 // A margin card as a question: { label, say, why, todo }.
 export function questionOf(a, lang = 'en') {
   const lines = String(a.text || '').split('\n').map((l) => l.trim()).filter(Boolean);

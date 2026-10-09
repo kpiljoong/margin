@@ -15,7 +15,7 @@ test('a review talked through: in the notes\' language, one thing asked as the m
 
 test('what was jotted, said back a line each; where it stands, said at the start and the end', () => {
   const lines = sortedLines([
-    { jot: { kind: 'decided', say: 'Fly into SF', about: 'trip/01_plan.md', ticks: { text: 'Book the flights ⏫' } } },
+    { jot: { kind: 'decided', say: 'Fly into SF', about: 'trip/01_plan.md', ticks: { text: 'Book the flights ⏫ [[99-assistant/inbox-archive/2026-09#a|src]]' } } },
     { jot: { kind: 'later', say: 'Napa: next week' } },
     { jot: { kind: 'withdrawn', say: 'x', replaces: 'Dinner at the pier → [[trip/plan]]' } },
     { jot: { kind: 'decided', say: 'Lunch at the market', replaces: 'Lunch at the pier' } },

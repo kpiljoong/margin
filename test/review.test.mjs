@@ -254,6 +254,17 @@ test('the server: topics of the recent notes (not the assistant\'s records, neve
   const again = await api('POST', '/api/lab/review/desk', { topic });
   assert.deepEqual([again.path, again.existed], [d.path, true]);
   assert.equal(sent().length, 2);
+  // To go on with: the topic as its desk left it (nothing sent); a note new in its folder since, with it.
+  await sleep(20);
+  fs.writeFileSync(path.join(ws, 'trip/hotel.md'), '# Hotel\n\nThe hotel in New York: booked, near the park.\n');
+  let rs;
+  for (let i = 0; i < 30 && !(rs = await api('GET', '/api/lab/review/resume')).topics[0]?.newer; i++) await sleep(100); // (the folder's watcher sees it)
+  assert.equal(rs.topics.length, 1);
+  assert.deepEqual([rs.topics[0].title, rs.topics[0].path, rs.topics[0].newer, rs.topics[0].changed], ['Honeymoon', d.path, 1, 0]);
+  assert.deepEqual(rs.topics[0].topic.notes, ['trip/plan.md', 'trip/flights.md', 'trip/hotel.md']);
+  assert.equal(rs.topics[0].topic.goal, 'Book it all before the trip');
+  assert.equal(sent().length, 2);
+  fs.rmSync(path.join(ws, 'trip/hotel.md'));
   // They write "This time" on it; prepared again: another desk (the first kept), what they chose sent and first.
   const mineCard = desk.nodes.find((n) => n.type === 'text' && n.text.startsWith('**This time**'));
   mineCard.text = mineCard.text.replace('Goal: ', 'Goal: Book it all by the 20th').replace('**To settle now**\n- ', '**To settle now**\n- The Napa tour');

@@ -3447,6 +3447,7 @@ const COMMANDS = [
   ['Brief: this note \u2014 a secretary in the margin: what to cover, what it still needs, what doesn\u2019t add up (experimental)', lab('Brief', () => setTimeout(() => briefNote(), 0)), { labs: true }],
   ['Themes: what keeps coming back in your recent notes (experimental)', lab('Themes', () => setTimeout(themesView, 0)), { labs: true }],
   ['Review: a topic of your recent notes, on a desk \u2014 its goal, what may be done already, what to settle (experimental)', lab('Review', () => setTimeout(() => reviewTopics(), 0)), { labs: true }],
+  ['Review: go on with a topic reviewed before \u2014 what was put off, its notes changed since (experimental)', lab('Review', () => setTimeout(() => reviewResume(), 0)), { labs: true }],
   ['Gather: pieces of notes into one (experimental)', lab('Gather', () => setTimeout(gatherView, 0)), { labs: true }],
   ['Lock this paragraph (experimental)', () => setTimeout(toggleLock, 0)],
   ['Origin: where this note\u2019s paragraphs came from (experimental)', () => setTimeout(originView, 0)],
@@ -9418,6 +9419,34 @@ async function reviewDesk(t, again = false) {
   } catch (e) { toast(e.message, 'error'); }
 }
 
+// A topic reviewed before, to go on with: what was put off and is due, its
+// notes changed or new since (read here, nothing sent) — said once a day
+// when the folder opens, and listed by M-x.
+const resumeSaid = (t, today) => {
+  const ko = /[\uac00-\ud7a3]/.test(t.title);
+  const ago = Math.max(0, Math.round((Date.parse(today) - Date.parse(t.day)) / 86400000));
+  const bits = ko
+    ? [ago ? `\uC9C0\uB09C \uC815\uB9AC ${ago}\uC77C \uC804` : '\uC624\uB298 \uC815\uB9AC\uD568', t.due.length ? `\uBBF8\uB8EC \uAC83 ${t.due.length}\uAC1C\uAC00 \uC624\uB298\uAE4C\uC9C0` : '', t.changed ? `\uADF8 \uB4A4 \uBC14\uB010 \uB178\uD2B8 ${t.changed}\uAC1C` : '', t.newer ? `\uC0C8 \uB178\uD2B8 ${t.newer}\uAC1C` : '']
+    : [ago ? `reviewed ${ago} day${ago === 1 ? '' : 's'} ago` : 'reviewed today', t.due.length ? `${t.due.length} put off until today` : '', t.changed ? `${t.changed} of its notes changed since` : '', t.newer ? `${t.newer} new note${t.newer === 1 ? '' : 's'}` : ''];
+  return { text: `\u201C${t.title}\u201D \u00B7 ${bits.filter(Boolean).join(' \u00B7 ')}`, label: ko ? '\uC774\uC5B4\uC11C \uC815\uB9AC' : 'Go on with it' };
+};
+async function reviewResume({ quiet = false } = {}) {
+  let r;
+  try { r = await api('GET', '/api/lab/review/resume'); } catch (e) { if (!quiet) toast(e.message, 'error'); return; }
+  if (quiet) {
+    // Once a day, and only what there is to look at.
+    const t = r.topics[0];
+    const key = `an.resumeSaid.${S.info.root}`;
+    if (!t || store.getItem(key) === r.today || !(t.due.length || (t.day < r.today && t.changed + t.newer))) return;
+    store.setItem(key, r.today);
+    const said = resumeSaid(t, r.today);
+    toast(said.text, '', { label: said.label, run: () => reviewDesk(t.topic) });
+    return;
+  }
+  if (!r.topics.length) { toast('No topic reviewed yet: M-x Review: a topic of your recent notes\u2026'); return; }
+  picker({ placeholder: 'Go on with a topic\u2026', source: (q) => r.topics.map((t) => ({ t, m: fuzzy(q, t.title) })).filter((x) => x.m).map(({ t, m }) => ({ icon: '\u25CE', label: marked(t.title, m.idx), hint: resumeSaid(t, r.today).text.split(' \u00B7 ').slice(1).join(' \u00B7 '), run: () => reviewDesk(t.topic) })) });
+}
+
 async function themesView() {
   if (!(await askConfirm('Themes sends paragraphs of the notes you changed in the last two months (up to 120 of them, those like others first when the local model has read your notes) to Claude, through the Claude Code agent you signed in to. A private note, or one .agentnotesignore names, is never sent. Nothing is written until you make a note of a theme.', { okLabel: 'Find themes' }))) return;
   const overlay = $('#overlay');
@@ -10901,6 +10930,8 @@ async function boot() {
   render();
   connectEvents();
   desktop?.uiReady?.();
+  // A topic reviewed before with something to look at: said once a day.
+  if (labsOn() && store.getItem('an.reviewOk')) setTimeout(() => reviewResume({ quiet: true }), 4000);
 }
 
 boot().finally(() => booted());
