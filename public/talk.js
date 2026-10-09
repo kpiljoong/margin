@@ -81,6 +81,7 @@ export const WORDS = {
     back: '← \uB300\uD654\uB85C \uB3CC\uC544\uAC00\uAE30',
     desk: '\uAE30\uB85D \uBCF4\uAE30', talk: '\uB300\uD654\uB85C',
     backTo: '\uC544\uAE4C \uC9C8\uBB38\uC73C\uB85C',
+    thinking: '\uB178\uD2B8\uB97C \uBCF4\uBA70 \uC0DD\uAC01\uD558\uB294 \uC911…',
     notes: (n) => `\uC774 \uC8FC\uC81C\uC758 \uB178\uD2B8 ${n}\uAC1C`, links: '\uC5F0\uACB0', todosOpen: (n) => `\uD560 \uC77C ${n}`, decisionsIn: (n) => `\uACB0\uC815 ${n}`, nowAbout: '\uC9C0\uAE08 \uC9C8\uBB38\uACFC \uAD00\uB828',
     placeholder: '\uB9D0\uD558\uB4EF \uC368 \uC8FC\uC138\uC694 — \uC815\uD55C \uAC83, \uBBF8\uB8EC \uAC83, \uACE0\uBBFC \uC911\uC778 \uAC83, \uD560 \uC77C… (Enter, ⇧Enter \uC904\uBC14\uAFC8)',
   },
@@ -150,6 +151,7 @@ export const WORDS = {
     back: '← Back to the talk',
     desk: 'Show the record', talk: 'Talk it through',
     backTo: 'Back to the question',
+    thinking: 'Looking through the notes…',
     notes: (n) => `${n} notes of this topic`, links: 'Links', todosOpen: (n) => `${n} to do`, decisionsIn: (n) => `${n} decided`, nowAbout: 'About this question',
     placeholder: 'Write as you’d say it — decided, later, still weighing, to do… (Enter; ⇧Enter: a new line)',
   },
@@ -326,6 +328,7 @@ export class Talk {
   constructor(desk) {
     this.desk = desk;
     this.passed = new Set(); // asked and gone past this time (skipped, not yet)
+    this.history = []; // what was said, talking freely: [{ me, ai }]
     this.current = null;
     this.busy = false;
     const all = desk.d.nodes.filter((n) => n.type === 'text').map((n) => n.text).join('\n');
@@ -376,22 +379,41 @@ export class Talk {
   }
   focus() { this.input.focus({ preventScroll: true }); }
   // ---- what is said
-  say(md, cls = 'ai') {
+  // refs ({ name: path }): its [[links]] to those notes, each to open (the others as words).
+  say(md, cls = 'ai', refs = null) {
     const row = el('div', `talk-say ${cls}`);
     // Said as plain text (what the notes say is shown as written): a paragraph
     // a block, "- " lines a list, a block in _…_ a quieter line.
+    const words = (t) => (refs ? this.linked(t, refs) : unlink(t));
     if (cls === 'me') row.textContent = md;
     else {
       for (const block of String(md).split(/\n{2,}/)) {
         const lines = block.split('\n');
-        if (lines.every((l) => /^- /.test(l))) row.append(el('ul', null, lines.map((l) => el('li', null, unlink(l.slice(2))))));
-        else if (/^_[\s\S]*_$/.test(block)) row.append(el('p', 'talk-dim', unlink(block.slice(1, -1))));
-        else row.append(el('p', null, unlink(block)));
+        if (lines.every((l) => /^\s*(?:[-*]|\d+[.)]) /.test(l))) row.append(el('ul', null, lines.map((l) => el('li', null, words(l.replace(/^\s*(?:[-*]|\d+[.)]) /, ''))))));
+        else if (/^_[\s\S]*_$/.test(block)) row.append(el('p', 'talk-dim', words(block.slice(1, -1))));
+        else row.append(el('p', null, words(refs ? block.replace(/\*\*([^*]+)\*\*/g, '$1') : block)));
       }
     }
     this.log.append(row);
     this.scroll();
     return row;
+  }
+  linked(t, refs) {
+    const out = [];
+    let at = 0;
+    for (const m of String(t).matchAll(/\[\[([^\]|#]+)(?:#[^\]|]*)?(?:\|([^\]]+))?\]\]/g)) {
+      out.push(t.slice(at, m.index));
+      const p = refs[m[1].trim()] || refs[name(m[1])];
+      if (p) {
+        const b = el('button', 'talk-ref', m[2] || name(m[1]));
+        b.title = p;
+        b.addEventListener('click', (e) => { e.stopPropagation(); this.desk.opts.openNote(p); this.about([p], true); });
+        out.push(b);
+      } else out.push(m[2] || name(m[1]));
+      at = m.index + m[0].length;
+    }
+    out.push(t.slice(at));
+    return out;
   }
   acts(row, ...buttons) { const a = el('div', 'talk-acts', ...buttons); row.append(a); this.scroll(); return a; }
   scroll() { requestAnimationFrame(() => { this.log.parentElement.scrollTop = this.log.parentElement.scrollHeight; }); }
@@ -404,6 +426,7 @@ export class Talk {
     return `${todoText(String(q.n.text || '').split('\n\n')[0])} — ${this.W.todoQ}`;
   }
   next(brief = false) {
+    this.done(this.asking); // (what was asked before: no longer)
     const q = this.queue()[0];
     this.current = (!this.early && q) || null;
     // (Enough for today: the rest asked next time, not now.)
@@ -638,14 +661,20 @@ export class Talk {
     const W = this.W;
     this.say(text, 'me');
     const asked = this.current;
-    this.done(this.asking);
+    // Talking freely (Labs): what is asked stays asked (its buttons too) while you talk.
+    const free = !!this.desk.opts.free?.();
+    if (!free) this.done(this.asking);
     // What was said back before and not noted: no longer to note (written again since).
     this.done(this.pending);
     this.busy = true;
-    const wait = this.say(W.sorting, 'ai wait');
+    const wait = this.say(free ? W.thinking : W.sorting, 'ai wait');
     let r;
-    try { r = await this.desk.jot(text, { asked: this.askOf(asked) }); } catch (e) { r = { error: e.message }; } finally { this.busy = false; wait.remove(); }
-    if (r?.error) { this.say(W.notSorted(r.error)); this.again(asked); return; }
+    try { r = await this.desk.jot(text, { asked: this.askOf(asked), ...(free ? { free: true, history: this.history.slice(-6) } : {}) }); } catch (e) { r = { error: e.message }; } finally { this.busy = false; wait.remove(); }
+    if (r?.error) { this.say(W.notSorted(r.error)); if (free) this.focus(); else this.again(asked); return; }
+    if (free) {
+      if (r.reply) { this.say(r.reply, 'ai', r.refs || {}); this.history.push({ me: text, ai: r.reply }); }
+      if (!r.cards?.length) { this.focus(); return; }
+    }
     // What they asked: answered from what is written (and where), nothing noted.
     for (const x of r?.replies || []) {
       const row = this.say(x.say);
@@ -654,6 +683,7 @@ export class Talk {
     }
     const cards = r?.cards || [];
     if (!cards.length) { if (!r?.replies?.length) this.say(W.nothing); this.again(asked, !!r?.replies?.length); return; }
+    if (free) this.done(this.asking);
     const short = (t) => (t.length > 50 ? `${t.slice(0, 50)}…` : t);
     // Said as its answer only when it is one (what they wrote may be about something else).
     const answering = asked && cards.some((c) => c.jot?.answers);

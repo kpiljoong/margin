@@ -4100,6 +4100,7 @@ function openSettings({ keys = false, live = false } = {}) {
       h('p', { class: 'set-detail' }, 'Experiments you can turn on and off. They may change or go away.'),
       h('div', { class: 'set-toggles' },
         toggle('labViews', 'Experimental views', `${LAB_VIEWS}. Off: out of the palette, the menus and the review (nothing is lost; a key of your own to one offers to turn them on).`, () => renderContent(S.focus)),
+        toggle('labTalkFree', 'Review talk: talk freely', 'Say or ask anything in a review’s talk: Claude answers from the topic’s notes and the lines of your other notes found for it (looked up once more when it asks; never a private or ignored note), says which note, and offers what is so now to note — with a button; it changes nothing itself. Slower than sorting (about 5 to 20 seconds).'),
         toggle('labTalkSpace', 'Review talk in space', 'The notes of a topic around the talk in depth, linked ones together and drawn joined; the ones a question is about come forward, what you note flies to its note, the room leans a little with the pointer. Needs a wide window; with reduced motion, beside it flat.', () => S.tabs.forEach((t) => t.deskView?.talker?.layout())),
         toggle('labSteadyDraw', 'Steady live drawing', 'While you type in a ```flow block, keep the picture until the line is whole and you pause, so boxes don’t jump at every key.'),
         toggle('labWheelPans', 'Canvas: the wheel moves', 'Scrolling or two fingers move the canvas; pinch or ⌘/Ctrl + wheel zooms. Off: the wheel zooms.'),
@@ -4696,7 +4697,9 @@ function deskView(tab, c) {
         ledger: async () => (await api('GET', `/api/lab/review/ledger?path=${encodeURIComponent(tab.path)}`)).events,
         todoFile: S.files.some((f) => f.path === '99-assistant/todo.md') ? '99-assistant/todo.md' : null,
         // What they jot on it, sorted by Claude (decided, later, still open, to do).
-        jot: async (text, { asked = '' } = {}) => { await deskSaved(tab); return api('POST', '/api/lab/review/jot', { ...reviewOpts(), path: tab.path, text, ...(asked ? { asked } : {}) }); },
+        jot: async (text, { asked = '', free = false, history = [] } = {}) => { await deskSaved(tab); return api('POST', free ? '/api/lab/review/talk' : '/api/lab/review/jot', { ...reviewOpts(), path: tab.path, text, ...(asked ? { asked } : {}), ...(free ? { history } : {}) }); },
+        // Talking freely in the review (Labs).
+        free: () => !!S.settings.labTalkFree,
         // What they decided, carried into its notes: the lines to change, to show (then propose).
         changes: async () => { await deskSaved(tab); return api('POST', '/api/lab/review/changes', { ...reviewOpts(), path: tab.path }); },
         privateOf: async (paths) => (await api('POST', '/api/private', { paths })).private || {},

@@ -1252,11 +1252,9 @@ async function labReviewDesk(b) {
 // What they jotted on a review's desk, sorted (decided, later, still open,
 // to do): each thing with the note of the desk it is most about. Sent: the
 // topic, its "This time", its notes (not a private or ignored one) and the jot.
-async function labReviewJot(b) {
-  const rel = relOf(workspacePath(String(b.path || '')));
-  if (!/^Reviews\/.+\.canvas$/i.test(rel) || !fs.existsSync(workspacePath(rel))) throw httpError(400, 'Not a review\u2019s desk');
-  if (typeof b.text !== 'string' || !b.text.trim() || b.text.length > 4000) throw httpError(400, 'text: what was jotted (at most 4000 characters)');
-  const r0 = reviewUp(b);
+// A review's desk as a jot or the talk sends it: its topic, goal, This
+// time, notes (not a private or ignored one), open to-dos and projects.
+async function reviewDeskContext(rel) {
   const deskEsm = await import(require('url').pathToFileURL(path.join(__dirname, 'public', 'desk.js')).href);
   const desk = deskEsm.parseDesk(fs.readFileSync(workspacePath(rel), 'utf8'));
   const goalCard = desk.nodes.find((n) => n.type === 'text' && /^\*\*[^*]+\*\*\n\nGoal \(/.test(String(n.text || '')));
@@ -1272,9 +1270,92 @@ async function labReviewJot(b) {
   // and the to-dos taken on it (a card's "To-do: `- [ ] …`"), first of all.
   const cards = desk.nodes.flatMap((n) => [...String(n.type === 'text' && n.text || '').matchAll(/To-do: `- \[ \] ([^`]+)`/g)].map((m) => ({ card: n.id, text: m[1] })));
   const todos = [...cards, ...(await reviewTodos(mine, ignored)).sort((x, y) => onDesk.has(`${y.file}\u0000${y.key}`) - onDesk.has(`${x.file}\u0000${x.key}`))].slice(0, 60);
-  const r = await r0.jot({ topic: { title, goal: goal.trim() }, thisTime, notes, todos: todos.map((x) => `${x.text} (${x.file || 'on this desk'})`), jot: b.text.trim(), asked: cleanStr(b.asked, 1000), today: reviewToday(), projects });
+  return { title, goal: goal.trim(), thisTime, mine, notes, todos, projects, ignored };
+}
+// What Claude sorted (or offered to note), as the desk takes it: its note and to-do as they are.
+const reviewItemsOut = (items, { notes, thisTime, todos }) => items.map((x) => ({ kind: x.kind, say: x.say, ...(x.answers ? { answers: true } : {}), about: x.about ? notes[x.about - 1].path : '', settles: x.settles ? thisTime.focus[x.settles - 1] : '', todo: x.todo, ...(x.ticks ? { ticks: todos[x.ticks - 1] } : {}), ...(x.replaces ? { replaces: thisTime.decided[x.replaces - 1] } : {}) }));
+
+async function labReviewJot(b) {
+  const rel = relOf(workspacePath(String(b.path || '')));
+  if (!/^Reviews\/.+\.canvas$/i.test(rel) || !fs.existsSync(workspacePath(rel))) throw httpError(400, 'Not a review\u2019s desk');
+  if (typeof b.text !== 'string' || !b.text.trim() || b.text.length > 4000) throw httpError(400, 'text: what was jotted (at most 4000 characters)');
+  const r0 = reviewUp(b);
+  const c = await reviewDeskContext(rel);
+  const { title, goal, thisTime, notes, todos, projects } = c;
+  const r = await r0.jot({ topic: { title, goal }, thisTime, notes: notes.map((n) => ({ ...n, text: n.text.slice(0, 2000) })), todos: todos.map((x) => `${x.text} (${x.file || 'on this desk'})`), jot: b.text.trim(), asked: cleanStr(b.asked, 1000), today: reviewToday(), projects });
   if (!r.ok) throw httpError(502, r.error || 'Claude did not answer.');
-  return { items: r.items.map((x) => ({ kind: x.kind, say: x.say, ...(x.answers ? { answers: true } : {}), about: x.about ? notes[x.about - 1].path : '', settles: x.settles ? thisTime.focus[x.settles - 1] : '', todo: x.todo, ...(x.ticks ? { ticks: todos[x.ticks - 1] } : {}), ...(x.replaces ? { replaces: thisTime.decided[x.replaces - 1] } : {}) })) };
+  return { items: reviewItemsOut(r.items, c) };
+}
+
+// The lines of their notes (not a private or ignored one, nor those left
+// out) most about the words: a word found as written — or, in Korean, by
+// half its pairs of letters — the rarer counting more; the line with the one
+// before and after. → [{ path, line (from 0), text }] (k at most).
+function vaultLines(query, { skip = new Set(), ignored = loadIgnore(ROOT), k = 8 } = {}) {
+  const words = [...new Set(String(query).toLowerCase().split(/[^\p{L}\p{N}]+/u).filter((w) => w.length >= 2))].slice(0, 12);
+  if (!words.length) return [];
+  const pairs = (w) => Array.from({ length: w.length - 1 }, (_, i) => w.slice(i, i + 2));
+  const has = (lower, w) => lower.includes(w) || (/[\uac00-\ud7a3]/.test(w) && w.length > 2 && pairs(w).filter((p) => lower.includes(p)).length * 2 >= w.length - 1);
+  const files = workspaceFiles().filter((f) => !skip.has(f) && NOTE_EXT.has(extOf(f)) && reviewable(f, ignored)).slice(0, 4000);
+  const df = new Map(words.map((w) => [w, 0]));
+  const texts = [];
+  for (const f of files) {
+    const c = cachedText(f);
+    if (!c) continue;
+    const on = words.filter((w) => has(c.lower, w));
+    if (on.length) { for (const w of on) df.set(w, df.get(w) + 1); texts.push([f, c]); }
+  }
+  const idf = (w) => Math.log(1 + files.length / (1 + df.get(w)));
+  const need = Math.min(2, words.length);
+  const hits = [];
+  for (const [f, c] of texts) {
+    const lines = c.text.replace(/^\uFEFF/, '').split('\n');
+    const name = f.split('/').pop().replace(/\.md$/i, '').toLowerCase();
+    lines.forEach((l, i) => {
+      const lower = l.toLowerCase();
+      if (!lower.trim() || /^---\s*$/.test(l)) return;
+      const on = words.filter((w) => has(lower, w) || has(name, w));
+      if (on.length < need) return;
+      hits.push({ path: f, line: i, score: on.reduce((a, w) => a + idf(w), 0) + (on.some((w) => has(lower, w)) ? 0.5 : 0), text: lines.slice(Math.max(0, i - 1), i + 2).join(' / ').replace(/\s+/g, ' ').slice(0, 400) });
+    });
+  }
+  hits.sort((x, y) => y.score - x.score);
+  const out = [];
+  const per = new Map();
+  for (const h of hits) {
+    if ((per.get(h.path) || 0) >= 2) continue;
+    per.set(h.path, (per.get(h.path) || 0) + 1);
+    out.push({ path: h.path, line: h.line, text: h.text });
+    if (out.length >= k) break;
+  }
+  return out;
+}
+
+// The talk, freely (Labs): what they say answered from the topic's notes and
+// lines of their other notes found for it (and looked up once more, when
+// Claude asks to) — what is so now offered to note, never noted here. Sent:
+// the topic, This time, its notes, its open to-dos, what was said just
+// before, what was asked, the lines found. → { reply, items, refs: { name: path } }.
+async function labReviewTalk(b) {
+  const rel = relOf(workspacePath(String(b.path || '')));
+  if (!/^Reviews\/.+\.canvas$/i.test(rel) || !fs.existsSync(workspacePath(rel))) throw httpError(400, 'Not a review\u2019s desk');
+  if (typeof b.text !== 'string' || !b.text.trim() || b.text.length > 4000) throw httpError(400, 'text: what they say (at most 4000 characters)');
+  const history = Array.isArray(b.history) ? b.history.slice(-6).map((h) => ({ me: cleanStr(h?.me, 1500), ai: cleanStr(h?.ai, 3000) })).filter((h) => h.me || h.ai) : [];
+  const r0 = reviewUp(b);
+  const c = await reviewDeskContext(rel);
+  const { title, goal, thisTime, notes, todos, projects, ignored } = c;
+  // The topic's notes whole, as much as fits; the others by what is said (and what was asked).
+  let left = 60000;
+  const sent = notes.map((n) => { const text = n.text.slice(0, Math.min(12000, Math.max(0, left))); left -= text.length; return { path: n.path, text }; }).filter((n) => n.text.trim());
+  const skip = new Set(c.mine);
+  const asked = cleanStr(b.asked, 1000);
+  const found = vaultLines(`${b.text} ${asked}`, { skip, ignored });
+  const search = async (q) => vaultLines(q, { skip, ignored, k: 6 });
+  const r = await r0.talk({ today: reviewToday(), topic: { title, goal }, thisTime, notes: sent, todos: todos.map((x) => `${x.text} (${x.file || 'on this desk'})`), history, asked, found, text: b.text.trim(), projects }, search);
+  if (!r.ok) throw httpError(502, r.error || 'Claude did not answer.');
+  const refs = {};
+  for (const p of [...sent.map((n) => n.path), ...r.found.map((f) => f.path)]) refs[p.split('/').pop().replace(/\.md$/i, '')] ||= p;
+  return { reply: r.reply, items: reviewItemsOut(r.items, { ...c, notes: sent }), refs, found: r.found.map(({ path: p, line }) => ({ path: p, line })), searched: r.searched };
 }
 
 // What they decided on a review's desk (and put off), carried into its
@@ -3160,6 +3241,7 @@ async function routeApi(method, url, body) {
   if (method === 'GET' && p === '/api/lab/review/resume') return labReviewResume();
   if (method === 'POST' && p === '/api/lab/review/state') return labReviewState(body || {});
   if (method === 'POST' && p === '/api/lab/review/jot') return labReviewJot(body || {});
+  if (method === 'POST' && p === '/api/lab/review/talk') return labReviewTalk(body || {});
   if (method === 'POST' && p === '/api/lab/review/changes') return labReviewChanges(body || {});
   if (method === 'GET' && p === '/api/lab/review/ledger') return { events: reviewLedger(relOf(workspacePath(q('path')))) };
   if (method === 'POST' && p === '/api/lab/review/ledger') return addReviewLedger(body || {});

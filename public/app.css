@@ -2016,6 +2016,8 @@ li.callout-hot { background: color-mix(in srgb, var(--accent) 16%, transparent);
 .talk-quote { text-align: left; border: 0; border-left: 2px solid color-mix(in srgb, var(--accent) 50%, var(--border)); background: var(--bg-3); color: var(--fg); padding: 5px 10px; border-radius: 0 6px 6px 0; font: 12.5px/1.5 var(--sans); cursor: pointer; }
 .talk-quote:hover { background: var(--bg-hover); }
 .talk-quote b { font-weight: 600; margin-right: 4px; }
+.talk-ref { border: 0; padding: 0 3px; border-radius: 4px; background: color-mix(in srgb, var(--accent) 14%, transparent); color: var(--accent); font: inherit; cursor: pointer; }
+.talk-ref:hover { background: color-mix(in srgb, var(--accent) 26%, transparent); }
 .talk-acts { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
 .talk-acts .btn:disabled { opacity: .45; }
 .talk-foot { border-top: 1px solid var(--border); padding: 10px 16px 14px; }

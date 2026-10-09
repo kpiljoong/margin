@@ -183,6 +183,12 @@ process.stdin.on('data', (d) => {
       ? 'title: Honeymoon\\nfolder: none\\nnotes: ' + (j.message.content.match(/^\\[\\d+\\] (?:trip\\/plan\\.md|trip\\/flights\\.md|workout\\.md)/gm) || []).map((l) => l.match(/\\d+/)[0]).join(', ') + '\\ngoal: Book it all before the trip\\ngoal from: guess\\nask: Is the trip on the 27th?'
       : /^Title:/.test(j.message.content)
       ? '\\x60\\x60\\x60markdown\\n# Honeymoon\\n\\n## Decided\\n- Dinner at the pier [[flights]]\\n\\n## Still open\\n- Napa: half a day or a whole one? [[plan]] [[nowhere|elsewhere]]\\n\\x60\\x60\\x60'
+      : /^Found for it:/.test(j.message.content)
+      ? 'From [[flights]]: dinner at the pier.\\n===NOTE===\\nkind: decided\\nsay: Dinner at the pier\\nabout: N1\\nanswers: no'
+      : j.message.content.includes('\\n\\nThey say:\\nsearch me')
+      ? 'search: secret pier'
+      : j.message.content.includes('\\n\\nThey say:\\n')
+      ? 'Nothing in the notes says so.'
       : j.message.content.includes('\\nD1. ')
       ? 'note: N1\\nline: 3\\nwas: LA first, then SF\\nnow: LA first, then SF, then New York. Dinner at the pier. Napa tour: half a day or a whole one?\\nfor: D1\\n---\\nnote: N1\\nafter: 5\\nadd: - Dinner at the pier #decision\\nfor: D1'
       : j.message.content.includes('They jotted:')
@@ -340,6 +346,20 @@ test('the server: topics of the recent notes (not the assistant\'s records, neve
   assert.equal(review.parseState('No note here', []), '');
   assert.match(sent().at(-1), /^Title: Honeymoon\n\nGoal: Book it all by the 20th\n\nDecided:\nD1\. Dinner at the pier\n\nPut off:\n1\. Napa\n\nCalled off \(no longer decided\):\n\(none\)\n\nNotes:\nN1 \[\[plan\]\]:\n# Plan/);
   assert.ok(!fs.existsSync(path.join(ws, st.file)));
+  // Talking freely: an answer from the notes (and what it looked up once more), what is so now offered to note, nothing private sent.
+  const tk = await api('POST', '/api/lab/review/talk', { path: d2.path, text: 'search me: where is dinner?', asked: 'Napa?', history: [{ me: 'hi', ai: 'hello' }] });
+  assert.equal(tk.status, 200, tk.error);
+  assert.equal(tk.reply, 'From [[flights]]: dinner at the pier.');
+  assert.deepEqual(tk.items.map((x) => [x.kind, x.say, !!x.answers]), [['decided', 'Dinner at the pier', false]]);
+  assert.match(tk.items[0].about, /^trip\//);
+  assert.equal(tk.refs.flights, 'trip/flights.md');
+  assert.deepEqual(tk.searched, ['secret pier']);
+  const said = sent().slice(-2);
+  assert.match(said[0], /\n\nSaid just before:\nThey: hi\nYou: hello\n\nThey were just asked:\nNapa\?\n\nFound in their other notes:\n[\s\S]*\n\nThey say:\nsearch me: where is dinner\?$/);
+  assert.match(said[1], /^Found for it:\n/);
+  assert.ok(said.every((m) => !/secret/i.test(m.replace(/search me|secret pier/g, ''))), 'never a private note');
+  const plain = await api('POST', '/api/lab/review/talk', { path: d2.path, text: 'Is Napa decided?' });
+  assert.deepEqual([plain.reply, plain.items], ['Nothing in the notes says so.', []]);
   // A review's margin kept beside it as it was: what was jotted (and the to-do it does), a pick, a wrap-up's decisions, the changes.
   const kept = [
     { id: 'j1', kind: 'review', title: 'Jotted \u00B7 Done', text: 'Paid.', x: 1, y: 2, width: 300, height: 90, batch: 'b', jot: { kind: 'done', say: 'Paid.', about: 'trip/plan.md', settles: '', of: 'raw', ticks: { file: '99-assistant/todo.md', line: 2, key: 'todo:esta', text: 'ESTA', tasks: true }, evil: 'x' } },
@@ -535,4 +555,14 @@ test('a decision called off: only one there still as it was; kept under Withdraw
   assert.match(r.text, /\*\*Reviews with changes from a decision not decided now\*\*\n- \[\[trip\/day1\]\]: some of its changes were proposed from \u201CDinner at the pier\u201D \(called off\) \u2014 its red pen review is still waiting\n- \[\[trip\/day3\]\]: [^\n]* \u2014 its review could not be checked\n/);
   // Taken back into Decided (undone): no longer said.
   assert.deepEqual(wrapUp({ desk: { nodes: [{ id: 't', type: 'text', text: t }] }, ledger, runs: new Map([['r1', 'review']]) }).waiting, []);
+});
+
+test('the talk, freely: its answer, what it offers to note (never a question of theirs), what it asks to look up', () => {
+  assert.deepEqual(review.parseTalk('search: taco place\nsearch: NYC food'), { reply: '', items: [], search: ['taco place', 'NYC food'] });
+  const r = review.parseTalk('Not yet — [[food]] has only the to-do.\n\n===NOTE===\nkind: decided\nsay: Taco: Los Tacos No.1\nabout: N1\nanswers: no\n---\nkind: question\nsay: x', { nNotes: 1 });
+  assert.equal(r.reply, 'Not yet — [[food]] has only the to-do.');
+  assert.deepEqual(r.items, [{ kind: 'decided', say: 'Taco: Los Tacos No.1', about: 1, settles: 0, todo: '' }]);
+  assert.deepEqual(review.parseTalk('Just words.'), { reply: 'Just words.', items: [], search: [] });
+  assert.equal(review.parseTalk('- Find a taco place (T57)\n- Sort them (T10, N2)').reply, '- Find a taco place\n- Sort them');
+  assert.match(review.TALK.join('\n'), /You change nothing yourself/);
 });

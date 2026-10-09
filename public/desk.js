@@ -2562,6 +2562,15 @@ export class Desk {
     // A question of theirs is answered, not noted: one that is all questions leaves nothing on the desk.
     const replies = (r?.items || []).filter((it) => it.kind === 'question').map((it) => ({ say: it.say, about: it.about || '' }));
     const items = (r?.items || []).filter((it) => it.kind !== 'question');
+    // Talking freely: its answer, said; nothing to note leaves nothing on the desk.
+    const talk = r?.reply != null ? { reply: r.reply, refs: r.refs || {} } : {};
+    if (talk.reply != null && !items.length) {
+      const steps = this.undo.length;
+      this.change({ ...this.d, nodes: this.streamed(this.d.nodes.filter((n) => n.id !== card.id)) });
+      if (this.undo.length > steps) this.undo.pop();
+      this.jotStatus.textContent = talk.reply.slice(0, 300);
+      return { card: null, cards: [], replies, ...talk };
+    }
     if (!items.length && replies.length) {
       const steps = this.undo.length;
       this.change({ ...this.d, nodes: this.streamed(this.d.nodes.filter((n) => n.id !== card.id)) });
@@ -2578,7 +2587,7 @@ export class Desk {
     }
     this.streamNow();
     this.jotStatus.textContent = `${items.length} sorted, under it: Tab takes the first (marked; here too, with nothing written), Esc lets it go, \u21E7Tab takes all ${items.length}.`;
-    return { card, cards: this.ai.filter((a) => a.batch === batch), replies };
+    return { card, cards: this.ai.filter((a) => a.batch === batch), replies, ...talk };
   }
   // A jot taken back before it was noted (to write it again): it and what it was sorted into, gone.
   // (One of them taken already, on the desk: only the rest go; the jot stays with it.)
