@@ -1015,7 +1015,7 @@ function reviewable(rel, ignored = loadIgnore(ROOT)) {
 }
 // The notes of the last weeks, newest first (not the assistant's to-do
 // list: its lines go with a topic, as to-dos); a copy (the same name but for
-// "(next)", "(copy)", " 2", and the same words) once, with how many there are.
+// "(next)", "(copy)", " 2", and all the same words) once, with how many there are.
 function reviewNotes(days) {
   const ignored = loadIgnore(ROOT);
   const since = Date.now() - days * 86400000;
@@ -1026,7 +1026,7 @@ function reviewNotes(days) {
     if (out.length >= 120 || rel === REVIEW_TODO || !reviewable(rel, ignored)) continue;
     const text = reviewText(c);
     if (text.length < 40) continue;
-    const k = `${path.basename(rel).replace(/\.[^.]+$/, '').replace(/\s*\((?:next|copy|\d+)\)/gi, '').replace(/\s+(?:copy|\d+)$/i, '').trim()}\u0000${text.replace(/\s+/g, ' ').slice(0, 300)}`;
+    const k = `${path.basename(rel).replace(/\.[^.]+$/, '').replace(/\s*\((?:next|copy|\d+)\)/gi, '').replace(/\s+(?:copy|\d+)$/i, '').trim()}\u0000${crypto.createHash('sha1').update(text.replace(/\s+/g, ' ').trim()).digest('hex')}`;
     // The one kept: the newest, or of two as new the one named as the first was.
     if (seen.has(k)) { const n = seen.get(k); n.copies++; if (n.date === new Date(c.mtimeMs).toISOString().slice(0, 10) && rel.length < n.path.length) n.path = rel; continue; }
     const n = { path: rel, date: new Date(c.mtimeMs).toISOString().slice(0, 10), text, copies: 0 };

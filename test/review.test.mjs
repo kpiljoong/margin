@@ -127,6 +127,9 @@ test('the server: topics of the recent notes (not the assistant\'s records, neve
   fs.writeFileSync(path.join(ws, 'trip/plan.md'), '# Plan\n\nLA first, then SF, then New York. Napa tour: half a day or a whole one?\n\n- [ ] Book the Napa tour \u{1F4C5} 2026-01-02\n');
   fs.writeFileSync(path.join(ws, 'trip/flights.md'), '# Flights\n\nICN to SFO on the 27th, about 1.2M won each; not booked yet.\n');
   fs.writeFileSync(path.join(ws, 'trip/plan (copy).md'), '# Plan\n\nLA first, then SF, then New York. Napa tour: half a day or a whole one?\n\n- [ ] Book the Napa tour \u{1F4C5} 2026-01-02\n');
+  // The same beginning, another end (a decision made since): not a copy.
+  fs.writeFileSync(path.join(ws, 'trip/napa 2.md'), `# Napa\n\n${'The Napa tour, half a day or a whole one, as the guide says. '.repeat(6)}\n\nDecided: a whole day.\n`);
+  fs.writeFileSync(path.join(ws, 'trip/napa.md'), `# Napa\n\n${'The Napa tour, half a day or a whole one, as the guide says. '.repeat(6)}\n\nNot decided yet.\n`);
   fs.writeFileSync(path.join(ws, 'secret.md'), '---\nprivate: true\n---\nThe secret plan for the trip, long enough to be read.\n');
   fs.writeFileSync(path.join(ws, '99-assistant/log/2026-10-05.md'), '- 18:48 a record of the assistant, long enough to be a note\n');
   fs.writeFileSync(path.join(ws, '99-assistant/rules/todo-format.md'), '# Todo rules\n\n- [ ] <what to do> [\u{1F4C5} YYYY-MM-DD]\n');
@@ -150,9 +153,11 @@ test('the server: topics of the recent notes (not the assistant\'s records, neve
   assert.match(sent()[0], /^Folders:\n01-projects\/tramio\n/);
   assert.match(sent()[0], /trip\/plan\.md \([\d-]+, 2 copies\)/, 'a copy once (as the first was named), with how many');
   assert.doesNotMatch(sent()[0], /\(copy\)/);
+  assert.match(sent()[0], /Decided: a whole day/);
+  assert.match(sent()[0], /Not decided yet/);
   assert.doesNotMatch(sent()[0], /secret|a record of the assistant|Todo rules|Apply for the ESTA/, 'not private, not the assistant\'s records, rules or list');
-  const topic = tp.topics[0];
-  assert.equal(topic.notes.length, 2);
+  assert.equal(tp.topics[0].notes.length, 2);
+  const topic = { ...tp.topics[0], notes: ['trip/plan.md', 'trip/flights.md'] };
   const d = await api('POST', '/api/lab/review/desk', { topic });
   assert.equal(d.status, 200, d.error);
   assert.match(d.path, /^Reviews\/Honeymoon \d{4}-\d{2}-\d{2}\.canvas$/);
