@@ -2308,3 +2308,7 @@ img.part { border-radius: 6px; box-shadow: 0 0 0 1px var(--border); }
 .room-carry[hidden] { display: none; }
 .room-carry b { font-weight: 500; color: var(--fg-faint); margin-right: 4px; }
 .room-carry-i { max-width: 28em; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.room-card { cursor: default; }
+.room-more { margin-top: 3px; font-size: 11px; color: var(--fg-faint); }
+.room-card.open { box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent) 40%, transparent); }
+.room-close-hint { font-size: 12px; color: var(--fg-dim); max-width: 22em; }

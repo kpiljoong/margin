@@ -1478,7 +1478,8 @@ function roomNote(b) {
   if (isPrivateNote(workspacePath(rel))) throw httpError(403, 'This note is private (front matter): its lines are not sent.');
   return rel;
 }
-const roomItems = (items) => (Array.isArray(items) ? items.slice(-80).map((it) => ({ kind: cleanStr(it?.kind, 20), text: cleanStr(it?.text, 600), section: cleanStr(it?.section, 120) })).filter((it) => it.text.trim()) : []);
+// The weave reads the last lines; the close all of them (the page keeps it in bounds).
+const roomItems = (items, max = 80) => (Array.isArray(items) ? items.slice(-max).map((it) => ({ kind: cleanStr(it?.kind, 20), text: cleanStr(it?.text, 600), section: cleanStr(it?.section, 120) })).filter((it) => it.text.trim()) : []);
 const roomTitle = (rel) => /^#\s+(.+)$/m.exec(cachedText(rel)?.text || '')?.[1]?.trim() || path.basename(rel).replace(/\.md$/i, '');
 const roomKind = (rel) => FRONT_TYPE.exec(cachedText(rel)?.text || '')?.[1]?.toLowerCase() || 'meeting';
 // Now and then while it goes on: what to ask now, where the item stands,
@@ -1496,7 +1497,7 @@ async function roomWeave(b) {
 // At its end: the draft to read out, and at most three questions first.
 async function roomClose(b) {
   const rel = roomNote(b);
-  const items = roomItems(b.items);
+  const items = roomItems(b.items, 400);
   if (!items.length) return { decided: [], who: [], open: [], check: [], unsure: [] };
   const r = await roomUp(b).close({ title: roomTitle(rel), kind: roomKind(rel), items, today: reviewToday() });
   if (!r.ok) throw httpError(502, r.error || 'Claude did not answer.');

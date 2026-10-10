@@ -140,6 +140,28 @@ function findLine(lines, entry) {
   return all.length ? all[0] : -1;
 }
 
+// What the close reads: the whole session when it fits; a long one, its
+// plain notes left out from the oldest first (what was decided, given to
+// someone, asked or marked stays, however early), then the oldest of the rest.
+export function closeItems(entries, { budget = 60000, max = 400 } = {}) {
+  const size = (xs) => xs.reduce((n, e) => n + e.words.length + 24, 0);
+  let keep = [...entries];
+  for (let i = 0; i < keep.length && (size(keep) > budget || keep.length > max);) {
+    if (keep[i].kind === 'note' && keep.length - i > 20) keep.splice(i, 1); else i++;
+  }
+  while (keep.length > 1 && (size(keep) > budget || keep.length > max)) keep.shift();
+  return keep;
+}
+// The session as the draft was made from: a draft from other lines is old.
+export const sigOf = (entries) => entries.map((e) => `${e.key}\u0001${e.mark || ''}`).join('\u0002');
+// A date the margin's sentence adds that the words don't have ("on the 18th"
+// for "Friday"): the sentence is not shown — their words are what counts.
+const DATEY = /\d{4}-\d{2}-\d{2}|\d{1,2}\s*\uC6D4\s*\d{1,2}\s*\uC77C|\d{1,2}\uC77C|\b(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\.?\s+\d{1,2}\b|\b\d{1,2}(?:st|nd|rd|th)\b|\d{1,2}\/\d{1,2}/gi;
+export function addsDate(sentence, words) {
+  const said = String(words).toLowerCase().replace(/\s+/g, '');
+  return (String(sentence).match(DATEY) || []).some((d) => !said.includes(d.toLowerCase().replace(/\s+/g, '')));
+}
+
 // The lanes, and which kinds go in each.
 export const LANES = ['note', 'decision', 'todo', 'question', 'other'];
 export const laneOf = (kind) => (LANES.includes(kind) ? kind : ['risk', 'idea', 'next'].includes(kind) ? 'other' : 'note');
@@ -239,6 +261,9 @@ export const WORDS = {
     meeting: '\uD68C\uC758', lecture: '\uAC15\uC758',
     placeholder: '\uD55C \uC904\uC529 \uC4F0\uACE0 Enter — ! \uC815\uD568 · ? \uC9C8\uBB38 · [] \uD560 \uC77C · ?? \uBB3C\uC5B4\uBCF4\uAE30 · # \uB2E4\uC74C \uC548\uAC74',
     guess: '\uCD94\uC815 — \uB20C\uB7EC\uC11C \uC815\uD558\uAE30',
+    maybe: (k) => `${k} \uD6C4\uBCF4`, moreOn: '\uB20C\uB7EC\uC11C \uC815\uB9AC \uBB38\uC7A5·\uC9C0\uB09C \uAE30\uB85D \uBCF4\uAE30',
+    stale: '\uCD08\uC548 \uB4A4\uB85C \uBA54\uBAA8\uAC00 \uBC14\uB00C\uC5B4\uC11C \uC9C0\uAE08 \uBA54\uBAA8\uB85C \uB2E4\uC2DC \uC37C\uC5B4\uC694.',
+    withAnswers: (n) => `\uB2F5 ${n}\uAC1C \uB123\uACE0 \uCD08\uC548 \uB2E4\uC2DC \uC4F0\uAE30`, answersFirst: '\uB2F5\uC774 \uACB0\uC815·\uB2F4\uB2F9·\uAE30\uD55C\uC744 \uBC14\uAFB8\uB294\uC9C0 \uCD08\uC548\uC5D0 \uBA3C\uC800 \uBC18\uC601\uD574 \uBCF4\uC5EC \uB4DC\uB824\uC694.',
     mine: '\uC9C1\uC811 \uC815\uD568',
     now: '\uC9C0\uAE08',
     agreed: '\uD569\uC758 \uD6C4\uBCF4', open: '\uB0A8\uC740 \uC7C1\uC810', next: '\uB2E4\uC74C',
@@ -305,6 +330,9 @@ export const WORDS = {
     meeting: 'Meeting', lecture: 'Lecture',
     placeholder: 'A line at a time, Enter — ! decided · ? question · [] to-do · ?? ask · # next item',
     guess: 'A guess — press to set it',
+    maybe: (k) => `${k}?`, moreOn: 'Press for the margin’s sentence and what was recorded before',
+    stale: 'The notes changed since the draft: written again from them.',
+    withAnswers: (n) => `Put in ${n} answer${n === 1 ? '' : 's'} and write the draft again`, answersFirst: 'What the answers change (decided, who, by when) is shown in the draft first.',
     mine: 'Set by you',
     now: 'Now',
     agreed: 'Agreed so far', open: 'At issue', next: 'Next',
@@ -500,7 +528,8 @@ export class Room {
       e.sentence = s?.sentence || '';
       e.remark = s?.remark || '';
       e.owner = s?.owner || rule.owner || null;
-      e.due = s?.due || rule.due || null;
+      // A day only as their words give it (by rule), never the margin's reckoning.
+      e.due = rule.due || null;
     }
     const w = this.layer.weave || {};
     this.changedKeys = new Set(this.layer.links.filter((l) => l.kind === 'changes').map((l) => l.b));
@@ -599,7 +628,7 @@ export class Room {
         s.sentence = r.sentence;
         s.remark = r.remark || '';
         if (r.owner) s.owner = r.owner;
-        if ((s.kind || e.kind) === 'todo') s.due = dueOf(e.words) || r.due || s.due || null;
+        if ((s.kind || e.kind) === 'todo') s.due = dueOf(e.words) || null;
         this.layer.sorted[key] = s;
       });
       if (!end.ok) this.status = this.W.sortFail(end.error || '');
@@ -658,7 +687,14 @@ export class Room {
       this.layer.links = [...mine, ...wovenLinks(r, keys, { have: mine, cut: this.layer.cut })];
       const stand = r.stand && !(this.layer.weave?.stand?.by === 'me' && this.layer.weave.stand.item === r.stand.item) ? r.stand : this.layer.weave?.stand || null;
       const asked = new Set(this.layer.asks.map((a) => norm(a.text)));
-      const ask = r.ask && !asked.has(norm(r.ask.text)) ? { text: r.ask.text, key: r.ask.s ? keys[r.ask.s - 1] : null } : null;
+      let ask = r.ask && !asked.has(norm(r.ask.text)) ? { text: r.ask.text, key: r.ask.s ? keys[r.ask.s - 1] : null } : null;
+      // About an item they have moved on from (another item since, or many lines on): not asked now — kept for the close.
+      const now = this.entries.at(-1);
+      const at = ask?.key ? this.entries.findIndex((x) => x.key === ask.key) : -1;
+      if (ask && at >= 0 && (this.entries[at].section !== now?.section || this.entries.length - 1 - at > 8)) {
+        this.layer.asks.push({ text: ask.text, key: ask.key, how: 'late', at: Date.now() });
+        ask = null;
+      }
       this.layer.weave = { at: Date.now(), stand, ask, before: (r.before || []).map((b) => ({ key: keys[b.s - 1], note: b.note, was: b.was, why: b.why })).filter((b) => b.key) };
       this.status = '';
       this.saveLayer();
@@ -838,12 +874,21 @@ export class Room {
       c.dataset.key = e.key;
       c.addEventListener('pointerenter', () => this.light(c.dataset.key));
       c.addEventListener('pointerleave', () => this.light(null));
+      // Pressed: what the margin said of it, and what was recorded before, open (or closed again).
+      c.addEventListener('click', (ev) => {
+        if (ev.target.closest('button, .room-handle, textarea')) return;
+        c.classList.toggle('open');
+        const x = this.entries.find((y) => y.key === c.dataset.key);
+        if (x) this.card(x);
+        this.drawSoon();
+      });
       c.addEventListener('dblclick', () => { const x = this.entries.find((y) => y.key === c.dataset.key); if (x) this.editCard(x); });
       this.cards.set(e.key, c);
     }
     if (c.classList.contains('editing')) return c;
-    c.className = `room-card kind-${e.kind}${e.guess ? ' guess' : ''}${this.changedKeys.has(e.key) ? ' changed' : ''}${this.answeredKeys.has(e.key) ? ' answered' : ''}${e.done ? ' done' : ''}`;
-    const chip = button(W.kind[e.kind] || e.kind, (ev) => this.kindMenu(e, ev.currentTarget), 'room-chip', e.guess ? W.guess : W.mine);
+    const open = c.classList.contains('open');
+    c.className = `room-card${open ? ' open' : ''} kind-${e.kind}${e.guess ? ' guess' : ''}${this.changedKeys.has(e.key) ? ' changed' : ''}${this.answeredKeys.has(e.key) ? ' answered' : ''}${e.done ? ' done' : ''}`;
+    const chip = button(e.guess && e.kind !== 'note' ? W.maybe(W.kind[e.kind] || e.kind) : W.kind[e.kind] || e.kind, (ev) => this.kindMenu(e, ev.currentTarget), 'room-chip', e.guess ? W.guess : W.mine);
     const b = this.before.get(e.key);
     const was = b ? el('div', 'room-before', el('b', '', W.before(nameOf(b.note))), ` ${b.was}`, b.why ? ` — ${b.why}` : '') : null;
     was?.addEventListener('click', () => this.opts.openNote(b.note));
@@ -855,9 +900,11 @@ export class Room {
         this.changedKeys.has(e.key) ? el('span', 'room-flag', W.changed) : null, this.answeredKeys.has(e.key) ? el('span', 'room-flag ok', W.answered) : null,
         el('span', 'room-gap'), button('✎', () => this.editCard(e), 'icon-btn', W.edit), button('×', () => this.write((t) => dropEntry(t, e)), 'icon-btn', W.drop), handle),
       el('div', 'room-words', e.words),
-      e.sentence && norm(e.sentence) !== norm(e.words) ? el('div', 'room-sentence', e.sentence) : null,
-      e.remark && !was ? el('div', 'room-before', e.remark) : null,
-      was,
+      ...(c.classList.contains('open') ? [
+        e.sentence && norm(e.sentence) !== norm(e.words) && !addsDate(e.sentence, e.words) ? el('div', 'room-sentence', e.sentence) : null,
+        e.remark && !was && !addsDate(e.remark, e.words) ? el('div', 'room-before', e.remark) : null,
+        was,
+      ] : [(e.remark || was) ? el('div', 'room-more', W.moreOn) : null]),
     ].filter(Boolean));
     return c;
   }
@@ -1020,24 +1067,30 @@ export class Room {
     this.overlay.replaceChildren(panel);
     const head = el('div', 'room-close-head', el('b', '', W.closeTitle), el('span', 'room-gap'), button(W.cancel, () => { this.overlay.hidden = true; this.layer.closing = false; this.saveLayer(); this.input.focus(); }, 'btn small ghost'));
     panel.append(head);
+    const sig = sigOf(this.entries);
     let draft = !again && this.layer.draft;
+    // Lines added or changed since it was written: written again, from them.
+    const stale = draft && draft.sig !== sig;
+    if (stale) draft = null;
     if (!draft) {
       const wait = el('div', 'room-wait', W.closing(0));
       panel.append(wait);
       const t0 = Date.now();
       const tick = setInterval(() => { wait.textContent = W.closing(Math.round((Date.now() - t0) / 1000)); }, 1000);
-      const items = this.entries.slice(-80);
+      if (stale) panel.append(el('p', 'room-close-note', W.stale));
+      const items = closeItems(this.entries);
       try {
         const r = await this.opts.close(items.map((x) => ({ kind: x.guess ? `${x.kind}?` : x.kind, text: x.words, section: x.section })));
         const keyOf = (xs) => (xs || []).map((n) => items[n - 1]?.key).filter(Boolean);
         // Asks put off while it went on: not sure yet, kept.
-        const later = this.layer.asks.filter((a) => a.how === 'later').map((a) => ({ text: a.text, from: a.key ? [a.key] : [] }));
+        const later = this.layer.asks.filter((a) => a.how === 'later' || a.how === 'late').map((a) => ({ text: a.text, from: a.key ? [a.key] : [] }));
         draft = {
           decided: r.decided.map((x) => splitCond({ text: x.text, from: keyOf(x.from) })),
           who: r.who.map((x) => whoDue({ who: x.who, text: x.text, from: keyOf(x.from) })),
           open: r.open.map((x) => splitCond({ text: x.text, from: keyOf(x.from) })),
           check: r.check.map((x) => ({ text: x.text, from: keyOf(x.from), answer: '' })),
           unsure: [...r.unsure.map((x) => ({ text: x.text, from: keyOf(x.from) })), ...later].filter((x, i, xs) => xs.findIndex((y) => norm(y.text) === norm(x.text)) === i),
+          sig,
         };
         this.layer.draft = draft;
         this.saveLayer();
@@ -1117,22 +1170,31 @@ export class Room {
       }
     });
     body.append(each);
+    // Answers given: into the note as lines, and the draft written again from them (once, for all) — to read before accepting.
+    const answers = () => draft.check.filter((x) => x.answer);
+    const hint = el('span', 'room-close-hint');
+    const go = button(W.accept, async () => {
+      if (!answers().length) { this.accept(panel, draft); return; }
+      go.disabled = true;
+      await this.write((t) => addLines(t, answers().map((x) => `- ${x.text} → ${x.answer}`)));
+      this.showClose(true);
+    }, 'btn primary');
+    const label = () => { const n = answers().length; go.textContent = n ? W.withAnswers(n) : W.accept; hint.textContent = n ? W.answersFirst : ''; };
+    body.addEventListener('change', label);
+    label();
     const foot = el('div', 'room-close-foot',
       button(W.again, () => this.showClose(true), 'btn small ghost'),
-      el('span', 'room-gap'),
-      button(W.accept, () => this.accept(panel, draft), 'btn primary'));
+      el('span', 'room-gap'), hint, go);
     panel.append(body, foot);
   }
-  // What they accepted: the answers as lines of the note, then its wrap-up.
+  // What they accepted: its wrap-up (the answers went in, and the draft was written again from them, before).
   async accept(panel, draft) {
-    const W = this.W;
-    const answered = draft.check.filter((x) => x.answer);
     // A question not answered: not sure yet, kept.
     const unsure = [...draft.unsure, ...draft.check.filter((x) => !x.answer).map((x) => ({ text: x.text, from: x.from }))];
     const next = this.kind === 'meeting' ? nextMeetingPath(this.opts.path) : '';
     const at = `${isoDay(new Date())} ${new Date().toTimeString().slice(0, 5)}`;
     const section = wrapSection({ ...draft, unsure }, { lang: this.lang, kind: this.kind, at, next: next && (await this.opts.exists(next)) ? next : '' });
-    await this.write((t) => withWrap(answered.length ? addLines(t, answered.map((x) => `- ${x.text} → ${x.answer}`)) : t, section));
+    await this.write((t) => withWrap(t, section));
     this.layer.closed = true;
     this.layer.closing = false;
     this.layer.accepted = { at, decided: draft.decided.map((x) => [x.text, x.cond].filter(Boolean).join(' — ')), who: draft.who };

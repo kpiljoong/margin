@@ -9,7 +9,7 @@ import path from 'node:path';
 import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { createRequire } from 'node:module';
-import { WORDS, roomEntries, typedLine, addLines, markEntry, editEntry, dropEntry, wrapSection, withWrap, whoDue, splitCond, todoLines, withTodos, wovenLinks, laneOf, roomLang } from '../public/room.js';
+import { WORDS, closeItems, sigOf, addsDate, roomEntries, typedLine, addLines, markEntry, editEntry, dropEntry, wrapSection, withWrap, whoDue, splitCond, todoLines, withTodos, wovenLinks, laneOf, roomLang } from '../public/room.js';
 import { meetingItems } from '../public/meeting.js';
 
 const require = createRequire(import.meta.url);
@@ -64,6 +64,26 @@ test('the wrap-up: what they accepted (decided with its condition, to-dos with w
   assert.match(again, /### \uD575\uC2EC\n\n- X\n/, 'a lecture: its points, no #decision');
 });
 
+test('the close reads the whole session; a long one keeps what was decided, given or asked however early; a draft from other lines is old', () => {
+  const e = (kind, words, mark = null) => ({ kind, words, key: words, mark });
+  const early = [e('decision', 'ship on monday', 'decision'), e('todo', 'ann drafts the notes')];
+  const long = [...early, ...Array.from({ length: 500 }, (_, i) => e('note', `a plain note number ${i} ${'x'.repeat(100)}`)), e('question', 'a beta?')];
+  const k = closeItems(long);
+  assert.deepEqual(k.slice(0, 2).map((x) => x.words), ['ship on monday', 'ann drafts the notes']);
+  assert.equal(k.at(-1).words, 'a beta?');
+  assert.ok(k.length <= 400 && k.reduce((n, x) => n + x.words.length + 24, 0) <= 60000);
+  assert.equal(closeItems(early).length, 2, 'a short one whole');
+  assert.notEqual(sigOf(early), sigOf([...early, e('note', 'one more')]));
+  assert.notEqual(sigOf(early), sigOf([{ ...early[0], mark: null }, early[1]]), 'a mark set since: old too');
+});
+
+test('the margin\'s sentence with a day their words don\'t have: not shown', () => {
+  assert.ok(addsDate('\uCD9C\uC2DC\uC77C\uC744 10\uC6D4 18\uC77C \uAE08\uC694\uC77C\uB85C \uD55C\uB2E4.', '\uCD9C\uC2DC\uB294 \uAE08\uC694\uC77C\uB85C \uD558\uC790'));
+  assert.ok(addsDate('We launch on October 18.', 'launch friday'));
+  assert.ok(!addsDate('\uCD9C\uC2DC\uC77C\uC744 10\uC6D4 20\uC77C\uB85C \uD55C\uB2E4.', '\uCD9C\uC2DC 10\uC6D4 20\uC77C'));
+  assert.ok(!addsDate('\uC218\uC544\uAC00 \uCCB4\uD06C\uB9AC\uC2A4\uD2B8\uB97C \uB9C8\uBB34\uB9AC\uD55C\uB2E4.', '\uC218\uC544 \uCCB4\uD06C\uB9AC\uC2A4\uD2B8 \uB9C8\uBB34\uB9AC'));
+});
+
 test('its words: the same in Korean and in English', () => {
   const keys = (o) => Object.keys(o).sort().map((k) => (o[k] && typeof o[k] === 'object' ? `${k}{${keys(o[k])}}` : k)).join(',');
   assert.equal(keys(WORDS.ko), keys(WORDS.en));
@@ -107,6 +127,9 @@ test('weave and close: what Claude says checked — numbers in range, a quote th
   assert.deepEqual(c.who, [{ who: 'ann', text: 'Draft the notes — Wednesday', from: [4] }, { who: '?', text: 'Book the room', from: [5] }]);
   assert.equal(c.check.length, 3, 'three questions at most');
   assert.deepEqual(c.unsure, [{ text: 'Who reviews the page', from: [3] }]);
+  // A line's number in what it wrote: its words instead (not the lines' own S3).
+  assert.deepEqual(room.unnumbered({ ask: { text: 'Did S2 change S1?', s: 2 }, x: 'Clean the S3 bucket', y: 'N1 says otherwise' }, [{ text: 'ship friday' }, { text: 'ship monday' }, { text: 'the S3 bucket' }], [{ path: 'a/plan.md' }]),
+    { ask: { text: 'Did “ship monday” change “ship friday”?', s: 2 }, x: 'Clean the S3 bucket', y: '[[plan]] says otherwise' });
   assert.match(room.weaveText({ title: 'W', items: [{ kind: 'decision?', text: 'ship', section: 'Launch' }], notes: [{ path: 'a.md', text: 'A' }] }), /^Session: W \(a meeting\)\n\nLines:\nS1 decision\? \(Launch\): ship\n\nNotes before it:\nN1 a\.md:\nA$/);
   assert.match(room.WEAVE, /not an error|a change, maybe/);
   assert.match(room.CLOSE, /not in the record/);
