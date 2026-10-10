@@ -53,7 +53,10 @@ export const WORDS = {
     missedN: (k) => `${k}\uC904\uC740 \uB178\uD2B8\uAC00 \uADF8\uC0C8 \uBC14\uB00C\uC5B4\uC11C \uBE7C \uB450\uC5C8\uC5B4\uC694.`,
     failedN: (fs) => `\uC81C\uC548\uD558\uC9C0 \uBABB\uD55C \uB178\uD2B8: ${fs.join(', ')}.`,
     staleN: '\uC9C0\uAE08 \uC720\uD6A8\uD558\uC9C0 \uC54A\uC740 \uACB0\uC815\uC5D0\uC11C \uB098\uC628 \uBCC0\uACBD\uC740 \uC81C\uC548\uD558\uC9C0 \uC54A\uC558\uC5B4\uC694. \uBC18\uC601\uD560 \uACF3\uC744 \uB2E4\uC2DC \uCC3E\uC544 \uC8FC\uC138\uC694.',
-    noted: '\uC801\uC5C8\uC5B4\uC694.',
+    noted: '\uC774\uBC88 \uC815\uB9AC \uAE30\uB85D\uC5D0 \uC801\uC5C8\uC5B4\uC694(\uAE30\uB85D \uBCF4\uAE30 › This time). \uB178\uD2B8\uC5D0\uB294 \uC544\uC9C1 \uC548 \uB4E4\uC5B4\uAC14\uC5B4\uC694.',
+    toNote: (n) => `${n}\uC5D0\uB3C4 \uC801\uAE30`,
+    toNoteDone: (n) => `${n}\uC5D0 \uB367\uBD99\uC774\uAE30\uB97C \uC81C\uC548\uD588\uC5B4\uC694. \uC544\uB798\uB97C \uB204\uB974\uBA74 \uBE68\uAC04 \uD39C\uC774 \uC5F4\uB824\uC694 — \uAC70\uAE30\uC11C \uBC1B\uC73C\uC2DC\uBA74 \uB178\uD2B8\uC5D0 \uB4E4\uC5B4\uAC00\uC694.`,
+    toNoteSame: '\uB178\uD2B8\uC5D0 \uC774\uBBF8 \uADF8\uB300\uB85C \uC788\uC5B4\uC694.',
     held: (n) => `${n}\uAC1C\uB294 \uADF8 \uACB0\uC815\uC774 \uADF8\uC0C8 \uBC14\uB00C\uC5B4\uC11C \uBABB \uC801\uC5C8\uC5B4\uC694. \uAE30\uB85D \uBCF4\uAE30\uC5D0\uC11C \uD655\uC778\uD574 \uC8FC\uC138\uC694.`,
     fixIt: '\uACE0\uCCD0\uC11C \uB2E4\uC2DC \uC368 \uC8FC\uC138\uC694.',
     kind: { decided: '\uC815\uD568', later: '\uB098\uC911\uC5D0', open: '\uC544\uC9C1 \uACE0\uBBFC \uC911', todo: '\uD560 \uC77C', done: '\uB05D\uB0A8', withdrawn: '\uCDE8\uC18C' },
@@ -123,7 +126,10 @@ export const WORDS = {
     missedN: (k) => `${k} line${k === 1 ? '' : 's'} left out: the note changed since.`,
     failedN: (fs) => `Not proposed: ${fs.join(', ')}.`,
     staleN: 'Changes from a decision not decided now were not proposed: find them again.',
-    noted: 'Noted.',
+    noted: 'Noted in this review’s record (Show the record › This time) — not in a note yet.',
+    toNote: (n) => `Add to ${n} too`,
+    toNoteDone: (n) => `Proposed at the end of ${n}: press it below to open its red pen review, and accept it there to put it in the note.`,
+    toNoteSame: 'The note has it already.',
     held: (n) => `${n} not noted: the decision changed since. Look at it in the record.`,
     fixIt: 'Write it again as you mean it.',
     kind: { decided: 'Decided', later: 'Later', open: 'Still open', todo: 'To do', done: 'Done', withdrawn: 'Called off' },
@@ -726,7 +732,20 @@ export class Talk {
         this.desk.keepCards(left);
         this.fly(row, left.filter((c) => !this.desk.ai.includes(c) && c.jot?.about).map((c) => c.jot.about));
         const held = left.filter((c) => this.desk.ai.includes(c)).length;
-        this.say(held ? `${W.noted} ${W.held(held)}` : W.noted);
+        const said = this.say(held ? `${W.noted} ${W.held(held)}` : W.noted);
+        // Into its note too, when they want it there: proposed at its end, in the red pen review.
+        const kept = left.filter((c) => !this.desk.ai.includes(c) && c.jot?.about && ['decided', 'open', 'later', 'done'].includes(c.jot.kind));
+        const notes = [...new Set(kept.map((c) => c.jot.about))];
+        if (notes.length && this.desk.opts.proposeNote) {
+          this.acts(said, ...notes.map((f) => btn(W.toNote(name(f)), async (b) => {
+            b.disabled = true;
+            const add = kept.filter((c) => c.jot.about === f).map((c) => `- ${c.jot.say}${{ decided: ' #decision', open: ' #question', later: ' (later)', done: '' }[c.jot.kind]}`);
+            let id;
+            try { id = await this.desk.opts.proposeNote(f, (text) => { const have = new Set(text.split('\n').map((l) => l.trim())); const more = add.filter((l) => !have.has(l)); return more.length ? `${text.replace(/\s*$/, '')}\n\n${more.join('\n')}\n` : text; }, { open: false }); } catch (e) { this.say(W.notSorted(e.message)); b.disabled = false; return; }
+            if (!id) this.say(W.toNoteSame);
+            else if (typeof id === 'string') this.reviews([{ file: f, id }], W.toNoteDone(name(f)));
+          }, 'ghost')));
+        }
         await this.propose(this.desk.d.nodes.filter((n) => n.from?.kind === 'todo' && n.from.to && !n.from.sent && !before.has(n.id)).map((n) => n.id));
         if (this.current !== asked) return; // (asked on since)
         // Not about what was asked: asked again (more briefly).
