@@ -132,6 +132,8 @@ test('weave and close: what Claude says checked — numbers in range, a quote th
     { ask: { text: 'Did “ship monday” change “ship friday”?', s: 2 }, x: 'Clean the S3 bucket', y: '[[plan]] says otherwise' });
   assert.match(room.weaveText({ title: 'W', items: [{ kind: 'decision?', text: 'ship', section: 'Launch' }], notes: [{ path: 'a.md', text: 'A' }] }), /^Session: W \(a meeting\)\n\nLines:\nS1 decision\? \(Launch\): ship\n\nNotes before it:\nN1 a\.md:\nA$/);
   assert.match(room.WEAVE, /not an error|a change, maybe/);
+  assert.match(room.closeText({ kind: 'note-taking', items: [] }), /^Session: untitled \(note-taking: one person's notes\)/);
+  assert.match(room.CLOSE, /note-taking/);
   assert.match(room.CLOSE, /not in the record/);
   assert.match(room.CLOSE, /never for a missing date alone/);
 });
@@ -190,6 +192,9 @@ test('the server: a room\'s note begun after the one before, what it knows (neve
   const again = await api('POST', '/api/room/start', { kind: 'meeting', folder: 'launch', title: 'Launch check' });
   assert.match(again.path, / \(2\)\.md$/, 'one there already: (2)');
   assert.equal((await api('POST', '/api/room/start', { folder: 'nowhere', title: 'x' })).status, 400);
+  const nt = await api('POST', '/api/room/start', { kind: 'note-taking', folder: 'launch', title: 'Reading' });
+  assert.match(fs.readFileSync(path.join(ws, nt.path), 'utf8'), /^---\ntype: note-taking\n/);
+  assert.equal(nt.previous, null, 'the session before is one of its kind');
   const c = await api('POST', '/api/room/context', { path: s.path });
   assert.equal(c.notes[0].path, 'launch/2026-10-03 Weekly.md', 'the meeting before first');
   assert.ok(c.notes[0].previous);

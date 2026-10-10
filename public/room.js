@@ -172,7 +172,7 @@ export const laneOf = (kind) => (LANES.includes(kind) ? kind : ['risk', 'idea', 
 // with a line saying what it is: a draft from the end of the session.
 export function wrapSection(draft, { lang = 'en', kind = 'meeting', at = '', next = '' } = {}) {
   const W = WORDS[lang] || WORDS.en;
-  const lecture = kind === 'lecture';
+  const lecture = kind !== 'meeting';
   const out = ['## Wrap-up', '', `> ${W.wrapNote(at)}`, ''];
   const join = (x) => [x.text, x.cond].filter(Boolean).join(' — ');
   const decided = (draft.decided || []).filter((x) => x.text.trim());
@@ -259,6 +259,8 @@ export const WORDS = {
     laneLecture: { note: '\uB0B4\uC6A9', decision: '\uD575\uC2EC', todo: '\uACFC\uC81C', question: '\uC9C8\uBB38', other: '\uCC38\uACE0·\uC544\uC774\uB514\uC5B4' },
     kind: { note: '\uB0B4\uC6A9', decision: '\uACB0\uC815', todo: '\uD560 \uC77C', question: '\uC9C8\uBB38', risk: '\uC704\uD5D8', idea: '\uC544\uC774\uB514\uC5B4', next: '\uB2E4\uC74C\uC5D0' },
     meeting: '\uD68C\uC758', lecture: '\uAC15\uC758',
+    notetaking: '\uAE30\uB85D',
+    laneNotes: { note: '\uB0B4\uC6A9', decision: '\uD575\uC2EC', todo: '\uD560 \uC77C', question: '\uCC3E\uC544\uBCFC \uAC83', other: '\uC544\uC774\uB514\uC5B4·\uCC38\uACE0' },
     placeholder: '\uD55C \uC904\uC529 \uC4F0\uACE0 Enter — ! \uC815\uD568 · ? \uC9C8\uBB38 · [] \uD560 \uC77C · ?? \uBB3C\uC5B4\uBCF4\uAE30 · # \uB2E4\uC74C \uC548\uAC74',
     guess: '\uCD94\uC815 — \uB20C\uB7EC\uC11C \uC815\uD558\uAE30',
     maybe: (k) => `${k} \uD6C4\uBCF4`, moreOn: '\uB20C\uB7EC\uC11C \uC815\uB9AC \uBB38\uC7A5·\uC9C0\uB09C \uAE30\uB85D \uBCF4\uAE30',
@@ -328,6 +330,8 @@ export const WORDS = {
     laneLecture: { note: 'Notes', decision: 'Key points', todo: 'Assignments', question: 'Questions', other: 'Asides · ideas' },
     kind: { note: 'Note', decision: 'Decision', todo: 'To-do', question: 'Question', risk: 'Risk', idea: 'Idea', next: 'Later' },
     meeting: 'Meeting', lecture: 'Lecture',
+    notetaking: 'Notes',
+    laneNotes: { note: 'Notes', decision: 'Key points', todo: 'To do', question: 'To find out', other: 'Ideas · asides' },
     placeholder: 'A line at a time, Enter — ! decided · ? question · [] to-do · ?? ask · # next item',
     guess: 'A guess — press to set it',
     maybe: (k) => `${k}?`, moreOn: 'Press for the margin’s sentence and what was recorded before',
@@ -439,7 +443,13 @@ export class Room {
 
   get lang() { return this.langNow || 'en'; }
   get W() { return WORDS[this.lang]; }
-  get kind() { return this.layer.kind === 'lecture' || /^type:\s*lecture\s*$/im.test(this.text.split('\n---')[0] || '') ? 'lecture' : 'meeting'; }
+  get kind() {
+    const t = /^type:[ \t]*["']?(lecture|note-taking|meeting)["']?[ \t]*$/im.exec(this.text.split('\n---')[0] || '')?.[1];
+    return t || (['lecture', 'note-taking'].includes(this.layer.kind) ? this.layer.kind : 'meeting');
+  }
+  // A lecture's or their own notes: points, not decisions.
+  get plain() { return this.kind !== 'meeting'; }
+  get kindName() { return this.W[this.kind === 'note-taking' ? 'notetaking' : this.kind]; }
 
   build() {
     this.head = el('div', 'room-head');
@@ -733,7 +743,7 @@ export class Room {
     const links = this.layer.links?.length || 0;
     const space = !this.flatNow();
     this.head.replaceChildren(
-      el('span', 'room-kind', this.kind === 'lecture' ? W.lecture : W.meeting),
+      el('span', 'room-kind', this.kindName),
       el('span', 'room-title', title),
       el('span', 'room-clock', W.clock(mins)),
       el('span', 'room-status', this.weaving ? W.weaving : this.status || (links ? W.woven(links) : '')),
@@ -765,7 +775,7 @@ export class Room {
       return el('span', `room-now-p ${k}`, el('b', '', label), v);
     };
     this.nowBar.title = W.standHint;
-    const L = this.kind === 'lecture' ? W.standLecture : W;
+    const L = this.plain ? W.standLecture : W;
     this.nowBar.replaceChildren(el('span', 'room-now-item', `${W.now}${st.item ? ` · ${st.item}` : ''}`), part('agreed', L.agreed), part('open', L.open), part('next', L.next), ...(st.by === 'me' ? [el('span', 'room-now-mine', '✎')] : []));
   }
   // What the meeting before left open (its questions, to-dos not done, what it left for this one): taken up here by a press, as a line of this one.
@@ -809,7 +819,7 @@ export class Room {
 
   renderLanes() {
     const W = this.W;
-    const names = this.kind === 'lecture' ? W.laneLecture : W.lane;
+    const names = this.kind === 'lecture' ? W.laneLecture : this.kind === 'note-taking' ? W.laneNotes : W.lane;
     this.el.classList.toggle('in-space', !this.flatNow());
     this.el.classList.toggle('empty', !this.entries.length);
     if (!this.lanes) {
@@ -1106,7 +1116,7 @@ export class Room {
   }
   renderDraft(panel, draft) {
     const W = this.W;
-    const lecture = this.kind === 'lecture';
+    const lecture = this.plain;
     const body = el('div', 'room-close-body');
     panel.querySelector('.room-close-body')?.remove();
     panel.querySelector('.room-close-foot')?.remove();
@@ -1226,7 +1236,7 @@ export class Room {
         say(W.changes(files.length, r.changes.length), ...files.map((f) => el('span', 'room-file', nameOf(f))));
         const go = button(W.propose, async () => {
           go.disabled = true;
-          const why = `${this.kind === 'lecture' ? W.lecture : W.meeting} “${nameOf(this.opts.path)}”`;
+          const why = `${this.kindName} “${nameOf(this.opts.path)}”`;
           const ids = [];
           for (const f of files) {
             const cs = r.changes.filter((c) => c.file === f);
@@ -1242,7 +1252,7 @@ export class Room {
       const folder = this.opts.path.includes('/') ? this.opts.path.slice(0, this.opts.path.lastIndexOf('/')) : '';
       let lines = [];
       try {
-        const id = await this.opts.proposeNote(this.opts.todoFile, (text) => { lines = todoLines(acc.who, { list: text, folder }); return withTodos(text, lines); }, { open: false, why: `${W.meeting} “${nameOf(this.opts.path)}”` });
+        const id = await this.opts.proposeNote(this.opts.todoFile, (text) => { lines = todoLines(acc.who, { list: text, folder }); return withTodos(text, lines); }, { open: false, why: `${this.kindName} “${nameOf(this.opts.path)}”` });
         if (id) say(W.todosAdded, button(nameOf(this.opts.todoFile), () => this.opts.openReview(id), 'btn small')); else say(W.todosNone);
       } catch (e) { say(W.failed(e.message)); }
     }, 'btn small') : null;

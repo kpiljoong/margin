@@ -3490,6 +3490,7 @@ const COMMANDS = [
   ['Drawer: set the selection aside (experimental)', () => setTimeout(setAside, 0)],
   ['Meeting room: start a meeting \u2014 a line at a time in the middle, sorted as you go, what to ask now, a draft to check at the end (experimental)\u2026', () => setTimeout(() => roomFolderPick('meeting'), 0)],
   ['Meeting room: start a lecture \u2014 a line at a time, sorted as you go, ?? to ask about it (experimental)\u2026', () => setTimeout(() => roomFolderPick('lecture'), 0)],
+  ['Meeting room: take notes \u2014 reading, research, an interview, thinking it through: a line at a time, sorted as you go (experimental)\u2026', () => setTimeout(() => roomFolderPick('note-taking'), 0)],
   ['Meeting room: open this note in it (experimental)', () => setTimeout(roomHere, 0)],
   ['Meeting rail: the agenda, decisions, to-dos and questions beside the note (experimental)', () => setTimeout(toggleRail, 0)],
   ['Meeting: mark the line a decision (experimental)', () => classifyHere('decision'), { key: 'meeting-decision' }],
@@ -4201,6 +4202,7 @@ function folderMenu(e, dir) {
     { label: 'Talk through its notes (review)…', run: lab('Review', () => reviewFolder(dir)) },
     { label: 'Start a meeting here…', run: () => startRoom('meeting', dir) },
     { label: 'Start a lecture here…', run: () => startRoom('lecture', dir) },
+    { label: 'Take notes here (meeting room)…', run: () => startRoom('note-taking', dir) },
     { label: 'New Mermaid diagram here…', run: () => newMermaidFile(dir) },
     revealItem(dir),
     { label: 'Dired: edit as text…', run: () => openDired(dir) },
@@ -4592,8 +4594,9 @@ function openRoom(path, { group } = {}) {
 async function startRoom(kind = 'meeting', folder) {
   const ko = /[\uAC00-\uD7A3]/.test(`${folder || ''} ${fileTab()?.content?.slice(0, 2000) || ''}`);
   const dir = folder ?? dirname(fileTab()?.path || '');
-  const word = kind === 'lecture' ? (ko ? '\uAC15\uC758' : 'Lecture') : (ko ? '\uD68C\uC758' : 'Meeting');
-  const title = await askText({ title: kind === 'lecture' ? 'Start a lecture' : 'Start a meeting', label: `What it is about. Its note is made in ${dir || 'the top folder'}/ as “<today> <title>.md”; what you type goes in as typed.`, value: word, okLabel: 'Start' });
+  const word = kind === 'lecture' ? (ko ? '\uAC15\uC758' : 'Lecture') : kind === 'note-taking' ? (ko ? '\uAE30\uB85D' : 'Notes') : (ko ? '\uD68C\uC758' : 'Meeting');
+  const what = { meeting: 'Start a meeting', lecture: 'Start a lecture', 'note-taking': 'Take notes' }[kind];
+  const title = await askText({ title: what, label: `What it is about. Its note is made in ${dir || 'the top folder'}/ as “<today> <title>.md”; what you type goes in as typed.`, value: word, okLabel: 'Start' });
   if (!title?.trim()) return;
   try {
     const r = await api('POST', '/api/room/start', { kind, folder: dir, title: title.trim() });
@@ -4610,7 +4613,7 @@ function roomFolderPick(kind) {
   const dirs = [...new Set(S.files.filter((f) => isNote(f.path)).flatMap((f) => f.path.split('/').slice(0, -1).map((_, i, a) => a.slice(0, i + 1).join('/'))))].sort();
   const here = dirname(fileTab()?.path || '');
   const list = [...(here ? [here] : []), '', ...dirs.filter((d) => d !== here)];
-  picker({ placeholder: `${kind === 'lecture' ? 'A lecture' : 'A meeting'} in which folder? (its notes are what it knows from before)`, source: (q) => list.map((d) => ({ d, m: fuzzy(q, d || '/') })).filter((x) => x.m).map(({ d, m }) => ({ icon: '◉', label: d ? marked(d, m.idx) : '/', run: () => startRoom(kind, d) })) });
+  picker({ placeholder: `${{ meeting: 'A meeting', lecture: 'A lecture', 'note-taking': 'Notes' }[kind]} in which folder? (its notes are what it knows from before)`, source: (q) => list.map((d) => ({ d, m: fuzzy(q, d || '/') })).filter((x) => x.m).map(({ d, m }) => ({ icon: '◉', label: d ? marked(d, m.idx) : '/', run: () => startRoom(kind, d) })) });
 }
 
 function roomView(tab, c) {

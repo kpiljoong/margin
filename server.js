@@ -1415,9 +1415,9 @@ function roomUp(b) {
 }
 const ROOM_DIR = path.join(DATA_DIR, 'room');
 const roomLayerOf = (rel) => `${resolveInside(ROOM_DIR, rel)}.json`;
-const ROOM_KINDS = new Set(['meeting', 'lecture']);
+const ROOM_KINDS = new Set(['meeting', 'lecture', 'note-taking']);
 const dirOf = (f) => (f.includes('/') ? f.slice(0, f.lastIndexOf('/')) : '');
-const FRONT_TYPE = /^\uFEFF?---\r?\n(?:(?!---)[^\n]*\n)*?type:[ \t]*["']?(meeting|lecture)["']?[ \t]*\r?\n(?:[\s\S]*?\r?\n)?---/i;
+const FRONT_TYPE = /^\uFEFF?---\r?\n(?:(?!---)[^\n]*\n)*?type:[ \t]*["']?(meeting|lecture|note-taking)["']?[ \t]*\r?\n(?:[\s\S]*?\r?\n)?---/i;
 // A meeting room's note: "<folder>/<day> <title>.md" (" (2)" when there is
 // one), with its kind and day in front matter and the session before it in
 // the folder (the newest note of the same kind) linked as the meeting
