@@ -263,6 +263,7 @@ export const WORDS = {
     laneNotes: { note: '\uB0B4\uC6A9', decision: '\uD575\uC2EC', todo: '\uD560 \uC77C', question: '\uCC3E\uC544\uBCFC \uAC83', other: '\uC544\uC774\uB514\uC5B4·\uCC38\uACE0' },
     placeholder: '\uD55C \uC904\uC529 \uC4F0\uACE0 Enter — ! \uC815\uD568 · ? \uC9C8\uBB38 · [] \uD560 \uC77C · # \uB2E4\uC74C \uC548\uAC74 · ?? \uBB3C\uC5B4\uBCF4\uAE30 · >> \uB300\uD654',
     keepLine: '+ \uC801\uAE30:',
+    restart: '\uB300\uD654\uB294 \uC571\uC744 \uC644\uC804\uD788 \uC885\uB8CC\uD588\uB2E4\uAC00 \uB2E4\uC2DC \uC5F4\uC5B4\uC57C \uC4F8 \uC218 \uC788\uC5B4\uC694(\uC9C0\uAE08 \uB5A0 \uC788\uB294 \uC11C\uBC84\uAC00 \uB300\uD654 \uAE30\uB2A5 \uC774\uC804 \uBC84\uC804\uC774\uC5D0\uC694).',
     guess: '\uCD94\uC815 — \uB20C\uB7EC\uC11C \uC815\uD558\uAE30',
     maybe: (k) => `${k} \uD6C4\uBCF4`, moreOn: '\uB20C\uB7EC\uC11C \uC815\uB9AC \uBB38\uC7A5·\uC9C0\uB09C \uAE30\uB85D \uBCF4\uAE30',
     stale: '\uCD08\uC548 \uB4A4\uB85C \uBA54\uBAA8\uAC00 \uBC14\uB00C\uC5B4\uC11C \uC9C0\uAE08 \uBA54\uBAA8\uB85C \uB2E4\uC2DC \uC37C\uC5B4\uC694.',
@@ -335,6 +336,7 @@ export const WORDS = {
     laneNotes: { note: 'Notes', decision: 'Key points', todo: 'To do', question: 'To find out', other: 'Ideas · asides' },
     placeholder: 'A line at a time, Enter — ! decided · ? question · [] to-do · # next item · ?? ask · >> talk',
     keepLine: '+ Note:',
+    restart: 'Talking needs the app quit and opened again (the server running now is from before it).',
     guess: 'A guess — press to set it',
     maybe: (k) => `${k}?`, moreOn: 'Press for the margin’s sentence and what was recorded before',
     stale: 'The notes changed since the draft: written again from them.',
@@ -690,7 +692,8 @@ export class Room {
       const items = this.entries.slice(-200).map((x) => ({ kind: x.guess ? `${x.kind}?` : x.kind, text: x.words, section: x.section }));
       const r = await this.opts.talk(text, history, items);
       Object.assign(a, { a: r.reply, notes: r.notes || [], refs: r.refs || {} });
-    } catch (err) { a.a = this.W.failed(err.message); }
+    // (A server older than the page — the app not started again since an update — has no talk yet.)
+    } catch (err) { a.a = err.status === 404 ? this.W.restart : this.W.failed(err.message); }
     a.busy = false;
     this.saveLayer();
     this.renderAnswers();
