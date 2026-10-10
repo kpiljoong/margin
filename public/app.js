@@ -4637,6 +4637,7 @@ function roomView(tab, c) {
       line: async (body, signal, onText) => { await loadLive(); return liveStream(body, signal, onText); },
       weave: (items) => api('POST', '/api/room/weave', { ...reviewOpts(), path: tab.path, items }),
       close: (items) => api('POST', '/api/room/close', { ...reviewOpts(), path: tab.path, items }),
+      talk: (text, history, items) => api('POST', '/api/room/talk', { ...reviewOpts(), path: tab.path, text, history, items }),
       changes: (decided) => api('POST', '/api/room/changes', { ...reviewOpts(), path: tab.path, decided }),
       proposeNote: (p, make, o) => proposeFromRoom(tab, p, make, o),
       openReview: (id) => openReview(id),

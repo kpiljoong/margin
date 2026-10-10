@@ -1504,6 +1504,24 @@ async function roomClose(b) {
   const { ok, ...out } = r;
   return out;
 }
+// Talking with it (">> …" in the room): what they say answered from the
+// session so far, the folder's notes and lines of their other notes found for
+// it (once more when Claude asks) — lines to keep only offered.
+async function roomTalk(b) {
+  const rel = roomNote(b);
+  if (typeof b.text !== 'string' || !b.text.trim() || b.text.length > 4000) throw httpError(400, 'text: what they say (at most 4000 characters)');
+  const items = roomItems(b.items, 200);
+  const notes = roomNotes(rel);
+  const history = Array.isArray(b.history) ? b.history.slice(-6).map((h) => ({ me: cleanStr(h?.me, 1500), ai: cleanStr(h?.ai, 3000) })).filter((h) => h.me || h.ai) : [];
+  const ignored = loadIgnore(ROOT);
+  const skip = new Set([rel, ...notes.map((n) => n.path)]);
+  const found = vaultLines(b.text, { skip, ignored, k: 6 });
+  const r = await roomUp(b).talk({ title: roomTitle(rel), kind: roomKind(rel), items, notes, found, history, text: b.text.trim(), today: reviewToday() }, async (q) => vaultLines(q, { skip, ignored, k: 6 }));
+  if (!r.ok) throw httpError(502, r.error || 'Claude did not answer.');
+  const refs = {};
+  for (const p of [...notes.map((n) => n.path), ...r.found.map((f) => f.path)]) refs[path.basename(p).replace(/\.md$/i, '')] ||= p;
+  return { reply: r.reply, notes: r.notes, refs };
+}
 // What they accepted as decided, carried into the folder's notes (as a
 // review's): each line no longer agreeing, and each decision recorded once.
 async function roomChanges(b) {
@@ -3432,6 +3450,7 @@ async function routeApi(method, url, body) {
   if (method === 'POST' && p === '/api/room/context') { const rel = roomNote(body || {}); return { notes: roomNotes(rel), layer: roomLayer(rel) }; }
   if (method === 'POST' && p === '/api/room/weave') return roomWeave(body || {});
   if (method === 'POST' && p === '/api/room/close') return roomClose(body || {});
+  if (method === 'POST' && p === '/api/room/talk') return roomTalk(body || {});
   if (method === 'POST' && p === '/api/room/changes') return roomChanges(body || {});
   if (method === 'PUT' && p === '/api/room/layer') return saveRoomLayer(body || {});
   if (method === 'GET' && p === '/api/lab/review/ledger') return { events: reviewLedger(relOf(workspacePath(q('path')))) };

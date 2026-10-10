@@ -130,6 +130,9 @@ test('weave and close: what Claude says checked — numbers in range, a quote th
   // A line's number in what it wrote: its words instead (not the lines' own S3).
   assert.deepEqual(room.unnumbered({ ask: { text: 'Did S2 change S1?', s: 2 }, x: 'Clean the S3 bucket', y: 'N1 says otherwise' }, [{ text: 'ship friday' }, { text: 'ship monday' }, { text: 'the S3 bucket' }], [{ path: 'a/plan.md' }]),
     { ask: { text: 'Did “ship monday” change “ship friday”?', s: 2 }, x: 'Clean the S3 bucket', y: '[[plan]] says otherwise' });
+  // Its talk: the reply, and the lines it offers (its mark anywhere, or twice).
+  assert.deepEqual(room.parseRoomTalk('So it is (S2)?===NOTE===\n===NOTE===\n- ? A beta\n[] Ask ann\n\n'), { reply: 'So it is?', notes: ['? A beta', '[] Ask ann'], search: [] });
+  assert.deepEqual(room.parseRoomTalk('search: QA week'), { reply: '', notes: [], search: ['QA week'] });
   assert.match(room.weaveText({ title: 'W', items: [{ kind: 'decision?', text: 'ship', section: 'Launch' }], notes: [{ path: 'a.md', text: 'A' }] }), /^Session: W \(a meeting\)\n\nLines:\nS1 decision\? \(Launch\): ship\n\nNotes before it:\nN1 a\.md:\nA$/);
   assert.match(room.WEAVE, /not an error|a change, maybe/);
   assert.match(room.closeText({ kind: 'note-taking', items: [] }), /^Session: untitled \(note-taking: one person's notes\)/);
@@ -149,7 +152,13 @@ process.stdin.on('data', (d) => {
     if (j.type !== 'user') continue;
     const m = j.message.content;
     fs.appendFileSync(process.env.FAKE_LOG, JSON.stringify(m) + '\\n');
-    const text = m.includes('\\nD1. ')
+    const text = /^Found for it:/.test(m)
+      ? 'From [[plan]] (F1): QA a week before.\\n===NOTE===\\n- ! ship on monday\\n? a beta'
+      : m.includes('\\n\\nThey say:\\nsearch me')
+      ? 'search: QA week'
+      : m.includes('\\n\\nThey say:\\n')
+      ? 'Not in the notes (S2).'
+      : m.includes('\\nD1. ')
       ? 'note: N1\\nline: 3\\nwas: The launch is on\\nnow: - The launch is on Monday the 19th\\nfor: D1\\n---\\nnote: N1\\nafter: 3\\nadd: - Launch on Monday #decision\\nfor: D1'
       : m.includes('Notes before it:')
       ? 'ask: Monday the 19th for sure?\\nabout: S2\\n---\\nstand: Launch\\nagreed: Monday\\n---\\nchanges: S2 S1\\nwhy: put off\\n---\\nbefore: S2 N1\\nwas: The launch is on October 20\\nwhy: another day'
@@ -220,6 +229,17 @@ test('the server: a room\'s note begun after the one before, what it knows (neve
   assert.equal(ch.status, 200, ch.error);
   assert.ok(ch.changes.length && ch.changes.every((x) => x.file === 'launch/plan.md'), 'the plan, not the meeting before (what was said then stays)');
   assert.doesNotMatch(sent().at(-1), /2026-10-03 Weekly/);
+  // Talking with it: answered, its notes named, lines offered; looked up once more when it asks.
+  const tk = await api('POST', '/api/room/talk', { path: s.path, text: 'what did we say?', items, history: [{ me: 'hi', ai: 'hello' }] });
+  assert.equal(tk.status, 200, tk.error);
+  assert.equal(tk.reply, 'Not in the notes.');
+  assert.match(sent().at(-1), /^Session: Launch check \(a meeting\)[\s\S]*Lines so far:\nS1 decision\?: ship friday[\s\S]*Notes before it:\nN1 launch\/2026-10-03 Weekly\.md[\s\S]*Just before:\nThey: hi\nYou: hello\n\nThey say:\nwhat did we say\?$/);
+  assert.doesNotMatch(sent().at(-1), /secret/);
+  const tk2 = await api('POST', '/api/room/talk', { path: s.path, text: 'search me', items });
+  assert.equal(tk2.reply, 'From [[plan]]: QA a week before.');
+  assert.deepEqual(tk2.notes, ['! ship on monday', '? a beta']);
+  assert.equal(tk2.refs.plan, 'launch/plan.md');
+  assert.equal((await api('POST', '/api/room/talk', { path: s.path, text: '' })).status, 400);
   fs.writeFileSync(path.join(ws, 'launch/mine.md'), '---\nprivate: true\n---\n# Mine\n');
   assert.equal((await api('POST', '/api/room/weave', { path: 'launch/mine.md', items })).status, 403);
 });

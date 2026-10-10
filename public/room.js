@@ -261,7 +261,8 @@ export const WORDS = {
     meeting: '\uD68C\uC758', lecture: '\uAC15\uC758',
     notetaking: '\uAE30\uB85D',
     laneNotes: { note: '\uB0B4\uC6A9', decision: '\uD575\uC2EC', todo: '\uD560 \uC77C', question: '\uCC3E\uC544\uBCFC \uAC83', other: '\uC544\uC774\uB514\uC5B4·\uCC38\uACE0' },
-    placeholder: '\uD55C \uC904\uC529 \uC4F0\uACE0 Enter — ! \uC815\uD568 · ? \uC9C8\uBB38 · [] \uD560 \uC77C · ?? \uBB3C\uC5B4\uBCF4\uAE30 · # \uB2E4\uC74C \uC548\uAC74',
+    placeholder: '\uD55C \uC904\uC529 \uC4F0\uACE0 Enter — ! \uC815\uD568 · ? \uC9C8\uBB38 · [] \uD560 \uC77C · # \uB2E4\uC74C \uC548\uAC74 · ?? \uBB3C\uC5B4\uBCF4\uAE30 · >> \uB300\uD654',
+    keepLine: '+ \uC801\uAE30:',
     guess: '\uCD94\uC815 — \uB20C\uB7EC\uC11C \uC815\uD558\uAE30',
     maybe: (k) => `${k} \uD6C4\uBCF4`, moreOn: '\uB20C\uB7EC\uC11C \uC815\uB9AC \uBB38\uC7A5·\uC9C0\uB09C \uAE30\uB85D \uBCF4\uAE30',
     stale: '\uCD08\uC548 \uB4A4\uB85C \uBA54\uBAA8\uAC00 \uBC14\uB00C\uC5B4\uC11C \uC9C0\uAE08 \uBA54\uBAA8\uB85C \uB2E4\uC2DC \uC37C\uC5B4\uC694.',
@@ -332,7 +333,8 @@ export const WORDS = {
     meeting: 'Meeting', lecture: 'Lecture',
     notetaking: 'Notes',
     laneNotes: { note: 'Notes', decision: 'Key points', todo: 'To do', question: 'To find out', other: 'Ideas · asides' },
-    placeholder: 'A line at a time, Enter — ! decided · ? question · [] to-do · ?? ask · # next item',
+    placeholder: 'A line at a time, Enter — ! decided · ? question · [] to-do · # next item · ?? ask · >> talk',
+    keepLine: '+ Note:',
     guess: 'A guess — press to set it',
     maybe: (k) => `${k}?`, moreOn: 'Press for the margin’s sentence and what was recorded before',
     stale: 'The notes changed since the draft: written again from them.',
@@ -606,7 +608,10 @@ export class Room {
     this.input.value = '';
     this.input.style.height = 'auto';
     const asks = lines.filter((l) => /^\?\?/.test(l));
-    const add = lines.map(typedLine).filter(Boolean);
+    // ">> …": talking with it, not a line of the note.
+    const talk = lines.filter((l) => /^>>/.test(l)).map((l) => l.replace(/^>>\s*/, '')).filter(Boolean);
+    const add = lines.filter((l) => !/^>>/.test(l)).map(typedLine).filter(Boolean);
+    if (talk.length) this.talkTo(talk.join('\n'));
     if (this.answerTo) { this.dismissAsk('asked'); this.answerTo = null; }
     for (const q of asks) this.askMargin(q);
     if (!add.length) return;
@@ -671,6 +676,37 @@ export class Room {
     a.busy = false;
     this.saveLayer();
     this.renderAnswers();
+  }
+
+  // Talking with it: what they say, answered from the session, the folder's notes and their other notes;
+  // what is worth keeping offered as lines, put in the note only by a press.
+  async talkTo(text) {
+    const a = { q: text, a: '', at: Date.now(), busy: true, talk: true, notes: [], refs: {} };
+    const history = (this.layer.answers || []).filter((x) => x.talk && x.a && !x.busy).slice(-6).map((x) => ({ me: x.q, ai: x.a }));
+    this.layer.answers.push(a);
+    this.layer.answers = this.layer.answers.slice(-16);
+    this.renderAnswers();
+    try {
+      const items = this.entries.slice(-200).map((x) => ({ kind: x.guess ? `${x.kind}?` : x.kind, text: x.words, section: x.section }));
+      const r = await this.opts.talk(text, history, items);
+      Object.assign(a, { a: r.reply, notes: r.notes || [], refs: r.refs || {} });
+    } catch (err) { a.a = this.W.failed(err.message); }
+    a.busy = false;
+    this.saveLayer();
+    this.renderAnswers();
+  }
+  // Its words, with [[a note]] a link to it.
+  linked(text, refs = {}) {
+    const out = [];
+    let at = 0;
+    for (const m of String(text).matchAll(/\[\[([^\]|#]+)(?:#[^\]|]*)?(?:\|([^\]]+))?\]\]/g)) {
+      out.push(text.slice(at, m.index));
+      const p = refs[m[1].trim()] || refs[nameOf(m[1].trim())];
+      if (p) { const b = el('a', 'room-ref', m[2] || nameOf(m[1])); b.href = '#'; b.addEventListener('click', (e) => { e.preventDefault(); this.opts.openNote(p); }); out.push(b); } else out.push(m[2] || nameOf(m[1]));
+      at = m.index + m[0].length;
+    }
+    out.push(text.slice(at));
+    return out;
   }
 
   // ------------------------------------------------------------ weaving
@@ -807,13 +843,18 @@ export class Room {
   }
   renderAnswers() {
     const W = this.W;
-    const xs = (this.layer.answers || []).filter((a) => !a.gone).slice(-3);
-    this.answersEl.replaceChildren(...xs.map((a) => el('div', 'room-answer',
-      el('div', 'room-answer-q', `?? ${a.q}`),
-      el('div', 'room-answer-a', a.busy && !a.a ? W.thinking : a.a),
+    const xs = (this.layer.answers || []).filter((a) => !a.gone).slice(-4);
+    const keep = async (a, line) => { a.kept = [...(a.kept || []), line]; this.saveLayer(); this.renderAnswers(); const made = await this.write((t) => addLines(t, [typedLine(line)].filter(Boolean)), { fresh: true }); for (const k of made) { const x = this.entries.find((y) => y.key === k); if (x) this.sortLater(x); } };
+    this.answersEl.replaceChildren(...xs.map((a) => el('div', `room-answer${a.talk ? ' talk' : ''}`,
+      el('div', 'room-answer-q', `${a.talk ? '»' : '??'} ${a.q}`),
+      el('div', 'room-answer-a', ...(a.busy && !a.a ? [W.thinking] : this.linked(a.a, a.refs))),
       el('div', 'room-answer-do',
-        a.a && !a.busy ? button(W.keepAnswer, async () => { a.gone = true; this.saveLayer(); await this.write((t) => addLines(t, [`- ${a.q} → ${a.a}`])); }, 'btn small ghost') : null,
+        // What it offers to keep: each a line of the note, on a press.
+        ...(a.notes || []).filter((l) => !(a.kept || []).includes(l)).map((l) => button(`${W.keepLine} ${l}`, () => keep(a, l), 'btn small ghost room-keep')),
+        !a.talk && a.a && !a.busy ? button(W.keepAnswer, async () => { a.gone = true; this.saveLayer(); await this.write((t) => addLines(t, [`- ${a.q} → ${a.a}`])); }, 'btn small ghost') : null,
+        el('span', 'room-gap'),
         button('×', () => { a.gone = true; this.saveLayer(); this.renderAnswers(); }, 'icon-btn')))));
+    if (xs.length) this.answersEl.scrollTop = this.answersEl.scrollHeight;
   }
   flatNow() { return this.flat || this.opts.reduced || this.stage.clientWidth < 760; }
 
