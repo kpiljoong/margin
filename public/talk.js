@@ -349,6 +349,8 @@ export class Talk {
     this.el = el('div', 'talk', head, el('div', 'talk-mid', el('div', 'talk-main', el('div', 'talk-body', this.log), el('div', 'talk-foot', this.input)), this.side));
     // On the desk (the record): the way back, always in sight.
     this.back = btn(this.W.back, () => this.desk.showTalk(true), 'desk-to-talk');
+    // (Pressed, it is the button's, not the desk's: the desk would take the pointer to move the plane, and the click with it.)
+    for (const t of ['pointerdown', 'mousedown', 'dblclick']) this.back.addEventListener(t, (e) => e.stopPropagation());
     // Where it was read to, kept: the pane drawn again (a note opened beside it) puts it back at the top.
     const body = this.el.querySelector('.talk-body');
     body.addEventListener('scroll', () => { if (body.clientHeight) this.readTo = body.scrollTop; }, { passive: true });
