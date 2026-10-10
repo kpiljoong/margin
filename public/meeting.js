@@ -131,7 +131,7 @@ export function nextAgendaEdit(text, pos) {
 const tagWords = (l) => l.replace(HEAD, '').replace(KIND_TAGS, ' ').replace(/\s+/g, ' ').trim();
 
 // What a line is marked as (a callout, a box, a tag): its kind, or null.
-function markOf(line) {
+export function markOf(line) {
   const c = CALL.exec(line);
   if (c) return kindOf(c[1]);
   if (TASK.test(line)) return 'todo';
@@ -143,7 +143,7 @@ function markOf(line) {
 // The line as `kind` (null: plain words again): its head and its words as
 // they were, a tag at its end; a to-do a box in its list item. A callout
 // becomes a plain line. → the line, or null when it has no words.
-function lineAs(line, kind) {
+export function lineAs(line, kind) {
   const c = CALL.exec(line);
   const t = !c && TASK.exec(line);
   let head = '';

@@ -871,6 +871,7 @@ async function closeTab(id) {
     if (tab.text !== tab.saved && !(await askConfirm(`Discard unsaved changes to ${tab.path}?`, { okLabel: 'Discard', danger: true }))) return;
   }
   if (tab.kind === 'drawing') { clearTimeout(tab.autosaveTimer); tab.frame?.destroy(); tab.frame = null; tab.deskView = null; }
+  if (tab.kind === 'room') { tab.roomView?.destroy(); tab.roomView = null; }
   if (tab.timer) clearInterval(tab.timer);
   const g = tab.group ?? 0;
   const siblings = S.tabs.filter((t) => t.group === g);
@@ -1628,7 +1629,7 @@ function renderTabs() {
   hold(bar, 'tab-pill');
   bar.replaceChildren(...S.tabs.filter((t) => t.group === g).map((t) => {
     const dirty = (t.kind === 'file' && t.content !== t.saved) || (t.kind === 'drawing' && t.text !== t.saved);
-    const label = SPECIAL[t.kind] ? SPECIAL[t.kind].name(t) : basename(t.path);
+    const label = SPECIAL[t.kind] ? SPECIAL[t.kind].name(t) : t.kind === 'room' ? roomName(t) : basename(t.path);
     return h('div', { class: `tab${t.id === grp.active ? ' active' : ''}${dirty ? ' dirty' : ''}`, title: t.path || t.title, draggable: 'true',
       'data-id': t.id,
       ondragstart: (e) => { e.dataTransfer.setData('text/x-agent-notes-tab', t.id); e.dataTransfer.effectAllowed = 'move'; document.body.classList.add('tab-dragging'); },
@@ -1785,6 +1786,7 @@ function renderContent(g = S.focus) {
   if (!tab) { c.replaceChildren(g === 0 ? welcome() : h('div', { class: 'empty pane-empty' }, 'Open a note here with ', h('kbd', {}, kbd('quick-open') || 'the palette'), '.')); return; }
   if (SPECIAL[tab.kind]) { showSpecial(c, tab); return; }
   if (tab.kind === 'drawing') { drawingView(tab, c); return; }
+  if (tab.kind === 'room') { roomView(tab, c); return; }
   if (tab.kind === 'image') {
     // A part of it named (a note's source link): marked on it.
     const img = h('img', { src: `/api/raw?path=${encodeURIComponent(tab.path)}&t=${token}`, alt: tab.path });
@@ -3206,6 +3208,7 @@ const liveOutline = debounce(() => { if (S.view === 'files') renderSidebar(); },
 
 function onEdit(tab) {
   livePreview(tab);
+  if (S.tabs.some((t) => t.kind === 'room' && t.path === tab.path)) { clearTimeout(tab.roomTimer); tab.roomTimer = setTimeout(() => roomsRefresh(tab.path), 400); }
   liveOutline();
   scheduleAutosave(tab);
   briefEdited(tab);
@@ -3485,6 +3488,9 @@ const COMMANDS = [
   ['Origin: where this note\u2019s paragraphs came from (experimental)', () => setTimeout(originView, 0)],
   ['Drawer: this note\u2019s scraps (experimental)', () => setTimeout(() => toggleDrawer(), 0)],
   ['Drawer: set the selection aside (experimental)', () => setTimeout(setAside, 0)],
+  ['Meeting room: start a meeting \u2014 a line at a time in the middle, sorted as you go, what to ask now, a draft to check at the end (experimental)\u2026', () => setTimeout(() => roomFolderPick('meeting'), 0)],
+  ['Meeting room: start a lecture \u2014 a line at a time, sorted as you go, ?? to ask about it (experimental)\u2026', () => setTimeout(() => roomFolderPick('lecture'), 0)],
+  ['Meeting room: open this note in it (experimental)', () => setTimeout(roomHere, 0)],
   ['Meeting rail: the agenda, decisions, to-dos and questions beside the note (experimental)', () => setTimeout(toggleRail, 0)],
   ['Meeting: mark the line a decision (experimental)', () => classifyHere('decision'), { key: 'meeting-decision' }],
   ['Meeting: mark the line a to-do (experimental)', () => classifyHere('todo'), { key: 'meeting-todo' }],
@@ -4193,6 +4199,8 @@ function folderMenu(e, dir) {
     { label: 'New desk here…', run: () => newDesk(dir) },
     // (Always there: with Labs off, pressing it offers to turn them on.)
     { label: 'Talk through its notes (review)…', run: lab('Review', () => reviewFolder(dir)) },
+    { label: 'Start a meeting here…', run: () => startRoom('meeting', dir) },
+    { label: 'Start a lecture here…', run: () => startRoom('lecture', dir) },
     { label: 'New Mermaid diagram here…', run: () => newMermaidFile(dir) },
     revealItem(dir),
     { label: 'Dired: edit as text…', run: () => openDired(dir) },
@@ -4537,6 +4545,131 @@ function placeFramesSoon() {
   if (placeQueued) return;
   placeQueued = true;
   requestAnimationFrame(() => { placeQueued = false; placeFrames(); });
+}
+
+// ------------------------------------------------------------------ the meeting room
+// A meeting or a lecture typed a line at a time into a note of its own
+// (public/room.js): what is typed kept as typed; what the margin makes of it
+// (sorted, linked, what to ask now, the draft at the end) a layer beside it,
+// put into the note only as accepted; the folder's notes changed only by
+// proposals, in their red pen reviews.
+let roomMod = null;
+const loadRoom = async () => (roomMod ||= await import('./room.js'));
+const roomName = (t) => `◉ ${stem(t.path)}`;
+
+// A note, to read and write from outside its tab: through its tab when it is
+// open (the editor follows, autosave saves); else read and saved against the
+// version read — never over a newer one.
+async function noteDoc(p) {
+  const t = S.tabs.find((x) => x.kind === 'file' && x.path === p);
+  if (t) {
+    if (t.editor?.tracking) throw new Error('The note is in suggesting mode: write in it there.');
+    if (t.conflict) throw new Error('The note has a conflict to settle first (its banner).');
+    return { text: t.content, save: async (text) => {
+      t.content = text;
+      if (t.editor) { const at = t.editor.selectionStart; t.editor.loadText(text); t.editor.setSelection(Math.min(at, text.length)); }
+      onEdit(t);
+      if (isAttached(t)) renderPreview(t);
+    } };
+  }
+  const f = await api('GET', `/api/file?path=${encodeURIComponent(p)}`);
+  const disk = fromDisk(f.content);
+  let hash = f.hash;
+  return { text: disk.content, save: async (text) => {
+    try { hash = (await api('PUT', '/api/file', { path: p, content: toDisk(text, disk.eol), baseHash: hash })).hash; } catch (e) {
+      throw new Error(e.status === 409 ? 'The note changed on disk since: not saved over it. Open it to see both.' : `Save failed: ${e.message}`);
+    }
+  } };
+}
+
+function openRoom(path, { group } = {}) {
+  let tab = S.tabs.find((t) => t.kind === 'room' && t.path === path);
+  if (!tab) { tab = { id: `r:${path}`, kind: 'room', path, group: group ?? S.focus }; S.tabs.push(tab); }
+  activate(tab.id);
+}
+
+// A meeting or a lecture, begun: its title asked, its note made in the folder.
+async function startRoom(kind = 'meeting', folder) {
+  const ko = /[\uAC00-\uD7A3]/.test(`${folder || ''} ${fileTab()?.content?.slice(0, 2000) || ''}`);
+  const dir = folder ?? dirname(fileTab()?.path || '');
+  const word = kind === 'lecture' ? (ko ? '\uAC15\uC758' : 'Lecture') : (ko ? '\uD68C\uC758' : 'Meeting');
+  const title = await askText({ title: kind === 'lecture' ? 'Start a lecture' : 'Start a meeting', label: `What it is about. Its note is made in ${dir || 'the top folder'}/ as “<today> <title>.md”; what you type goes in as typed.`, value: word, okLabel: 'Start' });
+  if (!title?.trim()) return;
+  try {
+    const r = await api('POST', '/api/room/start', { kind, folder: dir, title: title.trim() });
+    await loadTree();
+    openRoom(r.path);
+  } catch (e) { toast(e.message, 'error'); }
+}
+function roomHere() {
+  const t = fileTab();
+  if (!t || !isNote(t.path)) { toast('Open a note first: it opens as a meeting room.'); return; }
+  openRoom(t.path, { group: t.group === 0 && S.groups.length > 1 ? 1 : t.group });
+}
+function roomFolderPick(kind) {
+  const dirs = [...new Set(S.files.filter((f) => isNote(f.path)).flatMap((f) => f.path.split('/').slice(0, -1).map((_, i, a) => a.slice(0, i + 1).join('/'))))].sort();
+  const here = dirname(fileTab()?.path || '');
+  const list = [...(here ? [here] : []), '', ...dirs.filter((d) => d !== here)];
+  picker({ placeholder: `${kind === 'lecture' ? 'A lecture' : 'A meeting'} in which folder? (its notes are what it knows from before)`, source: (q) => list.map((d) => ({ d, m: fuzzy(q, d || '/') })).filter((x) => x.m).map(({ d, m }) => ({ icon: '◉', label: d ? marked(d, m.idx) : '/', run: () => startRoom(kind, d) })) });
+}
+
+function roomView(tab, c) {
+  const toolbar = h('div', { class: 'toolbar' },
+    ...navButtons(),
+    h('span', { class: 'crumbs' }, tab.path.split('/').join('  ›  ')),
+    h('span', { class: 'badge', title: 'What you type goes into the note as typed; the margin’s sorting and links are a layer beside it' }, 'Meeting room'),
+    h('button', { class: 'icon-btn', title: 'Open the note beside it', onclick: () => openFile(tab.path, { side: true, mode: 'edit', beside: tab.group }) }, '☰'),
+    h('button', { class: 'icon-btn', title: S.groups.length > 1 ? 'Move to the other pane' : withKey('Open to the side', 'split'), onclick: () => (S.groups.length > 1 ? moveTab(tab, tab.group === 0 ? 1 : 0) : splitRight()) }, '◫'));
+  const slot = h('div', { class: 'room-slot' });
+  c.replaceChildren(toolbar, slot);
+  if (tab.roomView) { slot.append(tab.roomView.el); tab.roomView.drawSoon(); return; }
+  loadRoom().then((m) => {
+    if (!S.tabs.includes(tab) || tab.roomView) return;
+    tab.roomView = new m.Room({
+      path: tab.path,
+      reduced: typeof matchMedia === 'function' && matchMedia('(prefers-reduced-motion: reduce)').matches,
+      doc: () => noteDoc(tab.path),
+      context: () => api('POST', '/api/room/context', { path: tab.path }),
+      saveLayer: (layer) => api('PUT', '/api/room/layer', { path: tab.path, layer }).catch((e) => toast(`The room’s layer was not kept: ${e.message}`, 'error')),
+      line: async (body, signal, onText) => { await loadLive(); return liveStream(body, signal, onText); },
+      weave: (items) => api('POST', '/api/room/weave', { ...reviewOpts(), path: tab.path, items }),
+      close: (items) => api('POST', '/api/room/close', { ...reviewOpts(), path: tab.path, items }),
+      changes: (decided) => api('POST', '/api/room/changes', { ...reviewOpts(), path: tab.path, decided }),
+      proposeNote: (p, make, o) => proposeFromRoom(tab, p, make, o),
+      openReview: (id) => openReview(id),
+      openNote: (p, line) => openFile(p, { side: true, line, mode: 'edit', beside: tab.group }),
+      writeNote: async (p, text) => { const f = await api('POST', '/api/file', { path: p, content: text }); await loadTree(); return f.path; },
+      exists: async (p) => S.files.some((f) => f.path === p),
+      todoFile: S.files.some((f) => f.path === '99-assistant/todo.md') ? '99-assistant/todo.md' : null,
+      appKey: (e) => appKeydown(e),
+      toast: (msg, kind) => toast(msg, kind),
+    });
+    if (activeIn(tab.group) === tab) renderContent(tab.group);
+  });
+}
+// What the room proposes for a note: a red pen review of its own, with why beside each line it brings.
+async function proposeFromRoom(tab, p, make, { open = true, why = '' } = {}) {
+  const t = S.tabs.find((x) => x.kind === 'file' && x.path === p);
+  if (t) {
+    await flushAutosave(t);
+    if (t.conflict || t.content !== t.saved) throw new Error('Save the note first: the proposal starts from the note on disk.');
+  }
+  const f = await api('GET', `/api/file?path=${encodeURIComponent(p)}`);
+  const disk = fromDisk(f.content);
+  const next = make(disk.content);
+  if (next === disk.content) return false;
+  const reason = why || stem(tab.path);
+  const had = new Set(disk.content.split('\n').map((l) => l.trim()));
+  const comments = next.split('\n').filter((l) => l.trim() && !had.has(l.trim())).slice(0, 30).map((quote) => ({ quote, comment: reason }));
+  const r = await api('POST', '/api/desk/propose', { path: p, text: toDisk(next, disk.eol), task: `${reason}: ${basename(p)}`, comments });
+  if (r.same) return false;
+  await loadRuns();
+  if (open) openReview(r.id);
+  return r.id;
+}
+// The note changed (its tab, or on disk): the room showing it reads it again.
+function roomsRefresh(path) {
+  for (const t of S.tabs) if (t.kind === 'room' && t.path === path) t.roomView?.refresh();
 }
 
 // ------------------------------------------------------------------ the desk
@@ -5204,6 +5337,7 @@ function convertFlow(pre) {
 // A drawing, diagram or note changed: redraw the notes that show it.
 function refreshEmbeds(path) {
   for (const t of S.tabs) t.deskView?.refreshNote(path);
+  roomsRefresh(path);
   forgetEmbed(path);
   mmdSources.delete(path);
   noteSources.delete(path);
@@ -10610,7 +10744,7 @@ function runLeaderKeys(keys) {
 // The buffer list (Emacs C-x b): open notes and those closed but kept, the
 // most recent first — the one before this is at the top — and Margin's own
 // buffers (tasks, search, runs, messages…), open or not.
-const bufferName = (t) => (SPECIAL[t.kind] ? SPECIAL[t.kind].name(t) : t.path ? basename(t.path) : t.title || t.kind);
+const bufferName = (t) => (SPECIAL[t.kind] ? SPECIAL[t.kind].name(t) : t.kind === 'room' ? roomName(t) : t.path ? basename(t.path) : t.title || t.kind);
 function pickTab() {
   const cur = activeTab();
   const list = buffers().filter((b) => b.tab !== cur).concat(cur ? [{ tab: cur, closed: false }] : []);

@@ -25,6 +25,7 @@ const { developMargin } = require('./lib/develop');
 const { briefMargin } = require('./lib/brief');
 const { themesMargin, themeNote } = require('./lib/themes');
 const { reviewMargin, datesIn } = require('./lib/review');
+const { roomMargin } = require('./lib/room');
 
 const APP_DIR = __dirname;
 const PUBLIC_DIR = path.join(APP_DIR, 'public');
@@ -1393,6 +1394,142 @@ async function labReviewChanges(b) {
   const r = await r0.apply({ topic: { title, goal: thisTime.goal || (/\nGoal \([^)]*\): ([^\n]*)/.exec(goalCard?.text || '') || [])[1] || '' }, decided, notes });
   if (!r.ok) throw httpError(502, r.error || 'Claude did not answer.');
   return { decided, changes: r.changes.map(({ n, ...x }) => ({ file: notes[n - 1].path, ...x })) };
+}
+
+// A meeting room (a meeting, a lecture; lib/room.js, public/room.js): a
+// note of its own, where what is typed is kept as typed, in order; what
+// the margin makes of it (each line sorted, linked, what to ask now, where
+// the item stands, the draft at the end) beside it, in
+// .agent-notes/room/ — a layer, put into the note only as they accept it.
+let roomer = null;
+let roomerModel = '';
+function roomUp(b) {
+  setLiveOpts(b);
+  const agent = liveAgent();
+  if (!agent) throw httpError(400, 'This needs the Claude Code agent (Settings → Agents).');
+  const model = developModel(b);
+  if (roomerModel !== model) { roomer?.stop(); roomer = null; }
+  roomerModel = model;
+  roomer ||= roomMargin({ bin: liveBin(agent), env: liveEnv(), opts: { ...liveOpts, model, effort: '' } });
+  return roomer;
+}
+const ROOM_DIR = path.join(DATA_DIR, 'room');
+const roomLayerOf = (rel) => `${resolveInside(ROOM_DIR, rel)}.json`;
+const ROOM_KINDS = new Set(['meeting', 'lecture']);
+const dirOf = (f) => (f.includes('/') ? f.slice(0, f.lastIndexOf('/')) : '');
+const FRONT_TYPE = /^\uFEFF?---\r?\n(?:(?!---)[^\n]*\n)*?type:[ \t]*["']?(meeting|lecture)["']?[ \t]*\r?\n(?:[\s\S]*?\r?\n)?---/i;
+// A meeting room's note: "<folder>/<day> <title>.md" (" (2)" when there is
+// one), with its kind and day in front matter and the session before it in
+// the folder (the newest note of the same kind) linked as the meeting
+// before ("Previous meeting: [[…]]", as the live margin and Fold read it).
+function roomStart(b) {
+  const kind = ROOM_KINDS.has(b.kind) ? b.kind : 'meeting';
+  const title = cleanStr(b.title, 120).replace(/[\\/:*?"<>|#^[\]\r\n]/g, ' ').replace(/\s+/g, ' ').trim();
+  if (!title) throw httpError(400, 'title: what it is about');
+  const dir = String(b.folder || '').replace(/^\/+|\/+$/g, '');
+  if (dir) { const abs = workspacePath(dir); if (!fs.existsSync(abs) || !fs.statSync(abs).isDirectory()) throw httpError(400, 'Not a folder of this workspace'); }
+  const folder = dir ? relOf(workspacePath(dir)) : '';
+  const day = reviewToday();
+  const today = day;
+  let rel = '';
+  for (let i = 1; i < 50; i++) {
+    rel = `${folder ? `${folder}/` : ''}${day} ${title}${i > 1 ? ` (${i})` : ''}.md`;
+    if (!fs.existsSync(workspacePath(rel))) break;
+  }
+  const ignored = loadIgnore(ROOT);
+  const prev = workspaceFiles().filter((f) => dirOf(f) === folder && f !== rel && reviewable(f, ignored))
+    .map((f) => ({ f, c: cachedText(f), day: /(\d{4}-\d{2}-\d{2})/.exec(path.basename(f))?.[1] || '' }))
+    // Not one made ahead for a later day (the next meeting's note): the latest up to today.
+    .filter(({ c, day }) => c && FRONT_TYPE.exec(c.text)?.[1]?.toLowerCase() === kind && (!day || day <= today))
+    .sort((x, y) => (y.day || '').localeCompare(x.day || '') || y.c.mtimeMs - x.c.mtimeMs)[0]?.f || null;
+  const text = ['---', `type: ${kind}`, `date: ${day}`, '---', `# ${title}`, '', ...(prev ? [`Previous meeting: [[${path.basename(prev).replace(/\.md$/i, '')}]]`, ''] : [])].join('\n');
+  const abs = workspacePath(rel);
+  writeFileAtomic(abs, `${text}\n`);
+  treeCache = null;
+  writeFileAtomic(roomLayerOf(rel), JSON.stringify({ kind, startedAt: new Date().toISOString() }));
+  return { path: rel, previous: prev };
+}
+// What the session knows from before it: the meeting before (named in the
+// note), then the folder's notes (its folders too), the newest first —
+// never a private or ignored one. → [{ path, text }]
+function roomNotes(rel, { total = 30000, each = 6000, k = 12 } = {}) {
+  const ignored = loadIgnore(ROOT);
+  const own = cachedText(rel)?.text || '';
+  const folder = dirOf(rel);
+  const prevName = /^\s*(?:\*\*)?Previous meeting:?(?:\*\*)?:?\s*\[\[([^\]|#]+)/im.exec(own.split('\n').slice(0, 20).join('\n'))?.[1]?.trim();
+  const files = workspaceFiles().filter((f) => f !== rel && NOTE_EXT.has(extOf(f)) && (!folder || f.startsWith(`${folder}/`)) && reviewable(f, ignored));
+  const prev = prevName && files.find((f) => path.basename(f).replace(/\.md$/i, '') === prevName);
+  const rest = files.filter((f) => f !== prev).map((f) => [f, cachedText(f)?.mtimeMs || 0]).sort((x, y) => y[1] - x[1]).slice(0, k).map(([f]) => f);
+  const out = [];
+  let left = total;
+  for (const f of [...(prev ? [prev] : []), ...rest]) {
+    const c = cachedText(f);
+    if (!c || left <= 0) continue;
+    const text = reviewText(c).slice(0, Math.min(each, left));
+    if (!text.trim()) continue;
+    left -= text.length;
+    out.push({ path: f, text, ...(f === prev ? { previous: true } : {}) });
+  }
+  return out;
+}
+function roomNote(b) {
+  const rel = relOf(workspacePath(String(b.path || '')));
+  if (!NOTE_EXT.has(extOf(rel)) || !fs.existsSync(workspacePath(rel))) throw httpError(400, 'Not a note');
+  if (isPrivateNote(workspacePath(rel))) throw httpError(403, 'This note is private (front matter): its lines are not sent.');
+  return rel;
+}
+const roomItems = (items) => (Array.isArray(items) ? items.slice(-80).map((it) => ({ kind: cleanStr(it?.kind, 20), text: cleanStr(it?.text, 600), section: cleanStr(it?.section, 120) })).filter((it) => it.text.trim()) : []);
+const roomTitle = (rel) => /^#\s+(.+)$/m.exec(cachedText(rel)?.text || '')?.[1]?.trim() || path.basename(rel).replace(/\.md$/i, '');
+const roomKind = (rel) => FRONT_TYPE.exec(cachedText(rel)?.text || '')?.[1]?.toLowerCase() || 'meeting';
+// Now and then while it goes on: what to ask now, where the item stands,
+// what goes together, changes, disagrees, answers, and what the notes
+// before it say otherwise. Sent: the lines typed and the notes before it.
+async function roomWeave(b) {
+  const rel = roomNote(b);
+  const items = roomItems(b.items);
+  if (!items.length) return { ask: null, stand: null, links: [], before: [] };
+  const notes = roomNotes(rel);
+  const r = await roomUp(b).weave({ title: roomTitle(rel), kind: roomKind(rel), items, notes, today: reviewToday() });
+  if (!r.ok) throw httpError(502, r.error || 'Claude did not answer.');
+  return { ask: r.ask, stand: r.stand, links: r.links, before: r.before.map(({ n, ...x }) => ({ ...x, note: notes[n - 1].path })) };
+}
+// At its end: the draft to read out, and at most three questions first.
+async function roomClose(b) {
+  const rel = roomNote(b);
+  const items = roomItems(b.items);
+  if (!items.length) return { decided: [], who: [], open: [], check: [], unsure: [] };
+  const r = await roomUp(b).close({ title: roomTitle(rel), kind: roomKind(rel), items, today: reviewToday() });
+  if (!r.ok) throw httpError(502, r.error || 'Claude did not answer.');
+  const { ok, ...out } = r;
+  return out;
+}
+// What they accepted as decided, carried into the folder's notes (as a
+// review's): each line no longer agreeing, and each decision recorded once.
+async function roomChanges(b) {
+  const rel = roomNote(b);
+  const decided = Array.isArray(b.decided) ? b.decided.slice(0, 20).map((d) => cleanStr(d, 400).trim()).filter(Boolean) : [];
+  if (!decided.length) return { decided, changes: [] };
+  // Not a meeting's or a lecture's note: what was said then stays as it was said.
+  const notes = roomNotes(rel, { total: 200000, each: 40000, k: 16 }).filter((n) => !/^Reviews\//i.test(n.path) && !FRONT_TYPE.test(cachedText(n.path)?.text || ''));
+  if (!notes.length) return { decided, changes: [] };
+  const r = await reviewUp(b).apply({ topic: { title: roomTitle(rel), goal: '' }, decided, notes });
+  if (!r.ok) throw httpError(502, r.error || 'Claude did not answer.');
+  return { decided, changes: r.changes.map(({ n, ...x }) => ({ file: notes[n - 1].path, ...x })) };
+}
+function roomLayer(rel) {
+  const d = readJson(roomLayerOf(relOf(workspacePath(rel))), null);
+  return d && typeof d === 'object' && !Array.isArray(d) ? d : {};
+}
+function saveRoomLayer({ path: relPath, layer }) {
+  const rel = relOf(workspacePath(String(relPath || '')));
+  if (!NOTE_EXT.has(extOf(rel))) throw httpError(400, 'Not a note');
+  if (!layer || typeof layer !== 'object' || Array.isArray(layer)) throw httpError(400, 'layer: an object');
+  const json = JSON.stringify(layer);
+  if (json.length > 1024 * 1024) throw httpError(413, 'The layer is too large');
+  const file = roomLayerOf(rel);
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  writeFileAtomic(file, json);
+  return { ok: true };
 }
 
 // What was done on a review's desk (taken, let go, marked done, proposed,
@@ -3290,6 +3427,12 @@ async function routeApi(method, url, body) {
   if (method === 'POST' && p === '/api/lab/review/jot') return labReviewJot(body || {});
   if (method === 'POST' && p === '/api/lab/review/talk') return labReviewTalk(body || {});
   if (method === 'POST' && p === '/api/lab/review/changes') return labReviewChanges(body || {});
+  if (method === 'POST' && p === '/api/room/start') return roomStart(body || {});
+  if (method === 'POST' && p === '/api/room/context') { const rel = roomNote(body || {}); return { notes: roomNotes(rel), layer: roomLayer(rel) }; }
+  if (method === 'POST' && p === '/api/room/weave') return roomWeave(body || {});
+  if (method === 'POST' && p === '/api/room/close') return roomClose(body || {});
+  if (method === 'POST' && p === '/api/room/changes') return roomChanges(body || {});
+  if (method === 'PUT' && p === '/api/room/layer') return saveRoomLayer(body || {});
   if (method === 'GET' && p === '/api/lab/review/ledger') return { events: reviewLedger(relOf(workspacePath(q('path')))) };
   if (method === 'POST' && p === '/api/lab/review/ledger') return addReviewLedger(body || {});
   if (method === 'GET' && p === '/api/embed') return embedStatus();
@@ -3438,6 +3581,8 @@ function liveRestart() {
   themer = null;
   reviewer?.stop();
   reviewer = null;
+  roomer?.stop();
+  roomer = null;
 }
 function liveAgent() {
   return claudeAgents().find((a) => a.label === liveOpts.agent) || (AGENT?.kind === 'claude' ? AGENT : claudeAgents()[0] || null);
@@ -3598,7 +3743,7 @@ function liveLine(req, res, body) {
   let over = false;
   const cancel = live.line({
     key, title: text(body.title, 200), item: text(body.item, 200), line: text(body.line, 2000), under: text(body.under, 300), today: text(body.today, 300),
-    memory: text(body.memory, 6000), found: text(body.found, 3000), task: ['answer', 'summary'].includes(body.task) ? body.task : null, note: body.task ? text(body.note, 16000) : '',
+    memory: text(body.memory, 6000), found: text(body.found, 3000), task: ['answer', 'explain', 'summary'].includes(body.task) ? body.task : null, note: body.task ? text(body.note, 16000) : '',
     questions: Array.isArray(body.questions) ? body.questions.slice(0, 40).map((q) => text(q, 300)) : [],
     agenda: Array.isArray(body.agenda) ? body.agenda.slice(0, 30).map((a) => text(a, 120)) : [],
   }, (t) => res.write(`${JSON.stringify({ t })}\n`), (info) => { over = true; res.end(`${JSON.stringify({ end: info })}\n`); });
@@ -3786,6 +3931,7 @@ function shutdown() {
   briefer?.stop();
   themer?.stop();
   reviewer?.stop();
+  roomer?.stop();
   embed.stop();
   for (const id of running.keys()) { try { cancelRun(id, 'server stopped'); } catch { /* ignore */ } }
   process.exit(0);
