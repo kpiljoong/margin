@@ -1640,6 +1640,7 @@ function renderTabs() {
       oncontextmenu: (e) => contextMenu(e, [
         { label: S.groups.length > 1 ? 'Move to other pane' : 'Open to the side', run: () => moveTab(t, t.group === 0 ? 1 : 0) },
         isDoc(t) ? { label: 'Rename / move file…', run: () => renameItem(t.path) } : null,
+        t.kind === 'file' && isNote(t.path) ? { label: 'Open in the meeting room', run: () => openRoom(t.path, { group: t.group }) } : null,
         '-',
         { label: 'Close', run: () => closeTab(t.id) },
         { label: 'Close others', run: () => closeTabs(S.tabs.filter((x) => x.group === t.group && x !== t)) },
@@ -1825,6 +1826,7 @@ function renderContent(g = S.focus) {
       { label: 'Rename / move…', key: kbd('rename'), run: () => renameItem(tab.path) },
       { label: 'Copy [[link]]', run: () => navigator.clipboard.writeText(`[[${stem(tab.path)}]]`).then(() => toast('Link copied')) },
       isNote(tab.path) ? { label: 'Copy for GitHub (flows as Mermaid)', run: () => copyWithMermaid(tab) } : null,
+      isNote(tab.path) ? { label: 'Open in the meeting room', run: () => openRoom(tab.path, { group: tab.group }) } : null,
       isMermaidFile(tab.path) ? { label: 'Copy embed ![[…]]', run: () => navigator.clipboard.writeText(`![[${basename(tab.path)}]]`).then(() => toast('Embed copied — paste it into a note')) } : null,
       ...(isMermaidFile(tab.path) ? ['-', ...pictureItems(() => mermaidFilePicture(tab), { view: () => viewPicture(mermaidFilePicture(tab), basename(tab.path)) })] : []),
       '-',
@@ -4181,6 +4183,7 @@ function fileMenu(e, f) {
     { label: 'Open', run: () => openFile(f.path) },
     f.note ? { label: 'Open to the side', key: `${MOD}click`, run: () => openFile(f.path, { side: true }) } : null,
     f.note ? { label: 'Copy [[link]]', run: () => navigator.clipboard.writeText(`[[${stem(f.path)}]]`).then(() => toast('Link copied')) } : null,
+    f.note && isNote(f.path) ? { label: 'Open in the meeting room', run: () => openRoom(f.path) } : null,
     { label: 'Copy path', run: () => navigator.clipboard.writeText(f.path).then(() => toast('Path copied')) },
     revealItem(f.path),
     { label: isBookmarked(f.path) ? 'Remove bookmark' : 'Bookmark', run: () => toggleBookmark(f.path) },
