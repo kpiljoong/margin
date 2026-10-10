@@ -848,7 +848,7 @@ export class Room {
     const W = this.W;
     const xs = (this.layer.answers || []).filter((a) => !a.gone).slice(-4);
     const keep = async (a, line) => { a.kept = [...(a.kept || []), line]; this.saveLayer(); this.renderAnswers(); const made = await this.write((t) => addLines(t, [typedLine(line)].filter(Boolean)), { fresh: true }); for (const k of made) { const x = this.entries.find((y) => y.key === k); if (x) this.sortLater(x); } };
-    this.answersEl.replaceChildren(...xs.map((a) => el('div', `room-answer${a.talk ? ' talk' : ''}`,
+    this.answersEl.replaceChildren(...xs.map((a) => el('div', `room-answer${a.talk ? ' room-talk' : ''}`,
       el('div', 'room-answer-q', `${a.talk ? '»' : '??'} ${a.q}`),
       el('div', 'room-answer-a', ...(a.busy && !a.a ? [W.thinking] : this.linked(a.a, a.refs))),
       el('div', 'room-answer-do',
@@ -865,7 +865,7 @@ export class Room {
     const W = this.W;
     const names = this.kind === 'lecture' ? W.laneLecture : this.kind === 'note-taking' ? W.laneNotes : W.lane;
     this.el.classList.toggle('in-space', !this.flatNow());
-    this.el.classList.toggle('empty', !this.entries.length);
+    this.el.classList.toggle('room-blank', !this.entries.length);
     if (!this.lanes) {
       this.lanes = new Map(LANES.map((k) => {
         const list = el('div', 'room-lane-list');

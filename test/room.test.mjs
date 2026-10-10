@@ -89,6 +89,17 @@ test('its words: the same in Korean and in English', () => {
   assert.equal(keys(WORDS.ko), keys(WORDS.en));
 });
 
+test('its classes: none the rest of the app styles (a .talk or a .space of the app hid its answers, once its whole view)', () => {
+  const src = fs.readFileSync(path.join(ROOT, 'public', 'room.js'), 'utf8');
+  const css = fs.readFileSync(path.join(ROOT, 'public', 'app.css'), 'utf8');
+  const used = new Set();
+  for (const m of src.matchAll(/(?:el\('[a-z0-9]+', |classList\.(?:add|toggle|remove)\()[`']([^`']+)[`']/g)) for (const c of m[1].replace(/\$\{[^}]*\}/g, ' ').split(/\s+/)) if (/^[a-z][\w-]*$/.test(c)) used.add(c);
+  for (const m of src.matchAll(/\? ' ([a-z][\w-]*)' : ''/g)) used.add(m[1]);
+  // A rule of the app's for one of them, not inside the room's own.
+  const clash = [...used].filter((c) => !c.startsWith('room') && css.split('\n').some((l) => new RegExp(`(^|[\\s,>+~])\\.${c}(?![\\w-])`).test(l) && !/\.room/.test(l) && !/^\s*\.(btn|icon-btn)/.test(l)));
+  assert.deepEqual(clash.filter((c) => !['btn', 'small', 'ghost', 'primary', 'icon-btn', 'on'].includes(c)), []);
+});
+
 test('the to-do list: in its format, a project folder\'s tag, not twice', () => {
   const who = [{ text: 'Draft the notes', due: '2026-10-12' }, { text: 'Book it', due: null }];
   const lines = todoLines(who, { list: '# Todo\n\n- [ ] Book it \u{1F4C5} 2026-10-01 #project/x\n', folder: '01-projects/x/sub' });
