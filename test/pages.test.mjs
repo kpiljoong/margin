@@ -55,5 +55,5 @@ test('pages: an HTML page and what is beside it, from their own sandboxed origin
   assert.equal((await get(`${info.pages}talks/slides.html`, { method: 'POST' })).status, 405);
   // The app may frame them, and nothing else.
   const app = await fetch(`http://127.0.0.1:${m[1]}/?t=${m[2]}`);
-  assert.match(app.headers.get('content-security-policy'), new RegExp(`frame-src ${info.pages.replace(/\/k\/.*$/, '').replace(/\./g, '\\.')}$`));
+  assert.match(app.headers.get('content-security-policy'), new RegExp(`frame-src 'self' ${info.pages.replace(/\/k\/.*$/, '').replace(/\./g, '\\.')}$`));
 });

@@ -9292,7 +9292,7 @@ const briefHas = (tab, line) => !!((briefOn() || tab.isTheme) && tab.briefParas?
 // A Related card whose notes a Brief card already cites says nothing more.
 function briefCites(tab, r) {
   const st = briefOn() && briefSt.get(tab.path);
-  if (!st?.items.length || !r.refs?.length) return false;
+  if (!st?.items?.length || !r.refs?.length) return false;
   const cited = new Set(st.items.flatMap((x) => (x.refs || []).map((y) => `${y.path}:${y.line}`)));
   return r.refs.every((y) => cited.has(`${y.path}:${y.line}`));
 }

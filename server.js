@@ -3739,7 +3739,8 @@ pageServer.on('error', (e) => console.error(`Pages: ${e.message}`));
 pageServer.listen(0, '127.0.0.1', () => {
   pagePort = pageServer.address().port;
   // The app may frame them (and nothing else).
-  SECURITY_HEADERS['Content-Security-Policy'] = SECURITY_HEADERS['Content-Security-Policy'].replace(/; frame-src [^;]*|$/, `; frame-src http://127.0.0.1:${pagePort}`);
+  // (Its own frames too — the diagrams' and the drawings' sandboxes are 'self': frame-src replaces default-src for frames.)
+  SECURITY_HEADERS['Content-Security-Policy'] = SECURITY_HEADERS['Content-Security-Policy'].replace(/; frame-src [^;]*|$/, `; frame-src 'self' http://127.0.0.1:${pagePort}`);
 });
 const pageUrl = (rel) => (pagePort ? `http://127.0.0.1:${pagePort}/k/${PAGE_KEY}/${rel.split('/').map(encodeURIComponent).join('/')}` : '');
 
