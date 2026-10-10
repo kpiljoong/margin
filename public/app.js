@@ -4749,26 +4749,27 @@ function deskView(tab, c) {
         },
         // What the cards ask of a note, proposed: its red pen review, as the wall's are.
         // open: false — several notes at once: none opened, their reviews waiting (→ the review's id).
-        proposeNote: async (p, make, { open = true } = {}) => {
-          if (!open && !S.tabs.some((x) => x.kind === 'file' && x.path === p)) {
-            const f = await api('GET', `/api/file?path=${encodeURIComponent(p)}`);
-            const disk = fromDisk(f.content);
-            const next = make(disk.content);
-            if (next === disk.content) return false;
-            const r = await api('POST', '/api/proofs', { path: p });
-            await api('PUT', `/api/proofs/${r.id}`, { text: toDisk(next, disk.eol) });
-            await loadRuns();
-            return r.id;
-          }
-          if (!S.tabs.some((x) => x.kind === 'file' && x.path === p)) await openFile(p, { side: true, focus: false });
+        // What the desk (or its talk) proposes for a note: a red pen review of the
+        // review's own (not your suggestions), with why beside each line it adds or changes.
+        proposeNote: async (p, make, { open = true, why = '' } = {}) => {
           const t = S.tabs.find((x) => x.kind === 'file' && x.path === p);
-          if (!t) throw new Error('not open');
-          if (t.editor?.tracking) { toast('Stop suggesting in the note first: the desk proposes its own changes.', 'error'); throw new Error('suggesting'); }
-          await flushAutosave(t);
-          const next = make(t.content);
-          if (next === t.content) { if (open) toast('Nothing to change: the note says so already.'); return false; }
-          const id = await proposeText(t, next, 'The desk\u2019s changes, proposed: y / A to accept, a to apply.', { open });
-          return open ? true : id;
+          if (t) {
+            await flushAutosave(t);
+            if (t.conflict || t.content !== t.saved) { toast('Save the note first: the proposal starts from the note on disk.', 'error'); throw new Error('unsaved'); }
+          }
+          const f = await api('GET', `/api/file?path=${encodeURIComponent(p)}`);
+          const disk = fromDisk(f.content);
+          const next = make(disk.content);
+          if (next === disk.content) { if (open) toast('Nothing to change: the note says so already.'); return false; }
+          const title = deskTitleOf(tab);
+          const reason = why || (/[\uac00-\ud7a3]/.test(title) ? `\uB9AC\uBDF0 \u201C${title}\u201D\uC5D0\uC11C` : `From the review \u201C${title}\u201D`);
+          const had = new Set(disk.content.split('\n').map((l) => l.trim()));
+          const comments = next.split('\n').filter((l) => l.trim() && !had.has(l.trim())).slice(0, 30).map((quote) => ({ quote, comment: reason }));
+          const r = await api('POST', '/api/desk/propose', { path: p, text: toDisk(next, disk.eol), task: `${reason}: ${basename(p)}`, comments });
+          if (r.same) { if (open) toast('Nothing to change: the note says so already.'); return false; }
+          await loadRuns();
+          if (open) { openReview(r.id); toast('The review\u2019s changes, proposed: y / A to accept, a to apply.'); return true; }
+          return r.id;
         },
         openReview: (id) => openReview(id),
         state: async () => { await deskSaved(tab); return api('POST', '/api/lab/review/state', { ...reviewOpts(), path: tab.path }); },
@@ -8335,17 +8336,17 @@ function reviewView(tab) {
       wrap.append(h('div', { class: 'review-actions' },
         h('span', { class: 'grow' }, `${run.changes.length} file${run.changes.length === 1 ? '' : 's'} changed · ${n} change${n === 1 ? '' : 's'} ${penFirst() ? 'accepted' : 'selected'}`,
           h('span', { class: 'review-keys', title: keysHint('review') }, penFirst() ? 'j k · y n · A all · a apply · v diff · s space' : 'j k · x · a apply · v red pen')),
-        S.git?.repo && run.kind !== 'proof' ? h('label', { class: 'commit-toggle', title: 'Commit the applied files to git, authored by the agent (local only)' },
+        S.git?.repo && run.kind !== 'proof' && run.from !== 'review' ? h('label', { class: 'commit-toggle', title: 'Commit the applied files to git, authored by the agent (local only)' },
           h('input', { type: 'checkbox', checked: store.getItem('an.commitOnApply') !== 'false', onchange: (e) => store.setItem('an.commitOnApply', String(e.target.checked)) }), 'Commit to git') : null,
         labsOn() && run.changes.some(penable) ? h('button', { class: 'btn', title: 'The red pen in depth: paragraph by paragraph (s) — Labs', onclick: () => openSpaceView(tab) }, 'Space') : null,
         filmable(run) ? h('button', { class: 'btn', title: 'The note through the rounds of this run (F) — experimental', onclick: () => openFilmView(tab) }, 'Film') : null,
-        h('button', { class: 'btn', onclick: () => followUp(tab, lensFixText(tab) + spaceComments(tab)) }, 'Follow up…'),
+        run.from === 'review' ? null : h('button', { class: 'btn', onclick: () => followUp(tab, lensFixText(tab) + spaceComments(tab)) }, 'Follow up…'),
         h('button', { class: 'btn danger', onclick: () => discardRun(tab) }, 'Discard'),
         h('button', { class: 'btn primary', disabled: !n, onclick: () => applyRun(tab) }, `Apply ${n} ${penFirst() ? 'accepted' : 'selected'}`)));
     } else if (reviewable) {
       wrap.append(h('div', { class: 'review-actions' }, h('span', { class: 'grow' }),
         filmable(run) ? h('button', { class: 'btn', title: 'The note through the rounds of this run (F) — experimental', onclick: () => openFilmView(tab) }, 'Film') : null,
-        h('button', { class: 'btn', onclick: () => followUp(tab, lensFixText(tab)) }, 'Follow up…'),
+        run.from === 'review' ? null : h('button', { class: 'btn', onclick: () => followUp(tab, lensFixText(tab)) }, 'Follow up…'),
         h('button', { class: 'btn danger', onclick: () => discardRun(tab) }, 'Discard')));
     }
     const locked = !reviewable;
@@ -9506,6 +9507,11 @@ function openPage(p) {
   const url = pageUrl(p);
   if (!url) { toast('The page can\u2019t be shown.', 'error'); return; }
   window.open(url, '_blank', 'noopener');
+}
+// A review's desk's topic (its goal card's title, or its name).
+function deskTitleOf(tab) {
+  const n = tab?.deskView?.d?.nodes?.find((x) => x.type === 'text' && /^\*\*[^*]+\*\*\n\nGoal \(/.test(String(x.text || '')));
+  return (/^\*\*([^*]+)\*\*/.exec(n?.text || '') || [])[1] || stem(tab?.path || '').replace(/ \d{4}-\d{2}-\d{2}(?: \(\d+\))?$/, '');
 }
 async function reviewDesk(t, again = false) {
   if (!(await reviewConsent())) return;

@@ -2032,6 +2032,38 @@ function openProof({ path: relPath }) {
   return { id, base: now, work: now, created: true };
 }
 
+// What a review (its desk, its talk) proposes for a note: a red pen review of
+// its own — the review's, not yours — with why beside each line it changes.
+// Nothing is written to the note; accepted and applied as any proposal.
+function deskPropose({ path: relPath, text, task, comments }) {
+  const rel = relOf(workspacePath(String(relPath || '')));
+  if (!NOTE_EXT.has(extOf(rel))) throw httpError(400, 'Proposals are for notes');
+  if (typeof text !== 'string' || text.length > 2 * 1024 * 1024) throw httpError(400, 'text: the note as proposed');
+  let now;
+  try { now = readText(path.join(ROOT, rel)); } catch { throw httpError(404, 'Not found'); }
+  if (now == null) throw httpError(400, 'Not a text file');
+  if (now === text) return { same: true };
+  ensureDataDir();
+  const id = newRunId();
+  const dir = runDir(id);
+  for (const [sub, t] of [['base', now], ['work', text]]) {
+    fs.mkdirSync(path.dirname(path.join(dir, sub, rel)), { recursive: true });
+    fs.writeFileSync(path.join(dir, sub, rel), t);
+  }
+  // (Each with the line it brings: beside the change that brings it.)
+  const notes = (Array.isArray(comments) ? comments : []).slice(0, 50)
+    .map((c) => ({ file: rel, quote: cleanStr(c?.quote, 2000), suggest: cleanStr(c?.quote, 2000), comment: cleanStr(c?.comment, 1000), round: 1 }))
+    .filter((c) => c.quote.trim() && c.comment.trim() && text.includes(c.quote));
+  fs.writeFileSync(path.join(dir, 'comments.json'), JSON.stringify(notes, null, 2));
+  const at = new Date().toISOString();
+  writeMeta({
+    id, task: cleanStr(task, 300) || `From a review: ${rel}`, scope: 'file', focus: rel, parent: null, round: 1, recipe: '',
+    agent: 'Review', agentId: null, command: null, model: '', status: 'review', startedAt: at, finishedAt: at,
+    exitCode: 0, files: [rel], excluded: [], applied: null, selection: 0, from: 'review',
+  });
+  return { id };
+}
+
 // The note as you would have it, kept as you type.
 function saveProof(id, { text }) {
   const meta = readMeta(id);
@@ -3303,6 +3335,7 @@ async function routeApi(method, url, body) {
   if (method === 'GET' && p === '/api/comments') return getComments(q('path'));
   if (method === 'PUT' && p === '/api/comments') return saveComments(body || {});
   if (method === 'POST' && p === '/api/proofs') return openProof(body || {});
+  if (method === 'POST' && p === '/api/desk/propose') return deskPropose(body || {});
   if (method === 'POST' && p === '/api/live/options') return { changed: setLiveOpts(body), ...liveOpts };
   if (method === 'POST' && p === '/api/live/start') { setLiveOpts(body); const key = liveFor(String((body || {}).path || '')); return { ...live.start(key), agent: liveAgent().label, ...liveOpts }; }
   if (method === 'POST' && p === '/api/live/warm') { setLiveOpts(body); return { ...liveUp().warm(), agent: liveAgent().label, ...liveOpts }; }

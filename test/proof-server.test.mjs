@@ -33,6 +33,16 @@ test('suggesting: the note untouched until applied; comments beside it, read by 
     return data;
   };
 
+  // A review's proposal: a red pen review of its own (not your suggestions), why beside the line it brings; the note untouched.
+  const dp = await api('POST', '/api/desk/propose', { path: 'm.md', text: `${note}- dinner at the pier #decision\n`, task: 'From the review "Trip": m.md', comments: [{ quote: '- dinner at the pier #decision', comment: 'From the review "Trip"' }, { quote: 'not in it', comment: 'x' }] });
+  const dr = await api('GET', `/api/runs/${dp.id}`);
+  assert.deepEqual([dr.kind, dr.agent, dr.from, dr.status, dr.task], [undefined, 'Review', 'review', 'review', 'From the review "Trip": m.md']);
+  assert.deepEqual(dr.comments.map((c) => [c.quote, c.suggest, c.comment]), [['- dinner at the pier #decision', '- dinner at the pier #decision', 'From the review "Trip"']]);
+  assert.equal(dr.changes.length, 1);
+  assert.equal(fs.readFileSync(path.join(ws, 'm.md'), 'utf8'), note);
+  assert.deepEqual(await api('POST', '/api/desk/propose', { path: 'm.md', text: note }), { same: true });
+  await api('POST', `/api/runs/${dp.id}/discard`, {}).catch(() => {});
+
   // One open set of suggestions per note.
   const p = await api('POST', '/api/proofs', { path: 'm.md' });
   assert.equal(p.created, true);
