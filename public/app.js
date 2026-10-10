@@ -210,9 +210,12 @@ const dirname = (p) => (p.includes('/') ? p.slice(0, p.lastIndexOf('/')) : '');
 const stem = (p) => basename(p).replace(/\.[^.]+$/, '');
 const isNote = (p) => /\.(md|markdown|mdx|txt)$/i.test(p);
 const isMermaidFile = (p) => /\.(mmd|mermaid)$/i.test(p || '');
+const isHtmlFile = (p) => /\.html?$/i.test(p || '');
+// A page of the workspace where it is shown (an origin of its own; '' before the server says).
+const pageUrl = (p) => (S.info?.pages ? `${S.info.pages}${p.split('/').map(encodeURIComponent).join('/')}` : '');
 const IMAGE_FILE = /\.(png|jpe?g|gif|webp|avif|svg|bmp)$/i;
 // Files with a rendered view next to the source (Edit / Split / Preview).
-const hasPreview = (p) => isNote(p) || isMermaidFile(p);
+const hasPreview = (p) => isNote(p) || isMermaidFile(p) || isHtmlFile(p);
 const debounce = (fn, ms) => { let t; return (...a) => { clearTimeout(t); t = setTimeout(() => fn(...a), ms); }; };
 const timeAgo = (iso) => {
   const s = (Date.now() - new Date(iso)) / 1000;
@@ -253,7 +256,7 @@ S.focus = 0;
 const attachedByGroup = [null, null]; // file tab whose editor is in each pane
 let splitRatio = Number(store.getItem('an.splitRatio')) || 0.5; // left pane's share in a split
 const isAttached = (tab) => attachedByGroup[tab.group] === tab;
-const groupMode = (tab) => (tab?.kind === 'file' && isMermaidFile(tab.path) ? tab.mmdMode || 'preview' : S.groups[tab?.group ?? S.focus]?.mode || S.mode);
+const groupMode = (tab) => (tab?.kind === 'file' && (isMermaidFile(tab.path) || isHtmlFile(tab.path)) ? tab.mmdMode || 'preview' : S.groups[tab?.group ?? S.focus]?.mode || S.mode);
 
 // ------------------------------------------------------------------ settings
 
@@ -1812,6 +1815,7 @@ function renderContent(g = S.focus) {
     h('span', { class: 'crumbs' }, tab.path.split('/').join('  ›  ')),
     hasPreview(tab.path) ? seg : null,
     isMermaidFile(tab.path) ? h('button', { class: 'icon-btn', title: 'Copy diagram as image (PNG)', onclick: () => copyPicture(mermaidFilePicture(tab)) }, '⧉') : null,
+    isHtmlFile(tab.path) ? h('button', { class: 'icon-btn', title: 'Open the page in your browser (as saved)', onclick: () => openPage(tab.path) }, '↗') : null,
     h('button', { class: 'icon-btn', title: withKey('Find in note', 'find'), onclick: () => findInNote(tab) }, '⌕'),
     h('button', { class: 'icon-btn', title: S.groups.length > 1 ? 'Move to the other pane' : withKey('Open to the side', 'split'), onclick: () => (S.groups.length > 1 ? moveTab(tab, tab.group === 0 ? 1 : 0) : splitRight()) }, '◫'),
     h('button', { class: 'icon-btn', title: withKey('Focus mode', 'focus'), onclick: toggleFocusMode }, '⛶'),
@@ -2026,6 +2030,17 @@ function renderPreview(tab) {
   const p = tab.previewEl;
   if (!p || !p.isConnected || !hasPreview(tab.path) || groupMode(tab) === 'edit') return;
   if (groupMode(tab) === 'canvas' && isNote(tab.path)) { renderCanvas(tab); return; }
+  if (isHtmlFile(tab.path)) {
+    // The page as saved, from its own origin (its scripts kept from the app); again when it is saved.
+    const url = pageUrl(tab.path);
+    p.classList.add('page');
+    if (!url) { p.replaceChildren(h('div', { class: 'empty' }, 'The page can\u2019t be shown here.')); return; }
+    const src = `${url}?v=${encodeURIComponent(tab.hash || '')}`;
+    let frame = p.querySelector('iframe.page-frame');
+    if (!frame) { frame = h('iframe', { class: 'page-frame', title: basename(tab.path), sandbox: 'allow-scripts allow-popups allow-popups-to-escape-sandbox allow-modals allow-downloads', referrerpolicy: 'no-referrer' }); p.replaceChildren(frame); }
+    if (frame.dataset.src !== src) { frame.dataset.src = src; frame.src = src; }
+    return;
+  }
   if (isMermaidFile(tab.path)) {
     // The whole file is one diagram.
     const pre = h('pre', { 'data-lang': 'mermaid', class: 'mmd-file' });
@@ -3202,7 +3217,7 @@ function onEdit(tab) {
 function setMode(m) {
   // A .mmd file has its own view (it opens as the diagram), notes share the pane's.
   const t = activeIn(S.focus);
-  if (t?.kind === 'file' && isMermaidFile(t.path)) { t.mmdMode = m; renderContent(S.focus); return; }
+  if (t?.kind === 'file' && (isMermaidFile(t.path) || isHtmlFile(t.path))) { t.mmdMode = m; renderContent(S.focus); return; }
   S.mode = m;
   S.groups[S.focus].mode = m;
   persist();
@@ -9485,6 +9500,12 @@ async function reviewFolder(dir, again = false) {
     await openFile(r.path);
     if (r.existed) toast('Today\u2019s review of it, as you left it.', '', { label: 'Prepare again', run: () => reviewFolder(dir, true) });
   } catch (e) { toast(e.message, 'error'); }
+}
+// A page of the workspace in the browser (from its own origin, as in the app).
+function openPage(p) {
+  const url = pageUrl(p);
+  if (!url) { toast('The page can\u2019t be shown.', 'error'); return; }
+  window.open(url, '_blank', 'noopener');
 }
 async function reviewDesk(t, again = false) {
   if (!(await reviewConsent())) return;

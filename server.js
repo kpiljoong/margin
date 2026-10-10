@@ -3227,6 +3227,8 @@ async function routeApi(method, url, body) {
         models: AGENT_KINDS[a.kind]?.models.map(([id, label]) => ({ id, label })) || [],
       })),
       hasIgnoreFile: fs.existsSync(path.join(ROOT, '.agentnotesignore')),
+      // Where its HTML pages are shown (a page's path after it).
+      pages: pageUrl(''),
     };
   }
   if (method === 'GET' && p === '/api/tree') return { files: listTree(), dirs: emptyDirs() };
@@ -3661,6 +3663,52 @@ const server = http.createServer(async (req, res) => {
     send(res, e.status || 500, { error: e.status ? e.message : `Internal error: ${e.message}`, ...(e.data || {}) });
   }
 });
+
+// HTML pages of the workspace, shown as pages (in the app, or a browser) from
+// an origin of their own: another port, read only, under a key made at each
+// start — never the app's origin, so a page's scripts can't reach its API.
+// Each response sandboxed (scripts run, in an origin of none), sending
+// nothing back (no fetch, no form); a page, its pictures, styles, scripts and
+// fonts beside it; not a note, a hidden or ignored file.
+const PAGE_KEY = crypto.randomBytes(18).toString('hex');
+const PAGE_MIME = {
+  '.html': 'text/html; charset=utf-8', '.htm': 'text/html; charset=utf-8', '.css': 'text/css; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.mjs': 'text/javascript; charset=utf-8',
+  '.json': 'application/json', '.svg': 'image/svg+xml', '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.gif': 'image/gif', '.webp': 'image/webp', '.avif': 'image/avif', '.ico': 'image/x-icon',
+  '.woff': 'font/woff', '.woff2': 'font/woff2', '.ttf': 'font/ttf', '.otf': 'font/otf', '.mp4': 'video/mp4', '.webm': 'video/webm', '.mp3': 'audio/mpeg', '.wav': 'audio/wav', '.ogg': 'audio/ogg',
+};
+let pagePort = 0;
+const pageServer = http.createServer((req, res) => {
+  const no = (code) => { res.writeHead(code, { 'Content-Type': 'text/plain' }); res.end(String(code)); };
+  if (req.method !== 'GET' && req.method !== 'HEAD') return no(405);
+  if (req.headers.host !== `127.0.0.1:${pagePort}`) return no(403);
+  const u = new URL(req.url, `http://${req.headers.host}`);
+  const head = `/k/${PAGE_KEY}/`;
+  if (!u.pathname.startsWith(head)) return no(404);
+  let rel;
+  try { rel = decodeURIComponent(u.pathname.slice(head.length)); } catch { return no(400); }
+  const type = PAGE_MIME[extOf(rel)];
+  if (!type || rel.split('/').some((x) => !x || x.startsWith('.'))) return no(404);
+  let abs;
+  try { abs = workspacePath(rel); } catch { return no(403); }
+  if (loadIgnore(ROOT)(relOf(abs))) return no(404);
+  let st;
+  try { st = fs.statSync(abs); } catch { return no(404); }
+  if (!st.isFile() || st.size > 50 * 1024 * 1024) return no(404);
+  const self = `http://127.0.0.1:${pagePort}`;
+  res.writeHead(200, {
+    'Content-Type': type, 'Content-Length': st.size, 'X-Content-Type-Options': 'nosniff', 'Referrer-Policy': 'no-referrer', 'Cache-Control': 'no-store',
+    'Content-Security-Policy': `sandbox allow-scripts allow-popups allow-popups-to-escape-sandbox allow-modals allow-downloads; default-src ${self} https: data: blob: 'unsafe-inline' 'unsafe-eval'; connect-src 'none'; form-action 'none'; base-uri ${self}; frame-ancestors ${[...allowedHosts].map((x) => `http://${x}`).join(' ') || "'none'"}`,
+  });
+  if (req.method === 'HEAD') return res.end();
+  fs.createReadStream(abs).pipe(res);
+});
+pageServer.on('error', (e) => console.error(`Pages: ${e.message}`));
+pageServer.listen(0, '127.0.0.1', () => {
+  pagePort = pageServer.address().port;
+  // The app may frame them (and nothing else).
+  SECURITY_HEADERS['Content-Security-Policy'] = SECURITY_HEADERS['Content-Security-Policy'].replace(/; frame-src [^;]*|$/, `; frame-src http://127.0.0.1:${pagePort}`);
+});
+const pageUrl = (rel) => (pagePort ? `http://127.0.0.1:${pagePort}/k/${PAGE_KEY}/${rel.split('/').map(encodeURIComponent).join('/')}` : '');
 
 // Try the next port when one is taken. Each attempt's handlers are removed
 // when it fails, so only the port actually bound is announced.
