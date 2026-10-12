@@ -726,6 +726,7 @@ function buildMenu() {
       label: 'File',
       submenu: [
         { label: 'New Note…', accelerator: keysFor('new-note'), click: sendCommand('new-note') },
+        { label: 'New Folder…', accelerator: keysFor('new-folder'), click: sendCommand('new-folder') },
         { label: 'Quick Open…', accelerator: keysFor('quick-open'), click: sendCommand('quick-open') },
         { label: 'Quick Capture…', click: sendCommand('quick-capture') },
         {

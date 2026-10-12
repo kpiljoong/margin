@@ -122,7 +122,7 @@ async function api(method, url, body) {
 }
 
 // In-app replacement for window.prompt() (not available in Electron).
-function askText({ title, label = '', value = '', placeholder = '', multiline = false, okLabel = 'OK' }) {
+function askText({ title, label = '', value = '', placeholder = '', multiline = false, okLabel = 'OK', below = null }) {
   return new Promise((resolve) => {
     const overlay = $('#overlay');
     const input = multiline
@@ -135,7 +135,7 @@ function askText({ title, label = '', value = '', placeholder = '', multiline = 
     });
     overlay.onclick = (e) => { if (e.target === overlay) done(null); };
     overlay.replaceChildren(h('div', { class: 'dialog' },
-      h('div', { class: 'dialog-body' }, h('h2', {}, title), label ? h('p', { class: 'sub' }, label) : null, input),
+      h('div', { class: 'dialog-body' }, h('h2', {}, title), label ? h('p', { class: 'sub' }, label) : null, input, below ? below(input) : null),
       h('div', { class: 'dialog-foot' },
         h('div', { class: 'grow' }, multiline ? `${MOD}Enter to submit` : ''),
         h('button', { class: 'btn', onclick: () => done(null) }, 'Cancel'),
@@ -968,9 +968,24 @@ async function syncTabs(tabs) {
 
 const syncOpenTabs = () => syncTabs(S.tabs.filter(isDoc));
 
+// Under a path asked for: the folder it goes in, and a button to the top.
+function whereLine(input) {
+  const text = h('span', {});
+  const top = h('button', { class: 'btn small', type: 'button', title: 'Put it at the top of the vault, in no folder',
+    onclick: () => { input.value = input.value.slice(input.value.lastIndexOf('/') + 1); show(); input.focus(); input.setSelectionRange(input.value.length, input.value.length); } }, 'Top of the vault');
+  const show = () => {
+    const dir = input.value.includes('/') ? input.value.slice(0, input.value.lastIndexOf('/')).replace(/^\/+/, '') : '';
+    text.textContent = dir ? `In ${dir}/` : `At the top of ${S.info?.name || 'the vault'}`;
+    top.hidden = !dir;
+  };
+  input.addEventListener('input', show);
+  show();
+  return h('p', { class: 'sub where-line' }, text, top);
+}
+
 async function newNote(folder, template) {
   const base = folder ?? (fileTab() && !isTemplate(fileTab().path) ? dirname(fileTab().path) : '');
-  const name = await askText({ title: template ? `New note from “${stem(template)}”` : 'New note', label: 'Path relative to the workspace. “.md” is added if missing.', value: base ? `${base}/` : '', placeholder: 'folder/My note', okLabel: 'Create' });
+  const name = await askText({ title: template ? `New note from “${stem(template)}”` : 'New note', label: 'Path relative to the workspace. “.md” is added if missing.', value: base ? `${base}/` : '', placeholder: 'folder/My note', okLabel: 'Create', below: whereLine });
   if (!name || name.endsWith('/')) return;
   try {
     const filled = template ? await templateText(template, basename(name).replace(/\.md$/i, '')) : null;
@@ -1233,6 +1248,18 @@ function treeRows(node, depth, rows) {
   return rows;
 }
 
+// The top of the vault, a folder like the others: its menu, and + note, + folder.
+// Not a .tree-row, so F2 and Delete in the tree never reach it.
+function rootRow() {
+  const add = (label, title, run) => h('button', { class: 'icon-btn', title, onclick: (e) => { e.stopPropagation(); run(); } }, label);
+  return h('div', { class: 'tree-root', title: `${S.info?.root || ''}\nRight-click: new note, folder, meeting\u2026 at the top`,
+    oncontextmenu: (e) => folderMenu(e, '') },
+  h('span', { class: 'chev' }, '\u2302'), h('span', { class: 'name' }, S.info?.name || 'Workspace'),
+  h('span', { class: 'root-add' },
+    add('+ Note', 'New note at the top of the vault', () => newNote('')),
+    add('+ Folder', 'New folder at the top of the vault', () => newFolder(''))));
+}
+
 // The open file's row in the tree: its folders opened, scrolled to, flashed.
 function locateFile() {
   const path = (fileTab() || drawingTab())?.path;
@@ -1326,18 +1353,19 @@ function filesPanel() {
   const tab = fileTab();
   const out = [
     h('div', { class: 'panel-head' },
-      h('span', { class: 'title', title: S.info?.root }, S.info?.name || 'Workspace'),
+      h('span', { class: 'title' }, 'Files'),
       h('button', { class: `icon-btn follow-tab${S.settings.followTab ? ' on' : ''}`, title: `Follow the active tab: ${S.settings.followTab ? 'on' : 'off'}`, 'aria-pressed': String(!!S.settings.followTab), onclick: toggleFollowTab }, '⇅'),
       h('button', { class: 'icon-btn', title: 'Show the open file in the tree', onclick: locateFile }, '◎'),
       h('button', { class: 'icon-btn', title: 'Today’s journal note', onclick: openDaily }, '◷'),
-      h('button', { class: 'icon-btn new-note', title: 'New note', onclick: newNoteMenu }, '+'),
+      h('button', { class: 'icon-btn new-note', title: 'New note (in the open note\u2019s folder)', onclick: newNoteMenu }, '+'),
       h('button', { class: 'icon-btn new-desk', title: 'New desk… (cards to think with, a .canvas)', onclick: () => newDesk() }, '▦'),
-      h('button', { class: 'icon-btn', title: 'New folder', onclick: () => newFolder() }, '⊞'),
+      h('button', { class: 'icon-btn new-folder', title: 'New folder (at the top of the vault)', onclick: () => newFolder() }, '⊞'),
       h('button', { class: 'icon-btn', title: 'Refresh', onclick: () => loadTree().then(syncOpenTabs) }, '↻')),
   ];
-  const body = h('div', { class: 'panel-body' });
+  // Right-click where there is no row: the menu of the top folder.
+  const body = h('div', { class: 'panel-body', oncontextmenu: (e) => { if (e.target === body || e.target.classList.contains('empty')) folderMenu(e, ''); } });
   const rows = treeRows(buildTree(S.files), 0, []);
-  body.append(...bookmarkRows());
+  body.append(...bookmarkRows(), rootRow());
   body.append(...(rows.length ? rows : [h('div', { class: 'empty' }, 'No files yet. Create a note with +.')]));
   if (S.tags.length) {
     body.append(h('div', { class: 'section-label' }, `Tags (${S.tags.length})`),
@@ -3594,7 +3622,7 @@ const COMMANDS = [
   ['Print / save note as PDF…', () => printNote()],
   ['Rename / move current note…', () => fileTab() && renameItem(fileTab().path), { key: 'rename' }],
   ['Delete current note', () => fileTab() && deleteItem(fileTab().path)],
-  ['New folder…', () => newFolder()],
+  ['New folder…', () => newFolder(), { key: 'new-folder' }],
   ['Copy note for GitHub (flows as Mermaid)', () => copyWithMermaid()],
   ['Copy [[link]] to current note', () => fileTab() && navigator.clipboard.writeText(`[[${stem(fileTab().path)}]]`).then(() => toast('Link copied'))],
   ['Split: open to the side', splitRight, { key: 'split' }],
@@ -4202,16 +4230,16 @@ function folderMenu(e, dir) {
     { label: 'New drawing here…', run: () => newDrawing(dir) },
     { label: 'New desk here…', run: () => newDesk(dir) },
     // (Always there: with Labs off, pressing it offers to turn them on.)
-    { label: 'Talk through its notes (review)…', run: lab('Review', () => reviewFolder(dir)) },
+    dir ? { label: 'Talk through its notes (review)…', run: lab('Review', () => reviewFolder(dir)) } : null,
     { label: 'Start a meeting here…', run: () => startRoom('meeting', dir) },
     { label: 'Start a lecture here…', run: () => startRoom('lecture', dir) },
     { label: 'Take notes here (meeting room)…', run: () => startRoom('note-taking', dir) },
     { label: 'New Mermaid diagram here…', run: () => newMermaidFile(dir) },
     revealItem(dir),
     { label: 'Dired: edit as text…', run: () => openDired(dir) },
-    '-',
-    { label: 'Rename / move…', run: () => renameItem(dir, true) },
-    { label: 'Delete folder', danger: true, run: () => deleteItem(dir, true) },
+    dir ? '-' : null,
+    dir ? { label: 'Rename / move…', run: () => renameItem(dir, true) } : null,
+    dir ? { label: 'Delete folder', danger: true, run: () => deleteItem(dir, true) } : null,
   ]);
 }
 
@@ -4285,7 +4313,7 @@ async function trashPath(p) {
 }
 
 async function newFolder(base = '') {
-  const name = await askText({ title: 'New folder', value: base ? `${base}/` : '', okLabel: 'Create' });
+  const name = await askText({ title: 'New folder', value: base ? `${base}/` : '', placeholder: 'folder', okLabel: 'Create', below: whereLine });
   if (!name || name.endsWith('/')) return;
   try {
     const r = await api('POST', '/api/folder', { path: name });
@@ -10248,6 +10276,7 @@ const ACTIONS = {
   'ui-smaller': () => uiScaleBy(-1),
   'ui-reset': () => setSetting('uiScale', 100),
   'new-note': () => newNote(),
+  'new-folder': () => newFolder(),
   'quick-open': () => openPalette(),
   palette: () => openPalette('>'),
   search: () => { S.view = 'search'; $('#app').classList.remove('no-sidebar'); renderSidebar(); $('#search-input')?.focus(); $('#search-input')?.select(); },

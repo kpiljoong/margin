@@ -625,6 +625,7 @@ Each `##` with a ```` ```macro ```` block is a command, "Macro: Make it a task" 
   - **Rename/move**: Works for folders too; `[[link]]`s and relative links pointing to the note are fixed automatically across the whole workspace.
   - **Delete**: Moves to the trash; can be restored with Undo in the notification.
   - Also: new folder, copy `[[link]]`.
+  - **The top of the vault**: The first row of the tree, under the bookmarks, is the vault itself (⌂ and its name). Right-click it — or anywhere in the tree with no row — for the top folder's menu (new note, folder, drawing, desk, meeting… here); hovering it shows **+ Note** and **+ Folder**. **File › New Folder…** (⌘⇧N, palette **New folder…**) makes a folder at the top too. **+** in the header starts the note in the open note's folder; the dialog says where it goes, and **Top of the vault** moves it there.
   - **Reveal in Finder** (desktop app): Shows the file or folder selected in Finder. "Show in File Explorer" on Windows, "Open Containing Folder" on Linux. Also available for the current note from the command palette.
 - **Live updates**: File watching (SSE) reflects changes made by other editors, git, or agents immediately. Clean tabs are reloaded; tabs with edits are marked as conflicts.
 - **Export**: A standalone HTML file with styles and images (no tokens or internal paths), and print/save as PDF.

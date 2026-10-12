@@ -59,6 +59,14 @@ kbd { font: 11px var(--mono); padding: 1px 5px; border: 1px solid var(--border);
 .tree-row .chev { width: 12px; color: var(--fg-faint); font-size: 10px; text-align: center; }
 .tree-row .name { overflow: hidden; text-overflow: ellipsis; }
 .tree-row.dim .name { color: var(--fg-faint); }
+.tree-root { display: flex; align-items: center; gap: 4px; height: 24px; padding: 0 4px 0 8px; white-space: nowrap; color: var(--fg-dim); font-weight: 600; user-select: none; }
+.tree-root:hover { background: var(--bg-hover); }
+.tree-root .chev { width: 12px; color: var(--fg-faint); font-size: 11px; text-align: center; }
+.tree-root .name { overflow: hidden; text-overflow: ellipsis; }
+.tree-root .root-add { margin-left: auto; display: flex; visibility: hidden; }
+.tree-root:hover .root-add, .tree-root:focus-within .root-add { visibility: visible; }
+.tree-root .root-add .icon-btn { font-size: 11px; font-weight: 400; }
+.where-line { display: flex; align-items: center; gap: 8px; margin-top: 8px; }
 .tree-row .tag { margin-left: auto; font-size: 10px; color: var(--fg-faint); }
 
 .input { width: 100%; padding: 6px 8px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--bg); outline: none; }

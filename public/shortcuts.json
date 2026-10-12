@@ -4,6 +4,7 @@
   { "id": "palette", "label": "Command palette", "group": "General", "keys": "CmdOrCtrl+Shift+P", "scope": "app" },
   { "id": "search", "label": "Search the workspace", "group": "General", "keys": "CmdOrCtrl+Shift+F", "scope": "app" },
   { "id": "new-note", "label": "New note", "group": "General", "keys": "CmdOrCtrl+N", "scope": "app" },
+  { "id": "new-folder", "label": "New folder (at the top of the vault)", "group": "General", "keys": "CmdOrCtrl+Shift+N", "scope": "menu" },
   { "id": "save", "label": "Save", "group": "General", "keys": "CmdOrCtrl+S", "scope": "app" },
   { "id": "close-tab", "label": "Close tab", "group": "General", "keys": "CmdOrCtrl+W", "scope": "app" },
   { "id": "settings", "label": "Settings", "group": "General", "keys": "CmdOrCtrl+,", "scope": "app" },
