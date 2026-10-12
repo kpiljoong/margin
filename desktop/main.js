@@ -98,13 +98,16 @@ function registerQuickCapture({ paused = false } = {}) {
   if (!config.quickCapture || !key || paused) return true;
   let ok = false;
   try {
-    ok = globalShortcut.register(key, () => {
-      if (!win) { createWindow(); showServer(); }
-      if (win.isMinimized()) win.restore();
-      win.show();
-      win.focus();
+    ok = globalShortcut.register(key, async () => {
+      // The window last in front (or the last folder, opened again).
+      let v = lastView();
+      if (!v) { if (!config.workspace || !(await openWorkspace(config.workspace, { newWindow: true }))) return; v = lastView(); }
+      if (!v) return;
+      if (v.win.isMinimized()) v.win.restore();
+      v.win.show();
+      v.win.focus();
       app.focus({ steal: true });
-      setTimeout(() => sendCommand('quick-capture')(), win.webContents.isLoading() ? 800 : 0);
+      setTimeout(() => sendTo(v, 'quick-capture'), v.win.webContents.isLoading() ? 800 : 0);
     });
   } catch { /* not keys the system takes */ }
   if (ok) quickCaptureKey = key;
@@ -148,15 +151,36 @@ function adoptLoginShellPath() {
 
 // ---------------------------------------------------------------- server
 
-let server = null;
-let serverInfo = null; // { url, origin, root }
+// Each window shows one folder of notes, with a server of its own:
+// { win, server (its process), info: { url, origin, root }, root }.
+// Two windows never show the same folder; closing one stops its server only.
+const views = new Set();
+let focusedView = null;
 let quitting = false;
+// Quitting asked for (the windows closing one by one keep their folders for next time); a window with unsaved notes may still call it off.
+let closingAll = false;
 
-function stopServer() {
-  const child = server;
-  server = null;
-  serverInfo = null;
+function stopServer(view) {
+  const child = view.server;
+  view.server = null;
+  view.info = null;
   if (child && child.exitCode === null) child.kill('SIGTERM');
+}
+const viewOf = (w) => (w ? [...views].find((v) => v.win === w || v.win?.webContents === w) || null : null);
+// The window an IPC message came from — none of ours: nothing.
+const viewFrom = (e) => [...views].find((v) => v.win && !v.win.isDestroyed() && e.sender === v.win.webContents) || null;
+const viewByRoot = (root) => [...views].find((v) => v.root && realpath(v.root) === realpath(root)) || null;
+const lastView = () => {
+  const f = viewOf(BrowserWindow.getFocusedWindow());
+  if (f) return f;
+  return focusedView && views.has(focusedView) && focusedView.win && !focusedView.win.isDestroyed() ? focusedView : [...views].reverse().find((v) => v.win && !v.win.isDestroyed()) || null;
+};
+const anyInfo = () => [...views].some((v) => v.info);
+// The folders open in windows, for the next start.
+function rememberOpen() {
+  if (quitting || closingAll) return;
+  config.open = [...views].map((v) => v.root).filter(Boolean);
+  saveConfig();
 }
 
 // The margin's model, fetched for the server through the system's network
@@ -194,13 +218,14 @@ async function fetchModelFile(child, m) {
   }
 }
 
-function startServer(workspace) {
-  stopServer();
+function startServer(view, workspace) {
+  stopServer(view);
   // Only external CLI agents need the user's full PATH. Running the login
   // shell lazily avoids touching shell startup files (and any folder-access
   // prompts they trigger) for people who never enable an agent.
   if (agentCommands().some((c) => c && c !== 'demo')) adoptLoginShellPath();
   return new Promise((resolve, reject) => {
+    // 4321 for the first (the page's own storage is per port), the next one free for each other.
     const args = [workspace, '--no-open', '--port', '4321'];
     if (config.agentDefault) args.push('--default-agent', config.agentDefault);
     const child = fork(path.join(APP_ROOT, 'server.js'), args, {
@@ -215,27 +240,28 @@ function startServer(workspace) {
     child.on('message', (m) => {
       if (m && m.type === 'model-file') { fetchModelFile(child, m); return; }
       if (m && m.type === 'ready') {
-        serverInfo = { url: m.url, origin: new URL(m.url).origin, root: m.root };
-        resolve(serverInfo);
+        if (view.server === child) view.info = { url: m.url, origin: new URL(m.url).origin, root: m.root };
+        resolve(view.info);
       }
     });
     child.on('exit', (code) => {
-      const unexpected = server === child && !quitting;
-      if (server === child) { server = null; serverInfo = null; }
-      if (unexpected) dialog.showErrorBox('Margin', `The local note server stopped (exit ${code}).\n\n${stderr.slice(-800)}`);
+      const unexpected = view.server === child && !quitting && !view.closing;
+      if (view.server === child) { view.server = null; view.info = null; }
+      if (unexpected) dialog.showErrorBox('Margin', `The local note server for ${path.basename(workspace)} stopped (exit ${code}).\n\n${stderr.slice(-800)}`);
       reject(new Error(stderr.trim() || `server exited with ${code}`));
     });
-    server = child;
+    view.server = child;
   });
 }
 
 // ---------------------------------------------------------------- windows
 
-let win = null;
-
-function createWindow() {
-  const b = config.bounds || { width: 1280, height: 820 };
-  win = new BrowserWindow({
+function createWindow(root = null) {
+  const saved = root && config.boundsByRoot?.[root];
+  let b = saved || config.bounds || { width: 1280, height: 820 };
+  // A window more over one already there, not on top of it.
+  if (!saved && [...views].some((v) => v.win && !v.win.isDestroyed() && v.win.getBounds().x === b.x && v.win.getBounds().y === b.y)) b = { ...b, x: (b.x ?? 80) + 28, y: (b.y ?? 60) + 28 };
+  const win = new BrowserWindow({
     ...b,
     minWidth: 720,
     minHeight: 480,
@@ -253,15 +279,17 @@ function createWindow() {
       spellcheck: false,
     },
   });
+  const view = { win, server: null, info: null, root };
+  views.add(view);
   win.once('ready-to-show', () => win.show());
 
-  // Only our local server may be displayed; everything else goes to the OS browser.
+  // Only its own local server may be displayed; everything else goes to the OS browser.
   const openExternally = (url) => {
     if (/^(https?|mailto):/i.test(url)) shell.openExternal(url);
   };
   win.webContents.setWindowOpenHandler(({ url }) => { openExternally(url); return { action: 'deny' }; });
   win.webContents.on('will-navigate', (e, url) => {
-    if (!serverInfo || !url.startsWith(serverInfo.origin)) { e.preventDefault(); openExternally(url); }
+    if (!view.info || !url.startsWith(view.info.origin)) { e.preventDefault(); openExternally(url); }
   });
 
   // The web UI blocks unload when tabs have unsaved edits; ask natively.
@@ -275,14 +303,28 @@ function createWindow() {
       detail: 'If you continue, unsaved edits in open notes will be lost.',
     });
     if (choice === 0) e.preventDefault();
-    else restartPending = false; // the user kept the window, so no restart
+    else { restartPending = false; closingAll = false; } // the user kept the window, so no restart (nor quit)
   });
 
-  const remember = () => { if (!win.isMinimized() && !win.isFullScreen()) { config.bounds = win.getBounds(); saveConfig(); } };
+  const remember = () => {
+    if (win.isDestroyed() || win.isMinimized() || win.isFullScreen()) return;
+    config.bounds = win.getBounds();
+    if (view.root) config.boundsByRoot = { ...(config.boundsByRoot || {}), [view.root]: config.bounds };
+    saveConfig();
+  };
   win.on('resize', debounce(remember, 500));
   win.on('move', debounce(remember, 500));
-  win.on('closed', () => { win = null; });
-  return win;
+  win.on('focus', () => { focusedView = view; buildMenu(); });
+  // Closed: its server stops (and the folder is not reopened next time, unless the app is quitting).
+  win.on('closed', () => {
+    view.closing = true;
+    stopServer(view);
+    views.delete(view);
+    if (focusedView === view) focusedView = null;
+    rememberOpen();
+    if (!quitting) buildMenu();
+  });
+  return view;
 }
 
 function debounce(fn, ms) {
@@ -290,32 +332,48 @@ function debounce(fn, ms) {
   return (...a) => { clearTimeout(t); t = setTimeout(() => fn(...a), ms); };
 }
 
-async function showServer() {
-  if (!win) createWindow();
-  if (serverInfo) {
-    await win.loadURL(serverInfo.url);
-    win.setTitle(`${path.basename(serverInfo.root)} — Margin`);
+async function showServer(view) {
+  if (view.info) {
+    await view.win.loadURL(view.info.url);
+    view.win.setTitle(`${path.basename(view.info.root)} — Margin`);
   }
 }
 
-async function openWorkspace(dir) {
+// A folder in a window: the one showing it already (brought forward); else
+// in place of the folder of the window asked for (view), or in a new window.
+async function openWorkspace(dir, { view = null, newWindow = false } = {}) {
   if (!dir || !fs.existsSync(dir) || !fs.statSync(dir).isDirectory()) {
     dialog.showErrorBox('Margin', `Folder not found:\n${dir}`);
     return false;
   }
+  dir = path.resolve(dir);
+  const there = viewByRoot(dir);
+  if (there && there.info) {
+    if (there.win.isMinimized()) there.win.restore();
+    there.win.show();
+    there.win.focus();
+    return there;
+  }
+  // A window with no folder yet (the first one) is used first.
+  let v = there || (newWindow ? [...views].find((x) => !x.root && !x.info) : view || lastView());
+  if (!v) v = createWindow(dir);
+  const was = v.root;
+  v.root = dir;
   try {
-    await startServer(dir);
+    await startServer(v, dir);
   } catch (e) {
+    v.root = was;
     dialog.showErrorBox('Margin', `Could not open ${dir}\n\n${e.message}`);
+    if (!v.info && !was && views.size > 1) v.win.destroy();
     return false;
   }
   config.workspace = dir;
   config.recent = [dir, ...config.recent.filter((r) => r !== dir)].slice(0, 8);
-  saveConfig();
+  rememberOpen();
   app.addRecentDocument(dir);
   buildMenu();
-  await showServer();
-  return true;
+  await showServer(v);
+  return v;
 }
 
 // A note opens inside a workspace: the one already open or a recent one that
@@ -325,24 +383,22 @@ const realpath = (p) => { try { return fs.realpathSync(p); } catch { return path
 const within = (dir, file) => { const r = path.relative(dir, file); return !!r && !r.startsWith('..') && !path.isAbsolute(r); };
 
 function workspaceFor(file) {
-  if (serverInfo && within(serverInfo.root, file)) return serverInfo.root;
+  const open = [...views].map((v) => v.root).filter((r) => r && within(realpath(r), file)).sort((a, b) => b.length - a.length)[0];
+  if (open) return open;
   const known = config.recent.map(realpath).filter((r) => within(r, file)).sort((a, b) => b.length - a.length)[0];
   return known || path.dirname(file);
 }
 
+// A note opens in the window of its folder (a new window when none shows it).
 async function openNote(file) {
   file = realpath(file);
   const root = workspaceFor(file);
-  if (!(serverInfo && serverInfo.root === root)) {
-    if (!(await openWorkspace(root))) return false;
-  } else if (!win) {
-    createWindow();
-    await showServer();
-  }
+  const v = viewByRoot(root) || (await openWorkspace(root, { newWindow: true }));
+  if (!v) return false;
   app.addRecentDocument(file);
-  win.webContents.send('desktop:open-note', path.relative(serverInfo.root, file).split(path.sep).join('/'));
-  if (win.isMinimized()) win.restore();
-  win.focus();
+  v.win.webContents.send('desktop:open-note', path.relative(v.info.root, file).split(path.sep).join('/'));
+  if (v.win.isMinimized()) v.win.restore();
+  v.win.focus();
   return true;
 }
 
@@ -359,7 +415,8 @@ function openPath(p) {
 async function openPathNow(p) {
   let st;
   try { st = fs.statSync(p); } catch { dialog.showErrorBox('Margin', `Not found:\n${p}`); return false; }
-  if (st.isDirectory()) return openWorkspace(path.resolve(p));
+  // From outside (Finder, the Dock, another launch): a folder in a window of its own.
+  if (st.isDirectory()) return !!(await openWorkspace(path.resolve(p), { newWindow: true }));
   if (st.isFile() && NOTE_FILE.test(p)) return openNote(p);
   dialog.showErrorBox('Margin', `Margin opens folders and Markdown or text notes (.md, .markdown, .mdx, .txt).\n\n${p}`);
   return false;
@@ -371,23 +428,24 @@ async function openPaths(paths) {
 }
 
 async function chooseFile() {
-  const r = await dialog.showOpenDialog(win || undefined, {
+  const r = await dialog.showOpenDialog(lastView()?.win || undefined, {
     title: 'Open a note',
     buttonLabel: 'Open',
     properties: ['openFile', 'multiSelections'],
     filters: [{ name: 'Markdown', extensions: ['md', 'markdown', 'mdx', 'txt'] }],
   });
-  if (!r.canceled && r.filePaths.length) { await openPaths(r.filePaths); return !!serverInfo; }
+  if (!r.canceled && r.filePaths.length) { await openPaths(r.filePaths); return anyInfo(); }
   return false;
 }
 
-async function chooseFolder() {
-  const r = await dialog.showOpenDialog(win || undefined, {
-    title: 'Open a folder of notes',
+// In place of the window's folder (view), or in a new window.
+async function chooseFolder({ view = null, newWindow = false } = {}) {
+  const r = await dialog.showOpenDialog((view || lastView())?.win || undefined, {
+    title: newWindow ? 'Open a folder of notes in a new window' : 'Open a folder of notes',
     buttonLabel: 'Open Folder',
     properties: ['openDirectory', 'createDirectory'],
   });
-  if (!r.canceled && r.filePaths[0]) return openWorkspace(r.filePaths[0]);
+  if (!r.canceled && r.filePaths[0]) return !!(await openWorkspace(r.filePaths[0], { view, newWindow }));
   return false;
 }
 
@@ -399,12 +457,12 @@ async function openSample() {
     config.agents = [...agentProfiles(), { name: AGENT_PRESETS[0].name, command: 'demo' }];
     if (!config.agentDefault) config.agentDefault = AGENT_PRESETS[0].name;
   }
-  return openWorkspace(dst);
+  return !!(await openWorkspace(dst));
 }
 
 async function firstRun() {
   appStarted();
-  const { response } = await dialog.showMessageBox(win, {
+  const { response } = await dialog.showMessageBox(lastView()?.win, {
     type: 'none',
     buttons: ['Open Folder…', 'Open File…', 'Try Sample Notes', 'Quit'],
     defaultId: 0,
@@ -416,7 +474,7 @@ async function firstRun() {
   if (response === 1 && (await chooseFile())) return;
   if (response === 2 && (await openSample())) return;
   if (response === 3) { app.quit(); return; }
-  if (!serverInfo) firstRun();
+  if (!anyInfo()) firstRun();
 }
 
 // ---------------------------------------------------------------- updates
@@ -436,7 +494,7 @@ function appStarted() {
   const rb = boot?.rolledBack();
   if (rb) {
     boot.clearRollbackNotice();
-    dialog.showMessageBox(win || undefined, {
+    dialog.showMessageBox(lastView()?.win || undefined, {
       type: 'warning',
       message: `The update to Margin ${rb.version} was set aside`,
       detail: `It could not be used because ${rb.reason}. Margin is running ${boot.activeVersion}.`,
@@ -515,8 +573,8 @@ let agentWin = null;
 function openAgentSettings() {
   if (agentWin) { agentWin.focus(); return; }
   agentWin = new BrowserWindow({
-    parent: win || undefined,
-    modal: !!win,
+    parent: lastView()?.win || undefined,
+    modal: !!lastView(),
     width: 560,
     height: 560,
     resizable: false,
@@ -539,40 +597,40 @@ async function setAgents(agents, defaultName) {
   config.agentDefault = agents.some((a) => a.name === defaultName) ? defaultName : (agents[0]?.name || '');
   saveConfig();
   buildMenu();
-  if (config.workspace && serverInfo) {
-    // Restart the server with the new agent; running agent runs are cancelled.
-    await openWorkspace(config.workspace);
+  // Each window's server again, with the new agent; running agent runs are cancelled.
+  for (const v of [...views].filter((x) => x.root && x.info)) {
+    try { await startServer(v, v.root); await showServer(v); } catch (e) { dialog.showErrorBox('Margin', `Could not open ${v.root}\n\n${e.message}`); }
   }
 }
 
-// Only accept IPC from our own windows.
-const fromMain = (e) => win && e.sender === win.webContents;
+// Only accept IPC from our own windows — each message acts on the window it came from.
 const fromAgentWin = (e) => agentWin && e.sender === agentWin.webContents;
 
-ipcMain.on('desktop:open-folder', (e) => { if (fromMain(e)) chooseFolder(); });
-ipcMain.on('desktop:open-file', (e) => { if (fromMain(e)) chooseFile(); });
+ipcMain.on('desktop:open-folder', (e) => { const v = viewFrom(e); if (v) chooseFolder({ view: v }); });
+ipcMain.on('desktop:open-file', (e) => { if (viewFrom(e)) chooseFile(); });
 // Paths come from files the user dropped on the window (see preload.js).
 ipcMain.on('desktop:open-paths', (e, paths) => {
-  if (!fromMain(e) || !Array.isArray(paths)) return;
+  if (!viewFrom(e) || !Array.isArray(paths)) return;
   const list = paths.filter((p) => typeof p === 'string' && path.isAbsolute(p)).slice(0, 20);
   if (list.length) openPaths(list);
 });
-ipcMain.on('desktop:configure-agent', (e) => { if (fromMain(e)) openAgentSettings(); });
+ipcMain.on('desktop:configure-agent', (e) => { if (viewFrom(e)) openAgentSettings(); });
 ipcMain.on('desktop:reveal', (e, rel) => {
-  if (!fromMain(e) || !serverInfo) return;
-  if (rel === undefined) { shell.openPath(serverInfo.root); return; }
-  // Only items inside the open workspace.
-  const root = path.resolve(serverInfo.root);
+  const v = viewFrom(e);
+  if (!v?.info) return;
+  if (rel === undefined) { shell.openPath(v.info.root); return; }
+  // Only items inside its workspace.
+  const root = path.resolve(v.info.root);
   const abs = path.resolve(root, String(rel));
   if (abs !== root && !abs.startsWith(root + path.sep)) return;
   if (fs.existsSync(abs)) shell.showItemInFolder(abs);
 });
-ipcMain.on('desktop:close-window', (e) => { if (fromMain(e)) win.close(); });
-ipcMain.on('desktop:ui-ready', (e) => { if (fromMain(e)) appStarted(); });
+ipcMain.on('desktop:close-window', (e) => { viewFrom(e)?.win.close(); });
+ipcMain.on('desktop:ui-ready', (e) => { if (viewFrom(e)) appStarted(); });
 ipcMain.on('desktop:background', (e, color) => {
-  if (!fromMain(e) || !/^#[0-9a-f]{6}$/i.test(color) || color === config.background) return;
+  if (!viewFrom(e) || !/^#[0-9a-f]{6}$/i.test(color) || color === config.background) return;
   config.background = color;
-  win.setBackgroundColor(color);
+  for (const v of views) if (v.win && !v.win.isDestroyed()) v.win.setBackgroundColor(color);
   saveConfig();
 });
 
@@ -585,9 +643,9 @@ const PAGE_KEY_RE = /^an\.[^\u0000-\u001f\u007f]{1,1000}$/u;
 const PAGE_MAX = 4 * 1024 * 1024;
 let pageSaveTimer = null;
 const savePageSoon = () => { clearTimeout(pageSaveTimer); pageSaveTimer = setTimeout(saveConfig, 300); };
-ipcMain.on('desktop:page-store', (e) => { e.returnValue = fromMain(e) && config.page ? { ...config.page } : null; });
+ipcMain.on('desktop:page-store', (e) => { e.returnValue = viewFrom(e) && config.page ? { ...config.page } : null; });
 ipcMain.on('desktop:page-store-set', (e, entries) => {
-  if (!fromMain(e) || !entries || typeof entries !== 'object') return;
+  if (!viewFrom(e) || !entries || typeof entries !== 'object') return;
   const page = { ...(config.page || {}) };
   for (const [k, v] of Object.entries(entries)) {
     if (!PAGE_KEY_RE.test(k)) continue;
@@ -602,10 +660,10 @@ ipcMain.on('desktop:page-store-set', (e, entries) => {
 app.on('will-quit', () => { if (pageSaveTimer) { clearTimeout(pageSaveTimer); pageSaveTimer = null; saveConfig(); } });
 
 // Menu items that act inside the web UI.
-ipcMain.handle('desktop:get-shortcuts', (e) => (fromMain(e) ? { ...(config.shortcuts || {}) } : null));
+ipcMain.handle('desktop:get-shortcuts', (e) => (viewFrom(e) ? { ...(config.shortcuts || {}) } : null));
 // Stores the changed shortcuts and puts them in the menu and the system.
 ipcMain.handle('desktop:set-shortcuts', (e, custom) => {
-  if (!fromMain(e) || !custom || typeof custom !== 'object') return null;
+  if (!viewFrom(e) || !custom || typeof custom !== 'object') return null;
   const known = new Set(SHORTCUTS.map((s) => s.id));
   config.shortcuts = Object.fromEntries(Object.entries(custom).filter(([id, k]) => known.has(id) && validKeys(k)));
   saveConfig();
@@ -613,8 +671,10 @@ ipcMain.handle('desktop:set-shortcuts', (e, custom) => {
   return { quickCapture: registerQuickCapture() };
 });
 // While a shortcut is being recorded, the system-wide one lets its keys through.
-ipcMain.on('desktop:recording-keys', (e, on) => { if (fromMain(e)) registerQuickCapture({ paused: !!on }); });
-const sendCommand = (name) => () => { if (win && serverInfo) win.webContents.send('desktop:command', name); };
+ipcMain.on('desktop:recording-keys', (e, on) => { if (viewFrom(e)) registerQuickCapture({ paused: !!on }); });
+const sendTo = (v, name) => { if (v?.info && v.win && !v.win.isDestroyed()) v.win.webContents.send('desktop:command', name); };
+// A menu command: to the window it was chosen in (else the one last in front).
+const sendCommand = (name) => (_item, w) => sendTo(viewOf(w) || lastView(), name);
 ipcMain.handle('agent:get', (e) => {
   if (!fromAgentWin(e)) return null;
   adoptLoginShellPath();
@@ -676,25 +736,28 @@ function buildMenu() {
         },
         { type: 'separator' },
         { label: 'Open File…', accelerator: keysFor('open-file'), click: () => chooseFile() },
-        { label: 'Open Folder…', accelerator: keysFor('open-folder'), click: () => chooseFolder() },
+        { label: 'Open Folder…', accelerator: keysFor('open-folder'), click: (_i, w) => chooseFolder({ view: viewOf(w) }) },
+        { label: 'Open Folder in New Window…', accelerator: keysFor('open-folder-window'), click: () => chooseFolder({ newWindow: true }) },
         {
           label: 'Open Recent',
           submenu: config.recent.length
-            ? [...config.recent.map((r) => ({ label: r, click: () => openWorkspace(r) })),
+            ? [...config.recent.map((r) => ({ label: r, click: (_i, w) => openWorkspace(r, { view: viewOf(w) }) })),
+              { type: 'separator' },
+              { label: 'In a New Window', submenu: config.recent.map((r) => ({ label: r, click: () => openWorkspace(r, { newWindow: true }) })) },
               { type: 'separator' },
               { label: 'Clear Recent', click: () => { config.recent = []; saveConfig(); app.clearRecentDocuments(); buildMenu(); } }]
             : [{ label: 'No recent folders', enabled: false }],
         },
         { label: 'Open Sample Notes', click: () => openSample() },
         { type: 'separator' },
-        { label: isMac ? 'Reveal Folder in Finder' : 'Show Folder', enabled: !!serverInfo, click: () => serverInfo && shell.openPath(serverInfo.root) },
+        { label: isMac ? 'Reveal Folder in Finder' : 'Show Folder', enabled: anyInfo(), click: (_i, w) => { const v = viewOf(w) || lastView(); if (v?.info) shell.openPath(v.info.root); } },
         { type: 'separator' },
         { label: 'Export Note as HTML…', click: sendCommand('export-html') },
         { label: 'Print Note…', accelerator: keysFor('print'), click: sendCommand('print') },
         { type: 'separator' },
         { label: 'Save', accelerator: keysFor('save'), click: sendCommand('save') },
         { label: 'Close Tab', accelerator: keysFor('close-tab'), click: sendCommand('close-tab') },
-        { label: 'Close Window', accelerator: keysFor('close-window'), click: () => win && win.close() },
+        { label: 'Close Window', accelerator: keysFor('close-window'), click: (_i, w) => w && w.close() },
         ...(isMac ? [] : [{ type: 'separator' }, { role: 'quit' }]),
       ],
     },
@@ -703,8 +766,8 @@ function buildMenu() {
       // (public/undo.js), which the built-in Undo wouldn't reach.
       label: 'Edit',
       submenu: [
-        { label: 'Undo', accelerator: 'CmdOrCtrl+Z', click: (_i, w) => (w && w === win ? sendCommand('undo')() : w?.webContents.undo()) },
-        { label: 'Redo', accelerator: isMac ? 'Shift+CmdOrCtrl+Z' : 'Ctrl+Y', click: (_i, w) => (w && w === win ? sendCommand('redo')() : w?.webContents.redo()) },
+        { label: 'Undo', accelerator: 'CmdOrCtrl+Z', click: (_i, w) => (viewOf(w) ? sendTo(viewOf(w), 'undo') : w?.webContents.undo()) },
+        { label: 'Redo', accelerator: isMac ? 'Shift+CmdOrCtrl+Z' : 'Ctrl+Y', click: (_i, w) => (viewOf(w) ? sendTo(viewOf(w), 'redo') : w?.webContents.redo()) },
         { type: 'separator' },
         { role: 'cut' }, { role: 'copy' }, { role: 'paste' },
         ...(isMac ? [{ role: 'pasteAndMatchStyle' }, { role: 'delete' }, { role: 'selectAll' }, { type: 'separator' }, { label: 'Speech', submenu: [{ role: 'startSpeaking' }, { role: 'stopSpeaking' }] }] : [{ role: 'delete' }, { type: 'separator' }, { role: 'selectAll' }]),
@@ -760,13 +823,14 @@ if (!app.requestSingleInstanceLock()) {
   app.quit();
 } else {
   const pathArg = (argv, cwd = process.cwd()) => argv.slice(app.isPackaged ? 1 : 2)
-    .filter((a) => !a.startsWith('-')).map((a) => path.resolve(cwd, a)).find((a) => fs.existsSync(a));
+    // (Not the app's own folder: "electron ." in development.)
+    .filter((a) => !a.startsWith('-')).map((a) => path.resolve(cwd, a)).find((a) => a !== path.resolve(APP_ROOT) && fs.existsSync(a));
 
   // Windows/Linux: "Open with Margin" while the app is running.
   app.on('second-instance', (_e, argv, cwd) => {
     const p = app.isReady() && pathArg(argv, cwd);
     if (p) openPath(p);
-    else if (win) { if (win.isMinimized()) win.restore(); win.focus(); }
+    else { const v = lastView(); if (v) { if (v.win.isMinimized()) v.win.restore(); v.win.focus(); } }
   });
 
   // macOS: dropping a folder or note on the Dock icon, Finder's "Open With",
@@ -782,7 +846,7 @@ if (!app.requestSingleInstanceLock()) {
     // The UI needs no browser permissions (camera, notifications, …) except
     // writing to the clipboard (copy link, copy diagram or drawing as image),
     // and only for the app's own pages. Reading the clipboard stays denied.
-    const ownPage = (u) => !!serverInfo && typeof u === 'string' && (u === serverInfo.origin || u.startsWith(`${serverInfo.origin}/`));
+    const ownPage = (u) => typeof u === 'string' && [...views].some((v) => v.info && (u === v.info.origin || u.startsWith(`${v.info.origin}/`)));
     session.defaultSession.setPermissionRequestHandler((_wc, perm, cb, details) => cb(perm === 'clipboard-sanitized-write' && ownPage(details?.requestingUrl)));
     if (boot) {
       app.setAboutPanelOptions({
@@ -796,21 +860,28 @@ if (!app.requestSingleInstanceLock()) {
     // Packaged builds get the icon from electron-builder; show it in dev too.
     const devIcon = path.join(APP_ROOT, 'public', 'icon.png');
     if (!app.isPackaged && isMac && fs.existsSync(devIcon)) app.dock.setIcon(devIcon);
-    createWindow();
     const requested = config.pendingOpen || pathArg(process.argv);
     delete config.pendingOpen;
-    // A note opened from Finder goes into its workspace; otherwise reopen the last one.
+    // The folders open last time, each in its window again (the last one used in front).
+    const again = (Array.isArray(config.open) && config.open.length ? config.open : config.workspace ? [config.workspace] : [])
+      .filter((d, i, a) => typeof d === 'string' && a.indexOf(d) === i && fs.existsSync(d));
+    const front = config.workspace;
+    for (const d of [...again.filter((x) => x !== front), ...again.filter((x) => x === front)]) await openWorkspace(d, { newWindow: true });
+    // A note or folder opened from Finder goes into its window.
     if (requested && (await openPath(requested))) return;
-    if (!(config.workspace && (await openWorkspace(config.workspace)))) await firstRun();
+    if (!anyInfo()) { createWindow(); await firstRun(); }
   });
 
-  app.on('activate', () => { if (!win) { createWindow(); showServer(); } });
+  // The Dock icon with no window: the last folder again.
+  app.on('activate', async () => { if (!views.size && app.isReady()) { if (!(config.workspace && (await openWorkspace(config.workspace, { newWindow: true })))) { createWindow(); firstRun(); } } });
   app.on('window-all-closed', () => { if (!isMac) app.quit(); });
   // The server stops only once the quit is certain: a window with unsaved
   // notes may still cancel it, and then it must go on working.
+  // Quitting: the windows close, but the folders they show open again next time.
+  app.on('before-quit', () => { config.open = [...views].map((v) => v.root).filter(Boolean); saveConfig(); closingAll = true; });
   app.on('will-quit', () => {
     quitting = true;
-    stopServer();
+    for (const v of views) stopServer(v);
     globalShortcut.unregisterAll();
     if (restartPending) app.relaunch();
   });

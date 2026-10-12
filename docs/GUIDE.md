@@ -15,7 +15,8 @@ npm start            # run the app in development mode
 ```
 
 - The menu also has the main commands (New Note ⌘N, Close Tab ⌘W, Settings ⌘,, Focus Mode, Choose Theme, etc.). ⌘W closes the tab, not the window; to close the window press ⌘⇧W.
-- On first launch, choose **Open Folder…** (your Markdown folder), **Open File…** (a single note), or **Try Sample Notes** (sample notes + offline demo agent). The last opened folder reopens automatically on the next launch.
+- On first launch, choose **Open Folder…** (your Markdown folder), **Open File…** (a single note), or **Try Sample Notes** (sample notes + offline demo agent). The folders open when you quit reopen, each in its window, on the next launch.
+- **Several folders at once**, each in a window of its own with its own server: **File › Open Folder in New Window… (⌘⌥O)**, or **Open Recent › In a New Window**; a folder opened from Finder, the Dock or another launch opens in a new window, and one already open is brought forward. **Open Folder…** still swaps the folder of the window you are in. Closing a window stops its folder's server only.
 - Menus: **File › Open File… (⌘O) / Open Folder… (⌘⇧O) / Open Recent / Open Sample Notes / Reveal Folder in Finder**, **Agent › Choose Agent…**
 - You can drag a note (`.md`, `.markdown`, `.mdx`, `.txt`) or folder onto the window or Dock icon, or use Finder's **Open With › Margin**. If the note is inside the open workspace folder or a recent folder, it opens there; otherwise the note's folder opens as the workspace and the note opens in a tab. Other files, such as images, dropped onto the note editor are attached.
 - Agents are managed in the **Agent › Manage Agents…** window.

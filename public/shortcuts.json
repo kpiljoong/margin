@@ -11,6 +11,7 @@
   { "id": "print", "label": "Print the note", "group": "General", "keys": "CmdOrCtrl+Alt+Shift+P", "scope": "app" },
   { "id": "open-file", "label": "Open a file", "group": "General", "keys": "CmdOrCtrl+O", "scope": "menu" },
   { "id": "open-folder", "label": "Open a folder", "group": "General", "keys": "CmdOrCtrl+Shift+O", "scope": "menu" },
+  { "id": "open-folder-window", "label": "Open a folder in a new window", "group": "General", "keys": "CmdOrCtrl+Alt+O", "scope": "menu" },
   { "id": "close-window", "label": "Close the window", "group": "General", "keys": "CmdOrCtrl+Shift+W", "scope": "menu" },
 
   { "id": "cycle-mode", "label": "Edit / split / canvas / preview", "group": "View", "keys": "CmdOrCtrl+E", "scope": "app" },
