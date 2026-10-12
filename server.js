@@ -15,6 +15,7 @@ const { parseAgentLog } = require('./lib/agentlog');
 const { picturesIn, pictureSize, hiddenIn } = require('./lib/pictures');
 const { lockRanges, lockedHunks, drawerText, drawerScraps, addedLines } = require('./lib/beside');
 const { liveMargin, projectOf, testLine } = require('./lib/live');
+const { fileStat } = require('./lib/filestat');
 const { deskMargin, textLang } = require('./lib/desk');
 const { OutsideStore, Seen, changedWhileAway } = require('./lib/outside');
 const { tiersOf, agentLines } = require('./lib/tiers');
@@ -251,7 +252,7 @@ function emptyDirs() {
 function getFile(relPath) {
   const abs = workspacePath(relPath);
   let st;
-  try { st = fs.statSync(abs); } catch { throw httpError(404, 'File not found'); }
+  try { st = fileStat(abs); } catch { throw httpError(404, 'File not found'); }
   if (!st.isFile()) throw httpError(400, 'Not a file');
   if (st.size > (isDrawing(relPath) ? MAX_DRAWING_BYTES : MAX_OPEN_BYTES)) throw httpError(413, 'File is too large to open here');
   const buf = fs.readFileSync(abs);
@@ -337,7 +338,7 @@ function workspaceFiles() {
 function cachedText(rel) {
   const abs = path.join(ROOT, rel);
   let st;
-  try { st = fs.statSync(abs); } catch { textCache.delete(rel); return null; }
+  try { st = fileStat(abs); } catch { textCache.delete(rel); return null; }
   if (!st.isFile() || st.size > MAX_OPEN_BYTES) return null;
   const hit = textCache.get(rel);
   if (hit && hit.mtimeMs === st.mtimeMs && hit.size === st.size) return hit;
@@ -378,7 +379,7 @@ function startWatcher() {
       const abs = path.join(ROOT, p);
       let now = null;
       let st = null;
-      try { st = fs.statSync(abs); if (st.isFile()) now = readText(abs); } catch { /* gone */ }
+      try { st = fileStat(abs); if (st.isFile()) now = readText(abs); } catch { /* gone */ }
       sawNote(p, now, st);
       if (isOurs(p)) continue;
       if (!was) {
@@ -1721,7 +1722,7 @@ async function catchUp() {
   const files = new Map();
   for (const rel of walk(ROOT)) {
     if (!NOTE_EXT.has(extOf(rel))) continue;
-    try { const st = fs.statSync(path.join(ROOT, rel)); if (st.isFile() && st.size <= MAX_OPEN_BYTES) files.set(rel, st); } catch { /* gone */ }
+    try { const st = fileStat(path.join(ROOT, rel)); if (st.isFile() && st.size <= MAX_OPEN_BYTES) files.set(rel, st); } catch { /* gone */ }
   }
   const read = (rel) => { try { return readText(path.join(ROOT, rel)); } catch { return null; } };
   const away = changedWhileAway(seenNotes, files, read);
@@ -1794,7 +1795,7 @@ function outsideSeen({ paths }) {
 function wroteNote(abs, data) {
   if (!isInside(ROOT, abs) || isInside(DATA_DIR, abs) || !NOTE_EXT.has(extOf(abs))) return;
   try {
-    const st = fs.statSync(abs);
+    const st = fileStat(abs);
     const text = Buffer.isBuffer(data) ? data.toString('utf8') : String(data);
     textCache.set(relOf(abs), { mtimeMs: st.mtimeMs, size: st.size, created: Math.round(st.birthtimeMs || st.mtimeMs), text, lower: text.toLowerCase() });
     sawNote(relOf(abs), text, st);
@@ -1995,7 +1996,7 @@ const previousNames = new Map(); // rel → { mtimeMs, size, name }
 function previousName(rel) {
   const abs = path.join(ROOT, rel);
   let st;
-  try { st = fs.statSync(abs); } catch { previousNames.delete(rel); return null; }
+  try { st = fileStat(abs); } catch { previousNames.delete(rel); return null; }
   const hit = previousNames.get(rel);
   if (hit && hit.mtimeMs === st.mtimeMs && hit.size === st.size) return hit.name;
   let head = '';
@@ -2045,7 +2046,7 @@ function deskTrail({ paths }) {
     notes: want.map((f) => {
       const c = cachedText(f);
       let st = null;
-      try { st = fs.statSync(path.join(ROOT, f)); } catch { /* gone */ }
+      try { st = fileStat(path.join(ROOT, f)); } catch { /* gone */ }
       const versions = versionsOf(f).slice(0, HISTORY_KEEP).map((v) => {
         let t = '';
         try { t = fs.readFileSync(path.join(historyDir(f), v.id), 'utf8'); } catch { /* gone */ }
@@ -2276,7 +2277,7 @@ function serveRaw(relPath, res) {
   const type = RAW_MIME[extOf(abs)];
   if (!type) throw httpError(415, 'Only images are served');
   let st;
-  try { st = fs.statSync(abs); } catch { throw httpError(404, 'Not found'); }
+  try { st = fileStat(abs); } catch { throw httpError(404, 'Not found'); }
   if (!st.isFile() || st.size > 50 * 1024 * 1024) throw httpError(413, 'Too large');
   res.writeHead(200, {
     ...SECURITY_HEADERS,
@@ -2343,7 +2344,7 @@ function renamePath({ from, to }) {
   let dstRel = String(to || '').trim().replace(/^\/+/, '');
   if (!dstRel) throw httpError(400, 'New name required');
   let st;
-  try { st = fs.statSync(src); } catch { throw httpError(404, 'Not found'); }
+  try { st = fileStat(src); } catch { throw httpError(404, 'Not found'); }
   if (st.isFile() && NOTE_EXT.has(extOf(from)) && !path.extname(dstRel)) dstRel += path.extname(from);
   const dst = workspacePath(dstRel);
   if (fs.existsSync(dst) && fs.realpathSync(dst) !== fs.realpathSync(src)) throw httpError(409, 'Something with that name already exists');
@@ -2632,7 +2633,7 @@ function resolveScope(scope, focus, task = '') {
       try { text = readText(path.join(ROOT, f)) || ''; } catch { continue; }
       for (const p of picturesIn(text, f, all)) {
         if (pictures.length >= MAX_PICTURES || pictures.includes(p) || !there.has(p) || ignored(p)) continue;
-        try { if (fs.statSync(path.join(ROOT, p)).size <= MAX_PICTURE_BYTES) pictures.push(p); } catch { /* gone */ }
+        try { if (fileStat(path.join(ROOT, p)).size <= MAX_PICTURE_BYTES) pictures.push(p); } catch { /* gone */ }
       }
     }
   }
@@ -2658,7 +2659,7 @@ const INSTRUCTIONS = 'AGENTS.md';
 function agentInstructions() {
   const abs = path.join(ROOT, INSTRUCTIONS);
   let st;
-  try { st = fs.statSync(abs); } catch { return null; }
+  try { st = fileStat(abs); } catch { return null; }
   if (!st.isFile() || st.size > 32 * 1024 || loadIgnore(ROOT)(INSTRUCTIONS) || isPrivateNote(abs)) return null;
   return readText(abs)?.trim() || null;
 }
@@ -3890,7 +3891,7 @@ const pageServer = http.createServer((req, res) => {
   try { abs = workspacePath(rel); } catch { return no(403); }
   if (loadIgnore(ROOT)(relOf(abs))) return no(404);
   let st;
-  try { st = fs.statSync(abs); } catch { return no(404); }
+  try { st = fileStat(abs); } catch { return no(404); }
   if (!st.isFile() || st.size > 50 * 1024 * 1024) return no(404);
   const self = `http://127.0.0.1:${pagePort}`;
   res.writeHead(200, {
