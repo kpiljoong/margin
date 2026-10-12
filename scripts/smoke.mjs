@@ -2391,7 +2391,7 @@ await check('M-x (⌥X :) runs a recipe from RECIPES.md by name; the runs, the r
   let problem = null;
   try {
     await inPage(`const ta = await openNote('sub/meet.md'); ta.focus(); const i = ta.value.indexOf('ship') + 4; ta.setSelectionRange(i, i);`);
-    await letter('t', MOD | 8);
+    await letter('s', MOD | 1);
     got.on = await inPage(`return await until(() => $('.editor-wrap .ed.tracking')) ? $('#status').textContent : null;`);
     await type(' soon');
     await inPage(`const ta = $('.editor-wrap .ed.tracking textarea'); const i = ta.value.indexOf('Docs'); ta.setSelectionRange(i + 2, i + 2);`);

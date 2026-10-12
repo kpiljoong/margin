@@ -84,3 +84,18 @@ test('a one-letter command by its place, with another input source on', () => {
   assert.equal(letterKey({ key: 'q', code: 'KeyA', shiftKey: false }), 'q'); // AZERTY: its own letter
   assert.equal(letterKey({ key: 'Escape', code: 'Escape', shiftKey: false }), 'Escape');
 });
+
+test('a key you gave a shortcut wins over a default that came to use it', () => {
+  const defs = [
+    { id: 'reopen', keys: 'CmdOrCtrl+Shift+T', scope: 'app' },
+    { id: 'suggest', keys: 'CmdOrCtrl+Alt+S', scope: 'app' },
+    { id: 'find-x', keys: 'CmdOrCtrl+Shift+T', scope: 'find' },
+  ];
+  assert.deepEqual(effectiveKeys(defs, {}, true), { reopen: 'CmdOrCtrl+Shift+T', suggest: 'CmdOrCtrl+Alt+S', 'find-x': 'CmdOrCtrl+Shift+T' });
+  // Suggest kept on ⌘⇧T by hand: reopen has no keys, until given some.
+  const kept = effectiveKeys(defs, { suggest: 'CmdOrCtrl+Shift+T' }, true);
+  assert.equal(kept.suggest, 'CmdOrCtrl+Shift+T');
+  assert.equal(kept.reopen, '');
+  assert.equal(kept['find-x'], 'CmdOrCtrl+Shift+T');
+  assert.equal(effectiveKeys(defs, { suggest: 'CmdOrCtrl+Shift+T', reopen: 'CmdOrCtrl+Alt+R' }, true).reopen, 'CmdOrCtrl+Alt+R');
+});

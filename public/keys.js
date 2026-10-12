@@ -102,6 +102,12 @@ export function effectiveKeys(defaults, custom, mac) {
     const c = custom && Object.prototype.hasOwnProperty.call(custom, d.id) ? normalize(custom[d.id], mac) : null;
     out[d.id] = c ?? normalize(d.keys, mac) ?? '';
   }
+  // Keys you gave a shortcut win over a default that came to use them too
+  // (a new default, say): that one has no keys until you give it some.
+  for (const d of defaults) {
+    if (custom && Object.prototype.hasOwnProperty.call(custom, d.id)) continue;
+    if (defaults.some((o) => o.id !== d.id && custom && Object.prototype.hasOwnProperty.call(custom, o.id) && out[o.id] && out[o.id] === out[d.id] && clash(d.scope, o.scope))) out[d.id] = '';
+  }
   return out;
 }
 

@@ -860,6 +860,42 @@ function otherBuffer() {
   showBuffer(b);
 }
 
+// The tabs closed, the last on top, for ⌘⇧T: what each was and where it was.
+const closedStack = [];
+function rememberClosed(tab, group, index) {
+  if (!['file', 'drawing', 'image'].includes(tab.kind) || !tab.path) return;
+  const at = closedStack.findIndex((c) => c.kind === tab.kind && c.path === tab.path);
+  if (at >= 0) closedStack.splice(at, 1);
+  closedStack.push({ kind: tab.kind, path: tab.path, group, index });
+  if (closedStack.length > 30) closedStack.shift();
+}
+const canReopen = () => closedStack.some((c) => !S.tabs.some((t) => t.kind === c.kind && t.path === c.path) && S.files.some((f) => f.path === c.path));
+// Opens the tab closed last again, in its pane and its place in the row; one
+// whose file is gone is skipped.
+async function reopenTab() {
+  if (!store.getItem('an.seen.reopen-tab')) {
+    store.setItem('an.seen.reopen-tab', '1');
+    if (kbd('suggest')) toast(`${kbd('reopen-tab') || 'This'} reopens the tab closed last now; suggesting is ${kbd('suggest')}.`);
+  }
+  while (closedStack.length) {
+    const c = closedStack.pop();
+    if (S.tabs.some((t) => t.kind === c.kind && t.path === c.path) || !S.files.some((f) => f.path === c.path)) continue;
+    const side = c.group === 1 && S.groups.length < 2;
+    const group = side ? undefined : Math.min(c.group, S.groups.length - 1);
+    if (c.kind === 'image') { if (side) ensureSecondGroup(); const was = S.focus; S.focus = side ? 1 : group; openImage(c.path); S.focus = was; }
+    else if (c.kind === 'drawing') await openDrawing(c.path, side ? { side } : { group });
+    else await openFile(c.path, side ? { side } : { group });
+    const tab = S.tabs.find((t) => t.kind === c.kind && t.path === c.path);
+    if (!tab) continue;
+    const row = S.tabs.filter((t) => t.group === tab.group && t !== tab);
+    const before = row[c.index];
+    if (before) { S.tabs.splice(S.tabs.indexOf(tab), 1); S.tabs.splice(S.tabs.indexOf(before), 0, tab); persist(); render(); }
+    activate(tab.id);
+    return;
+  }
+  toast('No closed tab to reopen');
+}
+
 async function closeTab(id) {
   const tab = S.tabs.find((t) => t.id === id);
   if (!tab) return;
@@ -879,6 +915,7 @@ async function closeTab(id) {
   S.tabs.splice(S.tabs.indexOf(tab), 1);
   if (attachedByGroup[g] === tab) attachedByGroup[g] = null;
   keepClosed(tab);
+  rememberClosed(tab, g, idx);
   if (S.groups[g]?.active === id) {
     const rest = S.tabs.filter((t) => t.group === g);
     S.groups[g].active = (rest[idx] || rest[idx - 1])?.id || null;
@@ -1674,6 +1711,8 @@ function renderTabs() {
         { label: 'Close others', run: () => closeTabs(S.tabs.filter((x) => x.group === t.group && x !== t)) },
         { label: 'Close to the right', run: () => { const row = S.tabs.filter((x) => x.group === t.group); closeTabs(row.slice(row.indexOf(t) + 1)); } },
         { label: 'Close all', run: () => closeTabs(S.tabs.filter((x) => x.group === t.group)) },
+        canReopen() ? '-' : null,
+        canReopen() ? { label: 'Reopen closed tab', key: kbd('reopen-tab'), run: reopenTab } : null,
       ]) },
     t.kind === 'review' ? h('span', { class: 'kind' }, '✦') : null,
     h('span', { class: 'label' }, label),
@@ -3623,6 +3662,7 @@ const COMMANDS = [
   ['Rename / move current note…', () => fileTab() && renameItem(fileTab().path), { key: 'rename' }],
   ['Delete current note', () => fileTab() && deleteItem(fileTab().path)],
   ['New folder…', () => newFolder(), { key: 'new-folder' }],
+  ['Reopen closed tab', () => reopenTab(), { key: 'reopen-tab' }],
   ['Copy note for GitHub (flows as Mermaid)', () => copyWithMermaid()],
   ['Copy [[link]] to current note', () => fileTab() && navigator.clipboard.writeText(`[[${stem(fileTab().path)}]]`).then(() => toast('Link copied'))],
   ['Split: open to the side', splitRight, { key: 'split' }],
@@ -10277,6 +10317,7 @@ const ACTIONS = {
   'ui-reset': () => setSetting('uiScale', 100),
   'new-note': () => newNote(),
   'new-folder': () => newFolder(),
+  'reopen-tab': () => reopenTab(),
   'quick-open': () => openPalette(),
   palette: () => openPalette('>'),
   search: () => { S.view = 'search'; $('#app').classList.remove('no-sidebar'); renderSidebar(); $('#search-input')?.focus(); $('#search-input')?.select(); },
