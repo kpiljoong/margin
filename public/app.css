@@ -2244,6 +2244,11 @@ img.part { border-radius: 6px; box-shadow: 0 0 0 1px var(--border); }
 .room-line.answers { stroke: var(--ok); }
 .room-line.clash { stroke: var(--warn); stroke-dasharray: 6 4; }
 .room-line.lit { stroke-width: 2.2; opacity: 1; stroke: var(--accent); }
+.room-line.out { stroke-dasharray: 3 4; }
+.room-offs { position: absolute; inset: 0; pointer-events: none; }
+.room-off { position: absolute; transform: translate(-50%, -50%); pointer-events: auto; z-index: 3; padding: 1px 8px; border: 1px solid var(--border); border-radius: 999px; background: var(--bg); color: var(--fg-dim); font-size: 11px; line-height: 16px; box-shadow: 0 2px 8px rgba(0, 0, 0, .18); cursor: pointer; }
+.room-off:hover, .room-off.lit { border-color: var(--accent); color: var(--accent); }
+.room-card.room-found { animation: located 1.2s ease-out; }
 .room-line.dragging { stroke: var(--accent); stroke-dasharray: none; }
 .room.lit .room-line:not(.lit) { opacity: .15; }
 .room-hit { fill: none; stroke: transparent; stroke-width: 12; pointer-events: stroke; cursor: pointer; }

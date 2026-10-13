@@ -285,6 +285,7 @@ export const WORDS = {
     before: (n) => `\uC9C0\uB09C \uAE30\uB85D(${n})`,
     changed: '\uB4A4\uC5D0\uC11C \uBC14\uB01C',
     answered: '\uB2F5 \uB098\uC634',
+    goCard: '\uCE74\uB4DC\uB85C \uAC00\uAE30', offView: (n, up) => `${up ? '\uC704' : '\uC544\uB798'}\uC5D0 \uC5F0\uACB0\uB41C \uCE74\uB4DC ${n}\uAC1C \u2014 \uB204\uB974\uBA74 \uBCF4\uC5EC\uC90C`,
     cut: '\uB04A\uAE30', keep: '\uB9DE\uC544\uC694', mineLink: '\uC9C1\uC811 \uC774\uC74C',
     link: { link: '\uAD00\uB828', changes: '\uBC14\uB01C', clash: '\uB9DE\uC9C0 \uC54A\uC74C — \uD655\uC778 \uD544\uC694', answers: '\uB2F5' },
     edit: '\uACE0\uCE58\uAE30', drop: '\uBE7C\uAE30', openLine: '\uB178\uD2B8\uC5D0\uC11C \uBCF4\uAE30',
@@ -358,6 +359,7 @@ export const WORDS = {
     before: (n) => `Before (${n})`,
     changed: 'Changed later',
     answered: 'Answered',
+    goCard: 'Go to the card', offView: (n, up) => `${n} linked card${n === 1 ? '' : 's'} ${up ? 'above' : 'below'} \u2014 click to show`,
     cut: 'Cut', keep: 'Right', mineLink: 'Drawn by you',
     link: { link: 'Related', changes: 'Changed', clash: 'Doesn’t fit — ask', answers: 'Answers' },
     edit: 'Edit', drop: 'Remove', openLine: 'Show in the note',
@@ -462,7 +464,8 @@ export class Room {
     this.lanesEl = el('div', 'room-lanes');
     this.svg = document.createElementNS(SVG, 'svg');
     this.svg.classList.add('room-lines');
-    this.stage.append(this.lanesEl, this.svg);
+    this.offEl = el('div', 'room-offs');
+    this.stage.append(this.lanesEl, this.svg, this.offEl);
     this.carryBar = el('div', 'room-carry');
     this.askBar = el('div', 'room-ask');
     this.answersEl = el('div', 'room-answers');
@@ -482,7 +485,8 @@ export class Room {
       if (e.target !== this.input && this.opts.appKey && (e.metaKey || e.ctrlKey) && !/^[zyxcva]$/i.test(e.key)) this.opts.appKey(e);
     });
     this.el.addEventListener('pointerdown', (e) => { if (!this.pop.contains(e.target)) this.pop.hidden = true; });
-    this.stage.addEventListener('scroll', () => this.drawSoon(), { passive: true });
+    // (A lane's list scrolls on its own; its scroll doesn't bubble, so caught on the way down.)
+    this.stage.addEventListener('scroll', () => this.drawSoon(), { passive: true, capture: true });
     this.stage.addEventListener('pointermove', (e) => this.tilt(e));
     this.resize = new ResizeObserver(() => { this.layout(); this.drawSoon(); });
     this.resize.observe(this.stage);
@@ -932,6 +936,7 @@ export class Room {
       c.addEventListener('click', (ev) => {
         if (ev.target.closest('button, .room-handle, textarea')) return;
         c.classList.toggle('open');
+        this.revealNear(c.dataset.key);
         const x = this.entries.find((y) => y.key === c.dataset.key);
         if (x) this.card(x);
         this.drawSoon();
@@ -1030,32 +1035,85 @@ export class Room {
     this.drawing = true;
     requestAnimationFrame(() => { this.drawing = false; this.draw(); });
   }
-  // The links, between where the cards are seen.
+  // Where a card is seen: its box, and whether its lane has it scrolled out
+  // of view (-1 above, 1 below), then its end at that edge of the lane.
+  seen(k) {
+    const c = this.cards.get(k);
+    if (!c || !c.isConnected) return null;
+    const r = c.getBoundingClientRect();
+    if (!r.width) return null;
+    const list = c.closest('.room-lane-list');
+    const v = list?.getBoundingClientRect();
+    const off = !v ? 0 : r.bottom < v.top + 6 ? -1 : r.top > v.bottom - 6 ? 1 : 0;
+    return { r, list, v, off };
+  }
+  // A card scrolled out of its lane, brought to the middle of it and flashed.
+  reveal(k) {
+    const at = this.seen(k);
+    if (!at?.list) return;
+    const { r, v, list } = at;
+    list.scrollTo({ top: list.scrollTop + (r.top - v.top) - (v.height - r.height) / 2, behavior: 'smooth' });
+    const c = this.cards.get(k);
+    c.classList.remove('room-found');
+    void c.offsetWidth;
+    c.classList.add('room-found');
+  }
+  // A card pressed: those linked to it out of view in other lanes come into view.
+  revealNear(key) {
+    const lane = this.cards.get(key)?.closest('.room-lane-list');
+    const done = new Set();
+    for (const l of this.layer.links || []) {
+      const other = l.a === key ? l.b : l.b === key ? l.a : null;
+      const at = other && this.seen(other);
+      if (!at?.off || at.list === lane || done.has(at.list)) continue;
+      done.add(at.list);
+      this.reveal(other);
+    }
+  }
+  // The links, between where the cards are seen. An end scrolled out of its
+  // lane stops at that edge of it, the line dashed, and a mark there (↑ 2)
+  // counts the cards it leads to; pressed, they come into view.
   draw() {
     if (this.dead) return;
     const s = this.stage.getBoundingClientRect();
     this.svg.setAttribute('width', String(s.width));
     this.svg.setAttribute('height', String(s.height));
     const out = [];
-    const at = (k) => { const c = this.cards.get(k); if (!c || !c.isConnected) return null; const r = c.getBoundingClientRect(); return r.width ? r : null; };
+    const offs = new Map(); // lane list + side → { at, up, keys, lit }
+    const end = (p) => {
+      if (!p.off) return { x: p.r.left + p.r.width / 2 - s.left, y: p.r.top + p.r.height / 2 - s.top, w: p.r.width, right: p.r.right - s.left };
+      const y = (p.off < 0 ? p.v.top + 12 : p.v.bottom - 12) - s.top;
+      return { x: p.v.left + p.v.width / 2 - s.left, y, w: 0, right: p.v.left + p.v.width / 2 - s.left };
+    };
+    const mark = (p, k, lit) => {
+      const id = `${[...this.lanesEl.querySelectorAll('.room-lane-list')].indexOf(p.list)}:${p.off}`;
+      const m = offs.get(id) || { p, keys: new Set(), lit: false };
+      m.keys.add(k);
+      m.lit ||= lit;
+      offs.set(id, m);
+    };
     for (const l of this.layer.links || []) {
-      const a = at(l.a);
-      const b = at(l.b);
-      if (!a || !b) continue;
-      const ax = a.left + a.width / 2 - s.left; const ay = a.top + a.height / 2 - s.top;
-      const bx = b.left + b.width / 2 - s.left; const by = b.top + b.height / 2 - s.top;
-      const side = ax < bx ? 1 : -1;
-      const x1 = ax + (side * a.width) / 2; const x2 = bx - (side * b.width) / 2;
-      const same = Math.abs(ax - bx) < 4;
-      const d = same ? `M${a.right - s.left} ${ay} C${a.right - s.left + 46} ${ay}, ${b.right - s.left + 46} ${by}, ${b.right - s.left} ${by}` : `M${x1} ${ay} C${(x1 + x2) / 2} ${ay}, ${(x1 + x2) / 2} ${by}, ${x2} ${by}`;
+      const pa = this.seen(l.a);
+      const pb = this.seen(l.b);
+      if (!pa || !pb) continue;
+      if (pa.off && pb.off && pa.list === pb.list) continue;
+      const a = end(pa);
+      const b = end(pb);
       const lit = this.lit && (l.a === this.lit || l.b === this.lit);
+      if (pa.off) mark(pa, l.a, lit);
+      if (pb.off) mark(pb, l.b, lit);
+      const side = a.x < b.x ? 1 : -1;
+      const x1 = a.x + (side * a.w) / 2; const x2 = b.x - (side * b.w) / 2;
+      const same = Math.abs(a.x - b.x) < 4;
+      const d = same ? `M${a.right} ${a.y} C${a.right + 46} ${a.y}, ${b.right + 46} ${b.y}, ${b.right} ${b.y}` : `M${x1} ${a.y} C${(x1 + x2) / 2} ${a.y}, ${(x1 + x2) / 2} ${b.y}, ${x2} ${b.y}`;
+      const away = pb.off ? l.b : pa.off ? l.a : null;
       const path = document.createElementNS(SVG, 'path');
       path.setAttribute('d', d);
-      path.setAttribute('class', `room-line ${l.kind} ${l.by === 'me' || l.kept ? 'kept' : 'offered'}${lit ? ' lit' : ''}`);
+      path.setAttribute('class', `room-line ${l.kind} ${l.by === 'me' || l.kept ? 'kept' : 'offered'}${lit ? ' lit' : ''}${away ? ' out' : ''}`);
       const hit = document.createElementNS(SVG, 'path');
       hit.setAttribute('d', d);
       hit.setAttribute('class', 'room-hit');
-      hit.addEventListener('click', (ev) => this.linkMenu(l, ev));
+      hit.addEventListener('click', (ev) => this.linkMenu(l, ev, away));
       const t = document.createElementNS(SVG, 'title');
       t.textContent = `${this.W.link[l.kind] || ''}${l.why ? ` — ${l.why}` : ''}`;
       hit.append(t);
@@ -1063,11 +1121,24 @@ export class Room {
     }
     if (this.dragLine) out.push(this.dragLine);
     this.svg.replaceChildren(...out);
+    this.offEl.replaceChildren(...[...offs.values()].map(({ p, keys, lit }) => {
+      const up = p.off < 0;
+      const b = el('button', `room-off${up ? ' up' : ' down'}${lit ? ' lit' : ''}`, `${up ? '\u2191' : '\u2193'}${keys.size > 1 ? ` ${keys.size}` : ''}`);
+      b.type = 'button';
+      b.title = this.W.offView(keys.size, up);
+      b.style.left = `${p.v.left + p.v.width / 2 - s.left}px`;
+      b.style.top = `${(up ? p.v.top + 12 : p.v.bottom - 12) - s.top}px`;
+      // The nearest of them first.
+      const near = [...keys].map((k) => ({ k, r: this.seen(k)?.r })).filter((x) => x.r).sort((x, y) => (up ? y.r.top - x.r.top : x.r.top - y.r.top));
+      b.addEventListener('click', () => near[0] && this.reveal(near[0].k));
+      return b;
+    }));
   }
-  linkMenu(l, ev) {
+  linkMenu(l, ev, away = null) {
     const W = this.W;
     const host = this.el.getBoundingClientRect();
     this.pop.replaceChildren(...[
+      away ? button(W.goCard, () => { this.pop.hidden = true; this.reveal(away); }) : null,
       el('div', 'room-pop-why', `${W.link[l.kind] || ''}${l.why ? ` — ${l.why}` : ''}${l.by === 'me' ? ` (${W.mineLink})` : ''}`),
       l.by !== 'me' && !l.kept ? button(W.keep, () => { l.kept = true; this.pop.hidden = true; this.saveLayer(); this.draw(); }) : null,
       button(W.cut, () => {
