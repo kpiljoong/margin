@@ -534,6 +534,7 @@ export class MarkdownEditor {
     this.notesCol.style.transform = `translateY(${-this.ta.scrollTop - (this._marginOff || 0)}px)`;
     this.anchorCol.style.transform = `translateY(${-this.ta.scrollTop}px)`;
     if (!this.curLine.hidden) this.curLine.style.transform = `translateY(${-this.ta.scrollTop}px)`;
+    if (this.anchorOn.length || this._edgeEl?.hidden === false) this._edge();
     this.onScroll();
   }
 
@@ -760,7 +761,8 @@ export class MarkdownEditor {
       if (n.el._anchorHooked) continue;
       n.el._anchorHooked = true;
       n.el.addEventListener('mouseenter', () => { this._hoverEl = n.el; this._anchors(); });
-      n.el.addEventListener('mouseleave', () => { if (this._hoverEl === n.el) this._hoverEl = null; this._anchors(); });
+      // Onto the mark at the edge (_edge): still the card's.
+      n.el.addEventListener('mouseleave', (e) => { if (this._edgeEl?.contains(e.relatedTarget)) return; if (this._hoverEl === n.el) this._hoverEl = null; this._anchors(); });
     }
     // The live margin keeps its column from the start, and a note that has had
     // remembered cards keeps it: the text you write doesn't move as cards come and go.
@@ -777,7 +779,7 @@ export class MarkdownEditor {
   // place inside a line from that line alone: never the text up to it for
   // each card, which in a long note took seconds.
   _placeNotes() {
-    if (!this.notes.length || !this.el.isConnected) { this.anchorCol.replaceChildren(); this._notesBelow = 0; this._marginBy(0); return; }
+    if (!this.notes.length || !this.el.isConnected) { this.anchorCol.replaceChildren(); this._notesBelow = 0; this._marginBy(0); if (this._edgeEl) this._edgeEl.hidden = true; return; }
     const o = this._off;
     const v = this.ta.value;
     const lh = this.lineHeight();
@@ -807,10 +809,20 @@ export class MarkdownEditor {
     const right = this.ta.offsetLeft + this.ta.clientWidth - (parseFloat(getComputedStyle(this.ta).paddingRight) || 0);
     this._anchorRight = right + 10;
     // Below the headline, when there is one.
-    let y = this._head ? this._head.offsetHeight + 12 : 0;
+    const start = this._head ? this._head.offsetHeight + 12 : 0;
+    const stack = () => { let at = start; return heights.map((ht, k) => { const top = Math.max(spots[k].top, at); at = top + ht + 8; return top; }); };
+    let tops = stack();
+    // A card pushed far below its line (by the cards above it) begins with
+    // the line it is about: what it answers can be read beside it, and a
+    // press brings the two into view together (revealNote).
+    const far = Math.max(lh * 4, this.ta.clientHeight / 3);
+    let quoted = false;
+    shown.forEach((n, k) => { if (this._quote(n, !n.noAnchor && tops[k] - spots[k].top > far, spots[k])) quoted = true; });
+    if (quoted) { shown.forEach((n, k) => { heights[k] = n.el.offsetHeight; }); tops = stack(); }
+    let y = start;
     const bars = shown.map((n, k) => {
       const { end, top: want, bottom } = spots[k];
-      const top = Math.max(want, y);
+      const top = tops[k];
       n.el.style.top = `${top}px`;
       y = top + heights[k] + 8;
       // Placed there, but about no line there (noAnchor): no bar, no line to it.
@@ -820,7 +832,7 @@ export class MarkdownEditor {
       bar.style.height = `${Math.max(lh, bottom - want)}px`;
       bar.style.left = `${this._anchorRight}px`;
       if (colors[k]) bar.style.setProperty('--a', colors[k]);
-      n.at = { end: end + o, top: want, card: top, bar, color: colors[k] };
+      n.at = { end: end + o, top: want, bottom, card: top, bar, color: colors[k] };
       return bar;
     });
     this.anchorCol.replaceChildren(...bars.filter(Boolean));
@@ -832,14 +844,107 @@ export class MarkdownEditor {
     this._anchors();
   }
 
-  // How far the margin has scrolled on past the text's end (0 … _notesBelow):
-  // the wheel, once the text is at its end, moves the cards on.
+  // How far the margin has scrolled on past the text's end (0 … _notesBelow),
+  // or lifted to a card's line (_lift, revealNote): the wheel, once the
+  // text is at its end, moves the cards on; back up, it lowers them first.
   _marginBy(px) {
-    const off = Math.max(0, Math.min(this._notesBelow || 0, px));
+    const off = Math.max(0, Math.min(Math.max(this._notesBelow || 0, this._lift || 0), px));
+    if (off < (this._lift || 0)) this._lift = off;
     const moved = off !== (this._marginOff || 0);
     this._marginOff = off;
     this.notesCol.style.transform = `translateY(${-this.ta.scrollTop - off}px)`;
     if (moved) { this._anchorKey = ''; this._anchors(); }
+  }
+  // The line a card is about, at its top (on), or not: whether that changed.
+  _quote(n, on, spot) {
+    let q = n.el.querySelector(':scope > .ed-src');
+    if (!on) { if (!q) return false; q.remove(); return true; }
+    const v = this.ta.value;
+    const ls = v.lastIndexOf('\n', spot.from - 1) + 1;
+    let le = v.indexOf('\n', spot.from);
+    if (le < 0) le = v.length;
+    // Its words when it is on words, else its line, without the list or heading marks.
+    const words = n.end == null && n.to > n.from ? v.slice(spot.from, Math.min(spot.end, le)) : v.slice(ls, le).replace(/^\s*(?:[-*+]\s+(?:\[[ xX]\]\s+)?|\d+[.)]\s+|#{1,6}\s+|>\s*)/, '');
+    const text = words.trim() || '\u2026';
+    if (q?.dataset.src === text) return false;
+    const had = !!q;
+    if (!q) {
+      q = document.createElement('button');
+      q.className = 'ed-src';
+      q.title = 'Show the line it is about, with this card';
+      q.addEventListener('mousedown', (e) => { e.preventDefault(); e.stopPropagation(); });
+      q.addEventListener('click', (e) => { e.stopPropagation(); const m = this.notes.find((x) => x.el === n.el); if (m) this.revealNote(m); });
+      n.el.prepend(q);
+    }
+    q.dataset.src = text;
+    q.textContent = `\u2191 ${text}`;
+    return !had;
+  }
+  // The line a card is about and the card, in view together, the line lit
+  // for a moment. A card too far below its line for both to be seen: the
+  // margin lifts to put it beside the line (the cards above go up with it).
+  revealNote(n) {
+    const at = n.at;
+    if (!at) return;
+    const ta = this.ta;
+    const ch = ta.clientHeight;
+    const lh = this.lineHeight();
+    const ht = n.el.offsetHeight;
+    const lift = at.card + ht - at.top + 48 <= ch ? 0 : at.card - at.top;
+    const span = at.card - lift + ht - at.top;
+    const want = span + 48 <= ch ? at.top - (ch - span) / 2 : at.top - lh;
+    ta.scrollTop = Math.max(0, Math.min(ta.scrollHeight - ch, want));
+    this._lift = lift;
+    this._marginBy(lift || Math.max(0, at.card + ht + 12 - ta.scrollTop - ch));
+    this._syncScroll();
+    clearTimeout(this._pinTimer);
+    this._pinEl = n.el;
+    this._anchorKey = '';
+    this._anchors();
+    const band = document.createElement('div');
+    band.className = 'ed-flash';
+    band.style.top = `${at.top}px`;
+    band.style.height = `${Math.max(lh, at.bottom - at.top)}px`;
+    band.style.width = `${this._anchorRight}px`;
+    if (at.color) band.style.setProperty('--a', at.color);
+    this.anchorCol.append(band);
+    const lit = [n.el, at.bar];
+    for (const el of lit) { el.classList.remove('ed-found'); void el.offsetWidth; el.classList.add('ed-found'); }
+    this._pinTimer = setTimeout(() => {
+      for (const el of lit) el.classList.remove('ed-found');
+      band.remove();
+      this._pinEl = null;
+      this._anchorKey = '';
+      this._anchors();
+    }, 1800);
+  }
+  // A card pointed at (or the caret in its line) whose line is out of view:
+  // a mark at that edge of the text, ↑ or ↓, that brings them together.
+  _edge() {
+    const n = this.anchorOn.find((x) => x.at);
+    const ta = this.ta;
+    const s = ta.scrollTop;
+    const card = n && n.at.card - (this._marginOff || 0);
+    const side = !n ? null : n.at.bottom <= s + 4 ? 'up' : card >= s + ta.clientHeight - 4 ? 'down' : null;
+    if (!side) { if (this._edgeEl) this._edgeEl.hidden = true; return; }
+    let e = this._edgeEl;
+    if (!e) {
+      e = this._edgeEl = document.createElement('button');
+      e.className = 'ed-edge';
+      e.addEventListener('mousedown', (ev) => ev.preventDefault());
+      e.addEventListener('click', () => { const m = this._edgeNote; if (m && this.notes.includes(m)) this.revealNote(m); });
+      e.addEventListener('mouseleave', (ev) => { if (this._hoverEl && !this._hoverEl.contains(ev.relatedTarget)) { this._hoverEl = null; this._anchors(); } });
+      this.el.append(e);
+    }
+    this._edgeNote = n;
+    e.hidden = false;
+    e.classList.toggle('down', side === 'down');
+    e.textContent = side === 'up' ? '\u2191' : '\u2193';
+    e.title = side === 'up' ? 'The line it is about is above: show it' : 'The card is below: show it with its line';
+    e.style.left = `${this._anchorRight - 9}px`;
+    e.style.top = `${ta.offsetTop + (side === 'up' ? 6 : ta.clientHeight - 26)}px`;
+    if (n.at.color) e.style.setProperty('--a', n.at.color);
+    else e.style.removeProperty('--a');
   }
   // A part of a card brought into view (the text scrolls, then the margin).
   revealInMargin(el) {
@@ -897,16 +1002,18 @@ export class MarkdownEditor {
     if (!this.notes.length) return;
     const o = this._off;
     const c = this.ta.selectionStart + o;
+    const pin = this._pinEl && this.notes.find((n) => n.el === this._pinEl && n.at);
     const hover = this._hoverEl?._anchorNote;
-    const on = hover?.at && this.notes.includes(hover) ? [hover] : this.notes.filter((n) => n.at && c >= n.from && c <= n.at.end);
+    const on = pin ? [pin] : hover?.at && this.notes.includes(hover) ? [hover] : this.notes.filter((n) => n.at && c >= n.from && c <= n.at.end);
     const key = on.map((n) => this.notes.indexOf(n)).join(',');
-    if (key === this._anchorKey) return;
+    if (key === this._anchorKey) { this._edge(); return; }
     this._anchorKey = key;
     for (const n of this.notes) { n.el.classList.toggle('anchored', on.includes(n)); n.at?.bar.classList.toggle('on', on.includes(n)); }
     this.anchorOn = on;
     this.findLayer.style.setProperty('--a', on.find((n) => n.at.color)?.at.color || '');
     this._renderFind();
     this.anchorCol.querySelector('svg')?.remove();
+    this._edge();
     if (!on.length) return;
     const NS = 'http://www.w3.org/2000/svg';
     const svg = document.createElementNS(NS, 'svg');

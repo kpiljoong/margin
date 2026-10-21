@@ -353,6 +353,16 @@ input[type=checkbox] { accent-color: var(--accent); }
 .pen-lines circle:is(.pen-on, .pen-pair) { opacity: 1; r: 3px; }
 .pen-doc .pen-pair { background: color-mix(in srgb, var(--pen) 12%, transparent); border-radius: 3px; }
 .pen-card.pen-pair { background: color-mix(in srgb, var(--pen) 7%, var(--bg)); }
+/* A card far below its mark: the words it is about, first; a press shows the two together. */
+.pen-src { display: block; width: 100%; margin: 0 0 1px; padding: 0; border: 0; background: none; text-align: left; font: 11.5px/1.4 var(--sans); color: var(--fg-faint); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; cursor: pointer; }
+.pen-src:hover { color: var(--fg); text-decoration: underline; }
+/* Its mark out of view: a mark at that edge, beside the margin. */
+.pen-edge { position: absolute; z-index: 3; width: 18px; height: 20px; padding: 0; border: 1px solid color-mix(in srgb, var(--pen) 60%, transparent); border-radius: 9px; background: var(--bg); color: var(--pen); font: 12px/18px var(--sans); cursor: pointer; }
+.pen-edge[hidden] { display: none; }
+.pen-edge:hover { background: color-mix(in srgb, var(--pen) 14%, var(--bg)); }
+.pen-doc .pen-found { animation: pen-found 1.8s ease-out; border-radius: 3px; }
+.pen-card.pen-found { animation: pen-found 1.8s ease-out; }
+@keyframes pen-found { 0%, 50% { background: color-mix(in srgb, var(--pen) 26%, transparent); } }
 /* stet in the margin, in the agent's hand. */
 .pen-stet { margin-right: auto; padding: 0 4px; color: var(--pen); font: 15px/1 var(--hand); letter-spacing: .02em; border-bottom: 2px dotted var(--pen); }
 /* Ink drying: just taken, the pen's ink is wet, then it sets into the page. */
@@ -415,6 +425,18 @@ input[type=checkbox] { accent-color: var(--accent); }
 .ed-anchors path { fill: none; stroke: var(--a, var(--pen-me)); stroke-width: 1.2; stroke-dasharray: 3 3; opacity: .8; }
 .ed-find-layer mark.anchor { background: none; text-decoration: underline dashed var(--a, var(--pen-me)); text-decoration-thickness: 1.5px; text-underline-offset: 4px; }
 .mnote.anchored { box-shadow: 0 0 0 1px color-mix(in srgb, var(--r, var(--pen-me)) 55%, transparent); }
+/* A card far below its line: the line, first; a press shows the two together. */
+.ed-src { display: block; width: 100%; margin: 0 0 2px; padding: 0; border: 0; background: none; text-align: left; font: 11.5px/1.4 var(--sans); color: var(--fg-faint); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; cursor: pointer; }
+.ed-src:hover { color: var(--fg); text-decoration: underline; }
+/* Its line out of view: a mark at that edge of the text. */
+.ed-edge { position: absolute; z-index: 4; width: 18px; height: 20px; padding: 0; border: 1px solid color-mix(in srgb, var(--a, var(--pen-me)) 60%, transparent); border-radius: 9px; background: var(--bg); color: var(--a, var(--pen-me)); font: 12px/18px var(--sans); cursor: pointer; }
+.ed-edge[hidden] { display: none; }
+.ed-edge:hover { background: color-mix(in srgb, var(--a, var(--pen-me)) 14%, var(--bg)); }
+.ed-flash { position: absolute; left: 0; border-radius: 3px; pointer-events: none; background: color-mix(in srgb, var(--a, var(--pen-me)) 16%, transparent); animation: ed-flash 1.8s ease-out forwards; }
+@keyframes ed-flash { 0%, 50% { opacity: 1; } 100% { opacity: 0; } }
+.ed-anchor.ed-found { opacity: 1; }
+.mnote.ed-found { animation: ed-found 1.6s ease-out; }
+@keyframes ed-found { from { box-shadow: 0 0 0 2px color-mix(in srgb, var(--r, var(--pen-me)) 70%, transparent); } }
 .ed-notes { position: absolute; top: 0; right: 22px; width: var(--notes-w); z-index: 3; pointer-events: none; display: none; }
 .ed.with-notes .ed-notes { display: block; }
 .mnote { position: absolute; left: 0; right: 0; box-sizing: border-box; pointer-events: auto; padding: 3px 6px 5px 9px; border-left: 2px solid var(--pen-me); border-radius: 0 6px 6px 0; background: color-mix(in srgb, var(--pen-me) 6%, var(--bg)); font: 12.5px/1.4 var(--sans); color: var(--fg); cursor: pointer; }

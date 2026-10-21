@@ -74,6 +74,12 @@ fs.writeFileSync(path.join(ws, 'sub', 'fork.md'), '# Fork\n\nWe ship on Friday. 
 fs.writeFileSync(path.join(ws, 'sub', 'drawn.md'), '# Drawn\n\n```flow\nOrder -> Pay -> Ship\n```\n\n![Screen](../assets/screen.svg)\n\n```ink\nbox blue: 10,10 50x40\n```\n');
 fs.writeFileSync(path.join(ws, 'sub', 'meet.md'), '# Meet\n\nWe ship on Monday.\nDocs by Friday.\n');
 fs.writeFileSync(path.join(ws, 'sub', 'messy.md'), ['#Title', 'text', ...filler('a'), '* one', ...filler('b'), '##Sub', 'more', ...filler('c'), '+ two', ''].join('\n'));
+// Long margin notes on lines close together: the later cards far below their lines.
+fs.writeFileSync(path.join(ws, 'sub', 'far.md'), ['# Far', '', ...Array.from({ length: 60 }, (_, i) => `Line ${i}: asked about item ${i} here.`)].join('\n') + '\n');
+fs.mkdirSync(path.join(ws, '.agent-notes', 'comments', 'sub'), { recursive: true });
+fs.writeFileSync(path.join(ws, '.agent-notes', 'comments', 'sub', 'far.md.json'), JSON.stringify([3, 4, 5, 6].map((i) => ({
+  id: `far${i}`, quote: `item ${i} `, line: i + 2, comment: `Answer ${i}. ${'A long answer from the agent. '.repeat(16)}`, speaker: 'claude',
+}))));
 fs.writeFileSync(path.join(userData, 'config.json'), JSON.stringify({
   workspace: ws, recent: [ws], agents: [{ name: 'Demo', command: 'demo' }], agentDefault: 'Demo', autoUpdateCheck: false, quickCapture: false,
 }));
@@ -186,6 +192,27 @@ await check('a note opens in the editor', `
   const ta = await openNote('flow.md');
   return ta?.value.includes('\`\`\`flow') || false;
 `, (ok) => (ok ? null : 'flow.md did not open'));
+
+await check('a margin card far below its line begins with the line; a press shows the two together', `
+  const ta = await openNote('sub/far.md');
+  const ed = ta.closest('.ed');
+  const q = await until(() => $$('.ed-src', ed).at(-1));
+  const card = q.closest('.mnote');
+  const words = q.textContent;
+  ta.scrollTop = parseFloat(card.style.top) - 40; ta.dispatchEvent(new Event('scroll'));
+  card.dispatchEvent(new MouseEvent('mouseenter')); await sleep(100);
+  const edge = $('.ed-edge', ed);
+  const up = !!edge && !edge.hidden && edge.textContent;
+  card.dispatchEvent(new MouseEvent('mouseleave'));
+  q.click(); await sleep(150);
+  const box = ed.getBoundingClientRect();
+  const band = $('.ed-flash', ed)?.getBoundingClientRect();
+  const c = card.getBoundingClientRect();
+  const inView = (r) => r && r.top >= box.top - 1 && r.top + 20 <= box.bottom;
+  const got = { quotes: $$('.ed-src', ed).length, words, up, line: inView(band), card: inView(c) };
+  await openNote('flow.md');
+  return got;
+`, (v) => (v.quotes >= 2 && /item 6/.test(v.words) && v.up === '↑' && v.line && v.card ? null : 'no line at the top of the card, no mark at the edge, or the two not in view together'));
 
 await check('the canvas draws both flows', `
   button('Canvas').click();

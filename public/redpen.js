@@ -191,15 +191,35 @@ export function layoutMargin(page) {
   const mx = margin.getBoundingClientRect().left - box.left;
   // Lines start past the end of the text, so they never read as a strike.
   const dx = doc.getBoundingClientRect().right - box.left + 6;
-  let next = 0;
-  for (const card of margin.querySelectorAll('.pen-card, .layer-card')) {
-    if (card.hidden) continue;
+  // A card pushed this far below its mark (by the cards above) begins with
+  // the words it is about; a press brings the two into view (revealMark).
+  const far = Math.max(120, (scrollerOf(page)?.clientHeight || 600) / 3);
+  // Each card as near its mark as the ones above it let it be; the one
+  // brought to its mark (page._focus, revealMark) at it, the ones above
+  // it stacked up from there.
+  const list = [...margin.querySelectorAll('.pen-card, .layer-card')].filter((c) => !c.hidden).map((card) => {
     const mark = doc.querySelector(`[data-mark="${card.dataset.mark}"]`);
-    const r = (mark?.getClientRects()[0]) || mark?.getBoundingClientRect();
-    const y = r ? r.top - box.top : next;
-    const top = Math.max(y - 6, next);
+    return { card, mark, r: (mark?.getClientRects()[0]) || mark?.getBoundingClientRect() };
+  });
+  let next = 0;
+  for (const it of list) {
+    const want = it.r ? it.r.top - box.top - 6 : next;
+    it.top = Math.max(want, next);
+    quote(page, it.card, it.mark, !!it.r && it.top - want > far);
+    it.want = want;
+    it.h = it.card.offsetHeight;
+    next = it.top + it.h + 8;
+  }
+  const f = page._focus == null ? -1 : list.findIndex((it) => it.card.dataset.mark === page._focus && it.r);
+  // (Those may go up past the page's top, as the editor's margin lifts.)
+  if (f >= 0) {
+    list[f].top = list[f].want;
+    for (let k = f - 1; k >= 0; k--) list[k].top = Math.min(list[k].want, list[k + 1].top - list[k].h - 8);
+    for (let k = f + 1; k < list.length; k++) list[k].top = Math.max(list[k].want, list[k - 1].top + list[k - 1].h + 8);
+    next = list.length ? list.at(-1).top + list.at(-1).h + 8 : 0;
+  }
+  for (const { card, r, top } of list) {
     card.style.top = `${top}px`;
-    next = top + card.offsetHeight + 8;
     if (!r || !card.classList.contains('noted')) continue;
     const x1 = Math.min(dx, mx - 8);
     const y1 = r.top - box.top + r.height * 0.5;
@@ -219,6 +239,102 @@ export function layoutMargin(page) {
     svg.append(line, dot);
   }
   margin.style.minHeight = `${next}px`;
+  markEdge(page);
+}
+
+// The box that scrolls the page: the review, or the note's pane.
+function scrollerOf(el) {
+  for (let p = el.parentElement; p; p = p.parentElement) {
+    const o = getComputedStyle(p).overflowY;
+    if ((o === 'auto' || o === 'scroll') && p.scrollHeight > p.clientHeight) return p;
+  }
+  return null;
+}
+
+// The words a card is about, at its top (on), or not.
+function quote(page, card, mark, on) {
+  let q = card.querySelector(':scope > .pen-src');
+  if (!on) { q?.remove(); return; }
+  // A note's own words; a change, the paragraph or line it is in.
+  const key = card.dataset.mark;
+  const words = mark.classList.contains('pen-anchor')
+    ? [...page.querySelectorAll(`.pen-doc [data-mark="${key}"]`)].map((x) => x.textContent).join(' ')
+    : (mark.closest('p, li, h1, h2, h3, h4, h5, h6, td, th, blockquote, pre') || mark).textContent;
+  const text = words.replace(/\s+/g, ' ').trim() || '\u2026';
+  if (!q) {
+    q = page.ownerDocument.createElement('button');
+    q.className = 'pen-src';
+    q.title = 'Show the words it is about, with this card';
+    q.addEventListener('click', (e) => { e.stopPropagation(); revealMark(page, key); });
+    card.prepend(q);
+  }
+  if (q.dataset.src !== text) { q.dataset.src = text; q.textContent = `\u2191 ${text}`; }
+}
+
+// A mark and its card in view together, lit for a moment: a card too far
+// below its mark for both to be seen is laid at it (layoutMargin).
+export function revealMark(page, key) {
+  const view = scrollerOf(page);
+  const marks = [...page.querySelectorAll(`.pen-doc [data-mark="${key}"]`)];
+  const card = page.querySelector(`.pen-margin [data-mark="${key}"]`);
+  if (!view || !marks.length || !card) return;
+  const gap = card.getBoundingClientRect().bottom - marks[0].getBoundingClientRect().top;
+  if (page._focus !== key && gap + 48 > view.clientHeight) { page._focus = key; layoutMargin(page); }
+  const vb = view.getBoundingClientRect();
+  const mr = marks[0].getBoundingClientRect();
+  const cr = card.getBoundingClientRect();
+  const top = Math.min(mr.top, cr.top);
+  const span = Math.max(mr.bottom, cr.bottom) - top;
+  const ch = view.clientHeight;
+  view.scrollTop += span + 48 <= ch ? top - vb.top - (ch - span) / 2 : mr.top - vb.top - 24;
+  const lit = [...marks, card];
+  for (const el of lit) { el.classList.remove('pen-found'); void el.offsetWidth; el.classList.add('pen-found'); }
+  clearTimeout(page._foundTimer);
+  page._foundTimer = setTimeout(() => { for (const el of lit) el.classList.remove('pen-found'); }, 1800);
+}
+
+// The card pointed at (or in view, kb-cur) whose mark is out of view: a
+// mark at that edge, ↑ or ↓, that brings them together.
+export function markEdge(page) {
+  if (!page?.isConnected) return;
+  const card = page.querySelector('.pen-margin .pen-pair[data-mark]') || page.querySelector('.pen-margin .kb-cur[data-mark]');
+  const mark = card && page.querySelector(`.pen-doc [data-mark="${card.dataset.mark}"]`);
+  const view = mark && scrollerOf(page);
+  let e = page.querySelector(':scope > .pen-edge');
+  let side = null;
+  if (view) {
+    const vb = view.getBoundingClientRect();
+    const mr = mark.getBoundingClientRect();
+    const cr = card.getBoundingClientRect();
+    if (mr.bottom <= vb.top + 4 && cr.bottom > vb.top) side = 'up';
+    else if (mr.top >= vb.bottom - 4 && cr.top < vb.bottom) side = 'down';
+    else if (cr.top >= vb.bottom - 4 && mr.bottom > vb.top && mr.top < vb.bottom) side = 'down';
+  }
+  if (!side) { if (e) e.hidden = true; return; }
+  if (!e) {
+    e = page.ownerDocument.createElement('button');
+    e.className = 'pen-edge';
+    e.addEventListener('click', () => revealMark(page, e.dataset.mark));
+    page.append(e);
+  }
+  const vb = view.getBoundingClientRect();
+  const box = page.getBoundingClientRect();
+  e.hidden = false;
+  e.dataset.mark = card.dataset.mark;
+  e.textContent = side === 'up' ? '\u2191' : '\u2193';
+  e.title = side === 'up' ? 'The words it is about are above: show them' : 'Out of view below: show the words and the card together';
+  e.style.left = `${page.querySelector('.pen-margin').offsetLeft - 24}px`;
+  e.style.top = `${(side === 'up' ? Math.max(vb.top, box.top) - box.top + 6 : Math.min(vb.bottom, box.bottom) - box.top - 26)}px`;
+}
+
+// The marks at the edge follow every scroll (the review, the note's pane).
+let edgeFrame = 0;
+if (typeof document !== 'undefined') {
+  document.addEventListener('scroll', (ev) => {
+    if (edgeFrame || !ev.target?.querySelectorAll) return;
+    const t = ev.target;
+    edgeFrame = requestAnimationFrame(() => { edgeFrame = 0; for (const b of t.querySelectorAll('.pen-body')) markEdge(b); });
+  }, { capture: true, passive: true });
 }
 
 // Laid out again when the page or the note in it changes size (fonts and

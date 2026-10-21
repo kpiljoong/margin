@@ -6496,6 +6496,7 @@ function penPage(c, tab, lock, extra = []) {
   // A mark and its margin note go together: pointing at one lights the other.
   const pair = (key, on) => {
     for (const el of page.querySelectorAll(`.pen-doc [data-mark="${key}"], .pen-card[data-mark="${key}"], .pen-lines [data-mark="${key}"]`)) el.classList.toggle('pen-pair', on);
+    pen.markEdge(page.querySelector('.pen-body'));
   };
   page.addEventListener('mouseover', (e) => { const k = e.target.closest?.('[data-mark]')?.dataset.mark; if (k && k !== page.paired) { if (page.paired) pair(page.paired, false); page.paired = k; pair(k, true); } });
   page.addEventListener('mouseleave', () => { if (page.paired) pair(page.paired, false); page.paired = null; });
@@ -7590,6 +7591,8 @@ function markCur(el) {
   if (el.dataset.fork != null) el.closest('.forks-page')?.forkPreview(el.dataset.opt);
   // The margin note in view shows all of itself: the ones below make room.
   const body = el.closest('.pen-body');
+  // Another card: the one laid at its mark (revealMark) goes back among the others.
+  if (body && body._focus != null && body._focus !== el.dataset.mark) body._focus = null;
   if (pen && body && wrap) for (const b of wrap.querySelectorAll('.pen-body')) pen.layoutMargin(b);
   for (const p of wrap?.querySelectorAll('.layered') || []) p.layerSelect(el);
   wrap?.querySelector(':scope > .minimap')?.redraw();
