@@ -174,9 +174,48 @@ function resolveInside(base, relPath) {
   return abs;
 }
 
+// Notes outside the workspace, opened on their own (dropped on the window,
+// Finder's Open With): only the ones the desktop app hands over, by its
+// id, as ":outside/<id>/<name>". They can be read and saved, nothing else.
+const LOOSE = new Map(); // id → absolute path
+const LOOSE_AT = ':outside/';
+const looseOf = (relPath) => {
+  if (typeof relPath !== 'string' || !relPath.startsWith(LOOSE_AT)) return null;
+  const abs = LOOSE.get(relPath.slice(LOOSE_AT.length).split('/')[0]);
+  if (!abs) throw httpError(404, 'This note is no longer open here: drop it on the window again');
+  return abs;
+};
+if (process.send) {
+  process.on('message', (m) => {
+    if (m?.type !== 'loose' || typeof m.id !== 'string' || !/^[a-z0-9]{6,32}$/.test(m.id)) return;
+    if (typeof m.path !== 'string' || !path.isAbsolute(m.path) || !NOTE_EXT.has(extOf(m.path))) return;
+    LOOSE.set(m.id, m.path);
+    process.send({ type: 'loose-ok', id: m.id });
+  });
+}
+function getLoose(relPath, abs) {
+  let st;
+  try { st = fileStat(abs); } catch { throw httpError(404, 'File not found'); }
+  if (!st.isFile()) throw httpError(400, 'Not a file');
+  if (st.size > MAX_OPEN_BYTES) throw httpError(413, 'File is too large to open here');
+  const buf = fs.readFileSync(abs);
+  if (buf.includes(0)) throw httpError(415, 'Binary files are not editable');
+  return { path: relPath, abs, content: buf.toString('utf8'), hash: hashOf(buf), mtime: st.mtimeMs };
+}
+function saveLoose(relPath, abs, { content, baseHash, force }) {
+  let old = null;
+  try { old = fs.readFileSync(abs); } catch { /* gone: written again */ }
+  if (!force && old && baseHash && hashOf(old) !== baseHash) throw httpError(409, 'File changed on disk since you opened it', { currentHash: hashOf(old) });
+  const tmp = `${abs}.${process.pid}.${Date.now()}.tmp`;
+  fs.writeFileSync(tmp, content);
+  fs.renameSync(tmp, abs);
+  return { path: relPath, hash: hashOf(Buffer.from(content, 'utf8')) };
+}
+
 // Resolves a user-supplied path inside the workspace, refusing reserved dirs
 // and symlinks that point outside of it.
 function workspacePath(relPath) {
+  if (typeof relPath === 'string' && relPath.startsWith(LOOSE_AT)) throw httpError(400, 'This note is outside the workspace: open its folder to use this');
   const abs = resolveInside(ROOT, relPath);
   if (relOf(abs).split('/').some((part) => SKIP_NAMES.has(part))) throw httpError(403, 'Path is reserved');
   let probe = abs;
@@ -250,6 +289,8 @@ function emptyDirs() {
 }
 
 function getFile(relPath) {
+  const loose = looseOf(relPath);
+  if (loose) return getLoose(relPath, loose);
   const abs = workspacePath(relPath);
   let st;
   try { st = fileStat(abs); } catch { throw httpError(404, 'File not found'); }
@@ -261,13 +302,15 @@ function getFile(relPath) {
 }
 
 function statFile(relPath) {
-  const abs = workspacePath(relPath);
+  const abs = looseOf(relPath) || workspacePath(relPath);
   try { return { path: relPath, hash: hashOf(fs.readFileSync(abs)), exists: true }; }
   catch { return { path: relPath, exists: false }; }
 }
 
 function saveFile({ path: relPath, content, baseHash, force, reason }) {
   if (typeof content !== 'string') throw httpError(400, 'content must be a string');
+  const loose = looseOf(relPath);
+  if (loose) return saveLoose(relPath, loose, { content, baseHash, force });
   const abs = workspacePath(relPath);
   const old = fs.existsSync(abs) ? fs.readFileSync(abs) : null;
   if (!force && old) {

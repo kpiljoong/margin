@@ -11,6 +11,10 @@ contextBridge.exposeInMainWorld('agentNotesDesktop', {
   // File objects from a drop; only real files from the OS have a path.
   openDropped: (files) => ipcRenderer.send('desktop:open-paths', [...files].map((f) => webUtils.getPathForFile(f)).filter(Boolean)),
   onOpenNote: (cb) => ipcRenderer.on('desktop:open-note', (_e, rel) => cb(String(rel))),
+  // A note opened on its own (":outside/…", outside the workspace): its folder
+  // opened as a workspace, or the note shown in Finder / Explorer.
+  openLooseFolder: (rel) => ipcRenderer.send('desktop:loose-folder', String(rel)),
+  revealLoose: (rel) => ipcRenderer.send('desktop:loose-reveal', String(rel)),
   configureAgent: () => ipcRenderer.send('desktop:configure-agent'),
   revealFolder: () => ipcRenderer.send('desktop:reveal'),
   // Shows a workspace file or folder in Finder / Explorer (path relative to the workspace).

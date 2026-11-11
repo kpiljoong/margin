@@ -2354,3 +2354,10 @@ img.part { border-radius: 6px; box-shadow: 0 0 0 1px var(--border); }
 .room-keep { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-align: left; }
 .room-ref { color: var(--accent); text-decoration: none; cursor: pointer; }
 .room-ref:hover { text-decoration: underline; }
+/* A note opened on its own, outside the workspace: where it is, and the ways in. */
+.loose-crumbs { display: flex; align-items: center; gap: 6px; min-width: 0; }
+.loose-chip { flex: none; padding: 0 6px; border: 1px solid var(--border); border-radius: 9px; font-size: 11px; color: var(--warn); }
+.loose-where { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.loose-btn { flex: none; border: 1px solid var(--border); background: none; color: var(--fg-dim); border-radius: 5px; padding: 1px 7px; font-size: 11.5px; cursor: pointer; }
+.loose-btn:hover { color: var(--fg); background: var(--bg-hover); }
+.tab .loose-kind { color: var(--warn); }

@@ -209,6 +209,9 @@ const basename = (p) => p.split('/').pop();
 const dirname = (p) => (p.includes('/') ? p.slice(0, p.lastIndexOf('/')) : '');
 const stem = (p) => basename(p).replace(/\.[^.]+$/, '');
 const isNote = (p) => /\.(md|markdown|mdx|txt)$/i.test(p);
+// A note outside the workspace, opened on its own (desktop: dropped on the
+// window, Finder's Open With): ":outside/<id>/<name>", read and saved only.
+const isLoose = (p) => typeof p === 'string' && p.startsWith(':outside/');
 const isMermaidFile = (p) => /\.(mmd|mermaid)$/i.test(p || '');
 const isHtmlFile = (p) => /\.html?$/i.test(p || '');
 // A page of the workspace where it is shown (an origin of its own; '' before the server says).
@@ -661,6 +664,7 @@ async function openFile(path, { line, focus = true, group, side = false, text = 
       closedTabs.delete(path);
       if (kept && kept.hash === f.hash) { tab = kept; tab.group = target; restoreKept(tab, line == null && focus); }
       else tab = { id: `f:${path}`, kind: 'file', path, ...fromDisk(f.content), hash: f.hash, sel: 0, scroll: 0, group: target };
+      if (f.abs) tab.abs = f.abs;
       S.tabs.push(tab);
     } catch (e) { toast(e.message, 'error'); return; }
   } else if (side && tab.group !== target) moveTab(tab, target, false);
@@ -669,6 +673,7 @@ async function openFile(path, { line, focus = true, group, side = false, text = 
   activate(tab.id);
   if (line != null) requestAnimationFrame(() => gotoLine(line));
   else if (focus) requestAnimationFrame(() => { if (isAttached(tab)) tab.editor.focus(); });
+  if (isLoose(path)) return;
   for (let d = dirname(path); d; d = dirname(d)) S.expanded.add(d);
   S.recent = [path, ...S.recent.filter((p) => p !== path)].slice(0, 30);
   store.setItem(`an.recent.${S.info?.root}`, JSON.stringify(S.recent));
@@ -1695,7 +1700,8 @@ function renderTabs() {
   bar.replaceChildren(...S.tabs.filter((t) => t.group === g).map((t) => {
     const dirty = (t.kind === 'file' && t.content !== t.saved) || (t.kind === 'drawing' && t.text !== t.saved);
     const label = SPECIAL[t.kind] ? SPECIAL[t.kind].name(t) : t.kind === 'room' ? roomName(t) : basename(t.path);
-    return h('div', { class: `tab${t.id === grp.active ? ' active' : ''}${dirty ? ' dirty' : ''}`, title: t.path || t.title, draggable: 'true',
+    const loose = isLoose(t.path);
+    return h('div', { class: `tab${t.id === grp.active ? ' active' : ''}${dirty ? ' dirty' : ''}`, title: loose ? `${t.abs || label} (outside the workspace)` : t.path || t.title, draggable: 'true',
       'data-id': t.id,
       ondragstart: (e) => { e.dataTransfer.setData('text/x-agent-notes-tab', t.id); e.dataTransfer.effectAllowed = 'move'; document.body.classList.add('tab-dragging'); },
       ondragend: tabDragEnd,
@@ -1704,8 +1710,8 @@ function renderTabs() {
       onmousedown: (e) => { if (e.button === 1) { e.preventDefault(); midTab = t.id; } },
       oncontextmenu: (e) => contextMenu(e, [
         { label: S.groups.length > 1 ? 'Move to other pane' : 'Open to the side', run: () => moveTab(t, t.group === 0 ? 1 : 0) },
-        isDoc(t) ? { label: 'Rename / move file…', run: () => renameItem(t.path) } : null,
-        t.kind === 'file' && isNote(t.path) ? { label: 'Open in the meeting room', run: () => openRoom(t.path, { group: t.group }) } : null,
+        isDoc(t) && !loose ? { label: 'Rename / move file…', run: () => renameItem(t.path) } : null,
+        t.kind === 'file' && isNote(t.path) && !loose ? { label: 'Open in the meeting room', run: () => openRoom(t.path, { group: t.group }) } : null,
         '-',
         { label: 'Close', run: () => closeTab(t.id) },
         { label: 'Close others', run: () => closeTabs(S.tabs.filter((x) => x.group === t.group && x !== t)) },
@@ -1715,6 +1721,7 @@ function renderTabs() {
         canReopen() ? { label: 'Reopen closed tab', key: kbd('reopen-tab'), run: reopenTab } : null,
       ]) },
     t.kind === 'review' ? h('span', { class: 'kind' }, '✦') : null,
+    loose ? h('span', { class: 'kind loose-kind' }, '⇱') : null,
     h('span', { class: 'label' }, label),
     h('button', { class: 'close', title: 'Close', onclick: (e) => { e.stopPropagation(); closeTab(t.id); } }, h('span', {}, '×')));
   }), S.groups.length > 1 ? h('button', { class: 'pane-close', title: 'Close pane (tabs move to the other pane)', onclick: () => closePane(g) }, '×') : '');
@@ -1821,6 +1828,34 @@ $('#panes').addEventListener('drop', (e) => {
   render();
 });
 
+// A note opened on its own, outside the workspace: where it is, and the
+// ways into the workspace — a copy of it here, or its folder in a window.
+function looseCrumbs(tab) {
+  const name = tab.path.split('/').pop();
+  return h('span', { class: 'crumbs loose-crumbs' },
+    h('span', { class: 'loose-chip', title: 'Opened on its own: it is read and saved where it is, but links, search, comments and agents are of the workspace' }, 'Outside the workspace'),
+    h('span', { class: 'loose-where', title: tab.abs || name }, tab.abs || name),
+    desktop?.revealLoose ? h('button', { class: 'icon-btn', title: 'Show in Finder', onclick: () => desktop.revealLoose(tab.path) }, '↗') : null,
+    h('button', { class: 'loose-btn', title: 'A copy of it in this workspace (at the top), opened in its place; the file itself stays where it is', onclick: () => copyLooseIn(tab) }, 'Copy into workspace'),
+    desktop?.openLooseFolder ? h('button', { class: 'loose-btn', title: 'Its folder as a workspace, in a window of its own', onclick: () => desktop.openLooseFolder(tab.path) }, 'Open its folder') : null);
+}
+async function copyLooseIn(tab) {
+  const name = tab.path.split('/').pop();
+  const dot = name.lastIndexOf('.');
+  const [stem, ext] = dot > 0 ? [name.slice(0, dot), name.slice(dot)] : [name, '.md'];
+  let p = `${stem}${ext}`;
+  for (let n = 2; S.files.some((f) => f.path.toLowerCase() === p.toLowerCase()); n++) p = `${stem} ${n}${ext}`;
+  let made;
+  try { made = await api('POST', '/api/file', { path: p, content: toDisk(tab.editor ? tab.editor.value : tab.content, tab.eol) }); }
+  catch (e) { toast(e.message, 'error'); return; }
+  if (tab.content !== tab.saved) await saveTab(tab);
+  await loadTree();
+  const g = tab.group;
+  await closeTab(tab.id);
+  await openFile(made.path, { group: g });
+  toast(`Copied into the workspace as ${made.path}; the file itself stays where it was`);
+}
+
 // Exchange the two panes (tabs, active tab, mode).
 function swapPanes() {
   if (S.groups.length < 2) return;
@@ -1882,7 +1917,7 @@ function renderContent(g = S.focus) {
     h('button', { class: mode === m ? 'on' : '', title: kbd('cycle-mode') ? `${m[0].toUpperCase() + m.slice(1)} (${kbd('cycle-mode')} cycles)` : m[0].toUpperCase() + m.slice(1), onclick: () => { S.focus = tab.group; setMode(m); } }, m[0].toUpperCase() + m.slice(1))));
   const toolbar = h('div', { class: 'toolbar' },
     ...navButtons(),
-    h('span', { class: 'crumbs' }, tab.path.split('/').join('  ›  ')),
+    isLoose(tab.path) ? looseCrumbs(tab) : h('span', { class: 'crumbs' }, tab.path.split('/').join('  ›  ')),
     hasPreview(tab.path) ? seg : null,
     isMermaidFile(tab.path) ? h('button', { class: 'icon-btn', title: 'Copy diagram as image (PNG)', onclick: () => copyPicture(mermaidFilePicture(tab)) }, '⧉') : null,
     isHtmlFile(tab.path) ? h('button', { class: 'icon-btn', title: 'Open the page in your browser (as saved)', onclick: () => openPage(tab.path) }, '↗') : null,
@@ -11177,7 +11212,7 @@ let booted;
 const bootDone = new Promise((resolve) => { booted = resolve; });
 desktop?.onOpenNote?.(async (rel) => {
   await bootDone;
-  if (!S.files.some((f) => f.path === rel)) await loadTree();
+  if (!isLoose(rel) && !S.files.some((f) => f.path === rel)) await loadTree();
   await openFile(rel);
   render();
 });

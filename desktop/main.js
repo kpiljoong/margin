@@ -220,6 +220,7 @@ async function fetchModelFile(child, m) {
 
 function startServer(view, workspace) {
   stopServer(view);
+  view.loose = null; // the notes it was told of go with it
   // Only external CLI agents need the user's full PATH. Running the login
   // shell lazily avoids touching shell startup files (and any folder-access
   // prompts they trigger) for people who never enable an agent.
@@ -239,6 +240,7 @@ function startServer(view, workspace) {
     child.stderr.on('data', (d) => { stderr += d; process.stderr.write(d); });
     child.on('message', (m) => {
       if (m && m.type === 'model-file') { fetchModelFile(child, m); return; }
+      if (m && m.type === 'loose-ok') { view.looseWait?.get(m.id)?.(); return; }
       if (m && m.type === 'ready') {
         if (view.server === child) view.info = { url: m.url, origin: new URL(m.url).origin, root: m.root };
         resolve(view.info);
@@ -389,10 +391,42 @@ function workspaceFor(file) {
   return known || path.dirname(file);
 }
 
-// A note opens in the window of its folder (a new window when none shows it).
-async function openNote(file) {
+// A note opens in the window of its folder; one outside every open folder,
+// on its own in the window it was dropped on (or the last one used): its
+// folder isn't made a workspace for it. With no window yet, its folder opens.
+async function openNote(file, target = null) {
   file = realpath(file);
-  const root = workspaceFor(file);
+  const inOpen = [...views].some((v) => v.root && within(realpath(v.root), file));
+  const host = !inOpen && (target?.info ? target : lastView());
+  if (host?.info && host.server) return openLoose(host, file);
+  return openInWorkspace(file, workspaceFor(file));
+}
+
+// The server of the window is told it may read and save that one file.
+async function openLoose(v, file) {
+  v.loose ||= new Map();
+  let id = [...v.loose].find(([, f]) => f === file)?.[0];
+  if (!id) {
+    id = require('crypto').randomBytes(6).toString('hex');
+    v.looseWait ||= new Map();
+    const ok = await new Promise((resolve) => {
+      const t = setTimeout(() => resolve(false), 4000);
+      v.looseWait.set(id, () => { clearTimeout(t); resolve(true); });
+      v.server.send({ type: 'loose', id, path: file });
+    });
+    v.looseWait.delete(id);
+    if (!ok) return false;
+    v.loose.set(id, file);
+  }
+  app.addRecentDocument(file);
+  v.win.webContents.send('desktop:open-note', `:outside/${id}/${path.basename(file)}`);
+  if (v.win.isMinimized()) v.win.restore();
+  v.win.focus();
+  return true;
+}
+const looseFile = (v, rel) => v?.loose?.get(/^:outside\/([a-z0-9]+)\//.exec(String(rel))?.[1]) || null;
+
+async function openInWorkspace(file, root) {
   const v = viewByRoot(root) || (await openWorkspace(root, { newWindow: true }));
   if (!v) return false;
   app.addRecentDocument(file);
@@ -406,25 +440,25 @@ async function openNote(file) {
 // run one at a time: macOS can deliver the same file twice at launch (argv and
 // an open-file event), and two workspace switches must not overlap.
 let opening = Promise.resolve();
-function openPath(p) {
-  const run = opening.then(() => openPathNow(p));
+function openPath(p, target = null) {
+  const run = opening.then(() => openPathNow(p, target));
   opening = run.catch(() => {});
   return run;
 }
 
-async function openPathNow(p) {
+async function openPathNow(p, target) {
   let st;
   try { st = fs.statSync(p); } catch { dialog.showErrorBox('Margin', `Not found:\n${p}`); return false; }
   // From outside (Finder, the Dock, another launch): a folder in a window of its own.
   if (st.isDirectory()) return !!(await openWorkspace(path.resolve(p), { newWindow: true }));
-  if (st.isFile() && NOTE_FILE.test(p)) return openNote(p);
+  if (st.isFile() && NOTE_FILE.test(p)) return openNote(p, target);
   dialog.showErrorBox('Margin', `Margin opens folders and Markdown or text notes (.md, .markdown, .mdx, .txt).\n\n${p}`);
   return false;
 }
 
-async function openPaths(paths) {
+async function openPaths(paths, target = null) {
   // Several notes from one workspace all open; otherwise the last one wins.
-  for (const p of paths) await openPath(p);
+  for (const p of paths) await openPath(p, target);
 }
 
 async function chooseFile() {
@@ -612,7 +646,17 @@ ipcMain.on('desktop:open-file', (e) => { if (viewFrom(e)) chooseFile(); });
 ipcMain.on('desktop:open-paths', (e, paths) => {
   if (!viewFrom(e) || !Array.isArray(paths)) return;
   const list = paths.filter((p) => typeof p === 'string' && path.isAbsolute(p)).slice(0, 20);
-  if (list.length) openPaths(list);
+  if (list.length) openPaths(list, viewFrom(e));
+});
+// A note opened on its own: its folder as a workspace (in a window of its
+// own, the note in it), or the note in Finder / Explorer.
+ipcMain.on('desktop:loose-folder', (e, rel) => {
+  const file = looseFile(viewFrom(e), rel);
+  if (file) openInWorkspace(file, path.dirname(file));
+});
+ipcMain.on('desktop:loose-reveal', (e, rel) => {
+  const file = looseFile(viewFrom(e), rel);
+  if (file && fs.existsSync(file)) shell.showItemInFolder(file);
 });
 ipcMain.on('desktop:configure-agent', (e) => { if (viewFrom(e)) openAgentSettings(); });
 ipcMain.on('desktop:reveal', (e, rel) => {

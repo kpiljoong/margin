@@ -214,6 +214,41 @@ await check('a margin card far below its line begins with the line; a press show
   return got;
 `, (v) => (v.quotes >= 2 && /item 6/.test(v.words) && v.up === '↑' && v.line && v.card ? null : 'no line at the top of the card, no mark at the edge, or the two not in view together'));
 
+// A note from outside the workspace, dropped on the window: opened here on
+// its own, saved where it is; its folder is not made a workspace.
+{
+  const outside = path.join(tmp, 'elsewhere');
+  fs.mkdirSync(outside);
+  const file = path.join(outside, 'dropped.md');
+  fs.writeFileSync(file, '# Dropped\n\nfrom elsewhere\n');
+  let got = {};
+  let problem = null;
+  try {
+    for (const type of ['dragEnter', 'dragOver', 'drop']) await send('Input.dispatchDragEvent', { type, x: 700, y: 400, data: { items: [], files: [file], dragOperationsMask: 1 } });
+    got = await inPage(`
+      const where = await until(() => $('.loose-crumbs .loose-where'), 6000);
+      const ta = $$('.editor-wrap textarea').find((t) => t.offsetParent);
+      ta.focus(); ta.setSelectionRange(ta.value.length, ta.value.length);
+      document.execCommand('insertText', false, 'more\\n');
+      await sleep(200);
+      document.activeElement.dispatchEvent(new KeyboardEvent('keydown', { key: 's', code: 'KeyS', metaKey: navigator.platform.startsWith('Mac'), ctrlKey: !navigator.platform.startsWith('Mac'), bubbles: true, cancelable: true }));
+      await until(() => !$('.tab.active.dirty'));
+      await sleep(200);
+      return { where: where.textContent, tab: $('.tab.active')?.textContent, text: ta.value };
+    `);
+    got.disk = fs.readFileSync(file, 'utf8');
+    got.windows = (await (await fetch(`http://127.0.0.1:${PORT}/json/list`)).json()).filter((t) => t.type === 'page').length;
+    await inPage(`$('.tab.active .close').click(); await sleep(200); await openNote('flow.md');`);
+    if (!/elsewhere[\\/]dropped\.md$/.test(got.where || '')) problem = 'the note did not open on its own here';
+    else if (got.disk !== '# Dropped\n\nfrom elsewhere\nmore\n') problem = 'it was not saved where it is';
+    else if (got.windows !== 1) problem = 'a window was opened for its folder';
+  } catch (e) { problem = e.message; }
+  const name = 'a note from outside dropped on the window opens here on its own and saves where it is';
+  results.push({ name, ok: !problem });
+  console.log(`${problem ? '✗' : '✓'} ${name}${problem ? `\n    ${problem}\n    got: ${JSON.stringify(got)}` : ''}`);
+  if (problem) failed = true;
+}
+
 await check('the canvas draws both flows', `
   button('Canvas').click();
   await until(() => $$('.canvas-card').length === 2 && $$('.node-hit').length >= 8, 15000);
