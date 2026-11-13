@@ -109,22 +109,45 @@ export class DrawingFrame {
 // Images are cached per file content, and the last one per path is kept so
 // re-rendering a note while typing shows it at once.
 let renderer = null;
-const svgCache = new Map(); // `${dark}|${hash}` -> data URL
+const svgCache = new Map(); // `${dark}|${hash}` -> { url, frames }
 const lastByPath = new Map(); // `${dark}|${path}` -> data URL
 let chain = Promise.resolve();
+const svgUrl = (svg) => `data:image/svg+xml;base64,${btoa(unescape(encodeURIComponent(svg)))}`;
 
-function svgFor(text, format, dark, key) {
-  if (svgCache.has(key)) return Promise.resolve(svgCache.get(key));
+// One render in the hidden frame, after those asked for before it.
+function renderOne(msg) {
   if (!renderer) renderer = new DrawingFrame({ mode: 'render' }, null, { hidden: true });
-  const job = chain.then(async () => {
-    const r = await renderer.request({ type: 'render', text, format, dark });
-    const url = `data:image/svg+xml;base64,${btoa(unescape(encodeURIComponent(r.svg)))}`;
-    if (svgCache.size > 100) svgCache.delete(svgCache.keys().next().value);
-    svgCache.set(key, url);
-    return url;
-  });
+  const job = chain.then(() => renderer.request({ type: 'render', ...msg }));
   chain = job.catch(() => {});
   return job;
+}
+
+// → { url, frames }: frames [{ id, name, x, y, w, h }] are where the
+// drawing's frames are in the picture, as fractions of its size.
+function pictureFor(text, format, dark, key) {
+  if (svgCache.has(key)) return Promise.resolve(svgCache.get(key));
+  return renderOne({ text, format, dark }).then((r) => {
+    const frames = (r.frames || []).map((f) => ({ id: f.id, name: f.name, x: f.x / r.width, y: f.y / r.height, w: f.w / r.width, h: f.h / r.height }));
+    const pic = { url: svgUrl(r.svg), frames };
+    if (svgCache.size > 100) svgCache.delete(svgCache.keys().next().value);
+    svgCache.set(key, pic);
+    return pic;
+  });
+}
+const svgFor = (text, format, dark, key) => pictureFor(text, format, dark, key).then((p) => p.url);
+
+// A drawing as pages to present: each frame alone (in presenting order,
+// see framesOf in the frame), or the whole drawing when it has none.
+// → [{ name, url, whole? }]
+export async function drawingSlides(text, format, dark) {
+  const whole = await renderOne({ text, format, dark });
+  if (!whole.frames?.length) return [{ name: '', url: svgUrl(whole.svg), whole: true }];
+  const slides = [];
+  for (const f of whole.frames) {
+    const r = await renderOne({ text, format, dark, frame: f.id });
+    slides.push({ name: f.name, url: svgUrl(r.svg) });
+  }
+  return slides;
 }
 
 // A drawing file as an SVG data URL in its own (light) colours — what copying
@@ -135,7 +158,11 @@ export async function drawingImageUrl(path, { readFile }) {
 }
 
 export const cachedEmbed = (path, dark) => lastByPath.get(`${dark}|${path}`) || null;
-export function forgetEmbed(path) { lastByPath.delete(`true|${path}`); lastByPath.delete(`false|${path}`); }
+export function forgetEmbed(path) { lastByPath.delete(`true|${path}`); lastByPath.delete(`false|${path}`); framesByPath.delete(path); }
+// The frames of an embedded drawing as last shown (see pictureFor), for
+// presenting it a frame at a time.
+const framesByPath = new Map();
+export const embedFrames = (path) => framesByPath.get(path) || [];
 
 // Fill every .drawing-embed[data-path] in `root` that has no image yet.
 // readFile(path) → { content, hash }.
@@ -144,8 +171,9 @@ export async function renderDrawingEmbeds(root, { readFile, dark }) {
     const p = el.dataset.path;
     try {
       const f = await readFile(p);
-      const url = await svgFor(f.content, drawingFormat(p), dark, `${dark}|${f.hash}`);
+      const { url, frames } = await pictureFor(f.content, drawingFormat(p), dark, `${dark}|${f.hash}`);
       lastByPath.set(`${dark}|${p}`, url);
+      framesByPath.set(p, frames);
       if (!el.isConnected) continue;
       const img = document.createElement('img');
       img.src = url;

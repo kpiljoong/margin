@@ -22,7 +22,7 @@ import { ARROW_KINDS } from './inkdraw.js';
 import { pinnedFigure, pinLabel } from './pins.js';
 import { sketchToFlow } from './sketchflow.js';
 import { goalAt, boxAt, mentionRanges, definitionLines, leadLines, numberedItems } from './figure-goal.js';
-import { isDrawing as isExcalidraw, drawingFormat, DrawingFrame, renderDrawingEmbeds, cachedEmbed, forgetEmbed, drawingImageUrl } from './drawing.js';
+import { isDrawing as isExcalidraw, drawingFormat, DrawingFrame, renderDrawingEmbeds, cachedEmbed, forgetEmbed, drawingImageUrl, embedFrames, drawingSlides } from './drawing.js';
 import { copyPng, copySvg, svgFromDataUrl, imageToPng } from './clip.js';
 import { openViewer } from './viewer.js';
 import { fuzzy, rankCommands, used } from './commands.js';
@@ -2384,6 +2384,11 @@ function presentSteps(tab, prefer = new Map()) {
       const marks = pre.matches('.ink-figure') ? (pre.inkMarks || []).filter((m) => m.kind !== 'hide') : [];
       if (!pre.flowNodes) {
         if (!alone) steps.push({ pre, id: null, title: sec.title, text: '', note: '', via: '', lines: [] });
+        // A drawing's frames are its pages: one step each.
+        if (pre.matches('.drawing-embed')) {
+          embedFrames(pre.dataset.path).forEach((f, j) => steps.push({ pre, id: null, area: f, title: sec.title, text: f.name || `Frame ${j + 1}`, note: '', via: '', lines: [] }));
+          continue;
+        }
         let group = [];
         marks.forEach((m, j) => {
           group.push(m.line);
@@ -3655,6 +3660,7 @@ const COMMANDS = [
   ['View: preview only', () => setMode('preview')],
   ['View: editor and canvas (pictures follow the cursor)', () => setMode('canvas')],
   ['Canvas: present the flows (full screen, one box at a time)', () => presentFlows()],
+  ['Drawing: present it, a frame at a time (full screen)', () => presentDrawing()],
   ['Flow: new flow to draw on', () => newFlowHere()],
   ['Sketch: a blank board to draw on, below the cursor', () => newSketchHere()],
   ['Sketch: read it as a flow (below it)', () => sketchToFlowHere()],
@@ -4611,6 +4617,7 @@ function drawingView(tab, c) {
           tab.frame?.post({ type: 'view', view: tab.view });
           renderContent(tab.group);
         } }, label))),
+    h('button', { class: 'icon-btn', title: 'Present: full screen, a frame at a time (its frames are the pages)', onclick: () => presentDrawing(tab) }, '▶'),
     h('button', { class: 'icon-btn', title: 'Copy as image (PNG) — the selection, or the whole drawing (⇧⌥C)', onclick: () => copyPicture(drawingPicture(tab)) }, '⧉'),
     h('button', { class: 'icon-btn', title: S.groups.length > 1 ? 'Move to the other pane' : withKey('Open to the side', 'split'), onclick: () => (S.groups.length > 1 ? moveTab(tab, tab.group === 0 ? 1 : 0) : splitRight()) }, '◫'),
     h('button', { class: 'icon-btn', title: 'More actions', onclick: (e) => { const r = e.currentTarget.getBoundingClientRect(); contextMenu({ preventDefault() {}, stopPropagation() {}, clientX: r.right - 200, clientY: r.bottom + 4 }, [
@@ -4643,10 +4650,67 @@ function drawingView(tab, c) {
   renderDrawingBanner(tab);
 }
 
+// Presenting a drawing: full screen, a frame at a time (frames are its
+// pages, in the order framesOf in the drawing frame gives), or the whole
+// drawing when it has none. The pages are pictures of it as it is now.
+let drawingShow = null;
+async function presentDrawing(tab = drawingTab()) {
+  if (!tab || tab.desk) { toast('Open an Excalidraw drawing first.'); return; }
+  if (drawingShow) return;
+  await flushDrawing(tab);
+  let slides;
+  try { slides = await drawingSlides(tab.text, drawingFormat(tab.path), isDarkTheme()); } catch (e) { toast(`Can’t present it: ${e.message}`, 'error'); return; }
+  const img = h('img', { class: 'drawing-show-page', alt: '' });
+  const cap = h('div', { class: 'drawing-show-cap' });
+  const el = h('div', { class: 'drawing-show', tabindex: '-1' }, img, cap);
+  const show = { i: 0, el };
+  const go = (i) => {
+    show.i = Math.max(0, Math.min(slides.length - 1, i));
+    const sl = slides[show.i];
+    img.src = sl.url;
+    img.alt = sl.name || stem(tab.path);
+    cap.textContent = sl.whole ? `${stem(tab.path)}  ·  No frames, so all of it: draw frames (F in the drawing) to make pages`
+      : `${sl.name || `Frame ${show.i + 1}`}  ·  ${show.i + 1} / ${slides.length}`;
+  };
+  const end = () => {
+    if (drawingShow !== show) return;
+    drawingShow = null;
+    el.remove();
+    document.removeEventListener('fullscreenchange', left);
+    if (document.fullscreenElement === el) document.exitFullscreen().catch(() => {});
+    placeFrames();
+  };
+  const left = () => { if (document.fullscreenElement !== el) end(); };
+  show.end = end;
+  el.addEventListener('keydown', (e) => {
+    if (e.metaKey || e.ctrlKey || e.altKey) return;
+    const next = [' ', 'ArrowRight', 'ArrowDown', 'Enter', 'PageDown', ']'];
+    const back = ['ArrowLeft', 'ArrowUp', 'Backspace', 'PageUp', '['];
+    if (next.includes(e.key)) go(show.i + 1);
+    else if (back.includes(e.key)) go(show.i - 1);
+    else if (e.key === 'Home') go(0);
+    else if (e.key === 'End') go(slides.length - 1);
+    else if (e.key === 'Escape') end();
+    else return;
+    e.preventDefault();
+    e.stopPropagation();
+  });
+  // A click goes on; on the left third, back.
+  el.addEventListener('click', (e) => go(show.i + (e.clientX < el.clientWidth / 3 ? -1 : 1)));
+  drawingShow = show;
+  document.body.append(el);
+  placeFrames(); // the drawing's own frame stays under it
+  go(0);
+  el.focus();
+  if (el.requestFullscreen && !document.fullscreenElement) {
+    el.requestFullscreen().then(() => document.addEventListener('fullscreenchange', left)).catch(() => {});
+  }
+}
+
 // Frames sit in a fixed layer above the panes (moving an iframe reloads it).
 const slotObserver = new ResizeObserver(() => placeFrames());
 function placeFrames() {
-  for (const t of S.tabs) if (t.kind === 'drawing' && t.frame) t.frame.place(activeIn(t.group) === t ? t.slot : null);
+  for (const t of S.tabs) if (t.kind === 'drawing' && t.frame) t.frame.place(activeIn(t.group) === t && !drawingShow ? t.slot : null);
 }
 let placeQueued = false;
 function placeFramesSoon() {

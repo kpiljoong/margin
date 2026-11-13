@@ -101,7 +101,8 @@ fs.writeFileSync(path.join(out, 'THIRD-PARTY-LICENSES.txt'), `Bundled into Margi
 
 // frame.html: an import map pins the hash of every script chunk, so the
 // browser refuses any file that differs from this build.
-const walk = (dir, prefix = '') => fs.readdirSync(dir, { withFileTypes: true }).flatMap((e) =>
+// (Not macOS's "._" companions, which it writes beside files on some disks.)
+const walk = (dir, prefix = '') => fs.readdirSync(dir, { withFileTypes: true }).filter((e) => !e.name.startsWith('._')).flatMap((e) =>
   e.isDirectory() ? walk(path.join(dir, e.name), `${prefix}${e.name}/`) : [`${prefix}${e.name}`]);
 const sri = (rel) => `sha384-${crypto.createHash('sha384').update(fs.readFileSync(path.join(out, rel))).digest('base64')}`;
 const files = walk(out).sort();

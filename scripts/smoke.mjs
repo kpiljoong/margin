@@ -41,6 +41,12 @@ fs.writeFileSync(path.join(ws, 'elbow.md'), '# Route\n\n```ink\nboard: 1600x900\
 fs.writeFileSync(path.join(ws, 'looks.md'), '# Looks\n\n```ink\nboard: 1600x900\nbox: 100,100 400x200\ntext: 130,140 A long line of words that wraps in its box\narrow: 500,200 -> 900,200\n```\n\nAfter.\n');
 fs.writeFileSync(path.join(ws, 'sketchflow.md'), '# Board\n\n```ink\nboard: 1600x900\nbox: 100,100 300x120\ntext: 130,140 Idea\nbox: 100,500 300x120\ntext: 130,540 Try it\narrow: 250,230 -> 250,490\n```\n\nAfter.\n');
 // Lines for a keyboard macro, and notes to run one at every search result.
+// A drawing of two frames, named out of their places: presenting goes by the numbers.
+const frameEl = (id, x, name) => ({ id, type: 'frame', x, y: 0, width: 400, height: 300, name, strokeColor: '#bbb', backgroundColor: 'transparent', fillStyle: 'solid', strokeWidth: 2, roughness: 0, opacity: 100, seed: 1, version: 1, versionNonce: 1, isDeleted: false, boundElements: null, groupIds: [], frameId: null });
+fs.writeFileSync(path.join(ws, 'deck.excalidraw'), JSON.stringify({ type: 'excalidraw', version: 2, source: 'smoke', elements: [
+  frameEl('second', 0, '2 Second'), frameEl('first', 600, '1 First'),
+  { ...frameEl('box', 650, null), type: 'rectangle', y: 50, width: 200, height: 100, strokeColor: '#1e1e1e', frameId: 'first' },
+], appState: { viewBackgroundColor: '#ffffff' }, files: {} }));
 fs.writeFileSync(path.join(ws, 'macro.md'), 'apple\nbanana\ncherry');
 fs.writeFileSync(path.join(ws, 'emacs.md'), 'one two three\nfour five\nsix\n');
 fs.writeFileSync(path.join(ws, 'kept.md'), 'one\ntwo\n');
@@ -248,6 +254,22 @@ await check('a margin card far below its line begins with the line; a press show
   console.log(`${problem ? '✗' : '✓'} ${name}${problem ? `\n    ${problem}\n    got: ${JSON.stringify(got)}` : ''}`);
   if (problem) failed = true;
 }
+
+await check('a drawing presents a frame at a time, in the order of their numbers', `
+  (await until(() => $$('#sidebar .tree-row').find((r) => r.dataset.path === 'deck.excalidraw'))).click();
+  (await until(() => $$('.toolbar .icon-btn').find((b) => b.textContent === '▶' && b.offsetParent), 20000)).click();
+  const cap = await until(() => $('.drawing-show-cap'), 20000);
+  await until(() => $('.drawing-show-page')?.naturalWidth);
+  const first = cap.textContent;
+  const w = $('.drawing-show-page').naturalWidth;
+  $('.drawing-show').dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true }));
+  const second = cap.textContent;
+  $('.drawing-show').dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+  await sleep(100);
+  const gone = !$('.drawing-show');
+  $('.tab.active .close').click(); await sleep(200); await openNote('flow.md');
+  return { first, second, w, gone };
+`, (v) => (/^1 First\s+·\s+1 \/ 2$/.test(v.first) && /^2 Second\s+·\s+2 \/ 2$/.test(v.second) && v.w === 400 && v.gone ? null : 'expected 1 First then 2 Second, each its frame alone, and Esc to end'));
 
 await check('the canvas draws both flows', `
   button('Canvas').click();

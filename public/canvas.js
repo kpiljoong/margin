@@ -591,6 +591,7 @@ export class FigureCanvas {
       else if (x.pre) x.pre.querySelectorAll(':scope > .node-layer > .node-hit').forEach((b) => b.classList.remove('unseen'));
     }
     if (st.frame) st.frame.el.querySelectorAll('.node-hit').forEach((b) => b.classList.remove('unseen'));
+    this.shade(st.area ? st.pre : null, st.area);
     for (const fig of new Set(p.steps.filter((x) => x.marks).map((x) => x.pre))) {
       for (const m of fig.querySelectorAll('.ink-mark')) m.classList.toggle('unseen', !shown.get(fig)?.has(Number(m.dataset.line)));
     }
@@ -673,6 +674,18 @@ export class FigureCanvas {
       const marks = st.marks && [...st.pre.querySelectorAll('.ink-mark')].filter((m) => st.marks.includes(Number(m.dataset.line)));
       const box = st.id ? this.hit(st.pre, st.id) : null;
       const b = box ? this.bounds([box]) : marks?.length ? this.bounds(marks) : c;
+      // A frame of a drawing: that part of its picture as large as fits.
+      if (st.area) {
+        const img = st.pre.querySelector('img');
+        if (!img) return;
+        const ib = this.bounds([img]);
+        const a = { x: ib.x + st.area.x * ib.w, y: ib.y + st.area.y * ib.h, w: st.area.w * ib.w, h: st.area.h * ib.h };
+        const k = Math.min(3, w / a.w, h / a.h);
+        this.userCam = false;
+        this.framed = null;
+        this.moveTo(k, s.width / 2 - (a.x + a.w / 2) * k, PAD + (h - a.h * k) / 2 - a.y * k, true);
+        return;
+      }
       const same = this.framed === card && !force;
       if (same && this.userCam) { this.reveal(b, s.width, s.height - cap); return; }
       this.userCam = false;
@@ -686,6 +699,20 @@ export class FigureCanvas {
       const k = 0.8;
       this.moveTo(k, s.width / 2 - (b.x + b.w / 2) * k, PAD + h / 2 - (b.y + b.h / 2) * k, true);
     });
+  }
+
+  // Presenting a drawing's frame: the rest of its picture dimmed. area is
+  // the frame's place in the picture, as fractions of it.
+  shade(fig, area) {
+    this.world.querySelectorAll('.drawing-shade').forEach((x) => x.remove());
+    const img = fig?.querySelector('img');
+    if (!img || !area) return;
+    const veil = el('div', 'drawing-shade');
+    Object.assign(veil.style, { left: `${img.offsetLeft}px`, top: `${img.offsetTop}px`, width: `${img.offsetWidth}px`, height: `${img.offsetHeight}px` });
+    const hole = el('div', 'drawing-shade-hole');
+    Object.assign(hole.style, { left: `${area.x * 100}%`, top: `${area.y * 100}%`, width: `${area.w * 100}%`, height: `${area.h * 100}%` });
+    veil.append(hole);
+    fig.append(veil);
   }
 
   // Pan, at the current zoom, just enough that b (world units) is inside a
@@ -709,6 +736,7 @@ export class FigureCanvas {
     if (!this.presenting) return;
     this.presenting = null;
     this.el.classList.remove('presenting');
+    this.shade(null);
     this.world.querySelectorAll('.node-hit.unseen, .ink-mark.unseen').forEach((b) => b.classList.remove('unseen'));
     this.caption.hidden = true;
     if (document.fullscreenElement === this.el) document.exitFullscreen().catch(() => {});

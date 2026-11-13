@@ -19,7 +19,7 @@
   }
  },
  "esbuild": "0.28.2",
- "csp": "default-src 'none'; script-src SELF 'wasm-unsafe-eval' 'sha256-dxnASzA+SRAH9X35MfqNOzaUloYcGjgoMW+OVEODQL8='; style-src SELF 'unsafe-inline'; font-src SELF data:; img-src SELF data: blob:; connect-src SELF data: blob:; worker-src SELF blob:; frame-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors SELF",
+ "csp": "default-src 'none'; script-src SELF 'wasm-unsafe-eval' 'sha256-ffx/SSpqxWR4kNBlEnG72JjvpffV5M7rOSzHkDHconA='; style-src SELF 'unsafe-inline'; font-src SELF data:; img-src SELF data: blob:; connect-src SELF data: blob:; worker-src SELF blob:; frame-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors SELF",
  "files": {
   "THIRD-PARTY-LICENSES.txt": "05e5f2a650dd855433d85335fcc292acf196e1cbd66f015f7313d8d86ea72744",
   "assets/Assistant-Bold-ZDZZ6JHA.woff2": "e0cdd332ce039770e93ec44336b6db65f931940f42b0342aad35a06e7f991d29",
@@ -229,8 +229,8 @@
   "fonts/Nunito/Nunito-Regular-XRXI3I6Li01BKofiOc5wtlZ2di8HDIkhdTo3j6zbXWjgevT5.woff2": "7928f47b21192cb6fdb2f46b71a474a3bd2fd608945c5ad7d7ed6bde8b0ae24c",
   "fonts/Nunito/Nunito-Regular-XRXI3I6Li01BKofiOc5wtlZ2di8HDIkhdTs3j6zbXWjgevT5.woff2": "5117398298dd0dba3c95a406ff12fbeb88289fa4e913e3a5cf482cafe7f7071a",
   "fonts/Virgil/Virgil-Regular.woff2": "2279cf7daf1c42a3a53b2c1437ad72f0050efb67ac263e0245f67612fd766714",
-  "frame-3B4NLDAE.js": "9408ed97a5bdfa9c4355e372b48e00eb42fd8d5c6ed024a51777b6b918f74574",
   "frame-5Y2X32QX.css": "9f1f160387cfe73540ffd383b6c96aacf6ab2314dc8fd83bc0c634b290c80349",
-  "frame.html": "b538ceac7feaf69b7bfcc2c52267394a2660d8ca3efdea08dcb639d9e0b8a7c0"
+  "frame-FK6BM326.js": "546edf461abb903340b6680b582a169f012c46fb2aca110e327f33705d155e7d",
+  "frame.html": "06a35988a9eed777bcf1720e25bdcb810a4a8f7fa8ee31936b47793f6a55a53f"
  }
 }

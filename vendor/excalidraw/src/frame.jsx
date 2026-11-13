@@ -7,7 +7,10 @@
 //                 theme {theme} · view {view}
 //                 flush {id}             reply flushed {id, text|null} right away
 //                 export {id, format: 'png'|'svg'}   selection (or all) → exported {id, blob|svg}
-//                 render {id, text, format, dark}   (render mode) → svg {id, svg} | error {id, message}
+//                 render {id, text, format, dark, frame?}   (render mode) → svg {id, svg, frames} | error {id, message}
+//                   frame: one frame's id — that frame alone, as Excalidraw exports it;
+//                   frames: the drawing's frames in presenting order, [{id, name, x, y, w, h}]
+//                   in the units of the whole drawing's SVG
 // frame → parent  ready · loaded · change {text} · error {message} · link {url} · key {combo} · focus
 
 import './asset-path.js';
@@ -191,15 +194,49 @@ async function exportSelection(api, format) {
   return { blob, count: elements.length, selection: !!picked.length };
 }
 
+const PAD = 16;
+
 async function render(m) {
   const { elements, appState, files } = parseScene(m.text, m.format);
+  const shown = elements.filter((el) => !el.isDeleted);
+  const frames = framesOf(shown);
+  const exportingFrame = m.frame ? frames.find((f) => f.id === m.frame) : null;
+  if (m.frame && !exportingFrame) throw new Error('That frame is no longer in the drawing.');
+  // The frames' names are left out of the whole drawing: they would move
+  // its edges by the size of their text, and the places of the frames in it
+  // are worked out from its elements (below).
   const svg = await exportToSvg({
-    elements: elements.filter((el) => !el.isDeleted),
-    appState: { ...appState, exportBackground: true, exportWithDarkMode: !!m.dark, exportEmbedScene: false },
+    elements: shown,
+    appState: { ...appState, exportBackground: true, exportWithDarkMode: !!m.dark, exportEmbedScene: false, frameRendering: { ...appState.frameRendering, name: false } },
     files,
-    exportPadding: 16,
+    exportPadding: PAD,
+    exportingFrame,
   });
-  return new XMLSerializer().serializeToString(svg);
+  // The whole drawing is the bounds of what is outside frames and of the
+  // frames themselves (what is in one is cut at its edge), padded all round.
+  let place = [];
+  if (!m.frame && frames.length) {
+    const ids = new Set(frames.map((f) => f.id));
+    const [x1, y1] = getCommonBounds(shown.filter((el) => !el.frameId || !ids.has(el.frameId)));
+    place = frames.map((f) => ({ id: f.id, name: f.name || '', x: f.x + PAD - x1, y: f.y + PAD - y1, w: f.width, h: f.height }));
+  } else place = frames.map((f) => ({ id: f.id, name: f.name || '' }));
+  return { svg: new XMLSerializer().serializeToString(svg), frames: place, width: Number(svg.getAttribute('width')), height: Number(svg.getAttribute('height')) };
+}
+
+// Frames are the pages of a drawing. Their order: those named with a number
+// first ("1 Intro", "2. Plan"), by it; then the rest as one reads, row by
+// row, top to bottom and left to right.
+function framesOf(elements) {
+  const all = elements.filter((el) => el.type === 'frame' || el.type === 'magicframe');
+  const num = (f) => { const n = /^\s*(\d+)/.exec(f.name || ''); return n ? Number(n[1]) : null; };
+  const numbered = all.filter((f) => num(f) != null).sort((a, b) => num(a) - num(b));
+  const rest = all.filter((f) => num(f) == null).sort((a, b) => a.y - b.y);
+  const rows = [];
+  for (const f of rest) {
+    const row = rows[rows.length - 1];
+    if (row && f.y < row.top + row.height / 2) { row.items.push(f); row.height = Math.min(row.height, f.height); } else rows.push({ top: f.y, height: f.height, items: [f] });
+  }
+  return [...numbered, ...rows.flatMap((r) => r.items.sort((a, b) => a.x - b.x))];
 }
 
 const bus = { onMessage: null };
@@ -217,7 +254,7 @@ window.addEventListener('message', async (e) => {
     return;
   }
   if (m.type === 'render') {
-    try { post({ type: 'svg', id: m.id, svg: await render(m) }); } catch (err) { post({ type: 'error', id: m.id, message: err.message }); }
+    try { post({ type: 'svg', id: m.id, ...(await render(m)) }); } catch (err) { post({ type: 'error', id: m.id, message: err.message }); }
     return;
   }
   bus.onMessage?.(m);

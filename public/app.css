@@ -2361,3 +2361,12 @@ img.part { border-radius: 6px; box-shadow: 0 0 0 1px var(--border); }
 .loose-btn { flex: none; border: 1px solid var(--border); background: none; color: var(--fg-dim); border-radius: 5px; padding: 1px 7px; font-size: 11.5px; cursor: pointer; }
 .loose-btn:hover { color: var(--fg); background: var(--bg-hover); }
 .tab .loose-kind { color: var(--warn); }
+
+/* Presenting a drawing a frame at a time (presentDrawing in app.js). */
+.drawing-show { position: fixed; inset: 0; z-index: 1000; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 14px; padding: 28px; box-sizing: border-box; background: var(--bg); outline: none; cursor: pointer; }
+.drawing-show-page { flex: 1 1 auto; min-height: 0; max-width: 100%; width: 100%; object-fit: contain; }
+.drawing-show-cap { flex: none; color: var(--fg-dim); font: 13px var(--sans); }
+/* Presenting a note: a drawing's frame lit, the rest of the picture dimmed (canvas.js shade()). */
+.canvas-world .drawing-embed { position: relative; }
+.drawing-shade { position: absolute; overflow: hidden; pointer-events: none; border-radius: 6px; }
+.drawing-shade-hole { position: absolute; box-shadow: 0 0 0 4000px color-mix(in srgb, var(--bg) 82%, transparent); outline: 2px solid var(--accent); }
