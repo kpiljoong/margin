@@ -12,6 +12,7 @@ import { EmacsKeys, emacs, keyName, wordEdge } from './emacs.js';
 
 const esc = (s) => s.replace(/[&<>]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c]));
 const MAX_HIGHLIGHT = 300_000; // chars; beyond this we fall back to plain text
+const FOLD_TEXT = 520; // px of text, at least, beside an open margin: narrower, it folds (_fold)
 
 // ------------------------------------------------------------------ highlighting
 
@@ -171,13 +172,13 @@ export class MarkdownEditor {
     this.el.append(this.curLine, this.findLayer, this.hlLayer, this.ta, this.anchorCol, this.notesCol, this.popup, this.findBar);
     this.el.addEventListener('wheel', (e) => this._marginWheel(e), { passive: false });
 
-    this.ta.addEventListener('input', (e) => this._changed(e));
+    this.ta.addEventListener('input', (e) => { this._foldAway(); this._changed(e); });
     this.ta.addEventListener('beforeinput', (e) => {
       if (e.inputType === 'historyUndo' || e.inputType === 'historyRedo') { e.preventDefault(); if (e.inputType === 'historyUndo') this.undo(); else this.redo(); return; }
       if (!this.busy) this._selBefore = [this.ta.selectionStart, this.ta.selectionEnd];
     });
     this.ta.addEventListener('beforeinput', (e) => this._multiInput(e));
-    this.ta.addEventListener('mousedown', () => { this._clearMulti(); this._closeStep(); this.emacs.mouse(); if (this.query) this._queryDone(); });
+    this.ta.addEventListener('mousedown', () => { this._foldAway(); this._clearMulti(); this._closeStep(); this.emacs.mouse(); if (this.query) this._queryDone(); });
     this.ta.addEventListener('compositionstart', () => { this._clearMulti(); this._selBefore = [this.ta.selectionStart, this.ta.selectionEnd]; });
     this.ta.addEventListener('scroll', () => this._syncScroll());
     this.ta.addEventListener('keydown', (e) => {
@@ -750,6 +751,7 @@ export class MarkdownEditor {
     if (this._head && this._head !== el) this._head.remove();
     this._head = el || null;
     if (el && el.parentNode !== this.el) { el.classList.add('ed-headline'); this.el.append(el); }
+    this._headButton();
   }
 
   setNotes(notes) {
@@ -779,6 +781,8 @@ export class MarkdownEditor {
   // place inside a line from that line alone: never the text up to it for
   // each card, which in a long note took seconds.
   _placeNotes() {
+    this._fold();
+    if (this._folded && this.notes.length && this.el.isConnected) { this._placeFolded(); return; }
     if (!this.notes.length || !this.el.isConnected) { this.anchorCol.replaceChildren(); this._notesBelow = 0; this._marginBy(0); if (this._edgeEl) this._edgeEl.hidden = true; return; }
     const o = this._off;
     const v = this.ta.value;
@@ -844,6 +848,117 @@ export class MarkdownEditor {
     this._anchors();
   }
 
+  // ---------------- the margin folded: an editor too narrow for the text
+  // and the cards side by side (split with the preview, a narrow pane) keeps
+  // the text wide. Each line with cards gets a mark at its right edge (their
+  // number when more than one); pressed, its cards open over the text just
+  // below the line, until a click in the text, Esc or typing. The headline
+  // folds to a button at the top of the marks. The live margin never folds.
+  _fold() {
+    const want = this.el.classList.contains('with-notes') && !this.el.classList.contains('live') && this.el.clientWidth > 0
+      && this.el.clientWidth - (parseFloat(getComputedStyle(this.el).getPropertyValue('--notes-w')) || 232) - 40 - 24 - 12 < FOLD_TEXT;
+    if (want === !!this._folded) return;
+    this._folded = want;
+    this.el.classList.toggle('notes-folded', want);
+    if (!want) { this._foldLine = null; this._headOpen = false; this.el.classList.remove('head-open'); }
+    this._lineOffsetCache = null;
+    this._marginOff = 0;
+    this._lift = 0;
+    this._headButton();
+  }
+  get marginFolded() { return !!this._folded; }
+
+  _headButton() {
+    const on = this._folded && !!this._head;
+    if (!on) { this._headBtn?.remove(); this._headBtn = null; this.el.classList.remove('head-open'); return; }
+    if (!this._headBtn) {
+      const b = this._headBtn = document.createElement('button');
+      b.className = 'ed-fold-head';
+      b.addEventListener('mousedown', (e) => e.preventDefault());
+      b.addEventListener('click', () => { this._headOpen = !this._headOpen; this._headButton(); });
+    }
+    const name = this._head.querySelector('.brief-mode')?.textContent.trim() || 'Brief';
+    this._headBtn.textContent = this._headOpen ? '\u00d7' : '\u2261';
+    this._headBtn.title = this._headOpen ? `Fold the ${name}` : `${name}: show it`;
+    this.el.classList.toggle('head-open', !!this._headOpen);
+    if (this._headBtn.parentNode !== this.el) this.el.append(this._headBtn);
+  }
+
+  _placeFolded() {
+    const o = this._off;
+    const v = this.ta.value;
+    const lh = this.lineHeight();
+    this._notesBelow = 0;
+    this.notesCol.style.transform = `translateY(${-this.ta.scrollTop}px)`;
+    if (this._edgeEl) this._edgeEl.hidden = true;
+    const right = this.ta.offsetLeft + this.ta.clientWidth - (parseFloat(getComputedStyle(this.ta).paddingRight) || 0);
+    this._anchorRight = right + 6;
+    // The cards by the line they begin on.
+    const lines = new Map();
+    for (const n of [...this.notes].sort((x, z) => x.from - z.from)) {
+      n.at = null;
+      this._quote(n, false);
+      const out = n.from < o || n.from - o > v.length;
+      if (out) { n.el.style.display = 'none'; continue; }
+      const l = this._lineOf(n.from - o);
+      if (!lines.has(l)) lines.set(l, []);
+      lines.get(l).push(n);
+    }
+    // A card being written (a new comment, a reply) is open whatever was.
+    for (const [l, ns] of lines) if (ns.some((n) => n.el.querySelector('input:not([type="checkbox"]), textarea'))) this._foldLine = l;
+    if (this._foldLine != null && !lines.has(this._foldLine)) this._foldLine = null;
+    const offs = this._lineOffsets();
+    const marks = [];
+    for (const [l, ns] of lines) {
+      const top = offs[l] + this._padTop();
+      const open = l === this._foldLine;
+      // What each is about, as unfolded: its words, or its lines (to the end of end's line).
+      for (const n of ns) {
+        const from = n.from - o;
+        let end;
+        if (n.end == null && n.to > n.from) end = Math.min(v.length, n.to - o);
+        else { const e = Math.min(v.length, Math.max(n.from, n.end ?? n.from) - o); end = v.indexOf('\n', e); if (end < 0) end = v.length; }
+        const last = this._lineOf(end);
+        const bottom = last + 1 < offs.length ? offs[last + 1] + this._padTop() : this._spot(v.length).top + lh;
+        n.at = { end: end + o, top: this._spot(from).top, bottom, card: top, bar: null, color: getComputedStyle(n.el).getPropertyValue('--r').trim(), line: l };
+        n.el.style.display = open ? '' : 'none';
+      }
+      const m = document.createElement('button');
+      m.className = `ed-fold-mark${open ? ' open' : ''}`;
+      m.textContent = ns.length > 1 ? String(ns.length) : '';
+      m.title = `${ns.length} card${ns.length === 1 ? '' : 's'} on this line: ${open ? 'fold' : 'show'}`;
+      m.style.top = `${top + (lh - 16) / 2}px`;
+      m.style.left = `${this._anchorRight}px`;
+      if (ns[0].at.color) m.style.setProperty('--a', ns[0].at.color);
+      m.addEventListener('mousedown', (e) => e.preventDefault());
+      m.addEventListener('click', () => this._openFold(open ? null : l));
+      m._foldLine = l;
+      marks.push(m);
+    }
+    this.anchorCol.replaceChildren(...marks);
+    // The open line's cards, one under another, just below it.
+    if (this._foldLine != null) {
+      const ns = lines.get(this._foldLine);
+      const last = Math.max(...ns.map((n) => this._lineOf(n.at.end - o)));
+      let y = (last + 1 < offs.length ? offs[last + 1] + this._padTop() : this._spot(v.length).top + lh) + 4;
+      for (const n of ns) { n.el.style.top = `${y}px`; y += n.el.offsetHeight + 6; }
+    }
+    this._anchorKey = '';
+    this._anchors();
+  }
+
+  // Open the cards of line l over the text (null: none).
+  _openFold(l) {
+    this._foldLine = l;
+    this._placeFolded();
+  }
+  // A folded margin's open cards and headline, closed.
+  _foldAway() {
+    if (!this._folded) return;
+    if (this._headOpen) { this._headOpen = false; this._headButton(); }
+    if (this._foldLine != null) this._openFold(null);
+  }
+
   // How far the margin has scrolled on past the text's end (0 … _notesBelow),
   // or lifted to a card's line (_lift, revealNote): the wheel, once the
   // text is at its end, moves the cards on; back up, it lowers them first.
@@ -886,6 +1001,13 @@ export class MarkdownEditor {
   revealNote(n) {
     const at = n.at;
     if (!at) return;
+    if (this._folded) {
+      this._openFold(at.line);
+      const ta = this.ta;
+      if (at.top < ta.scrollTop || at.bottom > ta.scrollTop + ta.clientHeight / 2) ta.scrollTop = Math.max(0, at.top - this.lineHeight() * 2);
+      this._syncScroll();
+      return;
+    }
     const ta = this.ta;
     const ch = ta.clientHeight;
     const lh = this.lineHeight();
@@ -921,6 +1043,7 @@ export class MarkdownEditor {
   // A card pointed at (or the caret in its line) whose line is out of view:
   // a mark at that edge of the text, ↑ or ↓, that brings them together.
   _edge() {
+    if (this._folded) { if (this._edgeEl) this._edgeEl.hidden = true; return; }
     const n = this.anchorOn.find((x) => x.at);
     const ta = this.ta;
     const s = ta.scrollTop;
@@ -949,6 +1072,10 @@ export class MarkdownEditor {
   // A part of a card brought into view (the text scrolls, then the margin).
   revealInMargin(el) {
     const ta = this.ta;
+    if (this._folded) {
+      const n = this.notes.find((x) => x.el.contains(el));
+      if (n?.at && n.at.line !== this._foldLine) this._openFold(n.at.line);
+    }
     let d = el.getBoundingClientRect().bottom + 12 - this.el.getBoundingClientRect().bottom;
     if (d <= 0) return;
     const can = Math.max(0, ta.scrollHeight - ta.clientHeight - ta.scrollTop);
@@ -956,6 +1083,7 @@ export class MarkdownEditor {
     if (d > 0) this._marginBy((this._marginOff || 0) + d);
   }
   _marginWheel(e) {
+    if (this._folded) return;
     if (e.ctrlKey || Math.abs(e.deltaX) > Math.abs(e.deltaY)) return;
     const ta = this.ta;
     const atEnd = ta.scrollTop + ta.clientHeight >= ta.scrollHeight - 1;
@@ -1008,12 +1136,17 @@ export class MarkdownEditor {
     const key = on.map((n) => this.notes.indexOf(n)).join(',');
     if (key === this._anchorKey) { this._edge(); return; }
     this._anchorKey = key;
-    for (const n of this.notes) { n.el.classList.toggle('anchored', on.includes(n)); n.at?.bar.classList.toggle('on', on.includes(n)); }
+    for (const n of this.notes) { n.el.classList.toggle('anchored', on.includes(n)); n.at?.bar?.classList.toggle('on', on.includes(n)); }
     this.anchorOn = on;
     this.findLayer.style.setProperty('--a', on.find((n) => n.at.color)?.at.color || '');
     this._renderFind();
     this.anchorCol.querySelector('svg')?.remove();
     this._edge();
+    if (this._folded) {
+      const lit = new Set(on.map((n) => n.at.line));
+      for (const m of this.anchorCol.querySelectorAll('.ed-fold-mark')) m.classList.toggle('on', lit.has(m._foldLine));
+      return;
+    }
     if (!on.length) return;
     const NS = 'http://www.w3.org/2000/svg';
     const svg = document.createElementNS(NS, 'svg');
@@ -1173,6 +1306,7 @@ export class MarkdownEditor {
     if (e.isComposing || e.keyCode === 229) return;
     if (!this.popup.hidden && this._popupKeys(e)) return;
     if (this.query && this._queryKey(e)) return;
+    if (e.key === 'Escape' && !e.metaKey && !e.ctrlKey && !e.altKey && (this._foldLine != null || this._headOpen)) { e.preventDefault(); this._foldAway(); return; }
     // A key the page takes first (the live margin's Tab and Esc).
     if (this.keyHook?.(e)) { e.preventDefault(); return; }
     if (this.emacs.key(e)) return;

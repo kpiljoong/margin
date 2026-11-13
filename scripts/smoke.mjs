@@ -199,9 +199,16 @@ await check('a note opens in the editor', `
   return ta?.value.includes('\`\`\`flow') || false;
 `, (ok) => (ok ? null : 'flow.md did not open'));
 
+// The margin open beside the text needs a wide editor (narrower, it folds).
+const tall = (await send('Runtime.evaluate', { expression: 'innerHeight', returnByValue: true })).result?.result?.value || 800;
+await send('Emulation.setDeviceMetricsOverride', { width: 1800, height: tall, deviceScaleFactor: 0, mobile: false });
+await sleep(400);
 await check('a margin card far below its line begins with the line; a press shows the two together', `
   const ta = await openNote('sub/far.md');
   const ed = ta.closest('.ed');
+  const wrap = ta.closest('.editor-wrap');
+  const was = ['split', 'canvas'].find((m) => wrap.classList.contains('mode-' + m));
+  if (was) { button('Edit').click(); await until(() => !ed.classList.contains('notes-folded')); }
   const q = await until(() => $$('.ed-src', ed).at(-1));
   const card = q.closest('.mnote');
   const words = q.textContent;
@@ -216,9 +223,34 @@ await check('a margin card far below its line begins with the line; a press show
   const c = card.getBoundingClientRect();
   const inView = (r) => r && r.top >= box.top - 1 && r.top + 20 <= box.bottom;
   const got = { quotes: $$('.ed-src', ed).length, words, up, line: inView(band), card: inView(c) };
+  if (was) { button(was === 'canvas' ? 'Canvas' : 'Split').click(); await sleep(200); }
   await openNote('flow.md');
   return got;
 `, (v) => (v.quotes >= 2 && /item 6/.test(v.words) && v.up === '↑' && v.line && v.card ? null : 'no line at the top of the card, no mark at the edge, or the two not in view together'));
+await send('Emulation.clearDeviceMetricsOverride');
+await sleep(400);
+
+await check('an editor too narrow for its margin folds it: a mark on the line opens its cards over the text; Esc folds them', `
+  const ta = await openNote('sub/far.md');
+  const ed = ta.closest('.ed');
+  const wrap = ta.closest('.editor-wrap');
+  const was = ['edit', 'split', 'canvas'].find((m) => wrap.classList.contains('mode-' + m));
+  button('Split').click();
+  await until(() => ed.classList.contains('notes-folded'));
+  const marks = $$('.ed-fold-mark', ed).length;
+  const shown = () => $$('.mnote', ed).filter((n) => getComputedStyle(n).display !== 'none').length;
+  const closed = shown();
+  $$('.ed-fold-mark', ed)[0].click(); await sleep(200);
+  const open = shown();
+  ta.focus();
+  ta.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true })); await sleep(200);
+  const after = shown();
+  if (was !== 'split') button(was === 'canvas' ? 'Canvas' : 'Edit').click();
+  await sleep(300);
+  const unfolded = !ed.classList.contains('notes-folded');
+  await openNote('flow.md');
+  return { marks, closed, open, after, unfolded, was };
+`, (v) => (v.marks === 4 && v.closed === 0 && v.open === 1 && v.after === 0 && (v.was === 'split' || v.unfolded) ? null : 'expected 4 marks, no card shown, one opened by its mark, folded again by Esc, and the margin back when wide'));
 
 // A note from outside the workspace, dropped on the window: opened here on
 // its own, saved where it is; its folder is not made a workspace.

@@ -2370,3 +2370,15 @@ img.part { border-radius: 6px; box-shadow: 0 0 0 1px var(--border); }
 .canvas-world .drawing-embed { position: relative; }
 .drawing-shade { position: absolute; overflow: hidden; pointer-events: none; border-radius: 6px; }
 .drawing-shade-hole { position: absolute; box-shadow: 0 0 0 4000px color-mix(in srgb, var(--bg) 82%, transparent); outline: 2px solid var(--accent); }
+
+/* The margin folded (editor.js _fold): the text keeps its width; a mark at the end of each line with cards opens them over the text below it. */
+.ed.with-notes.notes-folded .ed-layer, .ed.with-notes.notes-folded .ed-input { padding-left: 24px; padding-right: 40px; }
+.ed.notes-folded .ed-notes { right: 36px; width: min(calc(var(--notes-w) + 80px), calc(100% - 72px)); }
+.ed.notes-folded .mnote { box-shadow: 0 8px 24px -8px rgb(0 0 0 / .45); background: color-mix(in srgb, var(--r, var(--pen-me)) 8%, var(--bg)); }
+.ed.notes-folded .ed-headline { display: none; top: 30px; right: 36px; width: min(calc(var(--notes-w) + 80px), calc(100% - 72px)); }
+.ed.notes-folded.head-open .ed-headline { display: block; }
+.ed-fold-mark { position: absolute; z-index: 3; min-width: 16px; height: 16px; padding: 0 3px; box-sizing: border-box; pointer-events: auto; border: 1px solid color-mix(in srgb, var(--a, var(--pen-me)) 55%, transparent); border-radius: 8px; background: color-mix(in srgb, var(--a, var(--pen-me)) 22%, var(--bg)); color: var(--a, var(--pen-me)); font: 600 10px/14px var(--sans); cursor: pointer; opacity: .75; }
+.ed-fold-mark:hover, .ed-fold-mark.on { opacity: 1; }
+.ed-fold-mark.open { opacity: 1; background: var(--a, var(--pen-me)); color: var(--bg); }
+.ed-fold-head { position: absolute; z-index: 6; top: 6px; right: 14px; width: 20px; height: 20px; padding: 0; border: 1px solid color-mix(in srgb, var(--accent) 45%, var(--border)); border-radius: 6px; background: color-mix(in srgb, var(--accent) 10%, var(--bg)); color: var(--accent); font: 13px/18px var(--sans); cursor: pointer; }
+.ed-fold-head:hover { background: color-mix(in srgb, var(--accent) 22%, var(--bg)); }
