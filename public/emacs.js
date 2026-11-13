@@ -485,7 +485,10 @@ export function keyName(e, mac = isMac) {
   return `${e.ctrlKey ? 'C-' : ''}${e.altKey ? 'M-' : ''}${base}`;
 }
 
-// key → command. Off a Mac, Ctrl+V stays paste (and Ctrl+C copy, Ctrl+Z undo).
+// key → command. Off a Mac, Ctrl+V stays paste (and Ctrl+Z undo). As in
+// Emacs (and VS Code's Emacs keys), M-x runs a command by name and C-c,
+// the prefix Emacs leaves to its user, is Margin's leader: off a Mac,
+// copying in the editor is then M-w (or Ctrl+Insert).
 const KEYS = {
   'C-f': 'forward-char', 'C-b': 'backward-char', 'C-n': 'next-line', 'C-p': 'previous-line',
   'C-a': 'beginning-of-line', 'C-e': 'end-of-line', 'M-f': 'forward-word', 'M-b': 'backward-word',
@@ -499,6 +502,7 @@ const KEYS = {
   'M-u': 'upcase-word', 'M-l': 'downcase-word', 'M-c': 'capitalize-word', 'M-q': 'fill-paragraph',
   'C-t': 'transpose-chars', 'M-t': 'transpose-words', 'M-^': 'join-line', 'M-SPC': 'just-one-space', 'M-\\': 'delete-horizontal-space',
   'C-o': 'open-line', 'C-/': 'undo', 'C-_': 'undo', 'C-?': 'redo', 'C-M-_': 'redo', 'M-/': 'dabbrev-expand', 'M-=': 'count-words-region',
+  'M-x': 'execute-extended-command', 'C-c': 'margin-leader',
   'C-x': 'ctl-x', 'M-g': 'goto-map', 'M-s': 'search-map', 'C-u': 'universal-argument', 'M--': 'negative-argument', ESC: 'meta-prefix',
   ...Object.fromEntries([...'0123456789'].map((d) => [`M-${d}`, 'digit-argument'])),
 };
@@ -547,6 +551,7 @@ export const COMMAND_DOCS = {
   'open-line': 'A line break after the caret', 'delete-blank-lines': 'Delete the blank lines around', undo: 'Undo', redo: 'Redo', 'dabbrev-expand': 'Complete the word from words in the note (again: the next)',
   'universal-argument': 'Prefix: 4 times (again: 16), or type a number', 'digit-argument': 'Prefix: a number', 'negative-argument': 'Prefix: backwards',
   'meta-prefix': 'The next key with ⌥ (M-)', 'ctl-x': 'Prefix for ⌃X keys',
+  'execute-extended-command': 'Run a command by its name (the command palette)', 'margin-leader': 'Margin’s leader menu: commands by letter',
   'save-buffer': 'Save', 'find-file': 'Open a note', 'switch-to-buffer': 'Switch note (buffers)', 'list-buffers': 'Switch note (buffers)', 'kill-buffer': 'Close the tab',
   'other-window': 'The other pane', 'split-window': 'Split to the side', dired: 'Dired: this folder as text', 'upcase-region': 'Uppercase the region', 'downcase-region': 'Lowercase the region',
   'mark-whole-buffer': 'Select the whole note', 'exchange-point-and-mark': 'Swap the caret and the mark', repeat: 'Repeat the last command (z again: once more)',
@@ -585,7 +590,7 @@ export function keysOf(cmd) {
 // The commands M-x lists by their Emacs names: { cmd, name, keys, doc }.
 // Prefixes, arguments and C-g are keys only.
 export function emacsCommands() {
-  return Object.keys(COMMAND_DOCS).filter((cmd) => !ARGS.has(cmd) && cmd !== 'keyboard-quit' && cmd !== 'ctl-x')
+  return Object.keys(COMMAND_DOCS).filter((cmd) => !ARGS.has(cmd) && !['keyboard-quit', 'ctl-x', 'execute-extended-command', 'margin-leader'].includes(cmd))
     .map((cmd) => ({ cmd, name: emacsName(cmd), keys: keysOf(cmd)[0] || '', doc: COMMAND_DOCS[cmd] }));
 }
 
@@ -1237,6 +1242,8 @@ export class EmacsKeys {
   _meta_prefix() { this.pending = { meta: true }; this.say('ESC-', true); }
 
   // ---------------------------------------------------------------- the app's
+  _execute_extended_command() { emacs.hooks.mx?.(); }
+  _margin_leader() { emacs.hooks.leader?.(); }
   _save_buffer() { emacs.hooks.save?.(); }
   _find_file() { emacs.hooks.findFile?.(); }
   _switch_to_buffer() { emacs.hooks.buffers?.(); }

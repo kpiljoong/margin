@@ -62,7 +62,10 @@ function applyKeys() {
 }
 applyKeys();
 // A shortcut for people to read ("⌘⇧P"), or '' when it has none.
-const kbd = (id) => keyLabel(KEYS[id] || '', isMac);
+// With Emacs keys on, M-x is the palette and C-c the leader (emacsAppKey).
+const EMACS_APP_KEYS = { palette: 'Alt+X', leader: 'Ctrl+C' };
+const emacsLeads = (id) => emacs.on && (id === 'leader' || (id === 'palette' && !KEYS.palette));
+const kbd = (id) => (emacsLeads(id) ? keyLabel(EMACS_APP_KEYS[id], isMac) : keyLabel(KEYS[id] || '', isMac));
 const withKey = (text, id) => (kbd(id) ? `${text} (${kbd(id)})` : text);
 async function loadShortcuts() {
   try { customKeys = (desktop?.getShortcuts ? await desktop.getShortcuts() : JSON.parse(store.getItem('an.shortcuts') || '{}')) || {}; } catch { customKeys = {}; }
@@ -8150,7 +8153,7 @@ function describeLeader() {
     : { ...it, run: () => openHelp(leaderTopic(it, [...path, it.key])) }));
   openLeader(map(leaderTree(), []), {
     title: `Describe: ${kbd('leader') || 'Commands'}`,
-    isLeader: (e) => !!KEYS.leader && eventKeys(e, isMac) === KEYS.leader,
+    isLeader: (e) => (!!KEYS.leader && eventKeys(e, isMac) === KEYS.leader) || (emacs.on && e.altKey && !e.ctrlKey && !e.metaKey && e.code === 'KeyX'),
     onLeader: () => openHelp(shortcutTopic('leader')),
   });
 }
@@ -8732,8 +8735,20 @@ async function afterRunChange(tab) {
 
 // ------------------------------------------------------------------ keyboard & boot
 
+// Emacs keys on: M-x runs a command by name and C-c opens the leader, as in
+// Emacs (the editor's own keys do the same there, emacs.js). Outside a text
+// field; C-c only with nothing selected, so a selection still copies.
+function emacsAppKey(e) {
+  if (!emacs.on || e.metaKey || e.shiftKey || e.defaultPrevented) return null;
+  if (e.target.closest?.('input, textarea, select, [contenteditable="true"]') && !e.target.closest('.ed')) return null;
+  if (e.altKey && !e.ctrlKey && e.code === 'KeyX') return 'palette';
+  if (e.ctrlKey && !e.altKey && e.code === 'KeyC' && !String(window.getSelection?.() || '')) return 'leader';
+  return null;
+}
 function appKeydown(e) {
   const overlay = $('#overlay');
+  const em = overlay.hidden ? emacsAppKey(e) : null;
+  if (em) { e.preventDefault(); if (em === 'palette') openPalette('>'); else openLeaderMenu(); return; }
   if (e.key === 'Escape' && !overlay.hidden) { overlay.hidden = true; overlay.replaceChildren(); return; }
   if (e.key === 'Escape' && document.documentElement.classList.contains('focus-mode') && !fileTab()?.editor.find.open && !(e.defaultPrevented && e.target.closest?.('.ed'))) { toggleFocusMode(); return; }
   if (e.key === '?' && !e.metaKey && !e.ctrlKey && !/INPUT|TEXTAREA|SELECT/.test(document.activeElement.tagName)) { S.focus = 0; S.groups[0].active = null; render(); return; }
@@ -11108,6 +11123,8 @@ Object.assign(emacs.hooks, {
   echo: showEcho,
   prefixHelp: showPrefixKeys,
   save: () => runCommand('save'),
+  mx: () => openPalette('>'),
+  leader: openLeaderMenu,
   findFile: () => openPalette(),
   buffers: pickTab,
   killBuffer: () => activeTab() && closeTab(activeTab().id),

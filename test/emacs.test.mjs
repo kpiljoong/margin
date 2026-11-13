@@ -228,3 +228,20 @@ test('a ⌘ key after ESC or a prefix is the app\'s: the prefix is let go, the k
   assert.equal(keys.key(ev({ code: 'KeyP', key: 'p', metaKey: true })), false);
   assert.equal(keys.pending, null);
 });
+
+test('M-x runs a command by name and C-c opens the leader, as in Emacs (ESC x too); off a Mac C-c is no longer copy in the editor', (t) => {
+  t.after(() => { emacs.on = false; emacs.hooks = {}; });
+  emacs.on = true;
+  const ran = [];
+  emacs.hooks = { mx: () => ran.push('mx'), leader: () => ran.push('leader'), echo: () => {} };
+  const ed = { extra: [], find: { open: false }, ta: { selectionStart: 0, selectionEnd: 0, value: '' } };
+  const keys = new EmacsKeys(ed);
+  const ev = (o) => ({ ctrlKey: false, altKey: false, shiftKey: false, metaKey: false, preventDefault() {}, ...o });
+  assert.equal(keys.key(ev({ code: 'KeyX', key: '≈', altKey: true })), true);
+  assert.equal(keys.key(ev({ code: 'KeyC', key: 'c', ctrlKey: true })), true);
+  keys.key(ev({ code: 'Escape', key: 'Escape' }));
+  keys.key(ev({ code: 'KeyX', key: 'x' }));
+  assert.deepEqual(ran, ['mx', 'leader', 'mx']);
+  assert.equal(commandOf('M-x'), 'execute-extended-command');
+  assert.equal(commandOf('C-c'), 'margin-leader');
+});
