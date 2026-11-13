@@ -773,6 +773,9 @@ export class EmacsKeys {
     this.failed = null;
     this.keyDigit = /^Digit\d$/.test(e.code || '') ? e.code[5] : /^\d$/.test(e.key) ? e.key : '';
     const name = keyName(e);
+    // A ⌘ key is never Emacs's: after ESC or a prefix it lets that go and
+    // reaches the app (⌘⇧P, ⌘P, ⌘S …).
+    if (this.pending && e.metaKey) { this.pending = null; this.hideKeys(); this.unsay(); return false; }
     if (this.pending) { e.preventDefault(); this.pendingKey(e, name); return true; }
     if (this.indenting) {
       const step = { ArrowLeft: -1, ArrowRight: 1 }[e.key];

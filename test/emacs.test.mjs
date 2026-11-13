@@ -208,3 +208,23 @@ test('C-x and a pause: its keys show (? or C-h: at once); the next key hides the
   assert.deepEqual(shown, ['C-x', null]);
   assert.equal(keys.pending, null);
 });
+
+test('a ⌘ key after ESC or a prefix is the app\'s: the prefix is let go, the key not taken', (t) => {
+  t.after(() => { emacs.on = false; emacs.hooks = {}; });
+  emacs.on = true;
+  emacs.hooks = { prefixHelp: () => {}, echo: () => {} };
+  const ed = { extra: [], find: { open: false }, ta: { selectionStart: 0, selectionEnd: 0, value: '' } };
+  const keys = new EmacsKeys(ed);
+  let taken = 0;
+  const ev = (o) => ({ ctrlKey: false, altKey: false, shiftKey: false, metaKey: false, preventDefault() { taken++; }, ...o });
+  keys.key(ev({ code: 'Escape', key: 'Escape' }));
+  assert.ok(keys.pending, 'ESC waits for a key');
+  taken = 0;
+  assert.equal(keys.key(ev({ code: 'KeyP', key: 'p', metaKey: true, shiftKey: true })), false);
+  assert.equal(taken, 0);
+  assert.equal(keys.pending, null);
+  keys.key(ev({ code: 'KeyX', key: 'x', ctrlKey: true }));
+  assert.deepEqual(keys.pending, { map: 'C-x' });
+  assert.equal(keys.key(ev({ code: 'KeyP', key: 'p', metaKey: true })), false);
+  assert.equal(keys.pending, null);
+});
