@@ -16,6 +16,7 @@ const { picturesIn, pictureSize, hiddenIn } = require('./lib/pictures');
 const { lockRanges, lockedHunks, drawerText, drawerScraps, addedLines } = require('./lib/beside');
 const { liveMargin, projectOf, testLine } = require('./lib/live');
 const { fileStat } = require('./lib/filestat');
+const { watchTree } = require('./lib/watch');
 const { deskMargin, textLang } = require('./lib/desk');
 const { OutsideStore, Seen, changedWhileAway } = require('./lib/outside');
 const { tiersOf, agentLines } = require('./lib/tiers');
@@ -438,17 +439,16 @@ function startWatcher() {
     structural = false;
   };
   try {
-    const watcher = fs.watch(ROOT, { recursive: true }, (type, filename) => {
-      if (!filename) structural = true;
+    const watcher = watchTree(ROOT, { skip: (name) => SKIP_NAMES.has(name), onEvent: (type, rel) => {
+      if (!rel) structural = true;
       else {
-        const rel = String(filename).split(path.sep).join('/');
         if (rel.split('/').some((part) => SKIP_NAMES.has(part))) return;
         if (type === 'rename') structural = true;
         if (!OWN_TMP_RE.test(rel)) pending.add(rel);
       }
       clearTimeout(timer);
       timer = setTimeout(flush, 120);
-    });
+    } });
     watcher.on('error', () => { watching = false; treeCache = null; });
     watching = true;
   } catch { watching = false; }

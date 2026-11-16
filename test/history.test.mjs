@@ -51,6 +51,9 @@ test('local history keeps what saves, outside changes and restores replaced', as
   assert.deepEqual(v.map((x) => x.reason), ['save'], 'saves close together keep one version: the text before them');
   assert.equal(await textOf(api, 'a.md', v[0].id), 'one\n');
 
+  // A while after the save (a rename over the note): on Linux Node's own
+  // recursive watch no longer saw the note then (lib/watch.js).
+  await sleep(700);
   fs.writeFileSync(path.join(s.ws, 'a.md'), 'from another program\n');
   for (let i = 0; i < 80 && (v = await versions(api, 'a.md')).length < 2; i++) await sleep(100);
   assert.deepEqual(v.map((x) => x.reason), ['outside', 'save']);
