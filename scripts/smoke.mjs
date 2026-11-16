@@ -209,20 +209,23 @@ await check('a margin card far below its line begins with the line; a press show
   const wrap = ta.closest('.editor-wrap');
   const was = ['split', 'canvas'].find((m) => wrap.classList.contains('mode-' + m));
   if (was) { button('Edit').click(); await until(() => !ed.classList.contains('notes-folded')); }
-  const q = await until(() => $$('.ed-src', ed).at(-1));
+  // Waited for, not slept on: the cards laid out (all four), the edge mark
+  // after the scroll, the two in view after the press (a slow machine).
+  await until(() => $$('.ed-src', ed).length >= 2 && /item 6/.test($$('.ed-src', ed).at(-1).textContent));
+  const q = $$('.ed-src', ed).at(-1);
   const card = q.closest('.mnote');
   const words = q.textContent;
   ta.scrollTop = parseFloat(card.style.top) - 40; ta.dispatchEvent(new Event('scroll'));
-  card.dispatchEvent(new MouseEvent('mouseenter')); await sleep(100);
-  const edge = $('.ed-edge', ed);
-  const up = !!edge && !edge.hidden && edge.textContent;
+  card.dispatchEvent(new MouseEvent('mouseenter'));
+  const edge = await until(() => { const e = $('.ed-edge', ed); return e && !e.hidden && e.textContent ? e : null; }, 3000);
+  const up = edge?.textContent || false;
   card.dispatchEvent(new MouseEvent('mouseleave'));
-  q.click(); await sleep(150);
+  q.click();
   const box = ed.getBoundingClientRect();
-  const band = $('.ed-flash', ed)?.getBoundingClientRect();
-  const c = card.getBoundingClientRect();
-  const inView = (r) => r && r.top >= box.top - 1 && r.top + 20 <= box.bottom;
-  const got = { quotes: $$('.ed-src', ed).length, words, up, line: inView(band), card: inView(c) };
+  const inView = (r) => !!r && r.top >= box.top - 1 && r.top + 20 <= box.bottom;
+  const both = () => inView($('.ed-flash', ed)?.getBoundingClientRect()) && inView(card.getBoundingClientRect());
+  await until(both, 3000);
+  const got = { quotes: $$('.ed-src', ed).length, words, up, line: inView($('.ed-flash', ed)?.getBoundingClientRect()), card: inView(card.getBoundingClientRect()) };
   if (was) { button(was === 'canvas' ? 'Canvas' : 'Split').click(); await sleep(200); }
   await openNote('flow.md');
   return got;

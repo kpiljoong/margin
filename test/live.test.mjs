@@ -344,7 +344,9 @@ test('a stuck session: ended after a silence, the line sent again on a fresh one
   const bin = path.join(dir, 'fake-claude');
   fs.writeFileSync(bin, FAKE, { mode: 0o755 });
   const log = path.join(dir, 'log');
-  const m = server.liveMargin({ bin, env: { ...process.env, FAKE_LOG: log }, warmMs: 30, retryMs: 50, opts: { stallMs: 300 } });
+  const m = server.liveMargin({ bin, env: { ...process.env, FAKE_LOG: log }, warmMs: 30, retryMs: 50, opts: { stallMs: 1500 } });
+  // stallMs counts from the line sent, the fresh CLI's start too (the line
+  // again): 300 ms was at times less than a cold node took to start.
   const ask = (line) => new Promise((done) => m.line({ key: 'E', title: 'E', agenda: [], line, today: 'T' }, () => {}, done));
   const sent = () => fs.readFileSync(log, 'utf8').trim().split('\n').map((l) => JSON.parse(l));
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
