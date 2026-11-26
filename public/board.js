@@ -1142,7 +1142,10 @@ export class Board {
     if (this.presenting) return;
     const r = this.el.getBoundingClientRect();
     if (e.ctrlKey || e.metaKey) {
-      this.zoomAt(this.view.k * Math.exp(-e.deltaY * (e.ctrlKey && !e.metaKey ? 0.01 : 0.002)), e.clientX - r.left, e.clientY - r.top);
+      // A pinch sends small steps; a wheel notch (with ⌃ or ⌘) a large one: each zooms at most about 8%.
+      const dy = e.deltaMode === 1 ? e.deltaY * 16 : e.deltaY;
+      const step = Math.max(-0.08, Math.min(0.08, dy * 0.01));
+      this.zoomAt(this.view.k * Math.exp(-step), e.clientX - r.left, e.clientY - r.top);
     } else {
       this.setView(this.view.x - e.deltaX, this.view.y - e.deltaY, this.view.k);
     }
