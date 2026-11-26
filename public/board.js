@@ -182,7 +182,31 @@ const mix = (a, b, t) => { const x = rgb(a); const y = rgb(b); return `rgb(${x.m
 
 // → { svg (text), width, height }; only the nodes ids names (and the arrows
 // between them), else all.
-export function boardSvg(d, pal, ids = null) {
+// The pictures on a board (or on the boxes ids names) as data: URLs, for its
+// picture: each at twice its size on the board at most. urlOf(path) → where
+// to read it. → Map path → data: URL (a picture that can't be read: left out).
+export async function boardImages(d, ids, urlOf) {
+  const out = new Map();
+  const want = d.nodes.filter((n) => isPicture(n) && (!ids || ids.has(n.id)));
+  await Promise.all(want.map(async (n) => {
+    if (out.has(n.file)) return;
+    try {
+      const img = new Image();
+      img.src = urlOf(n.file);
+      await img.decode();
+      const k = Math.min(1, (n.width * 2) / img.naturalWidth, (n.height * 2) / img.naturalHeight);
+      const c = document.createElement('canvas');
+      c.width = Math.max(1, Math.round(img.naturalWidth * k));
+      c.height = Math.max(1, Math.round(img.naturalHeight * k));
+      c.getContext('2d').drawImage(img, 0, 0, c.width, c.height);
+      out.set(n.file, /\.jpe?g$/i.test(n.file) ? c.toDataURL('image/jpeg', 0.9) : c.toDataURL('image/png'));
+    } catch { /* not readable: its frame alone */ }
+  }));
+  return out;
+}
+
+// images: from boardImages (a picture without one: its frame and name).
+export function boardSvg(d, pal, ids = null, images = null) {
   const nodes = d.nodes.filter((n) => !ids || ids.has(n.id));
   const keep = new Set(nodes.map((n) => n.id));
   const edges = d.edges.filter((e) => keep.has(e.fromNode) && keep.has(e.toNode));
@@ -212,6 +236,12 @@ export function boardSvg(d, pal, ids = null) {
     if (shape === 'diamond') return `<polygon points="${x + w / 2},${y + 1} ${x + w - 1},${y + h / 2} ${x + w / 2},${y + h - 1} ${x + 1},${y + h / 2}" ${attrs}/>`;
     return `<rect x="${x + 1}" y="${y + 1}" width="${w - 2}" height="${h - 2}" rx="${shape === 'sticky' ? 3 : shape === 'group' ? 10 : 8}" ${attrs}/>`;
   };
+  const pictureSvg = (n) => {
+    const url = images?.get(n.file);
+    if (url) return `<image href="${esc(url)}" x="${n.x}" y="${n.y}" width="${n.width}" height="${n.height}" preserveAspectRatio="xMidYMid meet"/>`;
+    return `<rect x="${n.x + 1}" y="${n.y + 1}" width="${n.width - 2}" height="${n.height - 2}" rx="4" fill="${pal.bg2}" stroke="${pal.fgDim}" stroke-width="1" stroke-dasharray="4 3"/>`
+      + `<text x="${n.x + n.width / 2}" y="${n.y + n.height / 2 + 5}" font-size="13" text-anchor="middle" fill="${pal.fgDim}">${esc(String(n.file).split('/').pop())}</text>`;
+  };
   const wordsSvg = (n) => {
     const words = wordsOf(n);
     if (!words) return '';
@@ -234,7 +264,7 @@ export function boardSvg(d, pal, ids = null) {
     if ((e.toEnd ?? 'arrow') === 'arrow') out.push(`<path d="${arrowHead(c.p2, bez(c, 0.92))}" fill="${col}" stroke="${col}" stroke-linejoin="round"/>`);
     if (e.fromEnd === 'arrow') out.push(`<path d="${arrowHead(c.p1, bez(c, 0.08))}" fill="${col}" stroke="${col}" stroke-linejoin="round"/>`);
   }
-  for (const n of nodes.filter(isBox)) out.push(shapeSvg(n), wordsSvg(n));
+  for (const n of nodes.filter(isBox)) out.push(...(isPicture(n) ? [pictureSvg(n)] : [shapeSvg(n), wordsSvg(n)]));
   for (const e of edges.filter((x) => x.label)) {
     const m = bez(curves.get(e), 0.5);
     measurer ||= document.createElement('canvas').getContext('2d');
@@ -1512,12 +1542,17 @@ export class Board {
     const ids = this.sel.size ? new Set(this.sel) : null;
     // A group selected: what is in it too.
     if (ids) for (const g of this.selected().filter((n) => n.type === 'group')) for (const x of this.d.nodes) if (isBox(x) && inside(x, g)) ids.add(x.id);
-    const made = boardSvg(this.d, pal, ids);
+    const d = this.d;
+    let made = null;
+    const make = async () => {
+      made ||= boardSvg(d, pal, ids, this.opts.imageUrl ? await boardImages(d, ids, this.opts.imageUrl) : null);
+      return made;
+    };
     return {
       selection: !!ids,
       count: ids ? ids.size : this.d.nodes.length,
-      svg: async () => made.svg,
-      png: () => svgPng(made.svg, made.width, made.height),
+      svg: async () => (await make()).svg,
+      png: async () => { const m = await make(); return svgPng(m.svg, m.width, m.height); },
     };
   }
 

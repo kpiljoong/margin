@@ -5356,7 +5356,8 @@ async function fillBoardEmbeds(root) {
     try {
       const open = S.tabs.find((t) => t.kind === 'drawing' && t.path === p);
       const text = open ? open.text : (await api('GET', `/api/file?path=${encodeURIComponent(p)}`)).content;
-      const url = m.svgUrl(m.boardSvg(m.parseBoard(text), boardPalette()).svg);
+      const d = m.parseBoard(text);
+      const url = m.svgUrl(m.boardSvg(d, boardPalette(), null, await m.boardImages(d, null, (f) => `/api/raw?path=${encodeURIComponent(f)}&t=${token}`)).svg);
       boardPictures.set(`${isDarkTheme()}|${p}`, url);
       el.replaceChildren(h('img', { src: url, alt: el.dataset.label || boardStem(p) }));
       el.classList.add('ready');
