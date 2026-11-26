@@ -4934,6 +4934,26 @@ function boardView(tab, c) {
         text: tab.text,
         toast,
         palette: boardPalette,
+        imageUrl: (p) => `/api/raw?path=${encodeURIComponent(p)}&t=${token}`,
+        // Pictures pasted or dropped on the board: kept in assets/ beside it, as a note's are.
+        addImages: async (files) => {
+          const out = [];
+          for (const file of files) {
+            if (file.size > 25 * 1024 * 1024) { toast(`${file.name} is larger than 25 MB`, 'error'); continue; }
+            try {
+              const ext = (file.type.split('/')[1] || 'png').replace('jpeg', 'jpg').replace('svg+xml', 'svg');
+              const res = await api('POST', '/api/asset', { note: tab.path, name: file.name || `pasted.${ext}`, data: await blobBase64(file) });
+              out.push({ path: res.workspacePath });
+            } catch (e) { toast(`Could not put ${file.name || 'the picture'} on the board: ${e.message}`, 'error'); }
+          }
+          if (out.length) loadTree();
+          return out;
+        },
+        // Words or a picture drawn as a diagram by Claude (the desk's margin, its "diagram" request).
+        ask: async (req) => {
+          if (!(await boardConsent())) throw new Error('Not sent');
+          return deskStream({ ...req, path: tab.path, ...liveOpts(), lang: ['ko', 'en'].includes(S.settings.deskLang) ? S.settings.deskLang : '', fallback: navigator.language }, () => {});
+        },
         onChange: (text) => { tab.text = text; renderTabs(); scheduleDrawingSave(tab); },
       });
     } catch (e) { tab.fatal = e.message; renderContent(tab.group); return; }
@@ -5017,6 +5037,13 @@ async function deskConsent() {
   if (store.getItem('an.deskMargin') === '1') return true;
   const ok = await askConfirm(`The desk’s margin sends the cards you give it (their text, and the notes and pictures they show — a marked part of a picture with the whole of it) to Claude (${liveModelName()}) through your claude login. Notes marked private, and what .agentnotesignore names, are never sent. Nothing goes until you ask.`, { okLabel: 'Send the cards' });
   if (ok) store.setItem('an.deskMargin', '1');
+  return ok;
+}
+// The first time a board asks Claude to draw: what is sent, and where.
+async function boardConsent() {
+  if (store.getItem('an.boardDraw') === '1') return true;
+  const ok = await askConfirm(`Drawing it as a diagram sends that box\u2019s words, or that picture, to Claude (${liveModelName()}) through your claude login \u2014 only when you ask (\u2325\u21E7D or \u21F6), only that one. Words written as a line a box, - or -- for the ones under it, or A -> B are drawn here, without sending anything.`, { okLabel: 'Send it' });
+  if (ok) store.setItem('an.boardDraw', '1');
   return ok;
 }
 let deskWarm = false;

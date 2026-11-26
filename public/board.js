@@ -59,8 +59,10 @@ const newId = () => Array.from(crypto.getRandomValues(new Uint8Array(8)), (b) =>
 const round = (v) => Math.round(v);
 const colorOf = (c) => (c == null || c === '' ? null : COLORS[c] || (/^#[0-9a-f]{3,8}$/i.test(c) ? c : null));
 const shapeOf = (n) => (n.type === 'group' ? 'group' : n.type === 'text' ? (n.shape || 'rect') : 'rect');
-const wordsOf = (n) => (n.type === 'text' ? n.text || '' : n.type === 'group' ? n.label || '' : n.type === 'file' ? `\u{1F4C4} ${String(n.file || '').split('/').pop()}` : n.type === 'link' ? n.url || '' : '');
+const wordsOf = (n) => (n.type === 'text' ? n.text || '' : n.type === 'group' ? n.label || '' : n.type === 'file' ? (IMAGE.test(n.file || '') ? '' : `\u{1F4C4} ${String(n.file || '').split('/').pop()}`) : n.type === 'link' ? n.url || '' : '');
 const isBox = (n) => n.type !== 'group';
+const IMAGE = /\.(png|jpe?g|gif|webp|svg)$/i;
+const isPicture = (n) => n.type === 'file' && IMAGE.test(n.file || '');
 const inside = (x, g) => x.x >= g.x && x.y >= g.y && x.x + x.width <= g.x + g.width && x.y + x.height <= g.y + g.height;
 // Reading order: rows from the top, each from the left.
 const reading = (ns) => [...ns].sort((a, b) => (Math.round((a.y + a.height / 2) / 80) - Math.round((b.y + b.height / 2) / 80)) || (a.x - b.x));
@@ -93,6 +95,8 @@ function sidesFor(a, b) {
 // An arrow's sides: facing each other; but the later of two arrows between
 // the same boxes, the other way, goes round (under, or beside), not on it.
 function edgeSides(d, ed, a, b) {
+  // One that goes back (drawn from words: to a step before): round underneath.
+  if (ed.round && b.x + b.width <= a.x) return ['bottom', 'bottom'];
   const base = sidesFor(a, b);
   const i = d.edges.indexOf(ed);
   const back = d.edges.findIndex((x) => x.fromNode === ed.toNode && x.toNode === ed.fromNode);
@@ -259,7 +263,11 @@ export async function svgPng(svgText, width, height, scale = 2) {
 export const svgUrl = (svgText) => `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svgText)}`;
 
 export class Board {
-  constructor({ text, onChange = () => {}, toast = () => {}, palette = null }) {
+  // imageUrl(path) → its address; addImages(files) → [{ path }] kept in
+  // assets/; ask({ task, cards }) → { said, end } (the desk's margin): all
+  // optional, as a board can be shown without them.
+  constructor({ text, onChange = () => {}, toast = () => {}, palette = null, imageUrl = null, addImages = null, ask = null }) {
+    this.opts = { imageUrl, addImages, ask };
     this.onChange = onChange;
     this.toast = toast;
     this.palette = palette;
@@ -309,6 +317,14 @@ export class Board {
     this.el.addEventListener('copy', (e) => this.copy(e));
     this.el.addEventListener('cut', (e) => { if (this.copy(e)) this.remove(); });
     this.el.addEventListener('paste', (e) => this.paste(e));
+    this.el.addEventListener('dragover', (e) => { if ([...(e.dataTransfer?.items || [])].some((i) => i.kind === 'file')) e.preventDefault(); });
+    this.el.addEventListener('drop', (e) => {
+      const files = [...(e.dataTransfer?.files || [])].filter((f) => /^image\//.test(f.type));
+      if (!files.length) return;
+      e.preventDefault();
+      const r = this.el.getBoundingClientRect();
+      this.addPictures(files, (e.clientX - r.left - this.view.x) / this.view.k, (e.clientY - r.top - this.view.y) / this.view.k);
+    });
     this.render();
   }
 
@@ -462,7 +478,8 @@ export class Board {
     if (this.sel.has(n.id)) cls.push('board-sel');
     if (this.editing?.id === n.id) cls.push('board-editing');
     if (this.armed?.id === n.id) cls.push('board-armed');
-    if (n.type !== 'text' && n.type !== 'group') cls.push('board-other');
+    if (n.type !== 'text' && n.type !== 'group') cls.push(isPicture(n) ? 'board-picture' : 'board-other');
+    if (this.asking === n.id) cls.push('board-busy');
     const c = colorOf(n.color);
     if (c) cls.push('board-colored');
     const p = this.presentClass(n);
@@ -487,6 +504,11 @@ export class Board {
         : shape === 'diamond' ? svg('polygon', { points: `${w / 2},${q} ${w - q},${h / 2} ${w / 2},${h - q} ${q},${h / 2}` })
           : svg('rect', { x: q, y: q, width: w - 2 * q, height: h - 2 * q, rx: shape === 'sticky' ? 3 : shape === 'group' ? 10 : 8 });
       e.shape.replaceChildren(out);
+    }
+    if (isPicture(n) && this.opts.imageUrl) {
+      if (!e.img) { e.img = el('img', 'board-img'); e.img.alt = ''; e.img.draggable = false; e.insertBefore(e.img, e.textEl); }
+      const src = this.opts.imageUrl(n.file);
+      if (e.img.getAttribute('src') !== src) e.img.src = src;
     }
     if (this.editing?.id !== n.id) {
       const words = wordsOf(n);
@@ -560,9 +582,10 @@ export class Board {
       b.addEventListener('click', () => this.setAlign(a));
       return [a, b];
     });
-    this.nodeTools.append(sep(), ...this.alignButtons.map(([, b]) => b),
-      button('\u21F6', 'Its words drawn as a diagram, beside it (\u2325\u21E7D): a line a box, - or -- before the ones under it, A -> B for an arrow', () => this.drawWords()));
-    bar.append(...this.toolButtons.map(([, b]) => b), group, sep(), ...this.swatches.map(([, b]) => b), this.nodeTools, this.edgeTools, sep(),
+    this.nodeTools.append(sep(), ...this.alignButtons.map(([, b]) => b));
+    this.drawTool = el('span', 'board-edge-tools');
+    this.drawTool.append(button('\u21F6', 'Drawn as a diagram, beside it (\u2325\u21E7D): words written as a line a box, - or -- before the ones under it, A -> B for an arrow, at once; other words, or a picture, by Claude', () => this.drawWords()));
+    bar.append(...this.toolButtons.map(([, b]) => b), group, sep(), ...this.swatches.map(([, b]) => b), this.nodeTools, this.drawTool, this.edgeTools, sep(),
       button('▶', 'Present: from the selected box (or the first), along the arrows — full screen (⌥P)', () => this.present()),
       button('⤢', 'All of it in view (⇧1)', () => this.fit()),
       button('?', 'Keys', () => this.toggleHelp()));
@@ -579,6 +602,8 @@ export class Board {
     const ed = this.selEdge && this.d.edges.find((e) => e.id === this.selEdge);
     this.edgeTools.hidden = !ed;
     this.nodeTools.hidden = !sel.length;
+    const one = this.one();
+    this.drawTool.hidden = !one || !(one.type === 'text' || isPicture(one));
     const al = sel.length ? alignOf(sel[0]) : null;
     for (const [a, b] of this.alignButtons) b.classList.toggle('board-on', a === al);
     if (ed) this.headsButton.textContent = ed.fromEnd === 'arrow' ? '↔' : (ed.toEnd ?? 'arrow') === 'arrow' ? '→' : '—';
@@ -599,7 +624,8 @@ export class Board {
         ['⌥1–6 · ⌥0', 'a colour · none'],
         ['⌥⇧L E R', 'words to the left, the middle, the right'],
         ['⌘G · ⌘⇧G', 'a group around them · let it go'],
-        ['⌥⇧D', 'the box\u2019s words drawn: a line a box, - -- under, A -> B'],
+        ['⌥⇧D', 'drawn: a line a box, - -- under, A -> B; other words or a picture: by Claude'],
+        ['Paste, drop', 'a picture on the board (in assets/)'],
         ['On an arrow', 'A heads · L dashed · Enter or double-click: its words'],
         ['⌥ drag · ⌘D', 'a copy'],
         ['⌥⇧C', 'copy as an image (the selected boxes, or all)'],
@@ -712,6 +738,7 @@ export class Board {
       if (e.label) ed.label = e.label;
       if (e.both) ed.fromEnd = 'arrow';
       if (e.none) ed.toEnd = 'none';
+      if (made[e.to].x + made[e.to].width <= made[e.from].x) ed.round = true;
     }
     this.sel = new Set(made.map((n) => n.id));
     this.selEdge = null;
@@ -722,16 +749,92 @@ export class Board {
     const ys = made.flatMap((n) => [n.y, n.y + n.height]);
     const [x1, x2, y1, y2] = [Math.min(...xs, from ? from.x : Infinity), Math.max(...xs), Math.min(...ys, from ? from.y : Infinity), Math.max(...ys, from ? from.y + from.height : -Infinity)];
     this.look(x1, y1, x2, y2, { maxK: this.view.k });
-    this.toast(`Drawn: ${made.length} boxes, ${g.edges.length} arrows${from ? ' — the box you wrote stays' : ''} (⌘Z to take it back)`);
+    this.toast(`Drawn: ${made.length} boxes, ${g.edges.length} arrows${from ? ' — it stays as it is' : ''} (⌘Z to take it back)`);
     return true;
   }
   // The selected box's words, drawn (⌥⇧D).
+  // Words written that way: at once. Other words, or a picture: by Claude.
   drawWords() {
     const ed = this.editing;
     if (ed) this.finishEdit();
     const n = this.one();
-    if (!n || n.type !== 'text') { this.toast('Select a box with the words to draw'); return; }
-    if (!this.diagram(n.text, { from: n })) this.toast('Nothing to draw yet: a line a box, - or -- before the ones under it (one more each level), or A -> B -> C', 'error');
+    if (!n || !(n.type === 'text' || isPicture(n))) { this.toast('Select a box with words, or a picture, to draw'); return; }
+    if (n.type === 'text' && !n.text.trim()) { this.toast('Write in the box first: a line a box, - or -- before the ones under it, or A -> B -> C', 'error'); return; }
+    if (n.type === 'text' && this.diagram(n.text, { from: n })) return;
+    if (!this.opts.ask) { this.toast('Nothing to draw yet: a line a box, - or -- before the ones under it (one more each level), or A -> B -> C', 'error'); return; }
+    this.askDiagram(n);
+  }
+  async askDiagram(n) {
+    if (this.asking) { this.toast('Claude is still drawing the last one'); return; }
+    this.asking = n.id;
+    this.render();
+    this.toast(isPicture(n) ? 'Claude is reading the picture\u2026' : 'Claude is drawing it\u2026');
+    try {
+      const card = isPicture(n) ? { key: n.id, file: n.file, picture: await this.pictureOf(n.file) } : { key: n.id, text: n.text };
+      if (isPicture(n) && !card.picture) throw new Error('The picture could not be read');
+      const r = await this.opts.ask({ task: 'diagram', cards: [card] });
+      if (!r.end?.ok) throw new Error(r.end?.error || 'No answer');
+      if (r.withheld?.length) throw new Error(`Not sent: ${r.withheld.join(', ')} (.agentnotesignore)`);
+      const said = String(r.said || '').replace(/^```[^\n]*\n?|\n?```\s*$/g, '');
+      const from = this.node(n.id);
+      if (!from) return;
+      if (this.editing) this.finishEdit();
+      this.asking = null;
+      if (!this.diagram(said, { from })) this.toast(`Claude\u2019s answer was not a diagram: ${said.slice(0, 140)}`, 'error');
+    } catch (e) {
+      if (e.message !== 'Not sent') this.toast(`Not drawn: ${e.message}`, 'error');
+    } finally {
+      this.asking = null;
+      this.render();
+    }
+  }
+  // A picture as the model reads it: 1568 px at most on its long side, JPEG.
+  async pictureOf(file) {
+    try {
+      const img = new Image();
+      img.src = this.opts.imageUrl(file);
+      await img.decode();
+      const k = Math.min(1, 1568 / Math.max(img.naturalWidth, img.naturalHeight));
+      const c = document.createElement('canvas');
+      c.width = Math.max(1, Math.round(img.naturalWidth * k));
+      c.height = Math.max(1, Math.round(img.naturalHeight * k));
+      const g = c.getContext('2d');
+      g.fillStyle = '#fff';
+      g.fillRect(0, 0, c.width, c.height);
+      g.drawImage(img, 0, 0, c.width, c.height);
+      const url = c.toDataURL('image/jpeg', 0.88);
+      return { media: 'image/jpeg', data: url.slice(url.indexOf(',') + 1) };
+    } catch { return null; }
+  }
+  // Pictures pasted or dropped: kept in assets/, put down at (x, y), 360 wide at most.
+  async addPictures(files, x, y) {
+    if (!this.opts.addImages) return;
+    const got = await this.opts.addImages(files);
+    if (!got.length) return;
+    this.begin();
+    const made = [];
+    for (const { path } of got) {
+      let w = 360;
+      let h = 240;
+      try {
+        const img = new Image();
+        img.src = this.opts.imageUrl(path);
+        await img.decode();
+        const k = Math.min(1, 360 / img.naturalWidth, 480 / img.naturalHeight);
+        w = Math.max(40, Math.round(img.naturalWidth * k));
+        h = Math.max(30, Math.round(img.naturalHeight * k));
+      } catch { /* its size unknown: the default */ }
+      const n = { id: newId(), type: 'file', file: path, x: round(x - w / 2), y: round(y - h / 2), width: w, height: h };
+      for (let i = 0; i < 40 && this.overlaps(n); i++) n.x += 40;
+      this.d.nodes.push(n);
+      made.push(n);
+      y += h + 30;
+    }
+    this.sel = new Set(made.map((n) => n.id));
+    this.selEdge = null;
+    this.end();
+    this.reveal(made[made.length - 1]);
+    this.toast(this.opts.ask ? 'A picture on the board \u2014 \u2325\u21E7D (or \u21F6) asks Claude to draw it as a diagram' : 'A picture on the board');
   }
 
   setShape(shape) {
@@ -1351,6 +1454,12 @@ export class Board {
   }
   paste(e) {
     if (this.editing || this.editingEdge || !this.ours(e)) return;
+    const images = [...(e.clipboardData?.files || [])].filter((f) => /^image\//.test(f.type));
+    if (images.length && !e.clipboardData.getData(CLIP)) {
+      e.preventDefault();
+      this.addPictures(images, (this.el.clientWidth / 2 - this.view.x) / this.view.k, (this.el.clientHeight / 2 - this.view.y) / this.view.k);
+      return;
+    }
     const raw = e.clipboardData.getData(CLIP);
     const text = e.clipboardData.getData('text/plain');
     if (!raw && !text) return;
