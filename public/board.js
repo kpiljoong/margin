@@ -17,7 +17,10 @@
 //   no single box is selected. On an arrow: A its heads, L dashed, Enter its words.
 //   ⌘G: a group around the selected boxes; ⌘⇧G: the group let go.
 //   ▶ (⌥P): presented, from the selected box along the arrows.
+//   ⌥⇧D: a box's words drawn as a diagram beside it (board-text.js: a line a
+//   box, - -- for the ones under it, A -> B); pasted words like that: drawn.
 
+import { textToDiagram, layoutDiagram } from './board-text.js';
 export const EMPTY_BOARD = '{\n\t"nodes":[],\n\t"edges":[]\n}\n';
 
 const SHAPES = [
@@ -87,6 +90,15 @@ function sidesFor(a, b) {
   if (across >= down) return dx >= 0 ? ['right', 'left'] : ['left', 'right'];
   return dy >= 0 ? ['bottom', 'top'] : ['top', 'bottom'];
 }
+// An arrow's sides: facing each other; but the later of two arrows between
+// the same boxes, the other way, goes round (under, or beside), not on it.
+function edgeSides(d, ed, a, b) {
+  const base = sidesFor(a, b);
+  const i = d.edges.indexOf(ed);
+  const back = d.edges.findIndex((x) => x.fromNode === ed.toNode && x.toNode === ed.fromNode);
+  if (back < 0 || i < 0 || back > i) return base;
+  return base[0] === 'left' || base[0] === 'right' ? ['bottom', 'bottom'] : ['right', 'right'];
+}
 const sidePoint = (n, side) => ({
   top: [n.x + n.width / 2, n.y], bottom: [n.x + n.width / 2, n.y + n.height],
   left: [n.x, n.y + n.height / 2], right: [n.x + n.width, n.y + n.height / 2],
@@ -120,7 +132,7 @@ const edgeOf = (d, ed) => {
   const a = d.nodes.find((n) => n.id === ed.fromNode);
   const b = d.nodes.find((n) => n.id === ed.toNode);
   if (!a || !b) return null;
-  const [s1, s2] = sidesFor(a, b);
+  const [s1, s2] = edgeSides(d, ed, a, b);
   return curve(sidePoint(a, s1), s1, sidePoint(b, s2), s2);
 };
 
@@ -313,7 +325,7 @@ export class Board {
     for (const e of this.d.edges) {
       const a = this.node(e.fromNode);
       const b = this.node(e.toNode);
-      if (a && b) [e.fromSide, e.toSide] = sidesFor(a, b);
+      if (a && b) [e.fromSide, e.toSide] = edgeSides(this.d, e, a, b);
     }
   }
   // A change: kept for ⌘Z, drawn, saved.
@@ -490,7 +502,7 @@ export class Board {
       const a = ed.from || this.node(ed.fromNode);
       const b = ed.to || this.node(ed.toNode);
       if (!a || !b) continue;
-      const [s1, s2] = ed.sides || sidesFor(a, b);
+      const [s1, s2] = ed.sides || edgeSides(this.d, ed, a, b);
       const c = curve(sidePoint(a, s1), s1, ed.point || sidePoint(b, s2), ed.point ? null : s2);
       const col = colorOf(ed.color);
       const pc = ed.id ? this.presentEdgeClass(ed) : '';
@@ -548,7 +560,8 @@ export class Board {
       b.addEventListener('click', () => this.setAlign(a));
       return [a, b];
     });
-    this.nodeTools.append(sep(), ...this.alignButtons.map(([, b]) => b));
+    this.nodeTools.append(sep(), ...this.alignButtons.map(([, b]) => b),
+      button('\u21F6', 'Its words drawn as a diagram, beside it (\u2325\u21E7D): a line a box, - or -- before the ones under it, A -> B for an arrow', () => this.drawWords()));
     bar.append(...this.toolButtons.map(([, b]) => b), group, sep(), ...this.swatches.map(([, b]) => b), this.nodeTools, this.edgeTools, sep(),
       button('▶', 'Present: from the selected box (or the first), along the arrows — full screen (⌥P)', () => this.present()),
       button('⤢', 'All of it in view (⇧1)', () => this.fit()),
@@ -586,6 +599,7 @@ export class Board {
         ['⌥1–6 · ⌥0', 'a colour · none'],
         ['⌥⇧L E R', 'words to the left, the middle, the right'],
         ['⌘G · ⌘⇧G', 'a group around them · let it go'],
+        ['⌥⇧D', 'the box\u2019s words drawn: a line a box, - -- under, A -> B'],
         ['On an arrow', 'A heads · L dashed · Enter or double-click: its words'],
         ['⌥ drag · ⌘D', 'a copy'],
         ['⌥⇧C', 'copy as an image (the selected boxes, or all)'],
@@ -659,6 +673,65 @@ export class Board {
     this.render();
     this.reveal(m);
     this.edit(m, true);
+  }
+
+  // Words as a diagram (board-text.js): beside the box they were written in
+  // (it stays), or round (cx, cy) when pasted. Not one: false.
+  diagram(text, { from = null, cx = 0, cy = 0 } = {}) {
+    const g = textToDiagram(text);
+    if (!g) return false;
+    const font = `${FONT}px ${getComputedStyle(this.el).fontFamily || 'sans-serif'}`;
+    const size = (n) => {
+      const [w0, h0] = SIZE[n.shape] || SIZE.rect;
+      const pad = (PAD_X[n.shape] || 12) * 2;
+      const longest = Math.max(...wrap(n.text, font, 10000).map((l) => (measurer.measureText(l).width)));
+      const w = Math.max(n.shape === 'diamond' ? w0 : 130, Math.min(260, Math.ceil(longest + pad + 4)));
+      const lines = wrap(n.text, font, w - pad).length;
+      const grow = n.shape === 'diamond' ? 2.0 : n.shape === 'ellipse' ? 1.45 : 1;
+      return [w, Math.max(n.shape === 'rect' ? 56 : h0, Math.ceil((lines * LINE + 20) * grow))];
+    };
+    const pos = layoutDiagram(g, size, { gapX: 80, gapY: 26 });
+    const W = Math.max(...pos.map((p) => p.x + p.width));
+    const H = Math.max(...pos.map((p) => p.y + p.height));
+    const at = from ? { x: from.x + from.width + 120, y: from.y } : { x: cx - W / 2, y: cy - H / 2 };
+    // Out of the way of what is there.
+    const box = (dx) => ({ x: at.x + dx, y: at.y, width: W, height: H });
+    let dx = 0;
+    for (let i = 0; i < 60 && this.overlaps(box(dx)); i++) dx += 80;
+    at.x += dx;
+    this.begin();
+    const made = g.nodes.map((n, i) => {
+      const m = { id: newId(), type: 'text', text: n.text, x: round(at.x + pos[i].x), y: round(at.y + pos[i].y), width: pos[i].width, height: pos[i].height };
+      if (n.shape !== 'rect') m.shape = n.shape;
+      this.d.nodes.push(m);
+      return m;
+    });
+    for (const e of g.edges) {
+      const ed = this.link(made[e.from], made[e.to]);
+      if (!ed) continue;
+      if (e.label) ed.label = e.label;
+      if (e.both) ed.fromEnd = 'arrow';
+      if (e.none) ed.toEnd = 'none';
+    }
+    this.sel = new Set(made.map((n) => n.id));
+    this.selEdge = null;
+    this.render();
+    for (const n of made) { const t = this.els.get(n.id)?.textEl; if (t) this.grow(n, t); }
+    this.end();
+    const xs = made.flatMap((n) => [n.x, n.x + n.width]);
+    const ys = made.flatMap((n) => [n.y, n.y + n.height]);
+    const [x1, x2, y1, y2] = [Math.min(...xs, from ? from.x : Infinity), Math.max(...xs), Math.min(...ys, from ? from.y : Infinity), Math.max(...ys, from ? from.y + from.height : -Infinity)];
+    this.look(x1, y1, x2, y2, { maxK: this.view.k });
+    this.toast(`Drawn: ${made.length} boxes, ${g.edges.length} arrows${from ? ' — the box you wrote stays' : ''} (⌘Z to take it back)`);
+    return true;
+  }
+  // The selected box's words, drawn (⌥⇧D).
+  drawWords() {
+    const ed = this.editing;
+    if (ed) this.finishEdit();
+    const n = this.one();
+    if (!n || n.type !== 'text') { this.toast('Select a box with the words to draw'); return; }
+    if (!this.diagram(n.text, { from: n })) this.toast('Nothing to draw yet: a line a box, - or -- before the ones under it (one more each level), or A -> B -> C', 'error');
   }
 
   setShape(shape) {
@@ -865,6 +938,7 @@ export class Board {
     if (ev.isComposing || ev.keyCode === 229) { ev.stopPropagation(); return; }
     if (ev.metaKey && !['z', 'Enter'].includes(ev.key)) return; // the app's own (⌘S, ⌘P…), and ⌘C ⌘V in the words
     ev.stopPropagation();
+    if (ev.altKey && ev.shiftKey && ev.code === 'KeyD' && n.type === 'text') { ev.preventDefault(); this.drawWords(); return; }
     if (ev.key === 'Escape' || (ev.key === 'Enter' && (ev.metaKey || ev.ctrlKey))) { ev.preventDefault(); this.finishEdit(); this.el.focus({ preventScroll: true }); return; }
     if (ev.key === 'Tab') {
       ev.preventDefault();
@@ -1180,6 +1254,7 @@ export class Board {
       if (e.shiftKey) {
         const a = { KeyL: 'left', KeyE: 'center', KeyR: 'right' }[c];
         if (a) { handled(); this.setAlign(a); return; }
+        if (c === 'KeyD') { handled(); this.drawWords(); return; }
         return; // ⌥⇧C, copied as an image: the app's
       }
       if (SHAPE_CODES[c]) { handled(); this.setShape(SHAPE_CODES[c]); return; }
@@ -1298,6 +1373,9 @@ export class Board {
       this.d.nodes.push(...nodes.map((n) => ({ ...n, id: ids.get(n.id), x: n.x + dx, y: n.y + dy })));
       for (const ed of got.edges || []) if (ids.has(ed.fromNode) && ids.has(ed.toNode)) this.d.edges.push({ ...ed, id: newId(), fromNode: ids.get(ed.fromNode), toNode: ids.get(ed.toNode) });
       this.sel = new Set(ids.values());
+    } else if (this.diagram(text, { cx, cy })) {
+      this.before = null; // its own change
+      return;
     } else {
       // Words from elsewhere: a box each paragraph, one under another.
       const parts = text.split(/\n\s*\n/).map((s) => s.trim()).filter(Boolean).slice(0, 40);
