@@ -803,6 +803,19 @@ Opening a `.excalidraw` file from the tree lets you draw and edit it in the [Exc
 - **Rebuilding from source**: `cd vendor/excalidraw && npm ci --ignore-scripts && node build.mjs`. The same input gives the same output. Only two modifications are made to the Excalidraw code (removing the font CDN fallback path, skipping the Xiaolai load). If a modification fails to apply to a new version, the build fails.
 - **License**: MIT. Licenses of packages in the bundle are in `public/vendor/excalidraw/THIRD-PARTY-LICENSES.txt`.
 
+## Boards (quick drawings)
+
+A **board** is a quick drawing for a meeting or an explanation: boxes put down at once, words in them, arrows between them that follow when they move. **New board** (palette, a folder's right-click, the `+` menu, File › New Board) makes `name.board.canvas` — a [JSON Canvas](https://jsoncanvas.org), so Obsidian opens it too (as a canvas: the shapes there are boxes).
+
+- **Boxes**: double-click the plane for a box, written in at once (Esc: done). A selected box takes what is typed — its words go on at the end, Korean too — and Enter or a double-click writes in it. Tab: the next box, joined, to the right (writing or not); ⇧Tab: one under it, from the same box; ⌘ or ⌥ and an arrow: the next box that way. The arrows alone go from box to box; ⇧ and an arrow moves them.
+- **Joining**: a box shows a dot on each side. Drag one to another box to join them, or out on the plane for a new box joined to it; a click on a dot puts the next box that way. An arrow leaves from the side facing the other box, and changes side as they move.
+- **Shapes, colours, words**: box, ellipse, diamond, sticky note, words alone (the bar, or ⌥R ⌥O ⌥D ⌥S ⌥T; without ⌥ when no single box is selected); six colours (⌥1–6, ⌥0 none); words to the left, the middle or the right (⌥⇧L E R). On an arrow: A its heads (→ ↔ —), L dashed, Enter or a double-click its words.
+- **Groups**: ⌘G puts a group around the selected boxes, its name written at once; dragged, what is in it goes along. ⌘⇧G lets it go.
+- **Moving about**: drag to select with a box, Shift-click to add; boxes line up with the others as they are dragged; ⌥ drag or ⌘D a copy; ⌘C ⌘V (words pasted from elsewhere: a box each paragraph); ⌘Z ⇧⌘Z. Space and a drag, or two fingers, move the board; ⌘ and the wheel, or a pinch, zoom; ⇧1 all of it in view. `?` lists the keys.
+- **Copy as image**: ⧉ in the toolbar (or ⇧⌥C) copies the selected boxes — or all of it — as a PNG, in the theme's colours; the ⋯ menu has SVG, and saving either into `assets/`.
+- **In a note**: `![[name.board.canvas]]` shows the board as a picture in the preview (⋯ › Copy its embed link); a click opens it.
+- **Present**: ▶ (or ⌥P, palette *Board: present it*) shows the board full screen a box at a time, from the selected box (or the first one no arrow leads to), along its arrows: the box large, where it goes next beside it, the way here faint. Space or → on, ← back, Esc to stop; where it branches, the caption numbers the ways and a number takes one — the others come after the end of it.
+
 ## Git (local only)
 
 If the workspace is a git repository, the ⎇ panel on the left and the tree show change status (M/U/D). If it isn't, you can initialize one in a single step from the panel. **No remote operations such as fetch/pull/push are performed.**

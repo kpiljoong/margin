@@ -167,7 +167,7 @@ export const embedFrames = (path) => framesByPath.get(path) || [];
 // Fill every .drawing-embed[data-path] in `root` that has no image yet.
 // readFile(path) → { content, hash }.
 export async function renderDrawingEmbeds(root, { readFile, dark }) {
-  for (const el of [...root.querySelectorAll('.drawing-embed[data-path]:not(.ready)')]) {
+  for (const el of [...root.querySelectorAll('.drawing-embed[data-path]:not(.ready):not(.board-embed)')]) {
     const p = el.dataset.path;
     try {
       const f = await readFile(p);

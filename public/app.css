@@ -2382,3 +2382,112 @@ img.part { border-radius: 6px; box-shadow: 0 0 0 1px var(--border); }
 .ed-fold-mark.open { opacity: 1; background: var(--a, var(--pen-me)); color: var(--bg); }
 .ed-fold-head { position: absolute; z-index: 6; top: 6px; right: 14px; width: 20px; height: 20px; padding: 0; border: 1px solid color-mix(in srgb, var(--accent) 45%, var(--border)); border-radius: 6px; background: color-mix(in srgb, var(--accent) 10%, var(--bg)); color: var(--accent); font: 13px/18px var(--sans); cursor: pointer; }
 .ed-fold-head:hover { background: color-mix(in srgb, var(--accent) 22%, var(--bg)); }
+
+/* ---------------------------------------------------------------- board (quick drawing, working name) */
+.board-slot { flex: 1; min-height: 0; position: relative; display: flex; }
+.board { --board-k: 1; position: relative; flex: 1; overflow: hidden; outline: none; user-select: none; touch-action: none; cursor: default;
+  background-color: var(--bg); background-image: radial-gradient(circle, var(--border) 1.1px, transparent 1.2px); }
+.board.board-panning { cursor: grab; }
+.board-world { position: absolute; left: 0; top: 0; transform-origin: 0 0; }
+.board-edges, .board-guides { position: absolute; left: 0; top: 0; width: 1px; height: 1px; overflow: visible; }
+.board-guides { pointer-events: none; }
+.board-guides line { stroke: var(--bad); stroke-width: calc(1px / var(--board-k)); stroke-dasharray: 4 3; }
+.board-groups, .board-nodes, .board-labels { position: absolute; left: 0; top: 0; }
+.board-node { --board-c: var(--fg-dim); position: absolute; box-sizing: border-box; display: flex; align-items: center; justify-content: center; }
+.board-shape { position: absolute; inset: 0; overflow: visible; pointer-events: none; }
+.board-shape > * { fill: var(--bg-2); stroke: var(--board-c); stroke-width: 1.6; vector-effect: non-scaling-stroke; }
+.board-colored .board-shape > * { fill: color-mix(in srgb, var(--board-c) 16%, var(--bg)); }
+.board-sticky { --board-c: #d9a400; }
+.board-sticky .board-shape > * { fill: color-mix(in srgb, var(--board-c) 34%, var(--bg)); stroke: none; filter: drop-shadow(0 2px 3px rgba(0, 0, 0, .18)); }
+.board-node.board-text > .board-shape { display: none; }
+.board-group { z-index: 0; align-items: flex-start; justify-content: flex-start; }
+.board-group .board-shape > * { fill: color-mix(in srgb, var(--board-c) 6%, transparent); stroke-dasharray: 6 4; }
+.board-group .board-words { font-weight: 600; color: var(--fg-dim); padding: 6px 10px; text-align: left; }
+.board-other .board-words { color: var(--fg-dim); }
+.board-words { position: relative; max-width: 100%; max-height: 100%; box-sizing: border-box; padding: 8px 12px; font-size: 15px; line-height: 1.35; color: var(--fg);
+  text-align: center; white-space: pre-wrap; overflow-wrap: anywhere; overflow: hidden; outline: none; cursor: default; }
+.board-ellipse .board-words { padding: 8px 22px; }
+.board-diamond .board-words { padding: 8px 34px; }
+.board-editing .board-words { cursor: text; user-select: text; overflow: visible; min-width: 1em; }
+.board-sel { outline: calc(1.5px / var(--board-k)) solid var(--accent); outline-offset: calc(4px / var(--board-k)); border-radius: 4px; }
+.board-drop { outline: calc(2px / var(--board-k)) solid var(--ok); outline-offset: calc(4px / var(--board-k)); border-radius: 4px; }
+/* The dots to join from: on the box pointed at, or the one selected. */
+.board-dot { position: absolute; width: calc(12px / var(--board-k)); height: calc(12px / var(--board-k)); margin: calc(-6px / var(--board-k)); border-radius: 50%;
+  background: var(--accent); border: calc(2px / var(--board-k)) solid var(--bg); box-sizing: border-box; opacity: 0; cursor: crosshair; z-index: 2; transition: opacity var(--t-1), transform var(--t-1); }
+.board-dot-top { left: 50%; top: calc(-10px / var(--board-k)); }
+.board-dot-bottom { left: 50%; top: calc(100% + 10px / var(--board-k)); }
+.board-dot-left { top: 50%; left: calc(-10px / var(--board-k)); }
+.board-dot-right { top: 50%; left: calc(100% + 10px / var(--board-k)); }
+.board-node:hover > .board-dot, .board-sel > .board-dot { opacity: .85; }
+.board-dot:hover { opacity: 1; transform: scale(1.35); }
+.board-editing > .board-dot, .board-group > .board-dot { display: none; }
+.board-grip { position: absolute; right: calc(-5px / var(--board-k)); bottom: calc(-5px / var(--board-k)); width: calc(10px / var(--board-k)); height: calc(10px / var(--board-k));
+  background: var(--bg); border: calc(1.5px / var(--board-k)) solid var(--accent); box-sizing: border-box; cursor: nwse-resize; display: none; z-index: 2; }
+.board-sel > .board-grip { display: block; }
+.board-editing > .board-grip { display: none; }
+/* Arrows. */
+.board-edge { --board-c: var(--fg-dim); }
+.board-edge-line { fill: none; stroke: var(--board-c); stroke-width: 1.8; stroke-linecap: round; pointer-events: none; }
+.board-dash .board-edge-line { stroke-dasharray: 7 6; }
+.board-edge-head { fill: var(--board-c); stroke: var(--board-c); stroke-width: 1; stroke-linejoin: round; pointer-events: none; }
+.board-edge-hit { fill: none; stroke: transparent; stroke-width: 14; pointer-events: stroke; cursor: pointer; }
+.board-edge.board-sel { outline: none; }
+.board-edge.board-sel .board-edge-line, .board-edge.board-sel .board-edge-head { stroke: var(--accent); }
+.board-edge.board-sel .board-edge-head { fill: var(--accent); }
+.board-temp .board-edge-line { stroke: var(--accent); stroke-dasharray: 5 4; }
+.board-temp .board-edge-head { fill: var(--accent); stroke: var(--accent); }
+.board-label { position: absolute; transform: translate(-50%, -50%); padding: 1px 7px; border-radius: 4px; background: var(--bg); color: var(--fg); font-size: 13px;
+  white-space: nowrap; cursor: pointer; border: 1px solid transparent; }
+.board-label.board-sel { border-color: var(--accent); outline: none; }
+.board-label-edit { cursor: text; user-select: text; outline: none; border-color: var(--accent); min-width: 2em; }
+.board-marquee { position: absolute; border: calc(1px / var(--board-k)) solid var(--accent); background: color-mix(in srgb, var(--accent) 10%, transparent); pointer-events: none; }
+/* The bar, the help, the first words. */
+.board-bar { position: absolute; top: 10px; left: 50%; transform: translateX(-50%); display: flex; align-items: center; gap: 2px; padding: 4px; border-radius: 8px;
+  background: var(--bg-2); border: 1px solid var(--border); box-shadow: 0 2px 10px rgba(0, 0, 0, .15); z-index: 5; }
+.board-tool { min-width: 30px; height: 28px; border: 0; border-radius: 5px; background: none; color: var(--fg-dim); font-size: 15px; padding: 0 6px; }
+.board-tool:hover { background: var(--bg-hover); color: var(--fg); }
+.board-tool.board-on { background: var(--bg-3); color: var(--accent); }
+.board-sep { width: 1px; height: 18px; background: var(--border); margin: 0 4px; }
+.board-edge-tools { display: flex; align-items: center; gap: 2px; }
+.board-edge-tools[hidden] { display: none; }
+.board-swatch { width: 18px; height: 18px; margin: 0 2px; border-radius: 50%; border: 2px solid transparent; background: var(--board-c); padding: 0; }
+.board-swatch-none { background: linear-gradient(135deg, transparent 45%, var(--fg-faint) 45%, var(--fg-faint) 55%, transparent 55%), var(--bg); border-color: var(--border); }
+.board-swatch.board-on { box-shadow: 0 0 0 2px var(--bg-2), 0 0 0 3.5px var(--accent); }
+.board-hint { position: absolute; left: 50%; top: 45%; transform: translate(-50%, -50%); color: var(--fg-faint); font-size: 14px; pointer-events: none; text-align: center; padding: 0 20px; }
+.board-help { position: absolute; top: 52px; right: 12px; padding: 10px 12px; border-radius: 8px; background: var(--bg-2); border: 1px solid var(--border);
+  box-shadow: 0 2px 10px rgba(0, 0, 0, .15); z-index: 5; font-size: 12px; display: grid; gap: 4px; max-width: 360px; }
+.board-help[hidden] { display: none; }
+.board-help-row { display: grid; grid-template-columns: 120px 1fr; gap: 10px; align-items: baseline; color: var(--fg-dim); }
+.board-help-row kbd { justify-self: start; white-space: nowrap; }
+/* Words in a box: to the left or right, from edge to edge of it; a sticky note's from the top. */
+.board-al-left .board-words, .board-al-right .board-words { width: 100%; }
+.board-al-left .board-words { text-align: left; }
+.board-al-right .board-words { text-align: right; }
+.board-sticky { align-items: flex-start; }
+.board-sticky .board-words { padding-top: 12px; }
+.board-align svg { display: block; }
+.board-align line { stroke: currentColor; stroke-width: 1.6; stroke-linecap: round; }
+/* The selected box, ready for what is typed: no caret shown until it is. */
+.board-armed .board-words { caret-color: transparent; outline: none; }
+/* Presenting: the box now, where it goes next, the way here; the rest faint. */
+.board.board-presenting { background-image: none; cursor: pointer; }
+.board-presenting .board-bar, .board-presenting .board-hint, .board-presenting .board-help, .board-presenting .board-dot, .board-presenting .board-grip { display: none; }
+.board-presenting .board-world { transition: transform 450ms cubic-bezier(.2, .7, .2, 1); }
+.board-presenting .board-node, .board-presenting .board-edge, .board-presenting .board-label { transition: opacity 300ms ease; }
+.board-presenting .board-dim { opacity: .12; }
+.board-presenting .board-seen { opacity: .5; }
+.board-presenting .board-next { opacity: .85; }
+.board-presenting .board-group.board-seen { opacity: .8; }
+.board-now .board-shape > * { stroke: var(--accent); stroke-width: 2.6; filter: drop-shadow(0 0 10px color-mix(in srgb, var(--accent) 45%, transparent)); }
+.board-now.board-text-shape, .board-now.board-text { text-decoration: underline 2px var(--accent); text-underline-offset: 6px; }
+.board-edge.board-hot .board-edge-line { stroke: var(--accent); stroke-width: 2.4; }
+.board-edge.board-hot .board-edge-head { fill: var(--accent); stroke: var(--accent); }
+.board-caption { position: absolute; left: 50%; bottom: 18px; transform: translateX(-50%); display: flex; gap: 14px; align-items: baseline; max-width: calc(100% - 60px);
+  padding: 8px 16px; border-radius: 8px; background: color-mix(in srgb, var(--bg-2) 92%, transparent); border: 1px solid var(--border); font-size: 15px; z-index: 6; white-space: nowrap; overflow: hidden; }
+.board-caption[hidden] { display: none; }
+.board-caption b { font-weight: 600; overflow: hidden; text-overflow: ellipsis; }
+.board-caption-n { color: var(--fg-faint); font-size: 12px; }
+.board-caption-hint { color: var(--fg-dim); font-size: 12px; overflow: hidden; text-overflow: ellipsis; }
+@media (prefers-reduced-motion: reduce) { .board-presenting .board-world { transition: none; } }
+/* A board in a note: its picture. */
+.board-embed img { max-width: 100%; }

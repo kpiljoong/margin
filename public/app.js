@@ -406,8 +406,11 @@ const activeTab = () => activeIn(S.focus);
 const fileTab = () => { const t = activeTab(); return t && t.kind === 'file' ? t : null; };
 // A desk (.canvas) opens in a tab like a drawing's (kind 'drawing', desk: true):
 // the same saving, conflicts, closing and renaming.
-const isDesk = (p) => /\.canvas$/i.test(p);
-const isDrawing = (p) => isExcalidraw(p) || isDesk(p);
+// A board (*.board.canvas, a quick drawing — public/board.js) too, a JSON
+// Canvas of its own kind: boxes, words and arrows.
+const isBoard = (p) => /\.board\.canvas$/i.test(p);
+const isDesk = (p) => /\.canvas$/i.test(p) && !isBoard(p);
+const isDrawing = (p) => isExcalidraw(p) || isDesk(p) || isBoard(p);
 const drawingTab = () => { const t = activeTab(); return t && t.kind === 'drawing' ? t : null; };
 const isDoc = (t) => !!t && (t.kind === 'file' || t.kind === 'drawing'); // tabs that stand for a file
 const persist = () => {
@@ -914,7 +917,7 @@ async function closeTab(id) {
     else await flushDrawing(tab);
     if (tab.text !== tab.saved && !(await askConfirm(`Discard unsaved changes to ${tab.path}?`, { okLabel: 'Discard', danger: true }))) return;
   }
-  if (tab.kind === 'drawing') { clearTimeout(tab.autosaveTimer); tab.frame?.destroy(); tab.frame = null; tab.deskView = null; }
+  if (tab.kind === 'drawing') { clearTimeout(tab.autosaveTimer); tab.frame?.destroy(); tab.frame = null; tab.deskView = null; tab.boardView = null; }
   if (tab.kind === 'room') { tab.roomView?.destroy(); tab.roomView = null; }
   if (tab.timer) clearInterval(tab.timer);
   const g = tab.group ?? 0;
@@ -1048,6 +1051,7 @@ function newNoteMenu(e) {
   const r = e.currentTarget.getBoundingClientRect();
   contextMenu({ preventDefault() {}, stopPropagation() {}, clientX: r.left, clientY: r.bottom + 4 }, [
     { label: 'Blank note', run: () => newNote() },
+    { label: 'Board (a quick drawing)', run: () => newBoard() },
     '-',
     ...all.slice(0, 20).map((f) => ({ label: `From “${stem(f.path)}”`, run: () => newNote(undefined, f.path) })),
   ]);
@@ -1285,7 +1289,7 @@ function treeRows(node, depth, rows) {
       ondragstart: (e) => { e.dataTransfer.setData('text/x-margin-path', f.path); e.dataTransfer.effectAllowed = 'copy'; },
       onclick: (e) => (/\.(png|jpe?g|gif|webp|avif|svg|bmp)$/i.test(f.path) ? openImage(f.path) : openFile(f.path, { side: e.metaKey || e.ctrlKey })),
       oncontextmenu: (e) => fileMenu(e, f) },
-    h('span', { class: 'chev' }, isDesk(f.path) ? '▦' : drawing ? '◇' : isMermaidFile(f.path) ? '◈' : f.note ? '' : '·'), h('span', { class: 'name' }, f.note ? basename(f.path).replace(/\.md$/, '') : basename(f.path)),
+    h('span', { class: 'chev' }, isDesk(f.path) ? '▦' : isBoard(f.path) ? '▭' : drawing ? '◇' : isMermaidFile(f.path) ? '◈' : f.note ? '' : '·'), h('span', { class: 'name' }, f.note ? basename(f.path).replace(/\.md$/, '') : basename(f.path)),
     S.gitMap.has(f.path) ? h('span', { class: `git-code gc-${S.gitMap.get(f.path)}`, title: 'Changed since last commit' }, S.gitMap.get(f.path)) : null);
     row.style.paddingLeft = pad(depth);
     rows.push(row);
@@ -3682,6 +3686,8 @@ const COMMANDS = [
   ['Go forward', () => navGo(1), { key: 'nav-forward' }],
   ['Toggle sidebar', toggleSidebar, { key: 'sidebar' }],
   ['New drawing (Excalidraw)…', () => newDrawing()],
+  ['New board \u2014 a quick drawing: boxes, words, arrows (a canvas; Obsidian opens it too)…', () => newBoard()],
+  ['Board: present it \u2014 from the selected box, along the arrows (full screen)', () => { const t = drawingTab(); if (t?.boardView) t.boardView.present(); else toast('Open a board first'); }],
   ['New desk \u2014 notes and cards laid out to think with, and the margin to sort, question and merge them (experimental)…', () => newDesk()],
   ['Develop this note \u2014 Claude, beside it: the claim sharper, questions, your notes for and against it, a next step, notes that belong here', () => developNote()],
   ['Open on a desk \u2014 this note, its open questions and to-dos as cards that know where they came from, and the notes it links to (experimental)', () => noteOnDesk()],
@@ -4312,6 +4318,7 @@ function folderMenu(e, dir) {
     { label: 'New note from template here…', run: () => pickTemplate((t) => newNote(dir, t)) },
     { label: 'New folder here…', run: () => newFolder(dir) },
     { label: 'New drawing here…', run: () => newDrawing(dir) },
+    { label: 'New board here (quick drawing)…', run: () => newBoard(dir) },
     { label: 'New desk here…', run: () => newDesk(dir) },
     // (Always there: with Labs off, pressing it offers to turn them on.)
     dir ? { label: 'Talk through its notes (review)…', run: lab('Review', () => reviewFolder(dir)) } : null,
@@ -4435,13 +4442,13 @@ async function openDrawing(path, { focus = true, group, side = false } = {}) {
     try {
       const f = await api('GET', `/api/file?path=${encodeURIComponent(path)}`);
       // Obsidian drawings are read-only for now: writing them back must keep the plugin's format.
-      const readonly = !isDesk(path) && drawingFormat(path) === 'obsidian';
-      tab = { id: `d:${path}`, kind: 'drawing', desk: isDesk(path), path, text: f.content, saved: f.content, hash: f.hash, readonly, view: readonly, group: target };
+      const readonly = !isDesk(path) && !isBoard(path) && drawingFormat(path) === 'obsidian';
+      tab = { id: `d:${path}`, kind: 'drawing', desk: isDesk(path), board: isBoard(path), path, text: f.content, saved: f.content, hash: f.hash, readonly, view: readonly, group: target };
       S.tabs.push(tab);
     } catch (e) { toast(e.message, 'error'); return; }
   } else if (side && tab.group !== target) moveTab(tab, target, false);
   activate(tab.id);
-  if (focus) requestAnimationFrame(() => (tab.frame?.el || tab.deskView?.el)?.focus());
+  if (focus) requestAnimationFrame(() => (tab.frame?.el || tab.deskView?.el || tab.boardView?.el)?.focus());
   for (let d = dirname(path); d; d = dirname(d)) S.expanded.add(d);
   S.recent = [path, ...S.recent.filter((p) => p !== path)].slice(0, 30);
   store.setItem(`an.recent.${S.info?.root}`, JSON.stringify(S.recent));
@@ -4587,6 +4594,7 @@ async function reloadDrawing(tab) {
     Object.assign(tab, { text: f.content, saved: f.content, hash: f.hash, conflict: false, missing: false });
     tab.frame?.post({ type: 'load', text: f.content });
     tab.deskView?.load(f.content);
+    tab.boardView?.load(f.content);
   } catch (e) { toast(e.message, 'error'); }
   renderTabs();
   renderDrawingBanner(tab);
@@ -4609,6 +4617,7 @@ function renderDrawingBanner(tab) {
 
 function drawingView(tab, c) {
   if (tab.desk) { deskView(tab, c); return; }
+  if (tab.board) { boardView(tab, c); return; }
   const toolbar = h('div', { class: 'toolbar' },
     ...navButtons(),
     h('span', { class: 'crumbs' }, tab.path.split('/').join('  ›  ')),
@@ -4847,6 +4856,91 @@ async function proposeFromRoom(tab, p, make, { open = true, why = '' } = {}) {
 // The note changed (its tab, or on disk): the room showing it reads it again.
 function roomsRefresh(path) {
   for (const t of S.tabs) if (t.kind === 'room' && t.path === path) t.roomView?.refresh();
+}
+
+// ------------------------------------------------------------------ the board
+// A quick drawing (working name): boxes put down, written in and joined by
+// arrows, for a meeting or an explanation (public/board.js). A JSON Canvas,
+// *.board.canvas, saved as a drawing is.
+let boardMod = null;
+const loadBoard = async () => (boardMod ||= await import('./board.js'));
+// The theme's colours, for a board's picture.
+function boardPalette() {
+  const s = getComputedStyle(document.documentElement);
+  const v = (n) => s.getPropertyValue(n).trim();
+  return { bg: v('--bg'), bg2: v('--bg-2'), fg: v('--fg'), fgDim: v('--fg-dim'), accent: v('--accent'), font: v('--sans') || 'sans-serif' };
+}
+// The selected boxes of an open board (or all of it), as a picture to copy or save.
+function boardPicture(tab) {
+  const p = tab.boardView.picture();
+  return {
+    from: tab.path,
+    name: () => (p.selection ? `${boardStem(tab.path)}-selection` : boardStem(tab.path)),
+    what: () => (p.selection ? `${p.count} selected box${p.count > 1 ? 'es' : ''}` : 'the board'),
+    svg: p.svg,
+    png: p.png,
+  };
+}
+
+async function newBoard(folder) {
+  const base = folder ?? (activeTab()?.path ? dirname(activeTab().path) : '');
+  let name = await askText({ title: 'New board', label: 'Path relative to the workspace. “.board.canvas” is added if missing. Obsidian opens it too, as a canvas.', value: base ? `${base}/` : '', placeholder: 'folder/Board', okLabel: 'Create' });
+  if (!name?.trim() || name.endsWith('/')) return;
+  name = name.trim().replace(/\.canvas$/i, '').replace(/\.board$/i, '');
+  name = `${name}.board.canvas`;
+  if (S.files.some((f) => f.path === name)) { toast('A file with that name already exists', 'error'); return; }
+  try {
+    const { EMPTY_BOARD } = await loadBoard();
+    const r = await api('PUT', '/api/file', { path: name, content: EMPTY_BOARD });
+    await loadTree();
+    openFile(r.path);
+  } catch (e) { toast(e.message, 'error'); }
+}
+
+function boardView(tab, c) {
+  const toolbar = h('div', { class: 'toolbar' },
+    ...navButtons(),
+    h('span', { class: 'crumbs' }, tab.path.split('/').join('  ›  ')),
+    h('span', { class: 'badge', title: 'A quick drawing (working name). A JSON Canvas: Obsidian opens it too' }, 'Board'),
+    h('button', { class: 'icon-btn', title: 'Present: from the selected box, along the arrows (\u2325P)', onclick: () => tab.boardView?.present() }, '\u25b6'),
+    h('button', { class: 'icon-btn', title: withKey('Copy as an image \u2014 the selected boxes, or all of it', 'copy-drawing'), onclick: () => tab.boardView && copyPicture(boardPicture(tab)) }, '\u29c9'),
+    h('button', { class: 'icon-btn', title: 'All of it in view (\u21e71)', onclick: () => tab.boardView?.fit() }, '\u2922'),
+    h('button', { class: 'icon-btn', title: S.groups.length > 1 ? 'Move to the other pane' : withKey('Open to the side', 'split'), onclick: () => (S.groups.length > 1 ? moveTab(tab, tab.group === 0 ? 1 : 0) : splitRight()) }, '◫'),
+    h('button', { class: 'icon-btn', title: 'More actions', onclick: (e) => { const r = e.currentTarget.getBoundingClientRect(); contextMenu({ preventDefault() {}, stopPropagation() {}, clientX: r.right - 200, clientY: r.bottom + 4 }, [
+      { label: 'Present (from the selected box)', run: () => tab.boardView?.present() },
+      { label: 'Copy as image', run: () => tab.boardView && copyPicture(boardPicture(tab)) },
+      { label: 'Copy as SVG', run: () => tab.boardView && copyPicture(boardPicture(tab), 'svg') },
+      { label: 'Save as PNG (assets/)', run: () => tab.boardView && savePicture(boardPicture(tab)) },
+      { label: 'Save as SVG (assets/)', run: () => tab.boardView && savePicture(boardPicture(tab), 'svg') },
+      { label: 'Copy its embed link', run: () => { navigator.clipboard.writeText(`![[${tab.path}]]`); toast('Copied \u2014 paste it into a note to show the board there'); } },
+      '-',
+      { label: 'Open as text (JSON)', run: () => openDrawingAsText(tab) },
+      revealItem(tab.path),
+      '-',
+      { label: 'Rename / move\u2026', run: () => renameItem(tab.path) },
+      { label: 'Delete board', danger: true, run: () => deleteItem(tab.path) },
+    ]); } }, '⋯'));
+  const banner = h('div', { class: 'banner-slot' });
+  tab.bannerEl = banner;
+  const slot = h('div', { class: 'board-slot' });
+  c.replaceChildren(toolbar, banner, slot);
+  renderDrawingBanner(tab);
+  if (tab.boardView) { slot.append(tab.boardView.el); return; }
+  if (tab.fatal) { slot.append(h('div', { class: 'drawing-error' }, h('p', {}, `This board can’t be shown: ${tab.fatal}`), h('button', { class: 'btn', onclick: () => openDrawingAsText(tab) }, 'Open as text'))); return; }
+  loadBoard().then((m) => {
+    if (!S.tabs.includes(tab) || tab.boardView) return;
+    try {
+      tab.boardView = new m.Board({
+        text: tab.text,
+        toast,
+        palette: boardPalette,
+        onChange: (text) => { tab.text = text; renderTabs(); scheduleDrawingSave(tab); },
+      });
+    } catch (e) { tab.fatal = e.message; renderContent(tab.group); return; }
+    if (slot.isConnected) slot.append(tab.boardView.el);
+    else if (activeIn(tab.group) === tab) renderContent(tab.group);
+    requestAnimationFrame(() => { tab.boardView?.fit(); tab.boardView?.el.focus(); });
+  });
 }
 
 // ------------------------------------------------------------------ the desk
@@ -5135,6 +5229,7 @@ function fileEmbed(target, label, fromPath) {
   // another, nor in itself.
   if (rel && isNote(rel)) return noteEmbedDepth || rel === fromPath ? null : noteEmbed(rel, target);
   if (rel && isMermaidFile(rel)) return mermaidEmbed(rel, label || target);
+  if (rel && isBoard(rel)) return boardEmbed(rel, label || target);
   if (rel && isExcalidraw(rel)) return drawingEmbed(rel, label, target);
   // ![[shot.png]]: the picture, as ![](shot.png) shows it.
   if (rel && IMAGE_FILE.test(rel)) return `<img src="${escAttr(`/api/raw?path=${encodeURIComponent(rel)}&t=${token}`)}" alt="${escAttr(label || stem(rel))}">`;
@@ -5213,7 +5308,34 @@ function drawingEmbed(rel, label, target) {
     : `<span class="drawing-embed" data-path="${escAttr(rel)}" data-label="${escAttr(label || target)}" title="${title}">◇ ${escAttr(basename(rel))}…</span>`;
 }
 
-const fillDrawingEmbeds = (el) => renderDrawingEmbeds(el, { readFile: (path) => api('GET', `/api/file?path=${encodeURIComponent(path)}`), dark: isDarkTheme() });
+const fillDrawingEmbeds = (el) => Promise.all([renderDrawingEmbeds(el, { readFile: (path) => api('GET', `/api/file?path=${encodeURIComponent(path)}`), dark: isDarkTheme() }), fillBoardEmbeds(el)]);
+
+// ![[x.board.canvas]]: the board's picture (drawn here, in the theme's colours).
+const boardPictures = new Map(); // `${dark}|${path}` → data: URL
+const boardStem = (p) => basename(p).replace(/\.board\.canvas$/i, '');
+function boardEmbed(rel, label) {
+  const url = boardPictures.get(`${isDarkTheme()}|${rel}`);
+  const title = `${escAttr(rel)} \u2014 click to open`;
+  return url
+    ? `<span class="drawing-embed board-embed ready" data-path="${escAttr(rel)}" title="${title}"><img src="${escAttr(url)}" alt="${escAttr(label)}"></span>`
+    : `<span class="drawing-embed board-embed" data-path="${escAttr(rel)}" data-label="${escAttr(label)}" title="${title}">\u25ad ${escAttr(boardStem(rel))}\u2026</span>`;
+}
+async function fillBoardEmbeds(root) {
+  const els = [...root.querySelectorAll('.board-embed:not(.ready)')];
+  if (!els.length) return;
+  const m = await loadBoard();
+  for (const el of els) {
+    const p = el.dataset.path;
+    try {
+      const open = S.tabs.find((t) => t.kind === 'drawing' && t.path === p);
+      const text = open ? open.text : (await api('GET', `/api/file?path=${encodeURIComponent(p)}`)).content;
+      const url = m.svgUrl(m.boardSvg(m.parseBoard(text), boardPalette()).svg);
+      boardPictures.set(`${isDarkTheme()}|${p}`, url);
+      el.replaceChildren(h('img', { src: url, alt: el.dataset.label || boardStem(p) }));
+      el.classList.add('ready');
+    } catch (e) { el.textContent = `\u25ad ${p}: ${e.message}`; el.classList.add('error'); }
+  }
+}
 
 // ---- pictures: copy, save as a file, view larger
 
@@ -5423,6 +5545,7 @@ function previewPicture(target) {
   if (!img) return null;
   const tab = S.tabs.find((t) => t.previewEl?.contains(box));
   const path = box.dataset.path;
+  if (box.classList.contains('board-embed')) return { box, path, title: basename(path), pic: () => ({ from: path, name: boardStem(path), svg: async () => svgFromDataUrl(img.src), png: async () => imageToPng(img.src, { scale: 2 }) }) };
   if (box.classList.contains('drawing-embed')) return { box, path, title: basename(path), pic: () => drawingFilePicture(path) };
   const from = path || tab?.path || '';
   const name = path || (tab && isMermaidFile(tab.path)) ? stem(from) : `${stem(from)}-diagram`;
@@ -5516,6 +5639,7 @@ function refreshEmbeds(path) {
   for (const t of S.tabs) t.deskView?.refreshNote(path);
   roomsRefresh(path);
   forgetEmbed(path);
+  for (const k of [...boardPictures.keys()]) if (k.endsWith(`|${path}`)) boardPictures.delete(k);
   mmdSources.delete(path);
   noteSources.delete(path);
   for (const t of S.tabs) {
@@ -8763,7 +8887,7 @@ function appKeydown(e) {
     return;
   }
   if (id === 'rename' && !fileTab()) return;
-  if (id === 'copy-drawing' && !drawingTab()?.frame) return;
+  if (id === 'copy-drawing' && !drawingTab()?.frame && !drawingTab()?.boardView) return;
   if (!ACTIONS[id]) return;
   e.preventDefault();
   runCommand(id);
@@ -10434,6 +10558,7 @@ const ACTIONS = {
   'ui-reset': () => setSetting('uiScale', 100),
   'new-note': () => newNote(),
   'new-folder': () => newFolder(),
+  'new-board': () => newBoard(),
   'reopen-tab': () => reopenTab(),
   'quick-open': () => openPalette(),
   palette: () => openPalette('>'),
@@ -10463,7 +10588,7 @@ const ACTIONS = {
   'export-html': () => exportHtml(),
   print: () => printNote(),
   rename: () => fileTab() && renameItem(fileTab().path),
-  'copy-drawing': () => drawingTab()?.frame && copyPicture(drawingPicture(drawingTab())),
+  'copy-drawing': () => { const t = drawingTab(); if (t?.boardView) copyPicture(boardPicture(t)); else if (t?.frame) copyPicture(drawingPicture(t)); },
   leader: openLeaderMenu,
   repeat: repeatLast,
   'other-note': otherBuffer,
