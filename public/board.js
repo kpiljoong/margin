@@ -96,7 +96,9 @@ function sidesFor(a, b) {
 // the same boxes, the other way, goes round (under, or beside), not on it.
 function edgeSides(d, ed, a, b) {
   // One that goes back (drawn from words: to a step before): round underneath.
-  if (ed.round && b.x + b.width <= a.x) return ['bottom', 'bottom'];
+  if (ed.round === true && b.x + b.width <= a.x) return ['bottom', 'bottom'];
+  // One that skips steps (drawn from words): round over them.
+  if (ed.round === 'over' && b.x >= a.x + a.width) return ['top', 'top'];
   const base = sidesFor(a, b);
   const i = d.edges.indexOf(ed);
   const back = d.edges.findIndex((x) => x.fromNode === ed.toNode && x.toNode === ed.fromNode);
@@ -738,7 +740,13 @@ export class Board {
       if (e.label) ed.label = e.label;
       if (e.both) ed.fromEnd = 'arrow';
       if (e.none) ed.toEnd = 'none';
-      if (made[e.to].x + made[e.to].width <= made[e.from].x) ed.round = true;
+      const [a, b] = [made[e.from], made[e.to]];
+      if (b.x + b.width <= a.x) ed.round = true;
+      else if (b.x >= a.x + a.width) {
+        // A box in the way, between them: over the top.
+        const [y1, y2] = [Math.min(a.y, b.y), Math.max(a.y + a.height, b.y + b.height)];
+        if (made.some((m) => m !== a && m !== b && m.x >= a.x + a.width && m.x + m.width <= b.x && m.y < y2 && m.y + m.height > y1)) ed.round = 'over';
+      }
     }
     this.sel = new Set(made.map((n) => n.id));
     this.selEdge = null;
