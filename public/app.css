@@ -2475,6 +2475,8 @@ img.part { border-radius: 6px; box-shadow: 0 0 0 1px var(--border); }
 /* The selected box, ready for what is typed: no caret shown until it is. */
 .board-armed .board-words { caret-color: transparent; outline: none; }
 .board-ghost { opacity: 0; pointer-events: none; }
+.board-folded .board-words { display: none; }
+.board-folded::after { content: '\2261'; position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; font-size: 18px; color: var(--fg-dim); pointer-events: none; }
 .board-ghost .board-words { caret-color: transparent; outline: none; }
 /* Presenting: the box now, where it goes next, the way here; the rest faint. */
 .board.board-presenting { background-image: none; cursor: pointer; }

@@ -63,8 +63,11 @@ const wordsOf = (n) => (n.type === 'text' ? n.text || '' : n.type === 'group' ? 
 const isBox = (n) => n.type !== 'group';
 const IMAGE = /\.(png|jpe?g|gif|webp|svg)$/i;
 const isPicture = (n) => n.type === 'file' && IMAGE.test(n.file || '');
+// The words a drawing was drawn from, folded to a mark beside it (⌥⇧F): out of
+// the picture and the presenting; n.folded is its size open.
+const FOLDED = [40, 34];
 // A copy of a box or an arrow, no longer a part of the diagram it was drawn in.
-const unbound = (x) => { const c = structuredClone(x); delete c.drawnFrom; delete c.drawnKey; return c; };
+const unbound = (x) => { const c = structuredClone(x); delete c.drawnFrom; delete c.drawnKey; if (c.folded) { [c.width, c.height] = c.folded; delete c.folded; } return c; };
 const inside = (x, g) => x.x >= g.x && x.y >= g.y && x.x + x.width <= g.x + g.width && x.y + x.height <= g.y + g.height;
 // Reading order: rows from the top, each from the left.
 const reading = (ns) => [...ns].sort((a, b) => (Math.round((a.y + a.height / 2) / 80) - Math.round((b.y + b.height / 2) / 80)) || (a.x - b.x));
@@ -209,7 +212,7 @@ export async function boardImages(d, ids, urlOf) {
 
 // images: from boardImages (a picture without one: its frame and name).
 export function boardSvg(d, pal, ids = null, images = null) {
-  const nodes = d.nodes.filter((n) => !ids || ids.has(n.id));
+  const nodes = d.nodes.filter((n) => (!ids || ids.has(n.id)) && !n.folded);
   const keep = new Set(nodes.map((n) => n.id));
   const edges = d.edges.filter((e) => keep.has(e.fromNode) && keep.has(e.toNode));
   if (!nodes.length) return { svg: '<svg xmlns="http://www.w3.org/2000/svg" width="1" height="1"/>', width: 1, height: 1 };
@@ -515,6 +518,8 @@ export class Board {
     if (this.armed?.id === n.id) cls.push('board-armed');
     if (n.type !== 'text' && n.type !== 'group') cls.push(isPicture(n) ? 'board-picture' : 'board-other');
     if (this.asking === n.id) cls.push('board-busy');
+    if (n.folded) cls.push('board-folded');
+    e.title = n.folded ? 'The words this drawing follows (folded): Enter or a double-click to change them, ⌥⇧F to open' : '';
     const c = colorOf(n.color);
     if (c) cls.push('board-colored');
     const p = this.presentClass(n);
@@ -620,7 +625,9 @@ export class Board {
     this.nodeTools.append(sep(), ...this.alignButtons.map(([, b]) => b));
     this.drawTool = el('span', 'board-edge-tools');
     this.drawTool.append(button('\u21F6', 'Drawn as a diagram, beside it (\u2325\u21E7D): words written as a line a box, - or -- before the ones under it, A -> B for an arrow, at once; other words, or a picture, by Claude', () => this.drawWords()));
-    bar.append(...this.toolButtons.map(([, b]) => b), group, sep(), ...this.swatches.map(([, b]) => b), this.nodeTools, this.drawTool, this.edgeTools, sep(),
+    this.tidyTool = el('span', 'board-edge-tools');
+    this.tidyTool.append(button('\u229E', 'Put in order along their arrows, left to right (\u2325\u21E7T; none selected: all of it)', () => this.tidy()));
+    bar.append(...this.toolButtons.map(([, b]) => b), group, sep(), ...this.swatches.map(([, b]) => b), this.nodeTools, this.drawTool, this.tidyTool, this.edgeTools, sep(),
       button('▶', 'Present: from the selected box (or the first), along the arrows — full screen (⌥P)', () => this.present()),
       button('⤢', 'All of it in view (⇧1)', () => this.fit()),
       button('?', 'Keys', () => this.toggleHelp()));
@@ -639,6 +646,7 @@ export class Board {
     this.nodeTools.hidden = !sel.length;
     const one = this.one();
     this.drawTool.hidden = !one || !(one.type === 'text' || isPicture(one));
+    this.tidyTool.hidden = this.sel.size < 2;
     const al = sel.length ? alignOf(sel[0]) : null;
     for (const [a, b] of this.alignButtons) b.classList.toggle('board-on', a === al);
     if (ed) this.headsButton.textContent = ed.fromEnd === 'arrow' ? '↔' : (ed.toEnd ?? 'arrow') === 'arrow' ? '→' : '—';
@@ -661,6 +669,8 @@ export class Board {
         ['⌘G · ⌘⇧G', 'a group around them · let it go'],
         ['⌥⇧D', 'drawn: a line a box, - -- under, A -> B; other words or a picture: by Claude. Again, or the words changed: the drawing follows'],
         ['⌘C', 'the boxes and arrows, as words like that too (to paste in a note)'],
+        ['⌥⇧F', 'the words drawn from folded to ≡ (out of the picture), or open'],
+        ['⌥⇧T', 'the selected boxes (or all) put in order along their arrows'],
         ['Paste, drop', 'a picture on the board (in assets/)'],
         ['On an arrow', 'A heads · L dashed · Enter or double-click: its words'],
         ['⌥ drag · ⌘D', 'a copy'],
@@ -777,6 +787,7 @@ export class Board {
       if (from) ed.drawnFrom = from.id;
       this.drawnArrow(ed, e, made[e.from], made[e.to], made);
     }
+    if (from && from.type === 'text' && !from.folded) this.fold(from);
     // From a box: it stays selected, to write on in it (Enter); pasted: the drawing.
     this.sel = new Set(from ? [from.id] : made.map((n) => n.id));
     this.selEdge = null;
@@ -787,7 +798,7 @@ export class Board {
     const ys = made.flatMap((n) => [n.y, n.y + n.height]);
     const [x1, x2, y1, y2] = [Math.min(...xs, from ? from.x : Infinity), Math.max(...xs), Math.min(...ys, from ? from.y : Infinity), Math.max(...ys, from ? from.y + from.height : -Infinity)];
     this.look(x1, y1, x2, y2, { maxK: this.view.k });
-    this.toast(`Drawn: ${made.length} boxes, ${g.edges.length} arrows${from ? ' — change the words and it follows' : ''} (⌘Z to take it back)`);
+    this.toast(`Drawn: ${made.length} boxes, ${g.edges.length} arrows${from?.folded ? ' — its words folded to ≡ beside it: Enter changes them, and the drawing follows' : ''} (⌘Z to take it back)`);
     return true;
   }
   // An arrow of a drawing as the words say (e: { label, both, none }), and
@@ -865,6 +876,77 @@ export class Board {
     const say = [added.length && `${added.length} new`, changed.length && `${changed.length} changed`, gone.size && `${gone.size} gone`].filter(Boolean);
     this.toast(say.length ? `The drawing follows: ${say.join(', ')} (⌘Z to take it back)` : 'The drawing is as the words say');
     return true;
+  }
+  fold(n) {
+    if (n.folded || n.type !== 'text') return;
+    n.folded = [n.width, n.height];
+    [n.width, n.height] = FOLDED;
+  }
+  unfold(n) {
+    if (!n.folded) return;
+    [n.width, n.height] = n.folded;
+    delete n.folded;
+  }
+  // ⌥⇧F: the selected words folded to a mark, or open again.
+  toggleFold() {
+    const sel = this.selected().filter((n) => n.type === 'text');
+    if (!sel.length) { this.toast('Select a box to fold its words'); return; }
+    this.begin();
+    const open = sel.some((n) => n.folded);
+    for (const n of sel) if (open) this.unfold(n); else this.fold(n);
+    this.end();
+  }
+  // ⌥⇧T: the selected boxes (two or more; else all of them) put in order
+  // along their arrows, left to right, as a drawing is — from where they begin.
+  // No arrows between them: in rows, in reading order.
+  tidy() {
+    this.finishEdit({ follow: false });
+    let boxes = this.selected().filter((n) => isBox(n) && !n.folded);
+    if (boxes.length < 2) boxes = this.d.nodes.filter((n) => isBox(n) && !n.folded);
+    if (boxes.length < 2) { this.toast('Nothing to put in order'); return; }
+    boxes = reading(boxes);
+    const at = new Map(boxes.map((n, i) => [n.id, i]));
+    const edges = [];
+    for (const x of this.d.edges) {
+      if (!at.has(x.fromNode) || !at.has(x.toNode)) continue;
+      const back = x.fromEnd === 'arrow' && (x.toEnd ?? 'arrow') === 'none';
+      edges.push({ from: at.get(back ? x.toNode : x.fromNode), to: at.get(back ? x.fromNode : x.toNode), ed: x });
+    }
+    const x0 = Math.min(...boxes.map((n) => n.x));
+    const y0 = Math.min(...boxes.map((n) => n.y));
+    let pos;
+    if (edges.length) {
+      pos = layoutDiagram({ nodes: boxes, edges }, (n) => [n.width, n.height], { gapX: 80, gapY: 26 });
+    } else {
+      const cols = Math.ceil(Math.sqrt(boxes.length));
+      const w = Math.max(...boxes.map((n) => n.width)) + 30;
+      pos = [];
+      let y = 0;
+      for (let r = 0; r < boxes.length; r += cols) {
+        const row = boxes.slice(r, r + cols);
+        row.forEach((n, i) => pos.push({ x: i * w, y }));
+        y += Math.max(...row.map((n) => n.height)) + 30;
+      }
+    }
+    this.begin();
+    boxes.forEach((n, i) => { n.x = round(x0 + pos[i].x); n.y = round(y0 + pos[i].y); });
+    // The folded words of a drawing put in order: at its top left, out of the way.
+    for (const f of this.d.nodes.filter((n) => n.folded)) {
+      const its = boxes.filter((n) => n.drawnFrom === f.id);
+      if (!its.length) continue;
+      f.x = round(Math.min(...its.map((n) => n.x)) - f.width - 24);
+      f.y = round(Math.min(...its.map((n) => n.y)));
+    }
+    for (const e of edges) {
+      const keep = { label: e.ed.label, both: e.ed.fromEnd === 'arrow' && (e.ed.toEnd ?? 'arrow') !== 'none', none: e.ed.toEnd === 'none' && e.ed.fromEnd !== 'arrow' };
+      const [a, b] = [boxes[e.from], boxes[e.to]];
+      const was = { fromEnd: e.ed.fromEnd, toEnd: e.ed.toEnd, label: e.ed.label };
+      this.drawnArrow(e.ed, keep, a, b, boxes);
+      // Its heads and words as they were: only its way round is new.
+      for (const [k, v] of Object.entries(was)) if (v === undefined) delete e.ed[k]; else e.ed[k] = v;
+    }
+    this.end();
+    this.toast(`${boxes.length} boxes put in order (⌘Z to take it back)`);
   }
   // The selected box's words, drawn (⌥⇧D).
   // Words written that way: at once. Other words, or a picture: by Claude.
@@ -1060,7 +1142,7 @@ export class Board {
   arm() {
     const n = this.one();
     const free = !this.editing && !this.editingEdge && !this.presenting && !this.mode && this.hasFocus();
-    const want = !!n && n.type === 'text' && free;
+    const want = !!n && n.type === 'text' && !n.folded && free;
     // Nothing selected: what is typed is a new box (where the pointer is).
     const blank = !this.sel.size && !this.selEdge && free;
     if (this.armed && (this.armed.ghost ? !blank : (!want || this.armed.id !== n.id))) this.disarm();
@@ -1181,7 +1263,8 @@ export class Board {
     if (!isNew) this.begin();
     const e = this.els.get(n.id);
     if (!e) return;
-    this.editing = { id: n.id, el: e.textEl, isNew, was: n.type === 'group' ? n.label : n.text };
+    this.editing = { id: n.id, el: e.textEl, isNew, was: n.type === 'group' ? n.label : n.text, refold: !!n.folded };
+    if (n.folded) { this.unfold(n); this.paintNode(n, e); }
     // Armed again on the way (the board had the focus a moment): not now, it is written in.
     if (this.armed) this.disarm();
     this.sel = new Set([n.id]);
@@ -1242,6 +1325,7 @@ export class Board {
     const text = ed.el.innerText.replace(/\n+$/, '');
     if (n) {
       if (n.type === 'group') n.label = text; else n.text = text;
+      if (ed.refold) this.fold(n);
       // Words alone, left empty: not kept.
       if (!text && n.shape === 'text') {
         this.d.nodes = this.d.nodes.filter((x) => x !== n);
@@ -1539,6 +1623,8 @@ export class Board {
         const a = { KeyL: 'left', KeyE: 'center', KeyR: 'right' }[c];
         if (a) { handled(); this.setAlign(a); return; }
         if (c === 'KeyD') { handled(); this.drawWords(); return; }
+        if (c === 'KeyT') { handled(); this.tidy(); return; }
+        if (c === 'KeyF') { handled(); this.toggleFold(); return; }
         return; // ⌥⇧C, copied as an image: the app's
       }
       if (SHAPE_CODES[c]) { handled(); this.setShape(SHAPE_CODES[c]); return; }
@@ -1723,7 +1809,7 @@ export class Board {
     return reading(out);
   }
   roots() {
-    const boxes = this.d.nodes.filter(isBox);
+    const boxes = this.d.nodes.filter((n) => isBox(n) && !n.folded);
     const into = new Set();
     for (const n of boxes) for (const o of this.outs(n.id)) into.add(o.id);
     return reading(boxes.filter((n) => !into.has(n.id)));
@@ -1732,7 +1818,7 @@ export class Board {
     if (this.presenting) return;
     this.finishEdit();
     this.disarm();
-    const boxes = this.d.nodes.filter(isBox);
+    const boxes = this.d.nodes.filter((n) => isBox(n) && !n.folded);
     if (!boxes.length) { this.toast('Nothing on the board to present yet.'); return; }
     const start = this.one() && isBox(this.one()) ? this.one() : null;
     const first = start || this.roots()[0] || reading(boxes)[0];
