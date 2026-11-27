@@ -2474,6 +2474,8 @@ img.part { border-radius: 6px; box-shadow: 0 0 0 1px var(--border); }
 .board-align line { stroke: currentColor; stroke-width: 1.6; stroke-linecap: round; }
 /* The selected box, ready for what is typed: no caret shown until it is. */
 .board-armed .board-words { caret-color: transparent; outline: none; }
+.board-ghost { opacity: 0; pointer-events: none; }
+.board-ghost .board-words { caret-color: transparent; outline: none; }
 /* Presenting: the box now, where it goes next, the way here; the rest faint. */
 .board.board-presenting { background-image: none; cursor: pointer; }
 .board-presenting .board-bar, .board-presenting .board-hint, .board-presenting .board-help, .board-presenting .board-dot, .board-presenting .board-grip { display: none; }

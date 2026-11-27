@@ -157,3 +157,50 @@ export function layoutDiagram(g, size, { gapX = 90, gapY = 30 } = {}) {
     height: dims[v][1],
   }));
 }
+
+// The other way: boxes and the arrows between them as words in that notation
+// (to paste in a note, or on a board again). nodes: [{ id, text, shape }] in
+// reading order; edges: [{ from, to, label, both, none }] by id. Plain arrows
+// with one way in are an outline (- and -- under); the others are A -> B lines.
+export function diagramToText(nodes, edges) {
+  const name = (n) => {
+    const t = String(n.text || '').replace(/\s*\n\s*/g, ' ').trim();
+    return n.shape === 'ellipse' ? `(${t})` : n.shape === 'diamond' ? `{${t}}` : t;
+  };
+  const shown = nodes.filter((n) => String(n.text || '').trim());
+  const ids = new Set(shown.map((n) => n.id));
+  const es = edges.filter((e) => ids.has(e.from) && ids.has(e.to) && e.from !== e.to);
+  const plain = (e) => !e.label && !e.both && !e.none;
+  const into = new Map();
+  for (const e of es) if (plain(e)) into.set(e.to, (into.get(e.to) || 0) + 1);
+  const order = new Map(shown.map((n, i) => [n.id, i]));
+  const byId = new Map(shown.map((n) => [n.id, n]));
+  const under = new Set(); // the arrows the outline says
+  const lines = [];
+  const seen = new Set();
+  const visit = (n, depth) => {
+    seen.add(n.id);
+    const line = { n, depth, text: `${depth ? `${'-'.repeat(depth)} ` : ''}${name(n)}`, kids: 0 };
+    lines.push(line);
+    const next = es.filter((e) => e.from === n.id && plain(e) && into.get(e.to) === 1 && !seen.has(e.to))
+      .sort((a, b) => order.get(a.to) - order.get(b.to));
+    for (const e of next) {
+      if (seen.has(e.to)) continue;
+      under.add(e);
+      line.kids++;
+      visit(byId.get(e.to), depth + 1);
+    }
+  };
+  for (const n of shown) if (!into.get(n.id)) visit(n, 0);
+  for (const n of shown) if (!seen.has(n.id)) visit(n, 0);
+  const others = es.filter((e) => !under.has(e));
+  const said = new Set(others.flatMap((e) => [e.from, e.to]));
+  const rest = others.map((e) => {
+    const [a, b] = [name(byId.get(e.from)), name(byId.get(e.to))];
+    const arrow = e.both ? '<->' : e.none ? '--' : '->';
+    return `${a} ${arrow} ${b}${e.label ? `: ${String(e.label).replace(/\s*\n\s*/g, ' ')}` : ''}`;
+  });
+  // A box alone that an arrow line names: said there.
+  const outline = lines.filter((l) => l.depth || l.kids || !said.has(l.n.id)).map((l) => l.text);
+  return [...outline, ...(rest.length ? [...(outline.length ? [''] : []), ...rest] : [])].join('\n');
+}

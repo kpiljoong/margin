@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { textToDiagram, layoutDiagram } from '../public/board-text.js';
+import { textToDiagram, layoutDiagram, diagramToText } from '../public/board-text.js';
 
 const names = (g) => g.nodes.map((n) => n.text);
 const pairs = (g) => g.edges.map((e) => `${g.nodes[e.from].text}>${g.nodes[e.to].text}${e.label ? `:${e.label}` : ''}${e.both ? '<>' : ''}${e.none ? '--' : ''}`);
@@ -48,4 +48,20 @@ test('layout: columns along the arrows, a box in the middle of the ones under it
       assert.ok(a.x + a.width <= b.x || b.x + b.width <= a.x || a.y + a.height <= b.y || b.y + b.height <= a.y, `${g.nodes[i].text} / ${g.nodes[j].text}`);
     }
   }
+});
+
+test('back to words: an outline where each box has one way in, A -> B lines for the rest; read again, the same diagram', () => {
+  const nodes = [
+    { id: 'r', text: 'Plan' }, { id: 'a', text: 'Goals' }, { id: 'b', text: 'Risks' },
+    { id: 'c', text: 'Revenue' }, { id: 'd', text: 'Ok?', shape: 'diamond' }, { id: 'e', text: 'Ship\nit' },
+  ];
+  const edges = [
+    { from: 'r', to: 'a' }, { from: 'r', to: 'b' }, { from: 'a', to: 'c' },
+    { from: 'b', to: 'd' }, { from: 'c', to: 'd' }, { from: 'd', to: 'e', label: 'yes' },
+  ];
+  const t = diagramToText(nodes, edges);
+  assert.equal(t, 'Plan\n- Goals\n-- Revenue\n- Risks\n\nRisks -> {Ok?}\nRevenue -> {Ok?}\n{Ok?} -> Ship it: yes');
+  const g = textToDiagram(t);
+  assert.deepEqual(pairs(g).sort(), ['Plan>Goals', 'Plan>Risks', 'Goals>Revenue', 'Risks>Ok?', 'Revenue>Ok?', 'Ok?>Ship it:yes'].sort());
+  assert.equal(g.nodes.find((n) => n.text === 'Ok?').shape, 'diamond');
 });

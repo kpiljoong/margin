@@ -20,7 +20,7 @@
 //   ⌥⇧D: a box's words drawn as a diagram beside it (board-text.js: a line a
 //   box, - -- for the ones under it, A -> B); pasted words like that: drawn.
 
-import { textToDiagram, layoutDiagram } from './board-text.js';
+import { textToDiagram, layoutDiagram, diagramToText } from './board-text.js';
 export const EMPTY_BOARD = '{\n\t"nodes":[],\n\t"edges":[]\n}\n';
 
 const SHAPES = [
@@ -63,6 +63,8 @@ const wordsOf = (n) => (n.type === 'text' ? n.text || '' : n.type === 'group' ? 
 const isBox = (n) => n.type !== 'group';
 const IMAGE = /\.(png|jpe?g|gif|webp|svg)$/i;
 const isPicture = (n) => n.type === 'file' && IMAGE.test(n.file || '');
+// A copy of a box or an arrow, no longer a part of the diagram it was drawn in.
+const unbound = (x) => { const c = structuredClone(x); delete c.drawnFrom; delete c.drawnKey; return c; };
 const inside = (x, g) => x.x >= g.x && x.y >= g.y && x.x + x.width <= g.x + g.width && x.y + x.height <= g.y + g.height;
 // Reading order: rows from the top, each from the left.
 const reading = (ns) => [...ns].sort((a, b) => (Math.round((a.y + a.height / 2) / 80) - Math.round((b.y + b.height / 2) / 80)) || (a.x - b.x));
@@ -328,7 +330,7 @@ export class Board {
     this.marquee = el('div', 'board-marquee');
     this.marquee.hidden = true;
     this.world.append(this.groupsLayer, this.edgeSvg, this.nodesLayer, this.labels, this.guides, this.marquee);
-    this.hint = el('div', 'board-hint', 'Double-click to put a box down · drag a box’s dot to join it to another · Tab: the next box');
+    this.hint = el('div', 'board-hint', 'Type, or double-click, to put a box down · drag a box’s dot to join it to another · Tab: the next box');
     this.help = el('div', 'board-help');
     this.help.hidden = true;
     this.caption = el('div', 'board-caption');
@@ -338,7 +340,8 @@ export class Board {
 
     this.onArmedInput = () => this.startTyping();
     this.el.addEventListener('pointerdown', (e) => this.down(e));
-    this.el.addEventListener('pointermove', (e) => this.move(e));
+    this.el.addEventListener('pointermove', (e) => { this.pointer = { cx: e.clientX, cy: e.clientY }; this.move(e); });
+    this.el.addEventListener('pointerleave', () => { this.pointer = null; });
     this.el.addEventListener('pointerup', (e) => this.up(e));
     this.el.addEventListener('pointercancel', (e) => this.up(e));
     this.el.addEventListener('dblclick', (e) => this.dbl(e));
@@ -645,25 +648,26 @@ export class Board {
     if (!this.help.hidden && !this.help.childElementCount) {
       const rows = [
         ['Double-click', 'a box (on a box: write in it)'],
-        ['Type', 'on the selected box: its words go on'],
+        ['Type', 'on the selected box: its words go on · none selected: a new box at the pointer'],
         ['Enter · Esc', 'write in the box · done'],
         ['Drag a dot', 'to a box: join them · out: a new box, joined'],
         ['Click a dot', 'the next box that way'],
         ['Tab · ⇧Tab', 'the next box, joined · one under it, from the same box'],
         ['⌘ / ⌥ + arrow', 'the next box that way'],
         ['Arrows · ⇧ arrows', 'to the next box · move them'],
-        ['⌥R O D S T', 'box, ellipse, diamond, sticky, words (no ⌥: none selected)'],
+        ['⌥R O D S T', 'box, ellipse, diamond, sticky, words (none selected: the next box’s)'],
         ['⌥1–6 · ⌥0', 'a colour · none'],
         ['⌥⇧L E R', 'words to the left, the middle, the right'],
         ['⌘G · ⌘⇧G', 'a group around them · let it go'],
-        ['⌥⇧D', 'drawn: a line a box, - -- under, A -> B; other words or a picture: by Claude'],
+        ['⌥⇧D', 'drawn: a line a box, - -- under, A -> B; other words or a picture: by Claude. Again, or the words changed: the drawing follows'],
+        ['⌘C', 'the boxes and arrows, as words like that too (to paste in a note)'],
         ['Paste, drop', 'a picture on the board (in assets/)'],
         ['On an arrow', 'A heads · L dashed · Enter or double-click: its words'],
         ['⌥ drag · ⌘D', 'a copy'],
         ['⌥⇧C', 'copy as an image (the selected boxes, or all)'],
         ['⌥P', 'present, from the selected box along the arrows'],
         ['Space drag, wheel', 'move about · ⌘ wheel or pinch: zoom'],
-        ['⇧1 · - =', 'all in view · zoom'],
+        ['⇧1 · - =', 'all in view · zoom (a box selected)'],
       ];
       this.help.append(...rows.map(([k, v]) => el('div', 'board-help-row', el('kbd', '', k), el('span', '', v))));
     }
@@ -734,7 +738,8 @@ export class Board {
   }
 
   // Words as a diagram (board-text.js): beside the box they were written in
-  // (it stays), or round (cx, cy) when pasted. Not one: false.
+  // (it stays), or round (cx, cy) when pasted. Not one: false. Drawn from a
+  // box before: that drawing follows the words instead (redraw).
   diagram(text, { from = null, cx = 0, cy = 0 } = {}) {
     const g = textToDiagram(text);
     if (!g) return false;
@@ -749,6 +754,7 @@ export class Board {
       return [w, Math.max(n.shape === 'rect' ? 56 : h0, Math.ceil((lines * LINE + 20) * grow))];
     };
     const pos = layoutDiagram(g, size, { gapX: 80, gapY: 26 });
+    if (from && this.d.nodes.some((n) => n.drawnFrom === from.id)) return this.redraw(g, pos, from);
     const W = Math.max(...pos.map((p) => p.x + p.width));
     const H = Math.max(...pos.map((p) => p.y + p.height));
     const at = from ? { x: from.x + from.width + 120, y: from.y } : { x: cx - W / 2, y: cy - H / 2 };
@@ -761,24 +767,18 @@ export class Board {
     const made = g.nodes.map((n, i) => {
       const m = { id: newId(), type: 'text', text: n.text, x: round(at.x + pos[i].x), y: round(at.y + pos[i].y), width: pos[i].width, height: pos[i].height };
       if (n.shape !== 'rect') m.shape = n.shape;
+      if (from) { m.drawnFrom = from.id; m.drawnKey = n.text; }
       this.d.nodes.push(m);
       return m;
     });
     for (const e of g.edges) {
       const ed = this.link(made[e.from], made[e.to]);
       if (!ed) continue;
-      if (e.label) ed.label = e.label;
-      if (e.both) ed.fromEnd = 'arrow';
-      if (e.none) ed.toEnd = 'none';
-      const [a, b] = [made[e.from], made[e.to]];
-      if (b.x + b.width <= a.x) ed.round = true;
-      else if (b.x >= a.x + a.width) {
-        // A box in the way, between them: over the top.
-        const [y1, y2] = [Math.min(a.y, b.y), Math.max(a.y + a.height, b.y + b.height)];
-        if (made.some((m) => m !== a && m !== b && m.x >= a.x + a.width && m.x + m.width <= b.x && m.y < y2 && m.y + m.height > y1)) ed.round = 'over';
-      }
+      if (from) ed.drawnFrom = from.id;
+      this.drawnArrow(ed, e, made[e.from], made[e.to], made);
     }
-    this.sel = new Set(made.map((n) => n.id));
+    // From a box: it stays selected, to write on in it (Enter); pasted: the drawing.
+    this.sel = new Set(from ? [from.id] : made.map((n) => n.id));
     this.selEdge = null;
     this.render();
     for (const n of made) { const t = this.els.get(n.id)?.textEl; if (t) this.grow(n, t); }
@@ -787,14 +787,90 @@ export class Board {
     const ys = made.flatMap((n) => [n.y, n.y + n.height]);
     const [x1, x2, y1, y2] = [Math.min(...xs, from ? from.x : Infinity), Math.max(...xs), Math.min(...ys, from ? from.y : Infinity), Math.max(...ys, from ? from.y + from.height : -Infinity)];
     this.look(x1, y1, x2, y2, { maxK: this.view.k });
-    this.toast(`Drawn: ${made.length} boxes, ${g.edges.length} arrows${from ? ' — it stays as it is' : ''} (⌘Z to take it back)`);
+    this.toast(`Drawn: ${made.length} boxes, ${g.edges.length} arrows${from ? ' — change the words and it follows' : ''} (⌘Z to take it back)`);
+    return true;
+  }
+  // An arrow of a drawing as the words say (e: { label, both, none }), and
+  // its way round: back to an earlier column underneath, over the boxes it skips.
+  drawnArrow(ed, e, a, b, made) {
+    if (e.label) ed.label = e.label; else delete ed.label;
+    if (e.both) ed.fromEnd = 'arrow'; else delete ed.fromEnd;
+    if (e.none) ed.toEnd = 'none'; else delete ed.toEnd;
+    delete ed.round;
+    if (b.x + b.width <= a.x) ed.round = true;
+    else if (b.x >= a.x + a.width) {
+      const [y1, y2] = [Math.min(a.y, b.y), Math.max(a.y + a.height, b.y + b.height)];
+      if (made.some((m) => m !== a && m !== b && m.x >= a.x + a.width && m.x + m.width <= b.x && m.y < y2 && m.y + m.height > y1)) ed.round = 'over';
+    }
+  }
+  // The drawing from this box again, as its words are now: the boxes still in
+  // them where they are (moved, resized, coloured as they were), a box whose
+  // words changed in its place, new ones where the layout puts them beside
+  // those, the ones gone out; the arrows as the words say.
+  redraw(g, pos, from) {
+    const old = this.d.nodes.filter((n) => n.drawnFrom === from.id);
+    const byKey = new Map(old.map((o) => [o.drawnKey ?? o.text, o]));
+    const kept = new Map(); // key in g → box
+    g.nodes.forEach((n, i) => { const o = byKey.get(n.text); if (o) { kept.set(i, o); byKey.delete(n.text); } });
+    // As many gone as new: their words changed (a typo put right), each in its place.
+    const spare = [...byKey.values()];
+    const fresh = g.nodes.map((n, i) => i).filter((i) => !kept.has(i));
+    if (fresh.length === spare.length) for (const i of fresh) kept.set(i, spare.shift());
+    // Where the layout is on the board: as the boxes kept are, on the whole.
+    const mid = (v) => { const s = [...v].sort((a, b) => a - b); return s.length ? s[s.length >> 1] : 0; };
+    const ks = [...kept].filter(([, o]) => !spare.includes(o));
+    const ox = ks.length ? mid(ks.map(([i, o]) => o.x + o.width / 2 - (pos[i].x + pos[i].width / 2))) : Math.min(...old.map((o) => o.x));
+    const oy = ks.length ? mid(ks.map(([i, o]) => o.y + o.height / 2 - (pos[i].y + pos[i].height / 2))) : Math.min(...old.map((o) => o.y));
+    this.begin();
+    const gone = new Set(spare.map((o) => o.id));
+    this.d.nodes = this.d.nodes.filter((n) => !gone.has(n.id));
+    this.d.edges = this.d.edges.filter((x) => !gone.has(x.fromNode) && !gone.has(x.toNode));
+    for (const id of gone) this.sel.delete(id);
+    const made = [];
+    const added = [];
+    const changed = [];
+    g.nodes.forEach((n, i) => {
+      let m = kept.get(i);
+      if (m) {
+        if (m.text !== n.text) { m.text = n.text; changed.push(m); }
+        m.drawnKey = n.text;
+        if (n.shape !== 'rect') m.shape = n.shape;
+      } else {
+        const p = pos[i];
+        m = { id: newId(), type: 'text', text: n.text, x: round(ox + p.x), y: round(oy + p.y), width: p.width, height: p.height, drawnFrom: from.id, drawnKey: n.text };
+        if (n.shape !== 'rect') m.shape = n.shape;
+        for (let k = 0; k < 40 && this.overlaps(m); k++) m.y += m.height + 26;
+        this.d.nodes.push(m);
+        added.push(m);
+      }
+      made.push(m);
+    });
+    // The arrows: as the words say; one drawn before, kept as it is (dashes…) but for that.
+    const drawn = new Map(this.d.edges.filter((x) => x.drawnFrom === from.id).map((x) => [`${x.fromNode}>${x.toNode}`, x]));
+    const want = new Set();
+    for (const e of g.edges) {
+      const [a, b] = [made[e.from], made[e.to]];
+      const key = `${a.id}>${b.id}`;
+      want.add(key);
+      let ed = drawn.get(key);
+      if (!ed) { ed = this.link(a, b); if (!ed) continue; ed.drawnFrom = from.id; }
+      this.drawnArrow(ed, e, a, b, made);
+    }
+    this.d.edges = this.d.edges.filter((x) => x.drawnFrom !== from.id || want.has(`${x.fromNode}>${x.toNode}`));
+    this.selEdge = null;
+    this.render();
+    for (const n of [...added, ...changed]) { const t = this.els.get(n.id)?.textEl; if (t) this.grow(n, t); }
+    this.end();
+    if (added.length) this.reveal(added[added.length - 1]);
+    const say = [added.length && `${added.length} new`, changed.length && `${changed.length} changed`, gone.size && `${gone.size} gone`].filter(Boolean);
+    this.toast(say.length ? `The drawing follows: ${say.join(', ')} (⌘Z to take it back)` : 'The drawing is as the words say');
     return true;
   }
   // The selected box's words, drawn (⌥⇧D).
   // Words written that way: at once. Other words, or a picture: by Claude.
   drawWords() {
     const ed = this.editing;
-    if (ed) this.finishEdit();
+    if (ed) this.finishEdit({ follow: false });
     const n = this.one();
     if (!n || !(n.type === 'text' || isPicture(n))) { this.toast('Select a box with words, or a picture, to draw'); return; }
     if (n.type === 'text' && !n.text.trim()) { this.toast('Write in the box first: a line a box, - or -- before the ones under it, or A -> B -> C', 'error'); return; }
@@ -965,9 +1041,9 @@ export class Board {
   }
   duplicate(nodes, dx = 30, dy = 30) {
     const ids = new Map();
-    const made = nodes.map((n) => { const m = { ...structuredClone(n), id: newId(), x: n.x + dx, y: n.y + dy }; ids.set(n.id, m.id); return m; });
+    const made = nodes.map((n) => { const m = { ...unbound(n), id: newId(), x: n.x + dx, y: n.y + dy }; ids.set(n.id, m.id); return m; });
     this.d.nodes.push(...made);
-    for (const e of this.d.edges.filter((x) => ids.has(x.fromNode) && ids.has(x.toNode))) this.d.edges.push({ ...structuredClone(e), id: newId(), fromNode: ids.get(e.fromNode), toNode: ids.get(e.toNode) });
+    for (const e of this.d.edges.filter((x) => ids.has(x.fromNode) && ids.has(x.toNode))) this.d.edges.push({ ...unbound(e), id: newId(), fromNode: ids.get(e.fromNode), toNode: ids.get(e.toNode) });
     this.sel = new Set(made.map((m) => m.id));
     return made;
   }
@@ -983,8 +1059,12 @@ export class Board {
   }
   arm() {
     const n = this.one();
-    const want = !!n && n.type === 'text' && !this.editing && !this.editingEdge && !this.presenting && !this.mode && this.hasFocus();
-    if (this.armed && (!want || this.armed.id !== n.id)) this.disarm();
+    const free = !this.editing && !this.editingEdge && !this.presenting && !this.mode && this.hasFocus();
+    const want = !!n && n.type === 'text' && free;
+    // Nothing selected: what is typed is a new box (where the pointer is).
+    const blank = !this.sel.size && !this.selEdge && free;
+    if (this.armed && (this.armed.ghost ? !blank : (!want || this.armed.id !== n.id))) this.disarm();
+    if (blank) { this.armBlank(); return; }
     if (!want) return;
     const e = this.els.get(n.id);
     if (!e) return;
@@ -1005,12 +1085,37 @@ export class Board {
     s.removeAllRanges();
     s.addRange(range);
   }
+  // A box not on the board yet, unseen, its words ready for the keys: the
+  // first one typed (a syllable being composed too) puts it down.
+  armBlank() {
+    if (!this.armed) {
+      const [w, h] = SIZE[this.tool] || SIZE.rect;
+      const n = { id: newId(), type: 'text', text: '', x: 0, y: 0, width: w, height: h };
+      const e = this.makeNode(n);
+      this.paintNode(n, e);
+      e.classList.add('board-ghost');
+      this.nodesLayer.append(e);
+      const t = e.textEl;
+      t.contentEditable = 'plaintext-only';
+      t.spellcheck = false;
+      t.addEventListener('beforeinput', this.onArmedInput);
+      t.addEventListener('compositionstart', this.onArmedInput);
+      this.armed = { id: n.id, el: t, ghost: n, box: e };
+    }
+    if (document.activeElement !== this.armed.el) this.armed.el.focus({ preventScroll: true });
+  }
   disarm() {
     const a = this.armed;
     if (!a) return;
     this.armed = null;
     a.el.removeEventListener('beforeinput', this.onArmedInput);
     a.el.removeEventListener('compositionstart', this.onArmedInput);
+    if (a.ghost) {
+      const had = document.activeElement === a.el;
+      a.box.remove();
+      if (had) this.el.focus({ preventScroll: true });
+      return;
+    }
     this.els.get(a.id)?.classList.remove('board-armed');
     if (this.editing?.el === a.el) return;
     const had = document.activeElement === a.el;
@@ -1021,6 +1126,7 @@ export class Board {
   startTyping() {
     const a = this.armed;
     if (!a) return;
+    if (a.ghost) { this.putDown(a); return; }
     const n = this.node(a.id);
     if (!n) return;
     this.armed = null;
@@ -1029,10 +1135,42 @@ export class Board {
     const e = this.els.get(n.id);
     e?.classList.remove('board-armed');
     this.begin();
-    this.editing = { id: n.id, el: a.el, isNew: false };
+    this.editing = { id: n.id, el: a.el, isNew: false, was: n.text };
     e?.classList.add('board-editing');
     a.el.oninput = () => this.grow(n, a.el);
     a.el.onkeydown = (ev) => this.editKey(ev, n);
+  }
+
+  // The unseen box, typed in: on the board now, at the pointer (or the middle
+  // of the view), as the next box's shape and colour, out of the others' way.
+  putDown(a) {
+    const n = a.ghost;
+    this.armed = null;
+    a.el.removeEventListener('beforeinput', this.onArmedInput);
+    a.el.removeEventListener('compositionstart', this.onArmedInput);
+    const [w, h] = SIZE[this.tool] || SIZE.rect;
+    Object.assign(n, { width: w, height: h });
+    delete n.shape;
+    delete n.color;
+    if (this.tool !== 'rect') n.shape = this.tool;
+    if (this.color) n.color = this.color;
+    const r = this.el.getBoundingClientRect();
+    const p = this.pointer;
+    const over = p && p.cx >= r.left && p.cx <= r.right && p.cy >= r.top && p.cy <= r.bottom;
+    const [sx, sy] = over ? [p.cx - r.left, p.cy - r.top] : [this.el.clientWidth / 2, this.el.clientHeight / 2];
+    n.x = round((sx - this.view.x) / this.view.k - w / 2);
+    n.y = round((sy - this.view.y) / this.view.k - h / 2);
+    for (let i = 0; i < 40 && this.overlaps(n); i++) n.y += h + 24;
+    this.begin();
+    this.d.nodes.push(n);
+    this.els.set(n.id, a.box);
+    this.sel = new Set([n.id]);
+    this.selEdge = null;
+    this.editing = { id: n.id, el: a.el, isNew: true, was: '' };
+    a.el.oninput = () => this.grow(n, a.el);
+    a.el.onkeydown = (ev) => this.editKey(ev, n);
+    this.render();
+    this.reveal(n);
   }
 
   // ---- writing in a box
@@ -1043,7 +1181,9 @@ export class Board {
     if (!isNew) this.begin();
     const e = this.els.get(n.id);
     if (!e) return;
-    this.editing = { id: n.id, el: e.textEl, isNew };
+    this.editing = { id: n.id, el: e.textEl, isNew, was: n.type === 'group' ? n.label : n.text };
+    // Armed again on the way (the board had the focus a moment): not now, it is written in.
+    if (this.armed) this.disarm();
     this.sel = new Set([n.id]);
     this.selEdge = null;
     e.classList.add('board-editing');
@@ -1088,7 +1228,9 @@ export class Board {
       if (m && m.type === 'text') { if (ev.shiftKey) this.addSibling(m); else this.addFrom(m, 'right'); }
     }
   }
-  finishEdit() {
+  // follow: a box a drawing was drawn from, its words changed (and still a
+  // diagram): the drawing follows them.
+  finishEdit({ follow = true } = {}) {
     const ed = this.editing;
     if (!ed) { this.finishEdgeEdit(); return; }
     const had = document.activeElement === ed.el;
@@ -1110,6 +1252,7 @@ export class Board {
     if (had) this.el.focus({ preventScroll: true });
     if (this.before == null) this.begin();
     this.end();
+    if (follow && n && n.type === 'text' && n.text !== ed.was && this.node(n.id) && this.d.nodes.some((x) => x.drawnFrom === n.id) && textToDiagram(n.text)) this.diagram(n.text, { from: n });
   }
 
   editEdge(ed) {
@@ -1428,7 +1571,8 @@ export class Board {
       return;
     }
     // A key that writes: into the selected box.
-    if (armed && k.length === 1) return;
+    // (Nothing selected: a new box — but for Space, to move about, and ⇧1.)
+    if (armed && k.length === 1 && !(this.armed.ghost && (k === ' ' || (e.shiftKey && e.code === 'Digit1')))) return;
     if (k === ' ') { handled(); this.space = true; this.el.classList.add('board-panning'); return; }
     if (e.shiftKey && (k === '!' || e.code === 'Digit1')) { handled(); this.fit(); return; }
     if (k === '=' || k === '+') { handled(); this.zoomAt(this.view.k * 1.2, this.el.clientWidth / 2, this.el.clientHeight / 2); return; }
@@ -1487,7 +1631,15 @@ export class Board {
     const edges = this.d.edges.filter((x) => ids.has(x.fromNode) && ids.has(x.toNode));
     e.preventDefault();
     e.clipboardData.setData(CLIP, JSON.stringify({ nodes, edges }));
-    e.clipboardData.setData('text/plain', nodes.map((n) => wordsOf(n)).filter(Boolean).join('\n\n'));
+    // As words: the drawing, not the box it was drawn from as well.
+    const drawnHere = new Set(nodes.filter((n) => n.drawnFrom && ids.has(n.drawnFrom)).map((n) => n.drawnFrom));
+    const words = edges.length
+      ? diagramToText(reading(nodes.filter((n) => !drawnHere.has(n.id))).map((n) => ({ id: n.id, text: wordsOf(n), shape: n.shape })), edges.map((x) => {
+        const back = x.fromEnd === 'arrow' && (x.toEnd ?? 'arrow') === 'none';
+        return { from: back ? x.toNode : x.fromNode, to: back ? x.fromNode : x.toNode, label: x.label, both: x.fromEnd === 'arrow' && !back, none: (x.toEnd ?? 'arrow') === 'none' && !back };
+      }))
+      : nodes.map((n) => wordsOf(n)).filter(Boolean).join('\n\n');
+    e.clipboardData.setData('text/plain', words);
     return true;
   }
   paste(e) {
@@ -1517,8 +1669,8 @@ export class Board {
       const ids = new Map(nodes.map((n) => [n.id, newId()]));
       const dx = round(cx - (x1 + x2) / 2);
       const dy = round(cy - (y1 + y2) / 2);
-      this.d.nodes.push(...nodes.map((n) => ({ ...n, id: ids.get(n.id), x: n.x + dx, y: n.y + dy })));
-      for (const ed of got.edges || []) if (ids.has(ed.fromNode) && ids.has(ed.toNode)) this.d.edges.push({ ...ed, id: newId(), fromNode: ids.get(ed.fromNode), toNode: ids.get(ed.toNode) });
+      this.d.nodes.push(...nodes.map((n) => ({ ...unbound(n), id: ids.get(n.id), x: n.x + dx, y: n.y + dy })));
+      for (const ed of got.edges || []) if (ids.has(ed.fromNode) && ids.has(ed.toNode)) this.d.edges.push({ ...unbound(ed), id: newId(), fromNode: ids.get(ed.fromNode), toNode: ids.get(ed.toNode) });
       this.sel = new Set(ids.values());
     } else if (this.diagram(text, { cx, cy })) {
       this.before = null; // its own change
